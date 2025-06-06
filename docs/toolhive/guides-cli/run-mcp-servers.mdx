@@ -1,0 +1,424 @@
+---
+title: Run MCP servers
+description: How to run MCP servers with the ToolHive CLI.
+sidebar_position: 20
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+This guide explains how to run Model Context Protocol (MCP) servers using
+ToolHive. It covers how to run servers from the ToolHive registry, customize
+server settings, and run custom servers using Docker images or protocol schemes.
+
+## Run a server from the registry
+
+To run an MCP server from the [ToolHive registry](./registry.md), use the
+[`thv run`](../reference/cli/thv_run.md) command with the name of the server you
+want to run. The server name is the same as its name in the registry.
+
+```bash
+thv run <server-name>
+```
+
+For example:
+
+```bash
+thv run fetch
+```
+
+:::info What's happening?
+
+When you run an MCP server from the registry, ToolHive:
+
+1. Pulls the image and launches a container using the configuration from the
+   registry.
+2. Launches an HTTP proxy on a random port to forward client requests to the
+   container.
+3. Labels the container so it can be tracked by ToolHive:
+   ```yaml
+   toolhive: true
+   toolhive-name: <server-name>
+   ```
+
+:::
+
+See [Running custom MCP servers](#run-a-custom-mcp-server) to run a server that
+is not in the registry.
+
+## Customize server settings
+
+You might need to customize the behavior of an MCP server, such as changing the
+port, mounting a local directory, or passing secrets. ToolHive provides several
+options to customize the server's configuration when you run it.
+
+For a complete list of options, run
+[`thv run --help`](../reference/cli/thv_run.md) or see the
+[`thv run` command reference](../reference/cli/thv_run.md).
+
+### Run a server with a custom name
+
+By default, the container name matches the MCP server's name in the registry or
+is automatically generated from the image name when you run a custom server. To
+give your server instance a custom name, use the `--name` option:
+
+```bash
+thv run --name my-custom-name <server-name>
+```
+
+For example:
+
+```bash
+thv run --name my-fetch fetch
+```
+
+### Run a server with secrets
+
+Many MCP servers require secrets or other configuration variables to function
+correctly. ToolHive lets you pass these secrets as environment variables when
+starting the server.
+
+To pass a secret to an MCP server, use the `--secret` option:
+
+```bash
+thv run --secret <secret-name>,target=<env-var-name> <server-name>
+```
+
+The `target` parameter specifies the name of the environment variable in the MCP
+server's container. This is useful for passing secrets like API tokens or other
+sensitive information.
+
+For example:
+
+```bash
+thv run --secret github,target=GITHUB_PERSONAL_ACCESS_TOKEN github
+```
+
+See [Secrets management](secrets-management.mdx) to learn how to manage secrets
+in ToolHive.
+
+### Mount a local directory
+
+To let an MCP server access files on your host machine, you can mount a local
+directory into the container:
+
+```bash
+thv run --volume <host-path>:<container-path>[:ro] <server-name>
+```
+
+The optional `:ro` suffix makes the volume read-only in the container. This is
+useful for sharing files without letting the MCP server modify them.
+
+ToolHive automatically adds mounted paths to the MCP server's
+[permissions profile](./custom-permissions.md).
+
+For example, to mount a local directory to the Filesystem MCP server:
+
+```bash
+thv run --volume ~/code/toolhive:/projects/toolhive filesystem
+```
+
+The filesystem server can now access the contents of `~/code/toolhive` as
+`/projects/toolhive` in the container (the filesystem MCP server expects
+directories to be mounted at `/projects` by default).
+
+### Pass additional arguments
+
+Some MCP servers require additional arguments to run correctly. You can pass
+these arguments after the server name in the
+[`thv run`](../reference/cli/thv_run.md) command:
+
+```bash
+thv run <server-name> -- <additional-args>
+```
+
+For example, to run the `fetch` server with custom arguments:
+
+```bash
+thv run fetch -- --arg1 value1 --arg2 value2
+```
+
+Check the MCP server's documentation for the required arguments.
+
+### Run a server on a specific port
+
+ToolHive creates a reverse proxy on a random port that forwards requests to the
+container. To specify the port for an MCP server:
+
+```bash
+thv run --port <port-number> <server-name>
+```
+
+## Run a custom MCP server
+
+To run an MCP server that isn't in the registry, you can use a
+[Docker image](#run-a-server-from-a-docker-image) or a
+[protocol scheme](#run-a-server-using-protocol-schemes) to dynamically build the
+server.
+
+ToolHive supports the following transport methods:
+
+- **Standard I/O** (`stdio`), default:\
+  ToolHive redirects SSE traffic from the client to the container's standard
+  input and output. This acts as a secure proxy, ensuring that the container
+  doesn't have direct access to the network or the host machine.
+
+- **HTTP with SSE (server-sent events)** (`sse`):\
+  ToolHive creates a reverse proxy that forwards requests to the container. This
+  means the container itself doesn't directly expose any ports.
+
+- **Streamable HTTP** - coming soon!\
+  The March 2025 revision of the MCP specification replaced the HTTP+SSE
+  transport with Streamable HTTP. Follow the
+  [GitHub issue](https://github.com/stacklok/toolhive/issues/54) to be notified
+  when this feature is available in ToolHive.
+
+### Run a server from a Docker image
+
+To run an MCP server from a Docker image, specify the image name and tag in the
+[`thv run`](../reference/cli/thv_run.md) command. You can also specify a custom
+name for the server instance, the transport method, and any additional arguments
+required by the MCP server.
+
+```bash
+thv run [--name <friendly-name>] [--transport <stdio/sse>] <image-name:tag> -- <server-args>
+```
+
+For example, to run an MCP server from a Docker image named
+`my-mcp-server-image` that uses the SSE transport method and takes additional
+arguments:
+
+```bash
+thv run --name my-mcp-server --transport sse my-mcp-server-image:latest -- --arg1 value1 --arg2 value2
+```
+
+Check your MCP server's documentation for the required arguments.
+
+:::info What's happening?
+
+When you run an MCP server from a Docker image, ToolHive:
+
+1. Pulls the image (`my-mcp-server-image:latest`) and launches a container with
+   the options and arguments you specified.
+2. Launches an HTTP proxy on a random port (optionally, add
+   `--port <port-number>` to specify the port).
+3. Labels the container so it can be tracked by ToolHive:
+   ```yaml
+   toolhive: true
+   toolhive-name: my-mcp-server
+   ```
+4. Sets up the specified transport method (`--transport stdio` or
+   `--transport sse`).
+
+:::
+
+See [`thv run --help`](../reference/cli/thv_run.md) for more options.
+
+### Run a server using protocol schemes
+
+ToolHive also supports running MCP servers directly from package managers. This
+means you can launch MCP servers without building or publishing a Docker image,
+and without installing language-specific build tools on your machine.
+
+Currently, three protocol schemes are supported:
+
+- `uvx://`: For Python-based MCP servers using the uv package manager
+- `npx://`: For Node.js-based MCP servers using npm
+- `go://`: For Go-based MCP servers
+
+```bash
+thv run <protocol>://<package-name>@<version>
+```
+
+You'll likely need to specify additional arguments like the transport method,
+volumes, and environment variables. Check your MCP server's documentation and
+see [`thv run --help`](../reference/cli/thv_run.md) for more options.
+
+:::info What's happening?
+
+When you use a protocol scheme, ToolHive:
+
+1. Detects the protocol scheme and extracts the package reference
+2. Generates a Dockerfile based on the appropriate template
+3. Builds a Docker image with the package installed
+4. Runs the MCP server using the new image (see
+   [Run a server from a Docker image](#run-a-server-from-a-docker-image) for
+   details)
+
+:::
+
+#### Examples
+
+<Tabs groupId='protocol' queryString='protocol'>
+<TabItem value='uvx' label='Python (uvx)' default>
+
+The `uvx://` protocol is used for Python-based MCP servers. The package name
+must be a valid package in the [PyPI registry](https://pypi.org/). The
+`@<version>` suffix is _optional_ and defaults to the latest version if omitted.
+
+```bash
+thv run --name aws-docs uvx://awslabs.aws-documentation-mcp-server@latest
+```
+
+</TabItem>
+<TabItem value='npx' label='Node.js (npx)'>
+
+The `npx://` protocol is used for Node.js-based MCP servers. The package name
+must be a valid package in the [npm registry](https://www.npmjs.com/). The
+`@<version>` suffix is _optional_ and defaults to the latest version if omitted.
+
+```bash
+thv run --name pulumi npx://@pulumi/mcp-server@latest
+```
+
+</TabItem>
+<TabItem value='go' label='Go'>
+
+The `go://` protocol is used for Go-based MCP servers. The package name must be
+a valid Go module repo URI referencing the `main` package. The `@<version>`
+suffix is **required**.
+
+```bash
+thv run --name grafana go://github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
+```
+
+You can also run a local Go module by specifying the path to the module:
+
+```bash
+# Run from a relative path
+thv run go://./cmd/my-mcp-server
+
+# Run from the current directory
+cd my-go-mcp-project
+thv run go://.
+
+# Run from an absolute path
+thv run go:///path/to/my-go-project
+```
+
+</TabItem>
+</Tabs>
+
+### Add a custom CA certificate
+
+In corporate environments with TLS inspection or custom certificate authorities,
+you may need to configure a CA certificate for ToolHive to use when building
+containers from protocol schemes like `uvx://`, `npx://`, and `go://`.
+
+ToolHive provides both global configuration and per-command options for CA
+certificates.
+
+#### Configure a global CA certificate
+
+To set a CA certificate that ToolHive will use for all container builds:
+
+```bash
+thv config set-ca-cert /path/to/corporate-ca.crt
+```
+
+To view the currently configured CA certificate:
+
+```bash
+thv config get-ca-cert
+```
+
+To remove the CA certificate configuration:
+
+```bash
+thv config unset-ca-cert
+```
+
+#### Override CA certificate per command
+
+You can override the global CA certificate configuration for a specific run
+using the `--ca-cert` flag:
+
+```bash
+thv run --ca-cert /path/to/other-ca.crt uvx://some-package
+```
+
+This is useful when you need to use different CA certificates for different
+servers or when testing with a specific certificate.
+
+#### Priority order
+
+ToolHive uses the following priority order for CA certificates:
+
+1. Command-line flag (`--ca-cert`)
+2. Global configuration (`thv config set-ca-cert`)
+3. No custom CA certificate (default behavior)
+
+For example:
+
+```bash
+# Set a global CA certificate
+thv config set-ca-cert /path/to/corporate-ca.crt
+
+# This uses the configured CA certificate
+thv run uvx://some-package
+
+# This overrides the configured CA certificate
+thv run --ca-cert /path/to/special-ca.crt uvx://other-package
+```
+
+## Next steps
+
+See [Monitor and manage MCP servers](./manage-mcp-servers.md) to monitor and
+control your servers.
+
+## Related information
+
+- [`thv run` command reference](../reference/cli/thv_run.md)
+- [Client configuration](client-configuration.md)
+- [Secrets management](secrets-management.mdx)
+- [Custom permissions](custom-permissions.md)
+
+## Troubleshooting
+
+### Server fails to start
+
+If a server fails to start:
+
+1. Check if Docker/Podman is running
+2. Verify you have internet access to pull images
+3. Check if the port is already in use
+4. Look at the error message for specific issues
+
+### Server starts but isn't accessible
+
+If a server starts but isn't accessible:
+
+1. Check the server logs:
+
+   ```bash
+   thv logs <server-name>
+   ```
+
+2. Verify the port isn't blocked by a firewall
+
+3. Make sure clients are properly configured (see
+   [Client configuration](client-configuration.md))
+
+### Server crashes or exits unexpectedly
+
+If a server crashes or exits unexpectedly:
+
+1. List all MCP servers including stopped ones:
+
+   ```bash
+   thv list --all
+   ```
+
+2. Check the logs for error messages:
+
+   ```bash
+   thv logs <server-name>
+   ```
+
+3. Try running with a different permission profile:
+
+   ```bash
+   thv run --permission-profile network <server-name>
+   ```
+
+4. Check if the server requires any secrets or environment variables
