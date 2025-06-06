@@ -1,0 +1,66 @@
+name: Update ToolHive Reference Docs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update-reference:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run update-toolhive-reference.sh and capture version
+        id: imports
+        run: |
+          chmod +x scripts/update-toolhive-reference.sh
+          scripts/update-toolhive-reference.sh
+        env:
+          GITHUB_OUTPUT: ${{ github.output }}
+
+      - name: Get version output
+        id: get_version
+        run: |
+          VERSION=$(grep '^version=' $GITHUB_OUTPUT | cut -d'=' -f2)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Check for changes
+        id: git-diff
+        run: |
+          git add .
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected."
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create branch, commit, and push
+        if: steps.git-diff.outputs.changed == 'true'
+        run: |
+          BRANCH=update-toolhive-reference-${VERSION}
+          git checkout -b "$BRANCH"
+          git commit -am "Update ToolHive reference docs for ${VERSION}"
+          git push origin "$BRANCH"
+        env:
+          VERSION: ${{ env.VERSION }}
+
+      - name: Create Pull Request
+        if: steps.git-diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: update-toolhive-reference-${{ env.VERSION }}
+          title: 'Update ToolHive reference docs for ${{ env.VERSION }}'
+          body: |
+            This PR updates the ToolHive CLI and API reference documentation to the latest release: ${{ env.VERSION }}.
+          commit-message:
+            'Update ToolHive reference docs for ${{ env.VERSION }}'
+          delete-branch: true

@@ -20,17 +20,24 @@ if [ ! -d "$STATIC_DIR" ]; then
     exit 1
 fi
 
-LATEST_RELEASE_TARBALL=$(curl -s https://api.github.com/repos/stacklok/toolhive/releases/latest | grep "tarball_url" | cut -d '"' -f 4)
+RELEASE_JSON=$(curl -s https://api.github.com/repos/stacklok/toolhive/releases/latest)
+LATEST_RELEASE_TARBALL=$(echo "$RELEASE_JSON" | grep "tarball_url" | cut -d '"' -f 4)
+LATEST_RELEASE_VERSION=$(echo "$RELEASE_JSON" | grep '"tag_name"' | cut -d '"' -f 4)
 
 if [ -z "$LATEST_RELEASE_TARBALL" ]; then
-    echo "Failed to get the latest release tarball URL"
+    echo "Failed to get the latest release tarball URL for ${LATEST_RELEASE_VERSION}"
     exit 1
+fi
+
+# Output the latest release version for use in CI workflows
+if [ ! -z "$GITHUB_OUTPUT" ]; then
+    echo "version=$LATEST_RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 fi
 
 rm -rf ${IMPORT_DIR}/toolhive
 mkdir -p ${IMPORT_DIR}/toolhive
 
-echo "Fetching the latest ToolHive release from: $LATEST_RELEASE_TARBALL"
+echo "Fetching the latest ToolHive release (${LATEST_RELEASE_VERSION}) from: $LATEST_RELEASE_TARBALL"
 echo "Importing to: $IMPORT_DIR"
 
 curl -sL "$LATEST_RELEASE_TARBALL" | tar xz --strip-components=1  -C ./imports/toolhive
