@@ -32,12 +32,6 @@ export default function Home(): ReactNode {
     >
       <HomepageHeader />
       <main className='container'>
-        <h1
-          className='text--center'
-          style={{ marginTop: '3rem', marginBottom: '0' }}
-        >
-          Featured Project
-        </h1>
         <ProductGrid>
           <ProductCard
             contentType='logo'
