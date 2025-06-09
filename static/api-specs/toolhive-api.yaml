@@ -1,7 +1,11 @@
 components:
   schemas:
+    client.Client:
+      properties:
+        name:
+          $ref: '#/components/schemas/client.MCPClient'
+      type: object
     client.MCPClient:
-      description: ClientType is the type of MCP client
       type: string
       x-enum-varnames:
       - RooCode
@@ -13,7 +17,15 @@ components:
     client.MCPClientStatus:
       properties:
         client_type:
-          $ref: '#/components/schemas/client.MCPClient'
+          description: ClientType is the type of MCP client
+          type: string
+          x-enum-varnames:
+          - RooCode
+          - Cline
+          - Cursor
+          - VSCodeInsider
+          - VSCode
+          - ClaudeCode
         installed:
           description: Installed indicates whether the client is installed on the
             system
@@ -232,49 +244,6 @@ components:
         predicate_type:
           type: string
       type: object
-    runtime.ContainerInfo:
-      properties:
-        created:
-          description: Created is the container creation timestamp
-          type: string
-        id:
-          description: ID is the container ID
-          type: string
-        image:
-          description: Image is the container image
-          type: string
-        labels:
-          additionalProperties:
-            type: string
-          description: Labels is the container labels
-          type: object
-        name:
-          description: Name is the container name
-          type: string
-        ports:
-          description: Ports is the container port mappings
-          items:
-            $ref: '#/components/schemas/runtime.PortMapping'
-          type: array
-        state:
-          description: State is the container state
-          type: string
-        status:
-          description: Status is the container status
-          type: string
-      type: object
-    runtime.PortMapping:
-      properties:
-        containerPort:
-          description: ContainerPort is the port inside the container
-          type: integer
-        hostPort:
-          description: HostPort is the port on the host
-          type: integer
-        protocol:
-          description: Protocol is the protocol (tcp, udp)
-          type: string
-      type: object
     secrets.SecretParameter:
       properties:
         name:
@@ -290,8 +259,34 @@ components:
           type: array
           uniqueItems: false
       type: object
+    v1.createClientRequest:
+      properties:
+        name:
+          description: Name is the type of the client to register.
+          type: string
+          x-enum-varnames:
+          - RooCode
+          - Cline
+          - Cursor
+          - VSCodeInsider
+          - VSCode
+          - ClaudeCode
+      type: object
+    v1.createClientResponse:
+      properties:
+        name:
+          description: Name is the type of the client that was registered.
+          type: string
+          x-enum-varnames:
+          - RooCode
+          - Cline
+          - Cursor
+          - VSCodeInsider
+          - VSCode
+          - ClaudeCode
+      type: object
     v1.createRequest:
-      description: Request to create a new server
+      description: Request to create a new workload
       properties:
         authz_config:
           description: Authorization configuration
@@ -315,7 +310,7 @@ components:
           description: Docker image to use
           type: string
         name:
-          description: Name of the server
+          description: Name of the workload
           type: string
         oidc:
           $ref: '#/components/schemas/v1.oidcOptions'
@@ -341,14 +336,14 @@ components:
           type: array
           uniqueItems: false
       type: object
-    v1.createServerResponse:
-      description: Response after successfully creating a server
+    v1.createWorkloadResponse:
+      description: Response after successfully creating a workload
       properties:
         name:
-          description: Name of the created server
+          description: Name of the created workload
           type: string
         port:
-          description: Port the server is listening on
+          description: Port the workload is listening on
           type: integer
       type: object
     v1.getRegistryResponse:
@@ -427,21 +422,65 @@ components:
           type: array
           uniqueItems: false
       type: object
-    v1.serverListResponse:
-      description: Response containing a list of servers
-      properties:
-        servers:
-          description: List of container information for each server
-          items:
-            $ref: '#/components/schemas/runtime.ContainerInfo'
-          type: array
-          uniqueItems: false
-      type: object
     v1.versionResponse:
       properties:
         version:
           type: string
       type: object
+    v1.workloadListResponse:
+      description: Response containing a list of workloads
+      properties:
+        workloads:
+          description: List of container information for each workload
+          items:
+            $ref: '#/components/schemas/workloads.Workload'
+          type: array
+          uniqueItems: false
+      type: object
+    workloads.Workload:
+      properties:
+        created_at:
+          description: CreatedAt is the timestamp when the workload was created.
+          type: string
+        name:
+          description: |-
+            Name is the name of the workload.
+            It is used as a unique identifier.
+          type: string
+        package:
+          description: Package specifies the Workload Package used to create this
+            Workload.
+          type: string
+        port:
+          description: |-
+            Port is the port on which the workload is exposed.
+            This is embedded in the URL.
+          type: integer
+        status:
+          $ref: '#/components/schemas/workloads.WorkloadStatus'
+        status_context:
+          description: |-
+            StatusContext provides additional context about the workload's status.
+            The exact meaning is determined by the status and the underlying runtime.
+          type: string
+        tool_type:
+          description: |-
+            ToolType is the type of tool this workload represents.
+            For now, it will always be "mcp" - representing an MCP server.
+          type: string
+        url:
+          description: URL is the URL of the workload exposed by the ToolHive proxy.
+          type: string
+      type: object
+    workloads.WorkloadStatus:
+      description: Status is the current status of the workload.
+      type: string
+      x-enum-varnames:
+      - WorkloadStatusRunning
+      - WorkloadStatusStopped
+      - WorkloadStatusError
+      - WorkloadStatusStarting
+      - WorkloadStatusUnknown
 externalDocs:
   description: ""
   url: ""
@@ -464,6 +503,46 @@ paths:
       summary: Get OpenAPI specification
       tags:
       - system
+  /api/v1beta/clients:
+    get:
+      description: List all registered clients in ToolHive
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/client.Client'
+                type: array
+          description: OK
+      summary: List all clients
+      tags:
+      - clients
+    post:
+      description: Register a new client with ToolHive
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/v1.createClientRequest'
+        description: Client to register
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/v1.createClientResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Invalid request
+      summary: Register a new client
+      tags:
+      - clients
   /api/v1beta/discovery/clients:
     get:
       description: List all clients compatible with ToolHive and their status
@@ -616,158 +695,6 @@ paths:
       summary: Get a server from a registry
       tags:
       - registry
-  /api/v1beta/servers:
-    get:
-      description: Get a list of all running servers
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/v1.serverListResponse'
-          description: OK
-      summary: List all servers
-      tags:
-      - servers
-    post:
-      description: Create and start a new server
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/v1.createRequest'
-        description: Create server request
-        required: true
-      responses:
-        "201":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/v1.createServerResponse'
-          description: Created
-        "400":
-          content:
-            application/json:
-              schema:
-                type: string
-          description: Bad Request
-        "409":
-          content:
-            application/json:
-              schema:
-                type: string
-          description: Conflict
-      summary: Create a new server
-      tags:
-      - servers
-  /api/v1beta/servers/{name}:
-    delete:
-      description: Delete a server
-      parameters:
-      - description: Server name
-        in: path
-        name: name
-        required: true
-        schema:
-          type: string
-      - description: Force deletion
-        in: query
-        name: force
-        schema:
-          type: boolean
-      responses:
-        "204":
-          content:
-            application/json:
-              schema:
-                type: string
-          description: No Content
-        "404":
-          content:
-            application/json:
-              schema:
-                type: string
-          description: Not Found
-      summary: Delete a server
-      tags:
-      - servers
-    get:
-      description: Get details of a specific server
-      parameters:
-      - description: Server name
-        in: path
-        name: name
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/runtime.ContainerInfo'
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                type: string
-          description: Not Found
-      summary: Get server details
-      tags:
-      - servers
-  /api/v1beta/servers/{name}/restart:
-    post:
-      description: Restart a running server
-      parameters:
-      - description: Server name
-        in: path
-        name: name
-        required: true
-        schema:
-          type: string
-      responses:
-        "204":
-          content:
-            application/json:
-              schema:
-                type: string
-          description: No Content
-        "404":
-          content:
-            application/json:
-              schema:
-                type: string
-          description: Not Found
-      summary: Restart a server
-      tags:
-      - servers
-  /api/v1beta/servers/{name}/stop:
-    post:
-      description: Stop a running server
-      parameters:
-      - description: Server name
-        in: path
-        name: name
-        required: true
-        schema:
-          type: string
-      responses:
-        "204":
-          content:
-            application/json:
-              schema:
-                type: string
-          description: No Content
-        "404":
-          content:
-            application/json:
-              schema:
-                type: string
-          description: Not Found
-      summary: Stop a server
-      tags:
-      - servers
   /api/v1beta/version:
     get:
       description: Returns the current version of the server
@@ -781,6 +708,153 @@ paths:
       summary: Get server version
       tags:
       - version
+  /api/v1beta/workloads:
+    get:
+      description: Get a list of all running workloads
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/v1.workloadListResponse'
+          description: OK
+      summary: List all workloads
+      tags:
+      - workloads
+    post:
+      description: Create and start a new workload
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/v1.createRequest'
+        description: Create workload request
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/v1.createWorkloadResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Conflict
+      summary: Create a new workload
+      tags:
+      - workloads
+  /api/v1beta/workloads/{name}:
+    delete:
+      description: Delete a workload
+      parameters:
+      - description: Workload name
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: No Content
+        "404":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Not Found
+      summary: Delete a workload
+      tags:
+      - workloads
+    get:
+      description: Get details of a specific workload
+      parameters:
+      - description: Workload name
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workloads.Workload'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Not Found
+      summary: Get workload details
+      tags:
+      - workloads
+  /api/v1beta/workloads/{name}/restart:
+    post:
+      description: Restart a running workload
+      parameters:
+      - description: Workload name
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: No Content
+        "404":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Not Found
+      summary: Restart a workload
+      tags:
+      - workloads
+  /api/v1beta/workloads/{name}/stop:
+    post:
+      description: Stop a running workload
+      parameters:
+      - description: Workload name
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: No Content
+        "404":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Not Found
+      summary: Stop a workload
+      tags:
+      - workloads
   /health:
     get:
       description: Check if the API is healthy
