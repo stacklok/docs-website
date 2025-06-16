@@ -7,7 +7,14 @@ import * as mdx from 'eslint-plugin-mdx';
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
-  { ignores: ['.docusaurus/', 'build/', 'node_modules/'] },
+  {
+    ignores: [
+      '.docusaurus/',
+      'build/',
+      'node_modules/',
+      'docs/toolhive/reference/api/',
+    ],
+  },
   { files: ['**/*.{js,mjs,cjs,ts,jsx,tsx}'] },
   { languageOptions: { globals: globals.node } },
 

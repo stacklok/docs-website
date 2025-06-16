@@ -1,7 +1,7 @@
-import path from 'path';
 //import { themes as prismThemes } from 'prism-react-renderer';
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import type * as OpenApiPlugin from 'docusaurus-plugin-openapi-docs';
 
 import PrismLight from './src/utils/prismLight';
 import PrismDark from './src/utils/prismDark';
@@ -35,6 +35,24 @@ const config: Config = {
         thvCommand: 'thv', // Can be customized if thv is in a different path
         failOnError:
           process.env.NODE_ENV === 'production' || process.env.CI === 'true',
+      },
+    ],
+    [
+      'docusaurus-plugin-openapi-docs',
+      {
+        id: 'api', // plugin id
+        docsPluginId: 'classic', // configured for preset-classic
+        config: {
+          toolhive: {
+            specPath: 'static/api-specs/toolhive-api.yaml',
+            outputDir: 'docs/toolhive/reference/api',
+            downloadUrl: '/api-specs/toolhive-api.yaml',
+            sidebarOptions: {
+              groupPathsBy: 'tag',
+              categoryLinkSource: 'tag',
+            },
+          } satisfies OpenApiPlugin.Options,
+        },
       },
     ],
   ],
@@ -74,7 +92,7 @@ const config: Config = {
     },
   },
 
-  themes: ['@docusaurus/theme-mermaid', 'docusaurus-json-schema-plugin'],
+  themes: ['@docusaurus/theme-mermaid', 'docusaurus-json-schema-plugin', 'docusaurus-theme-openapi-docs'],
 
   presets: [
     [
@@ -85,6 +103,7 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           // Remove this to remove the "edit this page" links.
           editUrl: 'https://github.com/stacklok/docs-website/tree/main/',
+          docItemComponent: '@theme/ApiItem', // Derived from docusaurus-theme-openapi
         },
         blog: {
           blogTitle: 'ToolHive Updates and Announcements',
@@ -102,33 +121,6 @@ const config: Config = {
           containerId: 'GTM-KKJFZX3J',
         },
       } satisfies Preset.Options,
-    ],
-    [
-      'redocusaurus',
-      {
-        specs: [
-          {
-            id: 'toolhive-api',
-            spec: 'static/api-specs/toolhive-api.yaml',
-            url: '/api-specs/toolhive-api.yaml',
-            normalizeUrl: false,
-            config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
-          },
-          {
-            id: 'toolhive-registry-api',
-            spec: 'https://cdn.jsdelivr.net/gh/stacklok/toolhive-registry-server@latest/docs/thv-registry-api/swagger.yaml',
-            config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
-          },
-        ],
-        theme: {
-          primaryColor: '#2809a5',
-          primaryColorDark: '#7ab7ff',
-          options: {
-            sortTagsAlphabetically: true,
-            sortOperationsAlphabetically: true,
-          },
-        },
-      },
     ],
   ],
 
