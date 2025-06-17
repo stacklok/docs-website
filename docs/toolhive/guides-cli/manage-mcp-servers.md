@@ -95,7 +95,7 @@ won't clean up the MCP server's entry in your configured clients. Use
 To stop and remove a running MCP server in a single command:
 
 ```bash
-thv rm -f <server-name>
+thv rm <server-name>
 ```
 
 ## Related information
