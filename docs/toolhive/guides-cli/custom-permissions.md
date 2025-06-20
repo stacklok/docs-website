@@ -7,28 +7,18 @@ sidebar_position: 50
 ---
 
 ToolHive includes a permission system that lets you control an MCP server's
-access to the file system and network resources. This is crucial for maintaining
-security and ensuring that MCP servers operate within defined boundaries.
+access to your host's file system and to network resources. This is crucial for
+maintaining security and ensuring that MCP servers operate within defined
+boundaries.
 
 This guide shows you how to create and apply custom permission profiles for MCP
 servers, including built-in profiles and examples of common use cases.
 
-:::important
-
-Network access rules referenced in this document aren't currently implemented in
-ToolHive. They're a roadmap feature planned for future releases. For now, only
-file system permissions are enforced.
-
-Contributions to help implement this feature are welcome! You can contribute by
-visiting our [GitHub repository](https://github.com/stacklok/toolhive).
-
-:::
-
 ## Understanding permission profiles
 
-Permissions are defined using JSON permission profiles. These profiles specify:
+Permissions are defined using permission profiles. These profiles specify:
 
-- File system access (read and/or write access to specific paths)
+- Host file system access (read and/or write access to specific paths)
 - Network access rules (outbound connections from the MCP server)
 
 :::note
@@ -54,7 +44,9 @@ Profiles include the following sections:
     - `allow_transport`: List of allowed transport protocols (e.g., `tcp`,
       `udp`).
     - `allow_host`: List of allowed hostnames or IP addresses for outbound
-      connections.
+      connections. To allow all subdomains of a domain, prefix the domain with a
+      period (e.g., `.github.com` allows any subdomain of `github.com`).
+      Wildcards are not supported.
     - `allow_port`: List of allowed ports for outbound connections.
 
 ## Default permissions in the ToolHive registry
@@ -80,13 +72,13 @@ Permissions:
     - /tmp
   Network:
     Allow Transport: tcp
-    Allow Host: google.com
+    Allow Host: .google.com
     Allow Port: 443
 ```
 
 This example shows that the MCP server has read access to `/data`, read/write
-access to `/tmp`, and can make outbound TCP connections to `google.com` on
-port 443.
+access to `/tmp`, and can make outbound TCP connections to `*.google.com` (note
+the leading `.` which enables subdomain matching) on port 443.
 
 Always verify the default permissions and override them with a custom profile if
 needed to meet your security policies.
@@ -134,7 +126,7 @@ For example:
     "outbound": {
       "insecure_allow_all": false,
       "allow_transport": ["tcp", "udp"],
-      "allow_host": ["localhost", "google.com"],
+      "allow_host": ["localhost", ".google.com"],
       "allow_port": [80, 443]
     }
   }
@@ -146,8 +138,8 @@ This profile:
 - Allows read-only access to `/example/path1` and `/example/path2`
 - Allows read and write access to `/example/path3` (note that the `write`
   setting also implies read access)
-- Allows outbound TCP or UDP connections to localhost and google.com on ports 80
-  and 443
+- Allows outbound TCP or UDP connections to `localhost` and `google.com`
+  (including subdomains) on ports 80 and 443
 
 ## Apply a permissions profile
 
@@ -166,13 +158,80 @@ or
 thv run --permission-profile none <server-name>
 ```
 
+Add the `--isolate-network` flag to enforce network restrictions:
+
+```bash
+thv run --isolate-network --permission-profile none <server-name>
+```
+
 ### Using a custom profile file
 
 To run an MCP server with your custom profile:
 
 ```bash
-thv run --permission-profile </path/to/custom-profile.json>  <server-name>
+thv run --isolate-network --permission-profile </path/to/custom-profile.json> <server-name>
 ```
+
+## Network isolation
+
+To enforce the network access rules defined in your permission profile, you must
+use the `--isolate-network` flag when running the MCP server:
+
+```bash
+thv run --isolate-network --permission-profile </path/to/custom-profile.json> <server-name>
+```
+
+When network isolation is enabled, ToolHive creates a secure network
+architecture around your MCP server. Along with the main MCP server container,
+ToolHive launches:
+
+- **An egress Squid proxy container** that filters outgoing network traffic
+- **A dnsmasq container** that provides controlled DNS resolution
+- **An ingress Squid proxy container** that proxies incoming SSE requests from
+  the ToolHive proxy process (only for MCP servers using SSE transport; stdio
+  MCP servers don't need this since they don't expose ports)
+
+This multi-container setup ensures that all network traffic flows through
+controlled proxy points, allowing ToolHive to enforce the network access rules
+specified in your permission profile.
+
+```mermaid
+graph TB
+  subgraph "Host network"
+    Client[MCP client]
+    THVProxy[ToolHive SSE proxy]
+  end
+
+  subgraph "Docker networks"
+    subgraph "toolhive-external"
+      IngressProxy["Ingress proxy<br>(squid)"]
+    end
+
+    subgraph "toolhive-{name}-internal"
+      MCPServer[MCP server<br>container]
+      EgressProxy["Egress proxy<br>(squid)"]
+      DNSContainer["DNS container<br/>(dnsmasq)"]
+    end
+  end
+
+  External[External resources]
+
+  %% Traffic Flow
+  Client -->|SSE/HTTP request| THVProxy
+  THVProxy -->|Forward| IngressProxy
+  IngressProxy -->|Reverse proxy| MCPServer
+  MCPServer -->|Outbound requests| EgressProxy
+  EgressProxy -->|Filtered traffic| External
+  MCPServer -.->|DNS queries| DNSContainer
+```
+
+:::note
+
+Network isolation currently supports only HTTP and HTTPS protocols. Other
+protocols like TCP sockets for database connections will not work with network
+isolation enabled.
+
+:::
 
 ## Example: Restrict network access
 
@@ -198,7 +257,7 @@ Enterprise instance:
 2. Run the GitHub MCP server with this profile:
 
    ```bash
-   thv run --permission-profile ./github-profile.json --secret github,target=GITHUB_PERSONAL_ACCESS_TOKEN github
+   thv run --isolate-network --permission-profile ./github-profile.json --secret github,target=GITHUB_PERSONAL_ACCESS_TOKEN github
    ```
 
 This restricts the GitHub MCP server to make HTTPS connections only to
@@ -246,5 +305,13 @@ If your MCP server can't connect to external services:
 
 1. Verify that your profile allows the necessary hosts and ports
 2. Check that the transport protocol (TCP/UDP) is allowed
-3. Try temporarily using the default `network` profile to confirm it's a
+3. Check the logs of the egress proxy container for any blocked requests:
+
+   ```bash
+   docker logs <mcp-server-name>-egress
+   ```
+
+   Look for messages indicating denied connections.
+
+4. Try temporarily using the default `network` profile to confirm it's a
    permissions issue
