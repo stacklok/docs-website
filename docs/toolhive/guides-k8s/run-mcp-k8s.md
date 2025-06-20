@@ -414,6 +414,17 @@ Permission profiles can be configured in two ways:
 The ConfigMap should contain a JSON
 [permissions profile](../guides-cli/custom-permissions.md#create-a-custom-permissions-profile).
 
+:::important
+
+Outbound network filtering using permission profiles isn't currently implemented
+in the ToolHive Operator. This is a roadmap feature planned for future releases.
+For now, only file system permissions are enforced.
+
+Contributions to help implement this feature are welcome! You can contribute by
+visiting our [GitHub repository](https://github.com/stacklok/toolhive).
+
+:::
+
 ## Next steps
 
 See the [Client compatibility](../reference/client-compatibility.mdx) reference
