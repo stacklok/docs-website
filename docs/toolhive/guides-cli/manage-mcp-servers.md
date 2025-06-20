@@ -73,14 +73,15 @@ thv restart <server-name>
 
 ### Remove a server
 
-To remove a stopped MCP server:
+To remove an MCP server:
 
 ```bash
 thv rm <server-name>
 ```
 
 This removes the container and cleans up the MCP server's entry in your
-configured clients.
+configured clients. If the server is still running, it will be stopped as part
+of the removal.
 
 :::note
 
@@ -89,14 +90,6 @@ won't clean up the MCP server's entry in your configured clients. Use
 [`thv rm`](../reference/cli/thv_rm.md) to make sure the entry is removed.
 
 :::
-
-### Stop and remove in one command
-
-To stop and remove a running MCP server in a single command:
-
-```bash
-thv rm <server-name>
-```
 
 ## Related information
 
