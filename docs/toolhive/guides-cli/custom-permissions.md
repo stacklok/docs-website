@@ -7,17 +7,18 @@ sidebar_position: 50
 ---
 
 ToolHive includes a permission system that lets you control an MCP server's
-access to the file system and network resources. This is crucial for maintaining
-security and ensuring that MCP servers operate within defined boundaries.
+access to your host's file system and to network resources. This is crucial for
+maintaining security and ensuring that MCP servers operate within defined
+boundaries.
 
 This guide shows you how to create and apply custom permission profiles for MCP
 servers, including built-in profiles and examples of common use cases.
 
 ## Understanding permission profiles
 
-Permissions are defined using JSON permission profiles. These profiles specify:
+Permissions are defined using permission profiles. These profiles specify:
 
-- File system access (read and/or write access to specific paths)
+- Host file system access (read and/or write access to specific paths)
 - Network access rules (outbound connections from the MCP server)
 
 :::note
@@ -184,9 +185,11 @@ When network isolation is enabled, ToolHive creates a secure network
 architecture around your MCP server. Along with the main MCP server container,
 ToolHive launches:
 
-- **Two Squid proxy containers** (ingress and egress) that filter incoming and
-  outgoing network traffic
+- **An egress Squid proxy container** that filters outgoing network traffic
 - **A dnsmasq container** that provides controlled DNS resolution
+- **An ingress Squid proxy container** that proxies incoming SSE requests from
+  the ToolHive proxy process (only for MCP servers using SSE transport; stdio
+  MCP servers don't need this since they don't expose ports)
 
 This multi-container setup ensures that all network traffic flows through
 controlled proxy points, allowing ToolHive to enforce the network access rules
@@ -302,5 +305,13 @@ If your MCP server can't connect to external services:
 
 1. Verify that your profile allows the necessary hosts and ports
 2. Check that the transport protocol (TCP/UDP) is allowed
-3. Try temporarily using the default `network` profile to confirm it's a
+3. Check the logs of the egress proxy container for any blocked requests:
+
+   ```bash
+   docker logs <mcp-server-name>-egress
+   ```
+
+   Look for messages indicating denied connections.
+
+4. Try temporarily using the default `network` profile to confirm it's a
    permissions issue
