@@ -1,15 +1,16 @@
-| Client                     | Supported | Auto-discovery | Notes                                     |
-| -------------------------- | --------- | -------------- | ----------------------------------------- |
-| GitHub Copilot (VS Code)   | ✅        | ✅             | v1.99.0+ or Insiders version              |
-| Cursor                     | ✅        | ✅             | v0.47.0+                                  |
-| Roo Code                   | ✅        | ✅             | v3.9.0+                                   |
-| Cline                      | ✅        | ✅             | v3.8.5+                                   |
-| Claude Code                | ✅        | ✅             | v0.2.54+                                  |
-| PydanticAI                 | ✅        | ❌             |                                           |
-| Continue                   | ✅        | ❌             | Pre-release extension v1.39+ ([issue][1]) |
-| GitHub Copilot (JetBrains) | ❌        | ❌             | No support for HTTP/SSE MCPs ([issue][2]) |
-| Claude Desktop             | ❌        | ❌             | No support for HTTP/SSE MCPs ([issue][3]) |
+| Client                     | Supported | Auto-configuration | Notes                                          |
+| -------------------------- | :-------: | :----------------: | ---------------------------------------------- |
+| GitHub Copilot (VS Code)   |    ✅     |         ✅         | v1.100+ or Insiders version                    |
+| Cursor                     |    ✅     |         ✅         | v0.50.0+                                       |
+| Roo Code (VS Code)         |    ✅     |         ✅         | v3.19.2+                                       |
+| Cline (VS Code)            |    ✅     |         ✅         | v3.8.5+ (sse only; streamable-http [issue][2]) |
+| Claude Code CLI            |    ✅     |         ✅         | v1.0.27+                                       |
+| GitHub Copilot (JetBrains) |    ✅     |         ❌         | v1.5.47+                                       |
+| Continue (VS Code)         |    ✅     |         ❌         | v1.0.14+                                       |
+| Continue (JetBrains)       |    ✅     |         ❌         | v1.0.23+                                       |
+| PydanticAI                 |    ✅     |         ❌         | v0.2.18+                                       |
+| ChatGPT Desktop            |    ❌     |         ❌         | No support for HTTP/SSE MCPs                   |
+| Claude Desktop             |    ❌     |         ❌         | No support for HTTP/SSE MCPs ([issue][1])      |
 
-[1]: https://github.com/continuedev/continue/issues/5359
-[2]: https://github.com/microsoft/copilot-intellij-feedback/issues/224
-[3]: https://github.com/orgs/modelcontextprotocol/discussions/16
+[1]: https://github.com/orgs/modelcontextprotocol/discussions/16
+[2]: https://github.com/cline/cline/issues/4391
