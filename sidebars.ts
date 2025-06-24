@@ -70,6 +70,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-cli/secrets-management',
         'toolhive/guides-cli/client-configuration',
         'toolhive/guides-cli/custom-permissions',
+        'toolhive/guides-cli/telemetry-and-metrics',
         {
           type: 'category',
           label: 'Command reference',
@@ -119,6 +120,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'toolhive/concepts/mcp-primer',
         'toolhive/concepts/registry-criteria',
+        'toolhive/concepts/observability',
       ],
     },
 
