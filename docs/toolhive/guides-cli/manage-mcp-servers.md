@@ -60,12 +60,14 @@ To stop a running MCP server:
 thv stop <server-name>
 ```
 
-This stops the server and the associated proxy process but keeps the container
-for future use.
+This stops the server and the associated proxy process, removes the MCP server's
+entry from your configured clients, but keeps the container for future use.
+
+Add the `--all` flag to stop all running servers.
 
 ### Restart a server
 
-To restart a stopped MCP server:
+To restart a stopped MCP server and add it back to your configured clients:
 
 ```bash
 thv restart <server-name>
