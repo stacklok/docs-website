@@ -114,7 +114,7 @@ thv config remove-client <client-name>
 
 If you have other clients or development libraries that ToolHive doesn't
 directly support, you can still configure them to use ToolHive-managed MCP
-servers as long as they support the SSE or Stremable HTTP protocol. Check your
+servers as long as they support the SSE or Streamable HTTP protocol. Check your
 client or library documentation for configuration details.
 
 List your running MCP servers to get the URL:
