@@ -412,7 +412,7 @@ Permission profiles can be configured in two ways:
    ```
 
 The ConfigMap should contain a JSON
-[permissions profile](../guides-cli/custom-permissions.md#create-a-custom-permissions-profile).
+[permission profile](../guides-cli/custom-permissions.mdx#create-a-custom-permission-profile).
 
 :::important
 
@@ -434,7 +434,7 @@ to learn how to connect to MCP servers using different clients.
 
 - [Deploy the operator using Helm](./deploy-operator-helm.md) - Install the
   ToolHive operator
-- [Custom permissions](../guides-cli/custom-permissions.md) - Configure
+- [Custom permissions](../guides-cli/custom-permissions.mdx) - Configure
   permission profiles
 
 ## Troubleshooting

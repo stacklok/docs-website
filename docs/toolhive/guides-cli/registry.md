@@ -119,9 +119,9 @@ and security profile before running it.
 - **Tools list** (line 8): The list of tools this MCP server provides
 - **Configuration** (line 16): Required and optional environment variables
   needed to run the server
-- **Permissions** (line 21): The permissions profile applied to the server,
+- **Permissions** (line 21): The permission profile applied to the server,
   including file system and network access (see
-  [Custom permissions](./custom-permissions.md))
+  [Custom permissions](./custom-permissions.mdx))
 
 ## Use a remote registry
 
