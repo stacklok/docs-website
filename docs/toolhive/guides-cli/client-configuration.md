@@ -17,7 +17,8 @@ You can configure clients with ToolHive in three ways:
    clients.
 2. **Manual registration**: Register specific clients for ToolHive to manage.
 3. **Custom configuration**: For unsupported clients or custom setups, configure
-   them to connect to ToolHive-managed MCP servers using the SSE protocol.
+   them to connect to ToolHive-managed MCP servers using the SSE or Streamable
+   HTTP protocol.
 
 With the first two methods, ToolHive automatically updates client configuration
 when you start or remove an MCP server. For a complete list of supported clients
@@ -113,8 +114,8 @@ thv config remove-client <client-name>
 
 If you have other clients or development libraries that ToolHive doesn't
 directly support, you can still configure them to use ToolHive-managed MCP
-servers as long as they support the SSE protocol. Check your client or library
-documentation for configuration details.
+servers as long as they support the SSE or Streamable HTTP protocol. Check your
+client or library documentation for configuration details.
 
 List your running MCP servers to get the URL:
 
