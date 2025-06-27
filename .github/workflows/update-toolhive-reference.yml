@@ -2,12 +2,21 @@ name: Update ToolHive Reference Docs
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'ToolHive version to update reference docs for'
+        required: true
+        default: 'latest'
   repository_dispatch:
     types: [published-release]
 
 permissions:
   contents: write
   pull-requests: write
+
+concurrency:
+  group: update-toolhive-reference
+  cancel-in-progress: false
 
 jobs:
   update-reference:
@@ -23,11 +32,23 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Run update-toolhive-reference.sh and capture version
+      - name: Determine version
+        id: get-version
+        run: |
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            echo "version=${{ github.event.client_payload.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run update script
         id: imports
         run: |
           chmod +x scripts/update-toolhive-reference.sh
-          scripts/update-toolhive-reference.sh
+          if ! scripts/update-toolhive-reference.sh ${{ steps.get-version.outputs.version }}; then
+            echo "::error::Failed to update ToolHive reference docs"
+            exit 1
+          fi
 
       - name: Check for changes
         id: git-diff

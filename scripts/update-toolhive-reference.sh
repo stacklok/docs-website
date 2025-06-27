@@ -1,7 +1,9 @@
 #!/bin/bash
 
+set -euo pipefail
+
 REPO_ROOT=$(git rev-parse --show-toplevel)
-cd $REPO_ROOT
+cd "$REPO_ROOT"
 
 IMPORT_DIR="./imports"
 DOCS_DIR="./docs"
@@ -20,20 +22,31 @@ if [ ! -d "$STATIC_DIR" ]; then
     exit 1
 fi
 
+# Check if jq is installed
+if ! command -v jq >/dev/null 2>&1; then
+    echo "Error: 'jq' is required but not installed. Please install jq and try again."
+    exit 1
+fi
+
+VERSION=$(echo "${1:-}" | tr -cd '[:alnum:].-')
+
 # Handle tag name parameter - default to "latest" if not provided
-if [ -z "$1" ]; then
+if [ -z "$VERSION" ] || [ "$VERSION" = "latest" ]; then
     API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive/releases/latest"
-    echo "No tag specified, using latest release"
+    echo "No tag specified or 'latest' specified, using latest release"
 else
-    TAG_NAME="$1"
+    TAG_NAME="$VERSION"
     API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive/releases/tags/$TAG_NAME"
     echo "Using specified tag: $TAG_NAME"
 fi
 
 # Fetch release information
-RELEASE_JSON=$(curl -s "$API_ENDPOINT")
-RELEASE_TARBALL=$(echo "$RELEASE_JSON" | grep "tarball_url" | cut -d '"' -f 4)
-RELEASE_VERSION=$(echo "$RELEASE_JSON" | grep '"tag_name"' | cut -d '"' -f 4)
+RELEASE_JSON=$(curl -sf "$API_ENDPOINT" || {
+    echo "Failed to fetch release information from GitHub API"
+    exit 1
+})
+RELEASE_TARBALL=$(echo "$RELEASE_JSON" | jq -r '.tarball_url // empty')
+RELEASE_VERSION=$(echo "$RELEASE_JSON" | jq -r '.tag_name // empty')
 
 if [ -z "$RELEASE_TARBALL" ]; then
     echo "Failed to get release tarball URL for release: ${RELEASE_VERSION}"
@@ -41,8 +54,8 @@ if [ -z "$RELEASE_TARBALL" ]; then
     exit 1
 fi
 
-# Output the release version for use in CI workflows
-if [ ! -z "$GITHUB_OUTPUT" ]; then
+# Output the release version for use in CI workflows (if running in GitHub Actions)
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
     echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 fi
 
@@ -54,7 +67,7 @@ echo "Fetching ToolHive release (${RELEASE_VERSION}) from: $RELEASE_TARBALL"
 echo "Importing to: $IMPORT_DIR"
 
 # Download and extract the release tarball
-curl -sL "$RELEASE_TARBALL" | tar xz --strip-components=1 -C ./imports/toolhive
+curl -sfL "$RELEASE_TARBALL" | tar xz --strip-components=1 -C ./imports/toolhive
 
 # Determine release type and process accordingly
 if [[ "$RELEASE_VERSION" =~ ^v.* ]]; then
