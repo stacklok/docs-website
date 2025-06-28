@@ -163,6 +163,10 @@ When you apply an `MCPServer` resource, here's what happens:
 
 :::
 
+For more examples of `MCPServer` resources, see the
+[example MCP server manifests](https://github.com/stacklok/toolhive/tree/main/examples/operator/mcp-servers)
+in the ToolHive repo.
+
 ## Automatic RBAC management
 
 The ToolHive operator automatically handles RBAC (Role-Based Access Control) for
@@ -185,14 +189,13 @@ This approach provides:
 - Better security isolation between different MCPServer instances
 - Support for multi-tenant deployments across different namespaces
 
-For more examples of `MCPServer` resources, see the
-[example MCP server manifests](https://github.com/stacklok/toolhive/tree/main/examples/operator/mcp-servers)
-in the ToolHive repo.
-
 ## Customize server settings
 
 You can customize the MCP server by adding additional fields to the `MCPServer`
-resource. Here are some common configurations.
+resource. The full specification is available in the
+[Kubernetes CRD reference](../reference/crd-spec.mdx).
+
+Below are some common configurations.
 
 ### Customize the MCP server pod
 
@@ -363,56 +366,19 @@ For more details about a specific MCP server:
 kubectl -n <NAMESPACE> describe mcpserver <NAME>
 ```
 
-## Configuration reference
+## Next steps
 
-### MCPServer spec
+See the [Client compatibility](../reference/client-compatibility.mdx) reference
+to learn how to connect to MCP servers using different clients.
 
-| Field               | Description                                     | Required | Default |
-| ------------------- | ----------------------------------------------- | -------- | ------- |
-| `image`             | Container image for the MCP server              | Yes      | -       |
-| `transport`         | Transport method (stdio or sse)                 | No       | stdio   |
-| `port`              | Port to expose the MCP server on                | No       | 8080    |
-| `targetPort`        | Port to use for the MCP server (for SSE)        | No       |         |
-| `args`              | Additional arguments to pass to the MCP server  | No       | -       |
-| `env`               | Environment variables to set in the container   | No       | -       |
-| `resources`         | Resource requirements for the container         | No       | -       |
-| `secrets`           | References to secrets to mount in the container | No       | -       |
-| `permissionProfile` | Permission profile configuration                | No       | -       |
-| `podTemplateSpec`   | Custom pod specification for the MCP server     | No       | -       |
+## Related information
 
-### Secrets
-
-The `secrets` field has the following parameters:
-
-- `name`: The name of the Kubernetes secret (required)
-- `key`: The key in the secret (required)
-- `targetEnvName`: The environment variable to be used when setting up the
-  secret in the MCP server (optional). If left unspecified, it defaults to the
-  key.
-
-### Permission Profiles
-
-Permission profiles can be configured in two ways:
-
-1. Using a built-in profile:
-
-   ```yaml
-   permissionProfile:
-     type: builtin
-     name: network # or "none"
-   ```
-
-2. Using a ConfigMap:
-
-   ```yaml
-   permissionProfile:
-     type: configmap
-     name: my-permission-profile
-     key: profile.json
-   ```
-
-The ConfigMap should contain a JSON
-[permission profile](../guides-cli/custom-permissions.mdx#create-a-custom-permission-profile).
+- [Kubernetes CRD reference](../reference/crd-spec.mdx) - Reference for the
+  `MCPServer` Custom Resource Definition (CRD)
+- [Deploy the operator using Helm](./deploy-operator-helm.md) - Install the
+  ToolHive operator
+- [Custom permissions](../guides-cli/custom-permissions.mdx) - Configure
+  permission profiles
 
 :::important
 
@@ -424,18 +390,6 @@ Contributions to help implement this feature are welcome! You can contribute by
 visiting our [GitHub repository](https://github.com/stacklok/toolhive).
 
 :::
-
-## Next steps
-
-See the [Client compatibility](../reference/client-compatibility.mdx) reference
-to learn how to connect to MCP servers using different clients.
-
-## Related information
-
-- [Deploy the operator using Helm](./deploy-operator-helm.md) - Install the
-  ToolHive operator
-- [Custom permissions](../guides-cli/custom-permissions.mdx) - Configure
-  permission profiles
 
 ## Troubleshooting
 
