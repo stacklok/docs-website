@@ -19,6 +19,8 @@ Kubernetes cluster.
 
 ## Install the CRDs
 
+![Latest CRD Helm chart release](https://img.shields.io/github/v/release/stacklok/toolhive?filter=toolhive-operator-crds-*&style=for-the-badge&logo=helm&label=Latest%20CRD%20chart&color=097aff)
+
 The ToolHive operator requires Custom Resource Definitions (CRDs) to manage
 MCPServer resources. The CRDs define the structure and behavior of MCPServers in
 your cluster.
@@ -28,6 +30,8 @@ helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-
 ```
 
 ## Install the operator
+
+![Latest Operator Helm chart release](https://img.shields.io/github/v/release/stacklok/toolhive?filter=toolhive-operator-0*&style=for-the-badge&logo=helm&label=Latest%20Operator%20chart&color=097aff)
 
 To install the ToolHive operator using default settings, run the following
 command:
@@ -62,7 +66,7 @@ and set a specific ToolHive version, create a `values.yaml` file:
 ```yaml title="values.yaml"
 operator:
   replicaCount: 2
-  toolhiveRunnerImage: ghcr.io/stacklok/toolhive:v0.0.42 # or `latest`
+  toolhiveRunnerImage: ghcr.io/stacklok/toolhive:v0.1.1 # or `latest`
 ```
 
 Install the operator with your custom values:
