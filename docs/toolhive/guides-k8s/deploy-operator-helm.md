@@ -29,6 +29,14 @@ your cluster.
 helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds
 ```
 
+This command installs the latest version of the ToolHive operator CRDs Helm
+chart. To install a specific version, append `--version <version>` to the
+command, for example:
+
+```bash
+helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds --version 0.0.7
+```
+
 ## Install the operator
 
 ![Latest Operator Helm chart release](https://img.shields.io/github/v/release/stacklok/toolhive?filter=toolhive-operator-0*&style=for-the-badge&logo=helm&label=Latest%20Operator%20chart&color=097aff)
@@ -38,6 +46,14 @@ command:
 
 ```bash
 helm upgrade -i toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --create-namespace
+```
+
+This command installs the latest version of the ToolHive operator CRDs Helm
+chart. To install a specific version, append `--version <version>` to the
+command, for example:
+
+```bash
+helm upgrade -i toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --create-namespace --version 0.1.1
 ```
 
 Verify the installation:
