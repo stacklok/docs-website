@@ -16,25 +16,24 @@ To list all MCP servers in the ToolHive registry, run:
 thv registry list
 ```
 
-This command displays a list of servers with their name, description, transport
-method, and the number of stars and downloads to help you identify the most
-popular and useful servers.
+This command displays a list of servers with their name, description, tier
+(official or community), and the number of stars and downloads to help you
+identify the most popular and useful servers.
 
 Example output:
 
 ```text
-NAME                      DESCRIPTION                                                    TRANSPORT   STARS   PULLS
-atlassian                 Model Context Protocol (MCP) server for Atlassian product...   stdio       1557    3719
-aws-kb-retrieval-server   MCP server for retrieving information from the AWS Knowle...   stdio       47366   2251
-brave-search              MCP server that integrates the Brave Search API, providin...   stdio       47366   6022
-everart                   Image generation server for Claude Desktop using EverArt'...   stdio       47366   3937
-everything                This MCP server attempts to exercise all the features of ...   stdio       47366   5150
-fetch                     A Model Context Protocol server that provides web content...   stdio       47366   6414
-filesystem                Node.js server implementing Model Context Protocol (MCP) ...   stdio       47366   8750
-firecrawl                 A powerful web scraping and content extraction MCP server...   stdio       3141    3597
-gdrive                    This MCP server integrates with Google Drive to allow lis...   stdio       47366   3650
-git                       A Model Context Protocol server for Git repository intera...   stdio       47366   4262
-github                    The GitHub MCP Server provides seamless integration with ...   stdio       13894   5000
+NAME           DESCRIPTION                                                    TIER        STARS   PULLS
+atlassian      Model Context Protocol (MCP) server for Atlassian product...   Community   2194    7789
+elasticsearch  Connect to your Elasticsearch data directly from any MCP ...   Official    305     5429
+everything     This MCP server attempts to exercise all the features of ...   Community   56714   10441
+fetch          A Model Context Protocol server that provides web content...   Community   56714   9078
+filesystem     Node.js server implementing Model Context Protocol (MCP) ...   Community   56714   14041
+firecrawl      A powerful web scraping and content extraction MCP server...   Official    3605    7630
+git            A Model Context Protocol server for Git repository intera...   Community   56714   7000
+github         The GitHub MCP Server provides seamless integration with ...   Official    16578   5000
+grafana        A Model Context Protocol (MCP) server for Grafana that pr...   Official    1014    4900
+k8s            MKP is a Model Context Protocol (MCP) server for Kubernet...   Community   32      8064
 
 <... trimmed for brevity ...>
 ```
@@ -78,12 +77,15 @@ thv registry info <server-name> --format json
 
 ### Example output
 
-```yaml {1,8,16,21} showLineNumbers
+```yaml {1,11,19,24} showLineNumbers
 Name: github
 Image: ghcr.io/github/github-mcp-server:latest
 Description: The GitHub MCP Server provides seamless integration with GitHub APIs, enabling advanced automation and interaction capabilities for developers and tools
+Tier: Official
+Status: Active
 Transport: stdio
 Repository URL: https://github.com/github/github-mcp-server
+Has Provenance: Yes
 Popularity: 13894 stars, 5000 pulls
 Last Updated: 2025-05-20T00:21:46Z
 Tools:
@@ -113,13 +115,13 @@ and security profile before running it.
 
 - **Server name** (line 1): The server name to use with the
   [`thv run`](../reference/cli/thv_run.md) command
-- **Metadata** (lines 2-7): Details about the server, including the image name,
-  description, transport method, repository URL, popularity, and last updated
-  date
-- **Tools list** (line 8): The list of tools this MCP server provides
-- **Configuration** (line 16): Required and optional environment variables
+- **Metadata** (lines 2-10): Details about the server, including the image name,
+  description, status, transport method, repository URL, whether the server has
+  SLSA provenance available for verification, and popularity
+- **Tools list** (line 11): The list of tools this MCP server provides
+- **Configuration** (line 19): Required and optional environment variables
   needed to run the server
-- **Permissions** (line 21): The permission profile applied to the server,
+- **Permissions** (line 24): The permission profile applied to the server,
   including file system and network access (see
   [Custom permissions](./custom-permissions.mdx))
 
