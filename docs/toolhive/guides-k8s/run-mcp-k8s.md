@@ -393,7 +393,8 @@ visiting our [GitHub repository](https://github.com/stacklok/toolhive).
 
 ## Troubleshooting
 
-### MCPServer resource not creating pods
+<details>
+<summary>MCPServer resource not creating pods</summary>
 
 If your `MCPServer` resource is created but no pods appear, first ensure you
 created the `MCPServer` resource in an allowed namespace. If the operator runs
@@ -433,7 +434,10 @@ Other common causes include:
   for cluster-level permission issues
 - **Resource quotas**: Check if namespace resource quotas prevent pod creation
 
-### MCP server pod fails to start
+</details>
+
+<details>
+<summary>MCP server pod fails to start</summary>
 
 If the MCP server pod is created but fails to start or is in `CrashLoopBackOff`:
 
@@ -460,7 +464,10 @@ Common causes include:
 - **Invalid arguments**: Check if the `args` field contains valid arguments for
   the MCP server
 
-### Proxy pod connection issues
+</details>
+
+<details>
+<summary>Proxy pod connection issues</summary>
 
 If the proxy pod is running but clients cannot connect:
 
@@ -485,7 +492,10 @@ Common causes include:
   MCP server's capabilities
 - **Network policies**: Check if network policies are blocking communication
 
-### Secret mounting issues
+</details>
+
+<details>
+<summary>Secret mounting issues</summary>
 
 If secrets are not being properly mounted or environment variables are missing:
 
@@ -510,7 +520,10 @@ Common causes include:
 - **Permission issues**: The operator automatically creates the necessary RBAC
   resources, but verify the ServiceAccount has access to read secrets
 
-### Volume mounting problems
+</details>
+
+<details>
+<summary>Volume mounting problems</summary>
 
 If persistent volumes or other volumes are not mounting correctly:
 
@@ -536,7 +549,10 @@ Common causes include:
 - **Mount path conflicts**: Ensure mount paths don't conflict with existing
   directories
 
-### Permission profile errors
+</details>
+
+<details>
+<summary>Permission profile errors</summary>
 
 If the MCP server fails due to permission profile issues:
 
@@ -560,7 +576,10 @@ Common causes include:
 - **Invalid JSON**: Verify the permission profile JSON is valid
 - **Missing key**: Ensure the specified key exists in the ConfigMap
 
-### Resource limit issues
+</details>
+
+<details>
+<summary>Resource limit issues</summary>
 
 If pods are being killed due to resource constraints:
 
@@ -583,7 +602,10 @@ Solutions:
 - **Check node capacity**: Ensure cluster nodes have sufficient resources
 - **Review resource quotas**: Check namespace resource quotas and limits
 
-### Debugging connectivity
+</details>
+
+<details>
+<summary>Debugging connectivity</summary>
 
 To test connectivity between components:
 
@@ -598,7 +620,10 @@ curl http://localhost:8080/health
 kubectl -n <NAMESPACE> get endpoints
 ```
 
-### Getting more information
+</details>
+
+<details>
+<summary>Getting more debug information</summary>
 
 For additional debugging information:
 
@@ -612,3 +637,5 @@ kubectl -n <NAMESPACE> get events --field-selector involvedObject.kind=MCPServer
 # Export MCPServer resource for inspection
 kubectl -n <NAMESPACE> get mcpserver <NAME> -o yaml
 ```
+
+</details>

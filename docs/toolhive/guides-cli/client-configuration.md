@@ -160,7 +160,8 @@ ToolHive provides.
 
 ## Troubleshooting
 
-### Client is not detected by `thv client setup`
+<details>
+<summary>Client is not detected by `thv client setup`</summary>
 
 If ToolHive doesn't detect your client:
 
@@ -177,7 +178,10 @@ If ToolHive doesn't detect your client:
    thv config register-client <CLIENT_NAME>
    ```
 
-### Client can't connect to MCP server
+</details>
+
+<details>
+<summary>Client can't connect to MCP server</summary>
 
 If your client can't connect to the MCP server:
 
@@ -202,7 +206,10 @@ If your client can't connect to the MCP server:
 
 4. Restart your client application.
 
-### Client can connect but tools aren't available
+</details>
+
+<details>
+<summary>Client can connect but tools aren't available</summary>
 
 If your client connects to the MCP server but tools aren't available:
 
@@ -227,7 +234,10 @@ If your client connects to the MCP server but tools aren't available:
 5. If you've implemented authentication for your MCP server, make sure the
    client has the necessary permissions to access the tools.
 
-### Containerized client can't connect to MCP server
+</details>
+
+<details>
+<summary>Containerized client can't connect to MCP server</summary>
 
 If you're running an MCP client inside a container and it can't connect to an
 MCP server running on the same host, make sure you use the correct host address.
@@ -242,7 +252,10 @@ connectivity.
 Refer to your containerization platform's documentation for details on how to
 configure network access between containers and the host.
 
-### VS Code can't connect to some streamable-http servers
+</details>
+
+<details>
+<summary>VS Code can't connect to some streamable-http servers</summary>
 
 You might encounter errors with Visual Studio Code connecting to some
 Python-based MCP servers using the Streamable HTTP transport protocol:
@@ -267,3 +280,5 @@ There are two workarounds:
 
 You can track a proposed fix for this issue in the
 [MCP Python SDK repository](https://github.com/modelcontextprotocol/python-sdk/pull/781).
+
+</details>
