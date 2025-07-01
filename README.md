@@ -1,6 +1,6 @@
 # Stacklok docs <!-- omit in toc -->
 
-[![GitHub deployments](https://img.shields.io/github/deployments/stacklok/docs-website/Production?logo=vercel&style=flat&label=Vercel%20deployment)](https://github.com/stacklok/docs-website/deployments/Production)
+[![GitHub deployments][deployment-img]][deployment]
 
 This repository contains the public-facing docs for Stacklok's projects, hosted
 at [https://docs.stacklok.com](https://docs.stacklok.com).
@@ -26,7 +26,7 @@ You'll need Node.js available (v22 recommended) or VS Code with the
 [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
 extension and Docker.
 
-[![Open in Dev Containers](https://img.shields.io/static/v1?label=Dev%20Containers&message=Open&color=blue)](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/stacklok/docs-website)
+[![Open in Dev Containers][devcontainer-img]][devcontainer]
 
 ```bash
 npm install
@@ -80,3 +80,13 @@ the `main` branch.
 ## About
 
 This site is built with [Docusaurus](https://docusaurus.io/).
+
+<!-- badge links -->
+
+[deployment-img]:
+  https://img.shields.io/github/deployments/stacklok/docs-website/Production?logo=vercel&label=Vercel%20deployment
+[deployment]: https://github.com/stacklok/docs-website/deployments/Production
+[devcontainer-img]:
+  https://img.shields.io/static/v1?label=Dev%20Containers&message=Open&color=blue
+[devcontainer]:
+  https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/stacklok/docs-website
