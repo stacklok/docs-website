@@ -46,10 +46,10 @@ export default function Home(): ReactNode {
               src='/img/toolhive-mascot.png'
               alt='ToolHive mascot'
               style={{
-                width: '120px',
+                width: '150px',
                 height: 'auto',
                 float: 'right',
-                marginRight: '1.5rem',
+                marginLeft: '1.5rem',
                 display: 'block',
                 maxWidth: '40%',
               }}
@@ -63,20 +63,53 @@ export default function Home(): ReactNode {
 
         <h1 className='text--center'>Our MCP Servers</h1>
 
-        <ProductGrid>
+        <ProductGrid layout='fixed-2' spacing='spacious'>
+          <ProductCard
+            contentType='text'
+            href='http://github.com/StacklokLabs/gofetch'
+            title='GoFetch MCP server'
+            linkText='Go to project'
+          >
+            <img
+              src='/img/mcp-servers/gofetch-mascot.webp'
+              alt='GoFetch mascot'
+              style={{
+                width: '80px',
+                height: 'auto',
+                float: 'right',
+                marginLeft: '0.5rem',
+                display: 'block',
+                maxWidth: '40%',
+              }}
+            />
+            A Go implementation of the Fetch MCP server that retrieves web
+            content and converts it to markdown for easier consumption by LLMs.
+          </ProductCard>
           <ProductCard
             contentType='text'
             href='http://github.com/StacklokLabs/mkp'
-            title='MKP (Model Kontext Protocol)'
+            title='MKP - Model Kontext Protocol'
             linkText='Go to project'
           >
-            MKP (Model Kontext Protocol) is an MCP server that allows
-            LLM-powered applications to interact with Kubernetes clusters.
+            <img
+              src='/img/mcp-servers/mkp-logo.webp'
+              alt='MKP logo'
+              style={{
+                width: '60px',
+                height: 'auto',
+                float: 'right',
+                marginLeft: '0.5rem',
+                display: 'block',
+                maxWidth: '40%',
+              }}
+            />
+            MKP is an MCP server that allows LLM-powered applications to
+            interact with Kubernetes clusters.
           </ProductCard>
           <ProductCard
             contentType='text'
             href='http://github.com/StacklokLabs/osv-mcp'
-            title='OSV MCP'
+            title='OSV MCP server'
             linkText='Go to project'
           >
             The OSV MCP server provides access to the OSV (Open Source
@@ -85,7 +118,7 @@ export default function Home(): ReactNode {
           <ProductCard
             contentType='text'
             href='http://github.com/StacklokLabs/ocireg-mcp'
-            title='OCI Registry MCP'
+            title='OCI Registry MCP server'
             linkText='Go to project'
           >
             The OCI Registry MCP server provides tools for querying OCI
