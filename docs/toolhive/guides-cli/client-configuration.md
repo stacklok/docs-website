@@ -241,3 +241,29 @@ connectivity.
 
 Refer to your containerization platform's documentation for details on how to
 configure network access between containers and the host.
+
+### VS Code can't connect to some streamable-http servers
+
+You might encounter errors with Visual Studio Code connecting to some
+Python-based MCP servers using the Streamable HTTP transport protocol:
+
+```text
+[info] Connection state: Error Error sending message to http://localhost:49574/mcp: TypeError: fetch failed
+[error] Server exited before responding to `initialize` request.
+```
+
+This is a known interaction between VS Code and the FastMCP SDK used by
+Python-based MCP servers. If you inspect the HTTP connection, you'll see a
+`307 Temporary Redirect` response, which VS Code doesn't handle correctly.
+
+There are two workarounds:
+
+1. Change the URL in your VS Code settings to add a trailing slash to the MCP
+   server URL. For example, change `http://localhost:49574/mcp` to
+   `http://localhost:49574/mcp/`. You'll need to re-apply this if you stop and
+   restart the MCP server.
+2. If the MCP server supports SSE, switch to using the SSE transport instead of
+   Streamable HTTP.
+
+You can track a proposed fix for this issue in the
+[MCP Python SDK repository](https://github.com/modelcontextprotocol/python-sdk/pull/781).
