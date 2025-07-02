@@ -246,7 +246,8 @@ configured during installation.
 
 ## Troubleshooting
 
-### Authentication error with ghcr.io
+<details>
+<summary>Authentication error with ghcr.io</summary>
 
 If you encounter an authentication error when pulling the Helm chart, it might
 indicate a problem with your access to the GitHub Container Registry
@@ -259,7 +260,10 @@ your token has expired or been revoked.
 See the GitHub documentation to
 [re-authenticate to the registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-with-a-personal-access-token-classic).
 
-### Operator pod fails to start
+</details>
+
+<details>
+<summary>Operator pod fails to start</summary>
 
 If the operator pod is not starting or is in a `CrashLoopBackOff` state, check
 the pod logs for error messages:
@@ -284,7 +288,10 @@ Common causes include:
   resources available
 - **Image pull issues**: Verify that the cluster can pull images from `ghcr.io`
 
-### CRDs installation fails
+</details>
+
+<details>
+<summary>CRDs installation fails</summary>
 
 If the CRDs installation fails, you might see errors about existing resources or
 permission issues:
@@ -304,7 +311,10 @@ helm uninstall toolhive-operator-crds
 helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds
 ```
 
-### Namespace creation issues
+</details>
+
+<details>
+<summary>Namespace creation issues</summary>
 
 If you encounter permission errors when creating the `toolhive-system`
 namespace, create it manually first:
@@ -319,7 +329,10 @@ Then install the operator without the `--create-namespace` flag:
 helm upgrade -i toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system
 ```
 
-### Helm chart not found
+</details>
+
+<details>
+<summary>Helm chart not found</summary>
 
 If Helm cannot find the chart, ensure you're using the correct OCI registry URL
 and that your Helm version supports OCI registries (v3.8.0+):
@@ -332,10 +345,15 @@ helm version
 helm pull oci://ghcr.io/stacklok/toolhive/toolhive-operator
 ```
 
-### Network connectivity issues
+</details>
+
+<details>
+<summary>Network connectivity issues</summary>
 
 If you're experiencing network timeouts or connection issues:
 
 - Verify your cluster has internet access to reach `ghcr.io`
 - Check if your organization uses a proxy or firewall that might block access
 - Consider using a private registry mirror if direct access is restricted
+
+</details>
