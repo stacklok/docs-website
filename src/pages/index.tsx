@@ -63,7 +63,7 @@ export default function Home(): ReactNode {
 
         <h1 className='text--center'>Our MCP Servers</h1>
 
-        <ProductGrid layout='fixed-2' spacing='spacious'>
+        <ProductGrid layout='fixed-3' spacing='spacious'>
           <ProductCard
             contentType='text'
             href='http://github.com/StacklokLabs/gofetch'
@@ -123,6 +123,15 @@ export default function Home(): ReactNode {
           >
             The OCI Registry MCP server provides tools for querying OCI
             registries and image references.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='http://github.com/StacklokLabs/sqlite-mcp'
+            title='SQLite MCP server'
+            linkText='Go to project'
+          >
+            The SQLite MCP server provides tools and resources that allow you to
+            interact with SQLite databases.
           </ProductCard>
         </ProductGrid>
       </main>
