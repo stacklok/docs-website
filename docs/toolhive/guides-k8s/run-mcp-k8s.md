@@ -208,9 +208,7 @@ The `podTemplateSpec` field follows the standard Kubernetes
 [`PodTemplateSpec`](https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/pod-template-v1/#PodTemplateSpec)
 format, so you can use any valid pod specification options.
 
-This example sets security contexts and resource limits. It lets the MCP
-container to run as root, an unfortunate requirement for the Fetch MCP server
-image, while still applying some security restrictions.
+This example sets resource limits.
 
 ```yaml {13-14} title="my-mcpserver-custom-pod.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
@@ -219,9 +217,10 @@ metadata:
   name: fetch
   namespace: development # Can be any namespace
 spec:
-  image: docker.io/mcp/fetch
-  transport: stdio
+  image: ghcr.io/stackloklabs/gofetch/server
+  transport: sse
   port: 8080
+  targetPort: 8080
   permissionProfile:
     type: builtin
     name: network
@@ -229,13 +228,6 @@ spec:
     spec:
       containers:
         - name: mcp # This name must be "mcp"
-          securityContext:
-            allowPrivilegeEscalation: false
-            runAsNonRoot: false # Allows the MCP container to run as root
-            runAsUser: 0
-            capabilities:
-              drop:
-                - ALL
           resources: # These resources apply to the MCP container
             limits:
               cpu: '500m'
@@ -243,10 +235,6 @@ spec:
             requests:
               cpu: '100m'
               memory: '128Mi'
-      securityContext:
-        runAsNonRoot: true # The pod itself can run as a non-root user
-        seccompProfile:
-          type: RuntimeDefault
   resources: # These resources apply to the proxy container
     limits:
       cpu: '100m'
