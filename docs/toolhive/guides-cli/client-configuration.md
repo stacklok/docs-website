@@ -60,10 +60,10 @@ configurations.
 ## Alternative client registration
 
 If you prefer to register clients manually or in an automated script, use the
-`thv config register-client` command:
+`thv client register` command:
 
 ```bash
-thv config register-client <CLIENT_NAME>
+thv client register <CLIENT_NAME>
 ```
 
 Replace `<CLIENT_NAME>` with the name of your client. Common client names
@@ -72,17 +72,18 @@ include:
 - `claude-code` - Claude Code CLI
 - `cursor` - Cursor IDE
 - `roo-code` - Roo Code extension for Visual Studio Code
+- `cline` - Cline extension for Visual Studio Code
 - `vscode` - Visual Studio Code (GitHub Copilot)
 - `vscode-insider` - VS Code Insiders edition
 
 Example:
 
 ```bash
-thv config register-client vscode
+thv client register vscode
 ```
 
 Run
-[`thv config register-client --help`](../reference/cli/thv_config_register-client.md)
+[`thv client register --help`](../reference/cli/thv_client_register.md)
 for the latest list of supported clients.
 
 To list currently registered clients:
@@ -99,7 +100,7 @@ effect.
 To remove a client configuration:
 
 ```bash
-thv config remove-client <CLIENT_NAME>
+thv client remove <CLIENT_NAME>
 ```
 
 ## Other clients or tools
@@ -175,7 +176,7 @@ If ToolHive doesn't detect your client:
 3. Try manually registering the client:
 
    ```bash
-   thv config register-client <CLIENT_NAME>
+   thv client register <CLIENT_NAME>
    ```
 
 </details>
