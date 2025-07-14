@@ -88,7 +88,7 @@ the latest list of supported clients.
 To list currently registered clients:
 
 ```bash
-thv config list-registered-clients
+thv client list-registered
 ```
 
 Repeat the registration step for any additional clients you want to configure.
