@@ -82,9 +82,8 @@ Example:
 thv client register vscode
 ```
 
-Run
-[`thv client register --help`](../reference/cli/thv_client_register.md)
-for the latest list of supported clients.
+Run [`thv client register --help`](../reference/cli/thv_client_register.md) for
+the latest list of supported clients.
 
 To list currently registered clients:
 
