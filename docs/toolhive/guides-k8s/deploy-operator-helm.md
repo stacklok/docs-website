@@ -2,7 +2,6 @@
 title: Deploy the operator
 description:
   How to deploy the ToolHive operator in a Kubernetes cluster using Helm
-sidebar_position: 10
 ---
 
 Helm is the officially supported method to install the ToolHive operator in a
@@ -19,6 +18,8 @@ Kubernetes cluster.
 
 ## Install the CRDs
 
+![Latest CRD Helm chart release](https://img.shields.io/github/v/release/stacklok/toolhive?filter=toolhive-operator-crds-*&style=for-the-badge&logo=helm&label=Latest%20CRD%20chart&color=097aff)
+
 The ToolHive operator requires Custom Resource Definitions (CRDs) to manage
 MCPServer resources. The CRDs define the structure and behavior of MCPServers in
 your cluster.
@@ -27,13 +28,31 @@ your cluster.
 helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds
 ```
 
+This command installs the latest version of the ToolHive operator CRDs Helm
+chart. To install a specific version, append `--version <version>` to the
+command, for example:
+
+```bash
+helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds --version 0.0.7
+```
+
 ## Install the operator
+
+![Latest Operator Helm chart release](https://img.shields.io/github/v/release/stacklok/toolhive?filter=toolhive-operator-0*&style=for-the-badge&logo=helm&label=Latest%20Operator%20chart&color=097aff)
 
 To install the ToolHive operator using default settings, run the following
 command:
 
 ```bash
 helm upgrade -i toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --create-namespace
+```
+
+This command installs the latest version of the ToolHive operator CRDs Helm
+chart. To install a specific version, append `--version <version>` to the
+command, for example:
+
+```bash
+helm upgrade -i toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --create-namespace --version 0.1.1
 ```
 
 Verify the installation:
@@ -241,8 +260,8 @@ configured during installation.
 
 - [Kubernetes introduction](./intro.md) - Overview of ToolHive's Kubernetes
   integration
-- [ToolHive operator tutorial](../tutorials/toolhive-operator.mdx) -
-  Step-by-step tutorial for getting started using a local kind cluster
+- [ToolHive operator tutorial](../tutorials/quickstart-k8s.mdx) - Step-by-step
+  tutorial for getting started using a local kind cluster
 
 ## Troubleshooting
 

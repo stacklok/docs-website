@@ -1,7 +1,6 @@
 ---
 title: Run MCP servers in Kubernetes
 description: How to deploy MCP servers in Kubernetes using the ToolHive operator
-sidebar_position: 20
 ---
 
 ## Prerequisites

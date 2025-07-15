@@ -4,7 +4,6 @@ sidebar_label: MCP primer
 description:
   A brief introduction to the Model Context Protocol (MCP) and its benefits for
   developers.
-sidebar_position: 5
 ---
 
 **TL;DR:** MCP offers a pragmatic, language‑friendly bridge between

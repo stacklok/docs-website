@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 import React, { type ReactNode } from 'react';
 import { translate } from '@docusaurus/Translate';
 import { PageMetadata } from '@docusaurus/theme-common';

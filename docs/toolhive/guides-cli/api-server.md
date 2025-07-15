@@ -1,7 +1,6 @@
 ---
 title: Run the API server
-description: How to run the local ToolHive API server
-sidebar_position: 60
+description: How to run the local ToolHive API server.
 ---
 
 ToolHive includes a built-in API server that provides a RESTful interface for

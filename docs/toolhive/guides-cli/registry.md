@@ -1,7 +1,6 @@
 ---
 title: Explore the registry
-description: Using the built-in registry to find MCP servers.
-sidebar_position: 15
+description: How to use the built-in registry to find MCP servers.
 ---
 
 ToolHive includes a built-in registry of MCPs with verified configurations,
