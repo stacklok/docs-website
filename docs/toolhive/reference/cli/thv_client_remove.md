@@ -40,4 +40,5 @@ thv client remove [client] [flags]
 
 ### SEE ALSO
 
-* [thv client](thv_client.md)	 - Manage MCP clients 
+* [thv client](thv_client.md)	 - Manage MCP clients
+
