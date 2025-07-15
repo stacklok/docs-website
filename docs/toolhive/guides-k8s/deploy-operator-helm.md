@@ -10,7 +10,7 @@ Kubernetes cluster.
 
 ## Prerequisites
 
-- A Kubernetes cluster (v1.19+)
+- A Kubernetes cluster (current and two previous minor versions are supported)
 - Permissions to create resources in the cluster
 - [`kubectl`](https://kubernetes.io/docs/tasks/tools/) configured to communicate
   with your cluster
@@ -62,7 +62,7 @@ and set a specific ToolHive version, create a `values.yaml` file:
 ```yaml title="values.yaml"
 operator:
   replicaCount: 2
-  toolhiveRunnerImage: ghcr.io/stacklok/toolhive:v0.0.42 # or `latest`
+  toolhiveRunnerImage: ghcr.io/stacklok/toolhive:v0.1.8 # or `latest`
 ```
 
 Install the operator with your custom values:
