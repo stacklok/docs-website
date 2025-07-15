@@ -6,7 +6,7 @@ sidebar_position: 20
 
 ## Prerequisites
 
-- A Kubernetes cluster (v1.19+)
+- A Kubernetes cluster (current and two previous minor versions are supported)
 - Permissions to create resources in the cluster
 - [`kubectl`](https://kubernetes.io/docs/tasks/tools/) configured to communicate
   with your cluster
@@ -210,7 +210,7 @@ format, so you can use any valid pod specification options.
 
 This example sets resource limits.
 
-```yaml {13-14} title="my-mcpserver-custom-pod.yaml"
+```yaml {14-15} title="my-mcpserver-custom-pod.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
