@@ -56,6 +56,8 @@ thv run [flags] SERVER_OR_IMAGE_OR_PROTOCOL [-- ARGS...]
       --host string                           Host for the HTTP proxy to listen on (IP or hostname) (default "127.0.0.1")
       --image-verification string             Set image verification mode (warn, enabled, disabled) (default "warn")
       --isolate-network                       Isolate the container network from the host (default: false)
+      --jwks-allow-private-ip                 Allow JWKS/OIDC endpoints on private IP addresses (use with caution)
+      --jwks-auth-token-file string           Path to file containing bearer token for authenticating JWKS/OIDC requests
       --name string                           Name of the MCP server (auto-generated from image if not provided)
       --oidc-audience string                  Expected audience for the token
       --oidc-client-id string                 OIDC client ID
@@ -69,12 +71,13 @@ thv run [flags] SERVER_OR_IMAGE_OR_PROTOCOL [-- ARGS...]
       --otel-insecure                         Disable TLS verification for OpenTelemetry endpoint
       --otel-sampling-rate float              OpenTelemetry trace sampling rate (0.0-1.0) (default 0.1)
       --otel-service-name string              OpenTelemetry service name (defaults to toolhive-mcp-proxy)
-      --permission-profile string             Permission profile to use (none, network, or path to JSON file) (default "network")
+      --permission-profile string             Permission profile to use (none, network, or path to JSON file)
       --proxy-mode string                     Proxy mode for stdio transport (sse or streamable-http) (default "sse")
       --proxy-port int                        Port for the HTTP proxy to listen on (host port)
       --secret stringArray                    Specify a secret to be fetched from the secrets manager and set as an environment variable (format: NAME,target=TARGET)
       --target-host string                    Host to forward traffic to (only applicable to SSE or Streamable HTTP transport) (default "127.0.0.1")
       --target-port int                       Port for the container to expose (only applicable to SSE or Streamable HTTP transport)
+      --thv-ca-bundle string                  Path to CA certificate bundle for ToolHive HTTP operations (JWKS, OIDC discovery, etc.)
       --transport string                      Transport mode (sse, streamable-http or stdio)
   -v, --volume stringArray                    Mount a volume into the container (format: host-path:container-path[:ro])
 ```

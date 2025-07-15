@@ -33,4 +33,5 @@ thv client list-registered [flags]
 
 ### SEE ALSO
 
-* [thv client](thv_client.md)	 - Manage MCP clients 
+* [thv client](thv_client.md)	 - Manage MCP clients
+
