@@ -97,6 +97,12 @@ const config: Config = {
     },
     // Replace with your project's social card
     // image: 'img/docusaurus-social-card.jpg',
+    docs: {
+      sidebar: {
+        hideable: false,
+        autoCollapseCategories: false,
+      },
+    },
     navbar: {
       // title: 'Stacklok Docs',
       logo: {
@@ -107,11 +113,31 @@ const config: Config = {
       },
       items: [
         {
-          type: 'docSidebar',
-          sidebarId: 'toolhiveSidebar',
-          position: 'left',
+          type: 'dropdown',
           label: 'ToolHive Docs',
-          className: 'navbar__product-link--custom',
+          position: 'left',
+          items: [
+            {
+              label: 'Home',
+              href: '/toolhive',
+            },
+            {
+              label: 'Tutorials',
+              to: 'toolhive/tutorials',
+            },
+            {
+              label: 'ToolHive UI',
+              to: 'toolhive/guides-ui',
+            },
+            {
+              label: 'ToolHive CLI',
+              to: 'toolhive/guides-cli',
+            },
+            {
+              label: 'Kubernetes Operator',
+              to: 'toolhive/guides-k8s',
+            },
+          ],
         },
         {
           href: 'https://github.com/stacklok',

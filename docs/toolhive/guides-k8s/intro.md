@@ -1,8 +1,7 @@
 ---
-title: ToolHive Kubernetes operator
-description: Manage MCP servers in Kubernetes with the ToolHive operator
-sidebar_position: 1
-sidebar_label: Introduction
+title: Overview of the ToolHive Kubernetes Operator
+description: How to manage MCP servers in Kubernetes with the ToolHive operator
+sidebar_label: Overview
 ---
 
 The ToolHive Kubernetes operator manages MCP servers in Kubernetes clusters. It
@@ -12,11 +11,13 @@ deployment and management.
 :::info Experimental
 
 The Kubernetes operator is still under active development and isn't recommended
-for production use cases yet. We'd love for you to try it out and send feedback.
+for production use cases yet. Specifically, the `MCPServer` Custom Resource
+Definition (CRD) is still in an alpha state so breaking changes to the spec and
+its capabilities are possible.
 
-See the
-[ToolHive Operator quickstart tutorial](../tutorials/toolhive-operator.mdx) to
-get started quickly using a local kind cluster.
+See the [ToolHive Operator quickstart tutorial](../tutorials/quickstart-k8s.mdx)
+to get started quickly using a local kind cluster. We'd love for you to try
+itout and send feedback!
 
 :::
 

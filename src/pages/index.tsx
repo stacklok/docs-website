@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 import React from 'react';
 import type { ReactNode } from 'react';
 import clsx from 'clsx';
@@ -43,7 +46,7 @@ export default function Home(): ReactNode {
             linkText='Read documentation'
           >
             <img
-              src='/img/toolhive-mascot.png'
+              src='/img/toolhive-icon-honey.svg'
               alt='ToolHive mascot'
               style={{
                 width: '150px',
@@ -52,6 +55,7 @@ export default function Home(): ReactNode {
                 marginLeft: '1.5rem',
                 display: 'block',
                 maxWidth: '40%',
+                borderRadius: '25px',
               }}
             />
             ToolHive simplifies the deployment and management of Model Context

@@ -1,10 +1,9 @@
 ---
 title: 'Registry criteria'
 description: Criteria for adding MCP servers to the ToolHive registry
-sidebar_position: 50
 ---
 
-The ToolHive registry maintains a curated list of MCP servers that meet specific
+The ToolHive registry is a curated list of MCP servers that meet specific
 criteria. We aim to establish a curated, community-auditable list of
 high-quality MCP servers through clear, observable, and objective criteria. Here
 are the criteria for adding an MCP server to the ToolHive registry:

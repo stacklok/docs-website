@@ -2,7 +2,6 @@
 title: Monitor and manage MCP servers
 description:
   How to monitor and manage the lifecycle of MCP servers using ToolHive.
-sidebar_position: 25
 ---
 
 ## Monitoring
