@@ -43,7 +43,7 @@ You can also search by keyword to find servers related to a specific topic or
 capability:
 
 ```bash
-thv search <term>
+thv search <TERM>
 ```
 
 For example, to locate servers related to GitHub:
@@ -57,7 +57,7 @@ thv search github
 To view detailed information about a specific MCP server, run:
 
 ```bash
-thv registry info <server-name>
+thv registry info <SERVER_NAME>
 ```
 
 For example:
@@ -73,7 +73,7 @@ By default, ToolHive displays the server's configuration in a human-readable
 format. To view the configuration in JSON format, use the `--format` option:
 
 ```bash
-thv registry info <server-name> --format json
+thv registry info <SERVER_NAME> --format json
 ```
 
 ### Example output
@@ -137,7 +137,7 @@ organizations that want to maintain their own private registry of MCP servers.
 To configure ToolHive to use a remote registry, set the registry URL:
 
 ```bash
-thv config set-registry-url <url>
+thv config set-registry-url <URL>
 ```
 
 For example:

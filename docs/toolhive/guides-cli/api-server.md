@@ -45,14 +45,14 @@ By default, the API server listens on `localhost` (127.0.0.1) port `8080`.
 You can specify a different port using the `--port` option:
 
 ```bash
-thv serve --port <port-number>
+thv serve --port <PORT_NUMBER>
 ```
 
 If you're running the API server on a remote host, specify the hostname or IP
 address to bind to using the `--host` option:
 
 ```bash
-thv serve --host <host-name>
+thv serve --host <HOSTNAME_OR_IP>
 ```
 
 ## UNIX socket support

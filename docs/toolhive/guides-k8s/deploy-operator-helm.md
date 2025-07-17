@@ -29,7 +29,7 @@ helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-
 ```
 
 This command installs the latest version of the ToolHive operator CRDs Helm
-chart. To install a specific version, append `--version <version>` to the
+chart. To install a specific version, append `--version <VERSION>` to the
 command, for example:
 
 ```bash
@@ -48,7 +48,7 @@ helm upgrade -i toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-opera
 ```
 
 This command installs the latest version of the ToolHive operator CRDs Helm
-chart. To install a specific version, append `--version <version>` to the
+chart. To install a specific version, append `--version <VERSION>` to the
 command, for example:
 
 ```bash
@@ -66,7 +66,7 @@ After about 30 seconds, you should see the `toolhive-operator` pod running.
 Check the logs of the operator pod:
 
 ```bash
-kubectl logs -f -n toolhive-system <toolhive-operator-pod-name>
+kubectl logs -f -n toolhive-system <TOOLHIVE_OPERATOR_POD_NAME>
 ```
 
 This shows you the logs of the operator pod, which can help you debug any
@@ -217,7 +217,7 @@ kubectl get clusterrolebinding | grep toolhive
 # Check operator pod status
 kubectl get pods -n toolhive-system
 # Check operator pod logs
-kubectl logs -n toolhive-system <toolhive-operator-pod-name>
+kubectl logs -n toolhive-system <TOOLHIVE_OPERATOR_POD_NAME>
 ```
 
 ## Upgrade the operator
@@ -291,8 +291,8 @@ the pod logs for error messages:
 kubectl get pods -n toolhive-system
 # Note the name of the toolhive-operator pod
 
-kubectl describe pod -n toolhive-system <toolhive-operator-pod-name>
-kubectl logs -n toolhive-system <toolhive-operator-pod-name>
+kubectl describe pod -n toolhive-system <TOOLHIVE_OPERATOR_POD_NAME>
+kubectl logs -n toolhive-system <TOOLHIVE_OPERATOR_POD_NAME>
 ```
 
 Common causes include:
@@ -320,7 +320,7 @@ permission issues:
 kubectl get crd | grep toolhive
 
 # Remove existing CRDs if needed (this will delete all related resources)
-kubectl delete crd <crd-name>
+kubectl delete crd <CRD_NAME>
 ```
 
 To reinstall the CRDs:
