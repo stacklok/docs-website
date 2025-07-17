@@ -69,7 +69,21 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-cli/manage-mcp-servers',
         'toolhive/guides-cli/secrets-management',
         'toolhive/guides-cli/client-configuration',
-        'toolhive/guides-cli/custom-permissions',
+        {
+          type: 'category',
+          label: 'Custom permissions',
+          description:
+            'How to configure filesystem and network access for MCP servers',
+          collapsed: false,
+          link: {
+            type: 'doc',
+            id: 'toolhive/guides-cli/custom-permissions',
+          },
+          items: [
+            'toolhive/guides-cli/filesystem-access',
+            'toolhive/guides-cli/network-isolation',
+          ],
+        },
         {
           type: 'category',
           label: 'Command reference',

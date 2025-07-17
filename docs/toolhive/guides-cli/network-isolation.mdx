@@ -1,0 +1,254 @@
+---
+title: Network isolation
+description: How to configure network isolation for MCP servers in ToolHive
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+Most MCP servers require network access to function properly—for example, to
+access APIs, download data, or communicate with other services. However,
+malicious or misconfigured servers can also exfiltrate sensitive data or
+download unwanted content.
+
+When you run an MCP server in ToolHive, you can optionally enable _network
+isolation_. This feature restricts the MCP server's network access to only the
+resources you specify.
+
+## Enable network isolation
+
+To enforce network access rules, use the `--isolate-network` flag when running
+the MCP server. Network rules can come from:
+
+- The MCP server's default registry permissions
+- A custom permission profile you create
+
+```bash
+thv run --isolate-network [--permission-profile </path/to/custom-profile.json>] <SERVER>
+```
+
+:::tip
+
+You can combine file system and network permissions in the same permission
+profile. For details on creating profiles that include both types of
+permissions, see [custom permissions](./custom-permissions.mdx).
+
+:::
+
+When you enable network isolation, ToolHive creates a secure network
+architecture around your MCP server that includes several components working
+together to control network access.
+
+### Network architecture components
+
+Along with the main MCP server container, ToolHive launches additional
+containers to manage network traffic:
+
+- An egress proxy container that filters outgoing network traffic
+- A DNS container that provides controlled domain name resolution
+- An ingress proxy container that handles incoming requests (only for MCP
+  servers using SSE or Streamable HTTP transport; stdio MCP servers don't need
+  this since they don't expose ports)
+
+### Network topology
+
+ToolHive creates two separate networks in the container runtime:
+
+- A shared external network (`toolhive-external`) that connects to your host's
+  network
+- An internal network (`toolhive-<SERVER_NAME>-internal`) for each MCP server
+  that isolates it from external access
+
+The MCP server container connects only to the internal network, while the proxy
+and DNS containers connect to both networks. This design ensures that all
+network traffic flows through controlled points, allowing ToolHive to enforce
+the access rules you specify in your permission profile.
+
+The following diagrams show how network traffic flows through the isolation
+architecture for different transport types:
+
+<Tabs groupId='transport'>
+<TabItem value='stdio' label='Transport: Standard Input/Output (stdio)' default>
+
+For MCP servers using stdio transport, the ToolHive proxy process communicates
+directly with the MCP server container through standard input and output. All
+outbound network requests from the MCP server flow through the egress proxy and
+DNS containers:
+
+```mermaid
+architecture-beta
+    service mcp_client(server)[MCP client]
+    service toolhive_proxy(server)[ToolHive HTTP proxy process]
+
+    group container_runtime[Container runtime]
+    group thv_internal[Isolated network] in container_runtime
+    service egress(server)[Egress proxy container] in container_runtime
+    service mcp_server(server)[MCP server container] in thv_internal
+    service dns_container(server)[DNS container] in container_runtime
+
+    group external[External Resources]
+    service external_service(internet)[External service] in external
+    service external_dns(internet)[External DNS] in external
+
+    junction outbound in container_runtime
+
+    mcp_client:R --> L:toolhive_proxy
+    toolhive_proxy:R --> L:mcp_server
+    mcp_server:R -- L:outbound
+    egress:B <-- T:outbound
+    dns_container:T <-- B:outbound
+    egress:R --> L:external_service
+    dns_container:R --> L:external_dns
+```
+
+</TabItem>
+<TabItem value='sse' label='Transport: SSE or Streamable HTTP'>
+
+For MCP servers using SSE or Streamable HTTP transport, ToolHive includes an
+additional ingress proxy container. This proxy handles incoming HTTP requests
+and ensures the MCP server remains isolated from direct external access:
+
+```mermaid
+architecture-beta
+    service mcp_client(server)[MCP client]
+    service toolhive_proxy(server)[ToolHive HTTP proxy process]
+
+    group container_runtime[Container runtime]
+    group thv_internal[Isolated network] in container_runtime
+    service ingress(server)[Ingress proxy container] in container_runtime
+    service egress(server)[Egress proxy container] in container_runtime
+    service mcp_server(server)[MCP server container] in thv_internal
+    service dns_container(server)[DNS container] in container_runtime
+
+    group external[External resources]
+    service external_service(internet)[External service] in external
+    service external_dns(internet)[External DNS] in external
+
+    junction outbound in container_runtime
+
+    mcp_client:R --> L:toolhive_proxy
+    toolhive_proxy:R --> L:ingress
+    ingress:R --> L:mcp_server
+    mcp_server:R -- L:outbound
+    egress:B <-- T:outbound
+    dns_container:T <-- B:outbound
+    egress:R --> L:external_service
+    dns_container:R --> L:external_dns
+```
+
+</TabItem>
+</Tabs>
+
+:::important
+
+Network isolation supports HTTP and HTTPS protocols. If your MCP server needs to
+use other protocols (like direct TCP connections for database access), run it
+without the `--isolate-network` flag and rely on the container's built-in
+isolation instead.
+
+:::
+
+## Example: Enable network isolation using registry defaults
+
+Many MCP servers in the ToolHive registry have default permission profiles that
+allow access to the specific resources they need. For example, the `atlassian`
+MCP server has a default profile that allows access to Atlassian services.
+
+First, check the registry to see the default permissions for the `atlassian` MCP
+server:
+
+```bash
+thv registry info atlassian
+```
+
+Look for the `Permissions` section in the output:
+
+```text
+Permissions:
+  Network:
+    Allow Host: .atlassian.net, .atlassian.com
+    Allow Port: 443
+```
+
+To run the `atlassian` MCP server with these default permissions and enable
+network isolation, use the following command:
+
+```bash
+thv run --isolate-network atlassian
+```
+
+## Example: Customize network access
+
+The GitHub MCP server in the registry has a default profile that allows access
+to `github.com`, but you might need to customize it for a self-hosted GitHub
+Enterprise instance:
+
+```json title="github-enterprise-profile.json"
+{
+  "network": {
+    "outbound": {
+      "insecure_allow_all": false,
+      "allow_host": ["github.example.com"],
+      "allow_port": [443]
+    }
+  }
+}
+```
+
+Run the GitHub MCP server with this profile:
+
+```bash
+thv run --isolate-network --permission-profile ./github-enterprise-profile.json --secret github,target=GITHUB_PERSONAL_ACCESS_TOKEN github
+```
+
+## Example: Combined network and file system permissions
+
+Some MCP servers need both network restrictions and file system access. For
+example, the `aws-diagram` MCP server generates diagrams locally but doesn't
+need network access:
+
+```json title="aws-diagram-profile.json"
+{
+  "write": ["/tmp/generated-diagrams"],
+  "network": {
+    "outbound": {
+      "insecure_allow_all": false,
+      "allow_host": [],
+      "allow_port": []
+    }
+  }
+}
+```
+
+This profile:
+
+- Blocks all network access (equivalent to the `none` built-in profile)
+- Allows the server to write generated diagrams to `/tmp/generated-diagrams`
+
+Run the server with this combined profile:
+
+```bash
+thv run --isolate-network --permission-profile ./aws-diagram-profile.json aws-diagram
+```
+
+## Troubleshooting
+
+<details>
+<summary>Network connectivity issues</summary>
+
+If your MCP server can't connect to external services:
+
+1. Verify that your profile allows the necessary hosts and ports
+2. Check that the transport protocol (TCP/UDP) is allowed
+3. Check the logs of the egress proxy container for blocked requests:
+
+   ```bash
+   docker logs <SERVER_NAME>-egress
+   ```
+
+   Look for messages indicating denied connections.
+
+4. Try temporarily using the default `network` profile to confirm it's a
+   permissions issue
+
+</details>

@@ -371,7 +371,6 @@ to learn how to connect to MCP servers using different clients.
 
 Outbound network filtering using permission profiles isn't currently implemented
 in the ToolHive Operator. This is a roadmap feature planned for future releases.
-For now, only file system permissions are enforced.
 
 Contributions to help implement this feature are welcome! You can contribute by
 visiting our [GitHub repository](https://github.com/stacklok/toolhive).
