@@ -115,6 +115,20 @@ thv run --permission-profile ./file-permissions.json <SERVER>
 For more details on permission profiles and network permissions, see
 [custom permissions](./custom-permissions.mdx).
 
+### Combining with built-in network profiles
+
+You can also combine the `--volume` flag with built-in network profiles for a
+flexible approach that doesn't require creating a custom profile file. For
+example, to run the `aws-diagram` server with no network access and file system
+write access:
+
+```bash
+thv run --isolate-network --permission-profile none --volume /home/user/aws-diagrams:/tmp/generated-diagrams aws-diagram
+```
+
+This approach is useful when you need simple file system access combined with
+standard network restrictions.
+
 ## Troubleshooting
 
 <details>
