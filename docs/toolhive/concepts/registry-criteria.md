@@ -5,17 +5,32 @@ description: Criteria for adding MCP servers to the ToolHive registry
 
 The ToolHive registry is a curated list of MCP servers that meet specific
 criteria. We aim to establish a curated, community-auditable list of
-high-quality MCP servers through clear, observable, and objective criteria. Here
-are the criteria for adding an MCP server to the ToolHive registry:
+high-quality MCP servers through clear, observable, and objective criteria.
 
-## Heuristics
+## Contribute to the registry
+
+If you have an MCP server that you'd like to add to the ToolHive registry, you
+can
+[open an issue](https://github.com/stacklok/toolhive/issues/new?template=add-an-mcp-server.md)
+or submit a pull request to the ToolHive GitHub repository. The ToolHive team
+will review your submission and consider adding it to the registry.
+
+Criteria for adding an MCP server to the ToolHive registry are outlined below.
+These criteria ensure that the servers in the registry meet the standards of
+security, quality, and usability that ToolHive aims to uphold.
+
+Registry entries are defined in the
+[`pkg/registry/data/registry.json`](https://github.com/stacklok/toolhive/blob/main/pkg/registry/data/registry.json)
+file in the ToolHive repository.
+
+## Criteria for MCP servers
 
 ### Open source requirements
 
 - Must be fully open source with no exceptions
 - Source code must be publicly accessible
 - Must use an acceptable open source license (see
-  [Acceptable licenses](#acceptable-licenses) below)
+  [Acceptable licenses](#acceptable-licenses))
 
 ### Security
 

@@ -3,9 +3,11 @@ title: Explore the registry
 description: How to use the built-in registry to find MCP servers.
 ---
 
-ToolHive includes a built-in registry of MCPs with verified configurations,
-allowing you to discover and deploy MCP servers effortlessly. Simply select one
-from the list and run it securely with a single command.
+ToolHive includes a built-in registry of MCP servers with verified
+configurations that meet a
+[minimum quality standard](../concepts/registry-criteria.md), allowing you to
+discover and deploy high-quality tools effortlessly. Simply select one from the
+list and run it securely with a single command.
 
 ## Find MCP servers
 
@@ -173,23 +175,6 @@ thv config unset-registry-url
 ```
 
 This restores the default behavior of using ToolHive's built-in registry.
-
-## Contribute to the registry
-
-If you have an MCP server that you'd like to add to the ToolHive registry, you
-can
-[open an issue](https://github.com/stacklok/toolhive/issues/new?template=add-an-mcp-server.md)
-or submit a pull request to the ToolHive GitHub repository. The ToolHive team
-will review your submission and consider adding it to the registry.
-
-Criteria for adding an MCP server to the ToolHive registry are outlined in
-[Registry criteria](../concepts/registry-criteria.md). These criteria ensure
-that the servers in the registry meet the standards of security, quality, and
-usability that ToolHive aims to uphold.
-
-Registry entries are defined in the
-[`pkg/registry/data/registry.json`](https://github.com/stacklok/toolhive/blob/main/pkg/registry/data/registry.json)
-file in the ToolHive repository.
 
 ## Next steps
 
