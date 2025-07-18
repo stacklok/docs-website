@@ -9,9 +9,10 @@
 | Continue (VS Code)         |    ✅     |         ❌         | v1.0.14+                                             |
 | Continue (JetBrains)       |    ✅     |         ❌         | v1.0.23+                                             |
 | PydanticAI                 |    ✅     |         ❌         | v0.2.18+                                             |
-| ChatGPT Desktop            |    ❌     |         ❌         | No support for HTTP/SSE MCPs                         |
-| Claude Desktop             |    ❌     |         ❌         | No support for HTTP/SSE MCPs ([issue][1])            |
+| ChatGPT Desktop            |    ❌     |         ❌         | See [workaround for STDIO-only clients][4]           |
+| Claude Desktop             |    ❌     |         ❌         | See [workaround for STDIO-only clients][4]           |
+| Kiro                       |    ❌     |         ❌         | See [workaround for STDIO-only clients][4]           |
 
-[1]: https://github.com/orgs/modelcontextprotocol/discussions/16
 [2]: https://github.com/cline/cline/issues/4391
 [3]: /toolhive/reference/client-compatibility.mdx#vs-code-with-copilot
+[4]: /toolhive/reference/client-compatibility#stdio-only-client-configuration
