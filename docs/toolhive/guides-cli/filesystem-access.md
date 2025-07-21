@@ -137,8 +137,11 @@ standard network restrictions.
 If your MCP server can't access the file system as expected:
 
 1. Verify that the paths in your profile or volume flag are correct
-2. Check that the permissions are set correctly (read/write)
-3. Inspect the container's mounted paths to ensure they match your expectations:
+2. Ensure the host paths exist and have the correct permissions
+   - The MCP server runs as a specific user inside the container, so the host
+     paths must be accessible to that user
+3. Check that the permissions are set correctly (read/write)
+4. Inspect the container's mounted paths to ensure they match your expectations:
 
    ```bash
    docker inspect <SERVER_NAME>
@@ -146,6 +149,6 @@ If your MCP server can't access the file system as expected:
 
    Look for the `Mounts` section to see how paths are mapped.
 
-4. Restart the server with the updated profile or corrected volume mount
+5. Restart the server with the updated profile or corrected volume mount
 
 </details>
