@@ -6,24 +6,24 @@ description:
 ---
 
 ToolHive includes a permission system that lets you control an MCP server's
-access to your host's file system and network resources. This is crucial for
-maintaining security and ensuring that MCP servers operate within defined
-boundaries.
+access to your host's file system and network resources. This helps you maintain
+security and ensures that MCP servers operate within defined boundaries.
 
 ## Understanding permission profiles
 
 Permissions are defined using _permission profiles_—JSON files that specify both
 file system and network access rules for an MCP server. Each MCP server can use
-only one permission profile at a time, so you combine all necessary permissions
-into a single profile.
+only one permission profile at a time, so you include all necessary permissions
+in a single profile.
 
 Permission profiles control two types of access:
 
-- **Host file system access** — see [file system access](./filesystem-access.md)
+- **Host file system access** specifies paths on your host that are mounted into
+  the MCP server container — see [file system access](./filesystem-access.md)
   for detailed examples
-- **Network access rules** (outbound connections from the MCP server) — see
-  [network isolation](./network-isolation.mdx) for network architecture details
-  and examples
+- **Network access rules** let you restrict outbound HTTP(S) connectivity from
+  the MCP server — see [network isolation](./network-isolation.mdx) for
+  architecture details and examples
 
 ### Profile structure
 
@@ -42,30 +42,11 @@ Profiles are defined in JSON format and can include the following properties:
       Wildcards are not supported.
     - `allow_port`: List of allowed ports for outbound connections
 
-### Combining file system and network permissions
-
-Since you can specify only one permission profile per MCP server, combine both
-file system and network permissions in the same JSON file when needed:
-
-```json
-{
-  "read": ["/path/to/data"],
-  "write": ["/path/to/output"],
-  "network": {
-    "outbound": {
-      "allow_host": ["api.example.com"],
-      "allow_port": [443]
-    }
-  }
-}
-```
-
 ## Default permissions in the ToolHive registry
 
 ToolHive includes default least-privilege permissions for MCP servers in the
-built-in registry. These defaults are designed to balance functionality and
-security, but you should review them to make sure they meet your specific
-requirements.
+built-in registry. These defaults balance functionality and security, but you
+should review them to make sure they meet your specific requirements.
 
 View these permissions using the following command:
 
@@ -131,15 +112,18 @@ Both built-in profiles provide no file system access by default. To add file
 system permissions, either:
 
 - Use the `--volume` flag to mount specific paths
-- Create a custom profile that combines the network settings with file system
+- Create a custom profile that includes both network settings and file system
   permissions
 
 ## Create a custom permission profile
 
-Create a JSON file with your desired permissions. You can include file system
+You can create a JSON file with your desired permissions. Include file system
 permissions, network permissions, or both in the same profile.
 
 ### Example: Combined file system and network permissions
+
+When your MCP server needs both file access and network connectivity, include
+both types of permissions in a single profile:
 
 ```json title="~/my-server-profile.json"
 {
@@ -157,13 +141,16 @@ permissions, network permissions, or both in the same profile.
 
 This profile:
 
-- Allows read-only access to `/home/user/documents` and `/home/user/config`
-- Allows read and write access to `/home/user/output` (note that `write` also
+- Mounts `/home/user/documents` and `/home/user/config` as read-only paths
+- Mounts `/home/user/output` with read and write access (note that `write` also
   implies read access)
 - Allows outbound HTTPS connections to `api.github.com` and any subdomain of
   `googleapis.com`
 
 ### Example: Network-only permissions
+
+Use this approach when your MCP server needs to make API calls but doesn't
+require file system access:
 
 ```json title="~/network-only-profile.json"
 {
@@ -176,7 +163,16 @@ This profile:
 }
 ```
 
+This profile allows the server to connect to local development servers and
+internal company resources without granting any file system access.
+
+See [network isolation](./network-isolation.mdx) for more details about network
+permissions and how isolation works.
+
 ### Example: File system-only permissions
+
+Use this when your MCP server works with local files but doesn't need network
+access:
 
 ```json title="~/filesystem-only-profile.json"
 {
@@ -185,24 +181,24 @@ This profile:
 }
 ```
 
+This profile grants file system access without defining any network permissions.
+(Note, to actually block network access, use the `--isolate-network` flag when
+running the server.)
+
+See [file system access](./filesystem-access.md) for more details and specific
+examples.
+
 ## Apply a permission profile
 
 ### Using a built-in profile
 
-To run an MCP server with a built-in profile:
+To run an MCP server with unrestricted network access (the default):
 
 ```bash
-# This is equivalent to running a server without the --permission-profile flag
 thv run --permission-profile network <SERVER>
 ```
 
-or
-
-```bash
-thv run --permission-profile none <SERVER>
-```
-
-Add the `--isolate-network` flag to enforce network restrictions:
+To run an MCP server with no network access:
 
 ```bash
 thv run --isolate-network --permission-profile none <SERVER>
@@ -213,7 +209,7 @@ thv run --isolate-network --permission-profile none <SERVER>
 To run an MCP server with your custom profile:
 
 ```bash
-thv run --isolate-network --permission-profile </path/to/custom-profile.json> <SERVER>
+thv run --isolate-network --permission-profile /path/to/custom-profile.json <SERVER>
 ```
 
 ## Security best practices

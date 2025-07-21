@@ -62,12 +62,28 @@ To mount a host file `/home/user/config.json` as read-write in the container at
 thv run --volume /home/user/config.json:/app/config.json <SERVER>
 ```
 
+### Use with built-in network profiles
+
+You can also use the `--volume` flag with built-in network profiles for a
+flexible approach that doesn't require creating a custom profile file.
+
+For example, the AWS Diagram MCP server doesn't need any network connectivity,
+but generates diagrams locally. You can use the built-in `none` profile to block
+all network access and mount a directory for the generated diagrams:
+
+```bash
+thv run --isolate-network --permission-profile none --volume /home/user/aws-diagrams:/tmp/generated-diagrams aws-diagram
+```
+
+This approach is useful when you need simple file system access alongside
+standard network restrictions.
+
 ## Permission profiles
 
 To enable file system access using a permission profile, create a custom profile
 that specifies which host paths the MCP server can read or write. You can
-include file system permissions alone or combine them with network permissions
-in the same profile.
+include file system permissions alone or pair them with network permissions in
+the same profile.
 
 :::note
 
@@ -94,9 +110,9 @@ This profile:
 - Mounts `/home/user/output` as a read-write path (note that `write` also
   implies read access)
 
-### Combined with network permissions
+### Paired with network permissions
 
-You can also combine file system permissions with network access in the same
+You can also pair file system permissions with network access in the same
 profile:
 
 ```json title="combined-permissions.json"
@@ -123,24 +139,20 @@ thv run --permission-profile ./file-permissions.json <SERVER>
 For more details on permission profiles and network permissions, see
 [custom permissions](./custom-permissions.mdx).
 
-### Combining with built-in network profiles
-
-You can also combine the `--volume` flag with built-in network profiles for a
-flexible approach that doesn't require creating a custom profile file. For
-example, to run the `aws-diagram` server with no network access and file system
-write access:
-
-```bash
-thv run --isolate-network --permission-profile none --volume /home/user/aws-diagrams:/tmp/generated-diagrams aws-diagram
-```
-
-This approach is useful when you need simple file system access combined with
-standard network restrictions.
-
 ## Examples
 
 Below are some examples of how to use file system access with some common MCP
 servers in the ToolHive registry.
+
+:::tip
+
+The example MCP servers below don't require network access, and they have
+restricted permission profiles in the ToolHive registry. To further secure these
+examples, add the `--isolate-network` flag to block network access entirely.
+This ensures the MCP server can only access the file system as specified in your
+profile or volume mounts.
+
+:::
 
 ### Filesystem MCP server
 
@@ -204,6 +216,13 @@ container, use the server's `--db` flag to specify the new path:
 ```bash
 thv run --volume ~/my-database.db:/data/my-database.db sqlite --db /data/my-database.db
 ```
+
+## Related information
+
+- [`thv run` command reference](../reference/cli/thv_run.md)
+- [Run MCP servers](./run-mcp-servers.mdx)
+- [Custom permissions](./custom-permissions.mdx)
+- [Network isolation](./network-isolation.mdx)
 
 ## Troubleshooting
 
