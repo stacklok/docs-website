@@ -38,28 +38,28 @@ customize the destination path inside the container.
 
 To enable file system access using the `--volume` flag, you specify the host
 path and the container path in the `thv run` command. The syntax is the same as
-Docker's volume syntax:
+Docker's volume syntax for bind mounts:
 
 ```bash
 thv run --volume <HOST_PATH>:<CONTAINER_PATH>[:ro] <SERVER>
 ```
 
-You can specify multiple `--volume` flags to mount multiple paths.
+You can add the `--volume` flag multiple times to mount multiple paths.
 
 The optional `:ro` suffix makes the volume read-only in the container. This is
 useful for sharing files without letting the MCP server modify them. For
-example, to mount a host directory `/example/data` as read-only in the container
-at `/data`, run:
+example, to mount a host directory `/home/user/data` as read-only in the
+container at `/data`, run:
 
 ```bash
-thv run --volume /example/data:/data:ro <SERVER>
+thv run --volume /home/user/data:/data:ro <SERVER>
 ```
 
-To mount a host file `/example/config.json` as read-write in the container at
-`/config.json`, run:
+To mount a host file `/home/user/config.json` as read-write in the container at
+`/app/config.json`, run:
 
 ```bash
-thv run --volume /example/config.json:/config.json <SERVER>
+thv run --volume /home/user/config.json:/app/config.json <SERVER>
 ```
 
 ## Permission profiles
@@ -68,6 +68,14 @@ To enable file system access using a permission profile, create a custom profile
 that specifies which host paths the MCP server can read or write. You can
 include file system permissions alone or combine them with network permissions
 in the same profile.
+
+:::note
+
+Paths in permission profiles must be absolute paths on your host system.
+Relative paths and expanded paths (like `~/`) are not supported. Always use full
+paths starting from the root directory (e.g., `/home/user/documents`).
+
+:::
 
 ### File system-only profile
 
@@ -128,6 +136,74 @@ thv run --isolate-network --permission-profile none --volume /home/user/aws-diag
 
 This approach is useful when you need simple file system access combined with
 standard network restrictions.
+
+## Examples
+
+Below are some examples of how to use file system access with some common MCP
+servers in the ToolHive registry.
+
+### Filesystem MCP server
+
+The
+[Filesystem MCP server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
+lets you read and write files on your host system. By default, it expects paths
+to be mounted under `/projects` inside the container.
+
+Here's how to mount two directories using the `--volume` flag, with one as
+read-only:
+
+```bash
+thv run --volume ~/documents:/projects/docs:ro --volume ~/code:/projects/code filesystem
+```
+
+You can achieve the same result using a permission profile. Create a file called
+`filesystem-profile.json`:
+
+```json title="filesystem-profile.json"
+{
+  "read": ["/home/user/documents"],
+  "write": ["/home/user/code"]
+}
+```
+
+Since permission profiles mount paths at the same location inside the container
+as they exist on your host, you need to tell the filesystem server which base
+directory to allow. Pass `/home/user` as an argument:
+
+```bash
+thv run --permission-profile ./filesystem-profile.json filesystem -- /home/user
+```
+
+### Memory MCP server
+
+The
+[Memory MCP server](https://github.com/modelcontextprotocol/servers/tree/main/src/memory)
+uses a local knowledge graph to persist information across chats.
+
+To preserve data between runs, you need to mount a file. First, create an empty
+JSON file, then mount it to the expected location inside the container:
+
+```bash
+touch ./memory.json
+thv run --volume ./memory.json:/app/dist/memory.json memory
+```
+
+### SQLite MCP server
+
+The [SQLite MCP server](https://github.com/StacklokLabs/sqlite-mcp) works with
+database files on your host system. By default, it expects to find a database
+file at `/database.db` inside the container:
+
+```bash
+thv run --volume ~/my-database.db:/database.db sqlite
+```
+
+If you want to place the database file in a different location inside the
+container, use the server's `--db` flag to specify the new path:
+
+```bash
+thv run --volume ~/my-database.db:/data/my-database.db sqlite --db /data/my-database.db
+```
 
 ## Troubleshooting
 
