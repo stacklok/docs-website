@@ -17,10 +17,11 @@ To run an MCP server from the [ToolHive registry](./registry.md), use the
 want to run. The server name is the same as its name in the registry.
 
 ```bash
-thv run <server-name>
+thv run <SERVER_NAME>
 ```
 
-For example:
+For example, to run the `fetch` server, which is a simple MCP server that
+fetches website contents:
 
 ```bash
 thv run fetch
@@ -32,18 +33,18 @@ When you run an MCP server from the registry, ToolHive:
 
 1. Pulls the image and launches a container using the configuration from the
    registry.
-2. Launches an HTTP proxy on a random port to forward client requests to the
-   container.
+2. Starts an HTTP proxy process on a random port to forward client requests to
+   the container.
 3. Labels the container so it can be tracked by ToolHive:
    ```yaml
    toolhive: true
-   toolhive-name: <server-name>
+   toolhive-name: <SERVER_NAME>
    ```
 
 :::
 
-See [Running custom MCP servers](#run-a-custom-mcp-server) to run a server that
-is not in the registry.
+See [Run a custom MCP server](#run-a-custom-mcp-server) to run a server that is
+not in the registry.
 
 ## Customize server settings
 
@@ -62,7 +63,7 @@ is automatically generated from the image name when you run a custom server. To
 give your server instance a custom name, use the `--name` option:
 
 ```bash
-thv run --name my-custom-name <server-name>
+thv run --name <FRIENDLY_NAME> <SERVER>
 ```
 
 For example:
@@ -80,7 +81,7 @@ starting the server.
 To pass a secret to an MCP server, use the `--secret` option:
 
 ```bash
-thv run --secret <secret-name>,target=<env-var-name> <server-name>
+thv run --secret <SECRET_NAME>,target=<ENV_VAR_NAME> <SERVER>
 ```
 
 The `target` parameter specifies the name of the environment variable in the MCP
@@ -121,20 +122,20 @@ The filesystem server can now access the contents of `~/code/toolhive` as
 `/projects/toolhive` in the container (the filesystem MCP server expects
 directories to be mounted at `/projects` by default).
 
-### Pass additional arguments
+### Add command-line arguments
 
 Some MCP servers require additional arguments to run correctly. You can pass
 these arguments after the server name in the
 [`thv run`](../reference/cli/thv_run.md) command:
 
 ```bash
-thv run <server-name> -- <additional-args>
+thv run <SERVER> -- <ARGS>
 ```
 
-For example, to run the `fetch` server with custom arguments:
+For example:
 
 ```bash
-thv run fetch -- --arg1 value1 --arg2 value2
+thv run my-mcp-server:latest -- --arg1 value1 --arg2 value2
 ```
 
 Check the MCP server's documentation for the required arguments.
@@ -146,7 +147,7 @@ container. This is the port that client applications connect to. To set a
 specific proxy port instead, use the `--proxy-port` flag:
 
 ```bash
-thv run --proxy-port <port-number> <server-name>
+thv run --proxy-port <PORT_NUMBER> <SERVER>
 ```
 
 ## Run a custom MCP server
@@ -195,7 +196,7 @@ name for the server instance, the transport method, and any additional arguments
 required by the MCP server.
 
 ```bash
-thv run [--name <friendly-name>] [--transport <stdio/sse/streamable-http>] <image-name:tag> -- <server-args>
+thv run [--name <FRIENDLY_NAME>] [--transport <stdio/sse/streamable-http>] <IMAGE_REFERENCE> -- <ARGS>
 ```
 
 For example, to run an MCP server from a Docker image named
@@ -215,7 +216,7 @@ When you run an MCP server from a Docker image, ToolHive:
 1. Pulls the image (`my-mcp-server-image:latest`) and launches a container with
    the options and arguments you specified.
 2. Launches an HTTP proxy on a random port (optionally, add
-   `--proxy-port <port-number>` to specify the port).
+   `--proxy-port <PORT_NUMBER>` to specify the port).
 3. Labels the container so it can be tracked by ToolHive:
    ```yaml
    toolhive: true
@@ -241,7 +242,7 @@ Currently, three protocol schemes are supported:
 - `go://`: For Go-based MCP servers
 
 ```bash
-thv run <protocol>://<package-name>@<version>
+thv run <uvx|npx|go>://<PACKAGE_NAME>@<VERSION|latest>
 ```
 
 You'll likely need to specify additional arguments like the transport method,
@@ -312,6 +313,55 @@ thv run go:///path/to/my-go-project
 
 </TabItem>
 </Tabs>
+
+### Configure network transport
+
+When you run custom MCP servers using the SSE (`--transport sse`) or Streamable
+HTTP (`--transport streamable-http`) transport method, ToolHive automatically
+selects a random port to expose from the container to the host and sets the
+`MCP_PORT` and `FASTMCP_PORT` environment variables in the container.
+
+```mermaid
+graph LR
+    A[MCP client] -->|HTTP request to<br/>proxy port: 5432| B[ToolHive proxy<br/>process<br/>Port: 5432]
+    B -->|Forwards to<br/>host port: 9876| C[<strong>MCP container</strong><br/>Host: 9876 → Container: 7654<br/>ENV: MCP_PORT=7654]
+    C -->|Response| B
+    B -->|Response| A
+```
+
+This is equivalent to running a Docker container with
+`docker run -p <random_host_port>:<random_container_port> ...`
+
+For MCP servers that use a specific port or don't recognize those environment
+variables, specify the container port for ToolHive to expose using the
+`--target-port` flag:
+
+```bash
+thv run --transport streamable-http --target-port <PORT_NUMBER> <SERVER>
+```
+
+ToolHive still maps the container port to a random port on the host to avoid
+conflicts with commonly used ports. This is equivalent to running a Docker
+container with `docker run -p <random_port>:<PORT_NUMBER> ...`
+
+```mermaid
+graph LR
+    A[MCP client] -->|HTTP request to<br/>proxy port: 5432| B[ToolHive proxy<br/>process<br/>Port: 5432]
+    B -->|Forwards to<br/>host port: 9876| C["<strong>MCP container</strong><br/>(--target-port 3000)<br/>Host: 9876 → Container: 3000<br/>ENV: MCP_PORT=3000"]
+    C -->|Response| B
+    B -->|Response| A
+```
+
+Some MCP servers use command-line arguments to specify their transport and port.
+For example, if your server expects the transport type as a positional argument
+and requires the `--port` flag, you can pass it like this:
+
+```bash
+thv run --transport streamable-http --target-port <PORT_NUMBER> <SERVER> -- http --port <PORT_NUMBER>
+```
+
+Check your MCP server's documentation for the required transport and port
+configuration.
 
 ### Add a custom CA certificate
 
@@ -409,7 +459,7 @@ If a server starts but isn't accessible:
 1. Check the server logs:
 
    ```bash
-   thv logs <server-name>
+   thv logs <SERVER_NAME>
    ```
 
 2. Verify the port isn't blocked by a firewall
@@ -433,15 +483,11 @@ If a server crashes or exits unexpectedly:
 2. Check the logs for error messages:
 
    ```bash
-   thv logs <server-name>
+   thv logs <SERVER_NAME>
    ```
 
-3. Try running with a different permission profile:
+3. Check if the server requires any secrets or environment variables
 
-   ```bash
-   thv run --permission-profile network <server-name>
-   ```
-
-4. Check if the server requires any secrets or environment variables
+4. Verify the server's configuration and arguments
 
 </details>
