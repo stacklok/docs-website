@@ -84,6 +84,7 @@ const sidebars: SidebarsConfig = {
             'toolhive/guides-cli/network-isolation',
           ],
         },
+        'toolhive/guides-cli/telemetry-and-metrics',
         {
           type: 'category',
           label: 'Command reference',
@@ -133,6 +134,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'toolhive/concepts/mcp-primer',
         'toolhive/concepts/registry-criteria',
+        'toolhive/concepts/observability',
       ],
     },
 

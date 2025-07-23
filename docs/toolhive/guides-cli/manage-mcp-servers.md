@@ -99,3 +99,4 @@ won't clean up the MCP server's entry in your configured clients. Use
 - [`thv stop` command reference](../reference/cli/thv_stop.md)
 - [`thv restart` command reference](../reference/cli/thv_restart.md)
 - [`thv rm` command reference](../reference/cli/thv_rm.md)
+- [Monitor with OpenTelemetry](../guides-cli/telemetry-and-metrics.md)
