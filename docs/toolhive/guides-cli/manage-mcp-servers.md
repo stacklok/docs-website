@@ -33,14 +33,14 @@ the logs with the `--follow` option, which shows the most recent log entries and
 updates in real time.
 
 ```bash
-thv logs <server-name> [--follow]
+thv logs <SERVER_NAME> [--follow]
 ```
 
 Logs are stored in the ToolHive application directory. The path depends on your
 platform:
 
-- **macOS**: `~/Library/Application Support/toolhive/logs/<server-name>.log`
-- **Linux**: `~/.local/share/toolhive/logs/<server-name>.log`
+- **macOS**: `~/Library/Application Support/toolhive/logs/<SERVER_NAME>.log`
+- **Linux**: `~/.local/share/toolhive/logs/<SERVER_NAME>.log`
 
 The specific log file path is displayed when you start a server with
 [`thv run`](../reference/cli/thv_run.md).
@@ -56,7 +56,7 @@ with the ToolHive CLI and MCP servers.
 To stop a running MCP server:
 
 ```bash
-thv stop <server-name>
+thv stop <SERVER_NAME>
 ```
 
 This stops the server and the associated proxy process, removes the MCP server's
@@ -69,7 +69,7 @@ Add the `--all` flag to stop all running servers.
 To restart a stopped MCP server and add it back to your configured clients:
 
 ```bash
-thv restart <server-name>
+thv restart <SERVER_NAME>
 ```
 
 ### Remove a server
@@ -77,7 +77,7 @@ thv restart <server-name>
 To remove an MCP server:
 
 ```bash
-thv rm <server-name>
+thv rm <SERVER_NAME>
 ```
 
 This removes the container and cleans up the MCP server's entry in your

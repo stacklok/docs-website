@@ -16,7 +16,7 @@
 - [ ] New pages include a frontmatter section with title and description at a minimum
 - [ ] Sidebar navigation (`sidebars.ts`) updated for added, deleted, reordered, or renamed files
 - [ ] Redirects added to `vercel.json` for moved, renamed, or deleted pages (i.e., if the URL slug changed)
-  - Rationale: 404's are the enemy! You can test these in the Vercel preview build (push your branch or run `vercel`)
+  <!-- Rationale: 404's are the enemy! You can test these in the Vercel preview build (push your branch or run `vercel`) -->
 
 #### Reviews
 
