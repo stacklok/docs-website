@@ -6,7 +6,7 @@
 | Cline (VS Code)            |    ✅     |         ✅         | v3.8.5+ (sse only; streamable-http [issue][2]) |
 | Claude Code CLI            |    ✅     |         ✅         | v1.0.27+                                       |
 | Windsurf IDE               |    ✅     |         ✅         |                                                |
-| Windsurf (Jetbrains)       |    ✅     |         ✅         |                                                |
+| Windsurf (JetBrains)       |    ✅     |         ✅         |                                                |
 | GitHub Copilot (JetBrains) |    ✅     |         ❌         | v1.5.47+                                       |
 | Continue (VS Code)         |    ✅     |         ❌         | v1.0.14+                                       |
 | Continue (JetBrains)       |    ✅     |         ❌         | v1.0.23+                                       |
