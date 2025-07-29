@@ -15,7 +15,7 @@ Run an MCP server
 
 Run an MCP server with the specified name, image, or protocol scheme.
 
-ToolHive supports three ways to run an MCP server:
+ToolHive supports four ways to run an MCP server:
 
 1. From the registry:
    $ thv run server-name [-- args...]
@@ -36,6 +36,10 @@ ToolHive supports three ways to run an MCP server:
    or go (Golang). For Go, you can also specify local paths starting
    with './' or '../' to build and run local Go projects.
 
+4. From an exported configuration:
+   $ thv run --from-config <path>
+   Runs an MCP server using a previously exported configuration file.
+
 The container will be started with the specified transport mode and
 permission profile. Additional configuration can be provided via flags.
 
@@ -52,8 +56,10 @@ thv run [flags] SERVER_OR_IMAGE_OR_PROTOCOL [-- ARGS...]
       --enable-audit                          Enable audit logging with default configuration
   -e, --env stringArray                       Environment variables to pass to the MCP server (format: KEY=VALUE)
   -f, --foreground                            Run in foreground mode (block until container exits)
+      --from-config string                    Load configuration from exported file
   -h, --help                                  help for run
       --host string                           Host for the HTTP proxy to listen on (IP or hostname) (default "127.0.0.1")
+      --ignore-globally                       Load global ignore patterns from ~/.config/toolhive/thvignore (default true)
       --image-verification string             Set image verification mode (warn, enabled, disabled) (default "warn")
       --isolate-network                       Isolate the container network from the host (default: false)
       --jwks-allow-private-ip                 Allow JWKS/OIDC endpoints on private IP addresses (use with caution)
@@ -73,12 +79,14 @@ thv run [flags] SERVER_OR_IMAGE_OR_PROTOCOL [-- ARGS...]
       --otel-sampling-rate float              OpenTelemetry trace sampling rate (0.0-1.0) (default 0.1)
       --otel-service-name string              OpenTelemetry service name (defaults to toolhive-mcp-proxy)
       --permission-profile string             Permission profile to use (none, network, or path to JSON file)
+      --print-resolved-overlays               Debug: show resolved container paths for tmpfs overlays
       --proxy-mode string                     Proxy mode for stdio transport (sse or streamable-http) (default "sse")
       --proxy-port int                        Port for the HTTP proxy to listen on (host port)
       --secret stringArray                    Specify a secret to be fetched from the secrets manager and set as an environment variable (format: NAME,target=TARGET)
       --target-host string                    Host to forward traffic to (only applicable to SSE or Streamable HTTP transport) (default "127.0.0.1")
       --target-port int                       Port for the container to expose (only applicable to SSE or Streamable HTTP transport)
       --thv-ca-bundle string                  Path to CA certificate bundle for ToolHive HTTP operations (JWKS, OIDC discovery, etc.)
+      --tools stringArray                     Filter MCP server tools (comma-separated list of tool names)
       --transport string                      Transport mode (sse, streamable-http or stdio)
   -v, --volume stringArray                    Mount a volume into the container (format: host-path:container-path[:ro])
 ```
