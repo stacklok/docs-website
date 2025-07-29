@@ -28,7 +28,7 @@ unacceptable behavior to
 If you think you have found a security vulnerability in the Stacklok Docs
 website, please DO NOT disclose it publicly until we've had a chance to fix it.
 Please don't report security vulnerabilities using GitHub issues; instead,
-please follow this [process](SECURITY.MD).
+please follow this [process](SECURITY.md).
 
 ## How to contribute
 
