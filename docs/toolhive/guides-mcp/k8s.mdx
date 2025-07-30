@@ -1,0 +1,223 @@
+---
+title: Kubernetes MCP server guide
+sidebar_label: Kubernetes (MKP)
+description:
+  Using the Kubernetes (MKP) MCP server with ToolHive for cluster management.
+last_update:
+  author: danbarr
+  date: 2025-09-02
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+## Overview
+
+An MCP server that interacts with Kubernetes clusters, enabling you to manage
+and automate tasks within your Kubernetes environment.
+
+This server is based on the
+[MKP (Model Kontext Protocol)](https://github.com/StacklokLabs/mkp) project,
+which is a native Go implementation of an MCP server for Kubernetes that
+directly interacts with the Kubernetes API.
+
+## Metadata
+
+<MCPMetadata name='k8s' />
+
+## Usage
+
+<Tabs groupId='mode' queryString='mode'>
+<TabItem value='ui' label='UI' default>
+
+Select the `k8s` MCP server in the ToolHive registry. The server requires
+Kubernetes cluster access, so you'll need to configure authentication.
+
+In the **Volumes** section, mount your kubeconfig file to provide cluster
+access. The most common setup is:
+
+- **Host path**: `/home/$USER/.kube` (your local kubeconfig directory)
+- **Container path**: `/home/nonroot/.kube`
+- **Read only access** (recommended for security)
+
+Alternatively, if you have a specific kubeconfig file, mount it directly:
+
+- **Host path**: `/path/to/your/kubeconfig`
+- **Container path**: `/home/nonroot/.kube/config`
+- **Read only access**
+
+:::note[Write Operations]
+
+By default, the server runs in read-only mode. To enable write operations (like
+applying resources), add the `--read-write=true` argument in the **Command
+arguments** section. Use with caution in production environments.
+
+:::
+
+:::tip[Security tip]
+
+Enable outbound network filtering on the **Network Isolation** tab to restrict
+the server's network access to your Kubernetes cluster endpoints only. Add your
+cluster's API server host and port (usually 443 or 6443) to the allowed list.
+
+:::
+
+</TabItem>
+<TabItem value='cli' label='CLI'>
+
+Run with the default configuration, mounting your local `.kube` directory as
+read-only:
+
+```bash
+thv run --volume $HOME/.kube:/home/nonroot/.kube:ro k8s
+```
+
+Mount a specific kubeconfig file:
+
+```bash
+thv run --volume /path/to/kubeconfig:/home/nonroot/.kube/config:ro k8s
+```
+
+Enable write operations (create/update/delete resources) with the `--read-write`
+flag:
+
+```bash
+thv run --volume $HOME/.kube:/home/nonroot/.kube:ro \
+  k8s -- --read-write=true
+```
+
+Disable resource discovery to reduce context size in large clusters:
+
+```bash
+thv run --volume $HOME/.kube:/home/nonroot/.kube:ro \
+  --arg --serve-resources=false \
+  k8s
+```
+
+Enable [network isolation](../guides-cli/network-isolation.mdx) to restrict
+network access to your Kubernetes cluster only. Create a custom permission
+profile:
+
+```json title="k8s-cluster-profile.json"
+{
+  "network": {
+    "outbound": {
+      "insecure_allow_all": false,
+      "allow_host": ["your-cluster-endpoint.com", "kubernetes.default.svc"],
+      "allow_port": [443, 6443]
+    }
+  }
+}
+```
+
+Then run with network isolation:
+
+```bash
+thv run --volume $HOME/.kube:/home/nonroot/.kube:ro \
+  --isolate-network --permission-profile k8s-cluster-profile.json \
+  k8s
+```
+
+</TabItem>
+<TabItem value='k8s' label='Kubernetes'>
+
+This example follows the recommended practice of running the MKP MCP server
+inside the cluster it's managing. A service account is used for authentication.
+
+Create a Kubernetes manifest to deploy the MKP server. This example creates a
+service account with `cluster-admin` permissions for simplicity. In production,
+create a custom ClusterRole with only the minimum permissions required.
+
+```yaml title="mkp.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: mkp
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/mkp/server:0.2.1
+  transport: streamable-http
+  targetPort: 8080
+  port: 8080
+  serviceAccount: mkp-sa
+  permissionProfile:
+    type: builtin
+    name: network
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mkp-sa
+  namespace: toolhive-system
+---
+# NOTE: This ClusterRoleBinding uses cluster-admin for example purposes only.
+# In production, you should create a custom ClusterRole with the minimum
+# permissions required by your MCP server instead of using cluster-admin.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mkp-sa-cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: mkp-sa
+    namespace: toolhive-system
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+```
+
+Apply the manifest to your Kubernetes cluster:
+
+```bash
+kubectl apply -f mkp.yaml
+```
+
+To customize the server's behavior, add CLI arguments to the `spec` section of
+your manifest. For example, to enable write operations:
+
+```yaml title="mkp.yaml"
+spec:
+  # ...
+  args:
+    - '--read-write=true'
+```
+
+</TabItem>
+</Tabs>
+
+## Sample prompts
+
+Here are some sample prompts you can use to interact with the Kubernetes MCP
+server:
+
+- "List all pods in the default namespace"
+- "Show me the status of all deployments across all namespaces"
+- "Get the logs from the pod named `nginx-pod` in the default namespace"
+- "Create a new deployment with 3 replicas of nginx in the production namespace"
+- "Show me all services in the kube-system namespace"
+- "List all nodes in the cluster and show their resource usage"
+- "Get the YAML definition of the deployment named `web-app` in the staging
+  namespace"
+- "Show me all persistent volume claims that are not bound"
+- "Apply this ConfigMap to the development namespace"
+
+## Recommended practices
+
+- **Use read-only mode by default**: Only enable write operations
+  (`--read-write=true`) when necessary and in controlled environments.
+- **Implement proper RBAC**: When using service accounts, follow the principle
+  of least privilege and grant only the minimum permissions required.
+- **Enable network isolation**: Restrict network access to your Kubernetes API
+  endpoints only, especially in production environments.
+- **Monitor resource usage**: The server includes built-in rate limiting, but
+  monitor your cluster's API server load when using with AI agents.
+- **Disable resource discovery in large clusters**: Use
+  `--serve-resources=false` to reduce context size and improve performance in
+  clusters with many resources.
+- **Secure kubeconfig files**: When mounting kubeconfig files, always use
+  read-only mounts and ensure proper file permissions.
+- **Use namespace scoping**: When possible, limit the server's access to
+  specific namespaces rather than cluster-wide permissions.
+- **Enable audit logging**: Configure Kubernetes audit logging to track API
+  calls made by the MCP server for security monitoring.

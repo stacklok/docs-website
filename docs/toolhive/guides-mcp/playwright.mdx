@@ -1,0 +1,273 @@
+---
+title: Playwright MCP server guide
+sidebar_label: Playwright
+description:
+  Using the Playwright MCP server with ToolHive for browser automation.
+last_update:
+  author: danbarr
+  date: 2025-08-27
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+import ThemedImage from '@theme/ThemedImage';
+
+## Overview
+
+The official
+[Playwright MCP server](https://github.com/microsoft/playwright-mcp) provides
+browser automation capabilities using [Playwright](https://playwright.dev). This
+server enables AI agents to interact with web pages through structured
+accessibility snapshots, bypassing the need for screenshots or visually-tuned
+models.
+
+Key features include:
+
+- **Fast and lightweight**: Uses Playwright's accessibility tree instead of
+  pixel-based input
+- **LLM-friendly**: Operates purely on structured data without requiring vision
+  models
+- **Deterministic tool application**: Avoids ambiguity common with
+  screenshot-based approaches
+- **Multi-browser support**: Works with Chrome, Firefox, Safari (WebKit), and
+  Edge
+- **Tab management**: Create, switch between, and manage multiple browser tabs
+- **Persistent sessions**: Maintains login state and browser data between
+  interactions
+
+## Metadata
+
+<MCPMetadata name='playwright' />
+
+## Usage
+
+The Playwright MCP server supports numerous command-line arguments to customize
+its behavior. Common options include:
+
+- **Custom viewport**: Set `--viewport-size` to specify browser dimensions
+  (e.g., `1920,1080`)
+- **Device emulation**: Use `--device` to emulate mobile devices (e.g.,
+  `"iPhone 15"`)
+- **Network isolation**: Configure `--allowed-origins` and `--blocked-origins`
+  to control which websites the browser can access
+- **Output directory**: Specify `--output-dir` to save screenshots, PDFs, and
+  other files to a custom location; mount a host directory for persistence (see
+  examples below)
+
+Refer to the
+[Playwright MCP server documentation](https://github.com/microsoft/playwright-mcp?tab=readme-ov-file#configuration)
+for the full list of configuration options and their descriptions.
+
+:::note[Limitations]
+
+The containerized version of Playwright only supports the Chromium browser in
+headless mode.
+
+:::
+
+<Tabs groupId='mode' queryString='mode'>
+<TabItem value='ui' label='UI' default>
+
+Select the `playwright` MCP server in the ToolHive registry. The server runs
+with default settings that work for most use cases.
+
+To customize the server's behavior, add command-line arguments in the **Command
+arguments** section.
+
+To save browser output files like screenshots and traces, mount a host directory
+in the **Storage volumes** section and add the `--output-dir <container-path>`
+command argument as shown in the screenshot below.
+
+<ThemedImage
+  alt='Filesystem MCP server UI'
+  sources={{
+    light: useBaseUrl('/img/toolhive/mcp-guides/playwright-mcp-ui-light.webp'),
+    dark: useBaseUrl('/img/toolhive/mcp-guides/playwright-mcp-ui-dark.webp'),
+  }}
+  title='Filesystem MCP server UI'
+/>
+
+:::note[Important]
+
+Don't remove the `--port 8931` argument, as the server requires it to function
+correctly in ToolHive.
+
+:::
+
+</TabItem>
+<TabItem value='cli' label='CLI'>
+
+Run with the default configuration using Chromium in headless mode:
+
+```bash
+thv run playwright
+```
+
+Emulate a mobile device for responsive testing:
+
+```bash
+thv run playwright -- --port 8931 --device "iPhone 15"
+```
+
+Restrict access to specific domains:
+
+```bash
+thv run playwright -- --port 8931 --allowed-origins "example.com;trusted-site.com"
+```
+
+Mount a host directory (e.g., `~/playwright-output`) to save browser output
+files like screenshots and traces:
+
+```bash
+mkdir ~/playwright-output
+thv run --volume ~/playwright-output:/browser-output playwright -- --port 8931 --output-dir /browser-output --save-trace --save-session
+```
+
+You can run multiple instances of the server with different configurations by
+giving each a unique name:
+
+```bash
+thv run --name playwright-desktop playwright -- --port 8931 --device "Desktop Chrome" --viewport-size 1920,1080
+thv run --name playwright-iphone playwright -- --port 8931 --device "iPhone 15"
+```
+
+:::note[Important]
+
+Don't remove the `--port 8931` argument, as the server requires it to function
+correctly in ToolHive.
+
+:::
+
+</TabItem>
+<TabItem value='k8s' label='Kubernetes'>
+
+Create a basic Kubernetes manifest to deploy the Playwright MCP server:
+
+```yaml title="playwright.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: playwright
+  namespace: toolhive-system
+spec:
+  image: mcr.microsoft.com/playwright/mcp:v0.0.36
+  transport: streamable-http
+  targetPort: 8931
+  port: 8080
+  args:
+    - '--port'
+    - '8931'
+  permissionProfile:
+    type: builtin
+    name: network
+```
+
+Apply the manifest to your Kubernetes cluster:
+
+```bash
+kubectl apply -f playwright.yaml
+```
+
+For production deployments with network restrictions:
+
+```yaml title="playwright-restricted.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: playwright
+  namespace: toolhive-system
+spec:
+  image: mcr.microsoft.com/playwright/mcp:v0.0.36
+  transport: streamable-http
+  targetPort: 8931
+  port: 8080
+  args:
+    - '--port'
+    - '8931'
+    - '--allowed-origins'
+    - 'example.com;trusted-domain.org'
+  permissionProfile:
+    type: builtin
+    name: network
+```
+
+Mount a persistent volume to save browser output files like screenshots and
+traces:
+
+```yaml {13-14,22-25,28-31} title="playwright-with-volume.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: playwright
+  namespace: toolhive-system
+spec:
+  image: mcr.microsoft.com/playwright/mcp:v0.0.36
+  transport: streamable-http
+  targetPort: 8931
+  port: 8080
+  args:
+    - '--port'
+    - '8931'
+    - '--output-dir'
+    - '/browser-output'
+    - '--save-trace'
+    - '--save-session'
+  permissionProfile:
+    type: builtin
+    name: network
+  podTemplateSpec:
+    spec:
+      volumes:
+        - name: playwright-output
+          persistentVolumeClaim:
+            claimName: playwright-output-claim
+      containers:
+        - name: mcp
+          volumeMounts:
+            - mountPath: /browser-output
+              name: playwright-output
+              readOnly: false
+```
+
+</TabItem>
+</Tabs>
+
+## Sample prompts
+
+Here are some sample prompts you can use to interact with the Playwright MCP
+server:
+
+- "Navigate to https://example.com and take a screenshot of the homepage"
+- "Go to the login page, fill in the username field with 'testuser' and password
+  field with 'password123', then click the login button"
+- "Open https://news.ycombinator.com and get the titles of the top 5 stories"
+- "Navigate to a form on https://httpbin.org/forms/post, fill it out with sample
+  data, and submit it"
+- "Go to https://github.com/microsoft/playwright and check if there are any
+  console errors on the page"
+- "Take a full-page screenshot of https://example.com and save it as
+  'homepage.png'"
+- "Navigate to an e-commerce site, search for 'laptop', and capture information
+  about the first product"
+- "Open multiple tabs, navigate to different websites in each, and then switch
+  between them"
+
+## Recommended practices
+
+- **Use accessibility-first interactions**: The server works best when you
+  describe elements by their accessible names, labels, or text content rather
+  than visual characteristics.
+- **Leverage browser profiles**: For workflows requiring authentication, use
+  persistent profiles or storage state files to maintain login sessions.
+- **Enable network restrictions**: Use `--allowed-origins` and
+  `--blocked-origins` to limit which domains the browser can access, especially
+  in production environments.
+- **Monitor resource usage**: Browser automation can be resource-intensive;
+  consider using headless mode and limiting concurrent sessions.
+- **Handle dynamic content**: Use the `browser_wait_for` tool when dealing with
+  content that loads asynchronously.
+- **Organize output files**: Specify a custom output directory to keep
+  screenshots, PDFs, and traces organized.
+- **Test responsively**: Use device emulation to test how web applications
+  behave on different screen sizes and devices.
