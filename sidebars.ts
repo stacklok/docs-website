@@ -138,6 +138,21 @@ const sidebars: SidebarsConfig = {
       ],
     },
 
+    {
+      type: 'category',
+      label: 'MCP configuration guides',
+      description: 'How to configure MCP servers for different use cases',
+      link: {
+        type: 'doc',
+        id: 'toolhive/guides-mcp/index',
+      },
+      items: [
+        'toolhive/guides-mcp/fetch',
+        'toolhive/guides-mcp/filesystem',
+        'toolhive/guides-mcp/github',
+      ],
+    },
+
     'toolhive/faq',
   ],
 };
