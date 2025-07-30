@@ -8,7 +8,7 @@
 | Windsurf IDE               |    ✅     |         ✅         |                                                |
 | Windsurf (JetBrains)       |    ✅     |         ✅         |                                                |
 | Sourcegraph Amp CLI        |    ✅     |         ✅         |                                                |
-| Sourcegraph Amp (VSCode)   |    ✅     |         ✅         |                                                |
+| Sourcegraph Amp (VS Code)  |    ✅     |         ✅         |                                                |
 | Sourcegraph Amp (Cursor)   |    ✅     |         ✅         |                                                |
 | Sourcegraph Amp (Windsurf) |    ✅     |         ✅         |                                                |
 | GitHub Copilot (JetBrains) |    ✅     |         ❌         | v1.5.47+                                       |
