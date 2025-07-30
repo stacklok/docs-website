@@ -1,44 +1,6 @@
 import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { glob } from 'glob';
-import { CacheEntry } from './types';
-
-/**
- * Cache for storing MCP server data to avoid redundant CLI calls
- */
-export class MCPDataCache {
-  private cache = new Map<string, CacheEntry>();
-  private cacheTimeout: number;
-
-  constructor(cacheTimeout: number = 300000) {
-    // 5 minutes default
-    this.cacheTimeout = cacheTimeout;
-  }
-
-  get(serverName: string): string | null {
-    const entry = this.cache.get(serverName);
-    if (!entry) return null;
-
-    // Check if cache entry is still valid
-    if (Date.now() - entry.timestamp > this.cacheTimeout) {
-      this.cache.delete(serverName);
-      return null;
-    }
-
-    return entry.data;
-  }
-
-  set(serverName: string, data: string): void {
-    this.cache.set(serverName, {
-      data,
-      timestamp: Date.now(),
-    });
-  }
-
-  clear(): void {
-    this.cache.clear();
-  }
-}
 
 /**
  * Scans MDX files for MCPMetadata components and extracts server names

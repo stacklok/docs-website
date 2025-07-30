@@ -1,14 +1,13 @@
 import path from 'path';
 import type { Plugin, LoadContext } from '@docusaurus/types';
 import { PluginOptions, PluginContent } from './types';
-import { MCPDataCache, scanForMCPComponents, fetchServerData } from './utils';
+import { scanForMCPComponents, fetchServerData } from './utils';
 
 export default function mcpMetadataPlugin(
   context: LoadContext,
   options: PluginOptions = {}
 ): Plugin<PluginContent> {
-  const { cacheTimeout = 300000, thvCommand = 'thv' } = options;
-  const cache = new MCPDataCache(cacheTimeout);
+  const { thvCommand = 'thv' } = options;
 
   return {
     name: 'mcp-metadata-plugin',
@@ -31,23 +30,17 @@ export default function mcpMetadataPlugin(
 
       const serverData: Record<string, string> = {};
 
-      // Fetch data for each server (with caching)
+      // Fetch data for each server (no caching - always fresh)
       for (const serverName of mcpServers) {
         try {
-          // Check cache first
-          let data = cache.get(serverName);
-
-          if (!data) {
-            // Fetch fresh data
-            data = await fetchServerData(serverName, thvCommand);
-            cache.set(serverName, data);
-          } else {
-            console.log(`Using cached data for server: ${serverName}`);
-          }
-
+          console.log(`Fetching fresh data for server: ${serverName}`);
+          const data = await fetchServerData(serverName, thvCommand);
+          console.log(
+            `Successfully fetched data for ${serverName}, length: ${data.length} chars`
+          );
           serverData[serverName] = data;
         } catch (error) {
-          console.warn(
+          console.error(
             `Failed to fetch data for MCP server: ${serverName}`,
             error
           );
@@ -57,6 +50,9 @@ export default function mcpMetadataPlugin(
 # Please check that the server exists in the registry and thv command is available`;
         }
       }
+
+      console.log('Final serverData keys:', Object.keys(serverData));
+      console.log('Final serverData:', serverData);
 
       return { mcpServers: serverData };
     },

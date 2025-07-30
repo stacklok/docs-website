@@ -22,7 +22,6 @@ const config: Config = {
     [
       './plugins/mcp-metadata-plugin',
       {
-        cacheTimeout: 300000, // 5 minutes
         thvCommand: 'thv', // Can be customized if thv is in a different path
       },
     ],
