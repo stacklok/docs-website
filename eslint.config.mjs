@@ -35,6 +35,7 @@ export default [
         // Add global components from src/theme/MDXComponents.tsx here
         //Columns: 'readonly',
         //Column: 'readonly',
+        MCPMetadata: 'readonly',
       },
     },
   },

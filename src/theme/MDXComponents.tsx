@@ -7,8 +7,11 @@
 */
 
 import MDXComponents from '@theme-original/MDXComponents';
+import MCPMetadata from '@site/src/components/MCPMetadata';
 
 export default {
   // Reusing the default mapping
   ...MDXComponents,
+  // Add custom components
+  MCPMetadata,
 };
