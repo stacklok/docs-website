@@ -1,7 +1,11 @@
 import path from 'path';
 import type { Plugin, LoadContext } from '@docusaurus/types';
 import { PluginOptions, PluginContent } from './types';
-import { scanForMCPComponents, fetchServerData } from './utils';
+import {
+  scanForMCPComponents,
+  fetchServerData,
+  getMDXGlobPatterns,
+} from './utils';
 
 export default function mcpMetadataPlugin(
   context: LoadContext,
@@ -15,7 +19,7 @@ export default function mcpMetadataPlugin(
     getPathsToWatch() {
       // Watch all MDX files in the docs directory for changes
       const docsPath = path.join(context.siteDir, 'docs');
-      return [`${docsPath}/**/*.mdx`];
+      return getMDXGlobPatterns(docsPath);
     },
 
     async loadContent(): Promise<PluginContent> {
@@ -26,18 +30,20 @@ export default function mcpMetadataPlugin(
 
       // Scan all MDX files for MCPMetadata components
       const mcpServers = await scanForMCPComponents(docsPath);
-      console.log(`Found MCP servers: ${Array.from(mcpServers).join(', ')}`);
+      console.log(
+        `Getting metadata for MCP servers: ${Array.from(mcpServers).join(', ')}`
+      );
 
       const serverData: Record<string, string> = {};
 
-      // Fetch data for each server (no caching - always fresh)
+      // Fetch data for each server
       for (const serverName of mcpServers) {
         try {
-          console.log(`Fetching fresh data for server: ${serverName}`);
+          // console.log(`Fetching data for server: ${serverName}`);
           const data = await fetchServerData(serverName, thvCommand);
-          console.log(
-            `Successfully fetched data for ${serverName}, length: ${data.length} chars`
-          );
+          // console.log(
+          //   `Successfully fetched data for ${serverName}, length: ${data.length} chars`
+          // );
           serverData[serverName] = data;
         } catch (error) {
           console.error(
@@ -50,9 +56,6 @@ export default function mcpMetadataPlugin(
 # Please check that the server exists in the registry and thv command is available`;
         }
       }
-
-      console.log('Final serverData keys:', Object.keys(serverData));
-      console.log('Final serverData:', serverData);
 
       return { mcpServers: serverData };
     },

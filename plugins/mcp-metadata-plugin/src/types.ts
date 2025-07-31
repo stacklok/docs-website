@@ -3,5 +3,5 @@ export interface PluginOptions {
 }
 
 export interface PluginContent {
-  mcpServers: Record<string, string>; // serverName -> raw YAML output
+  mcpServers: Record<string, string>; // serverName -> raw text output
 }

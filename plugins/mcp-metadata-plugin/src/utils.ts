@@ -3,6 +3,18 @@ import { readFileSync } from 'fs';
 import { glob } from 'glob';
 
 /**
+ * Pattern to ignore MDX files starting with underscore
+ */
+export const MDX_IGNORE_PATTERN = '**/_*.mdx';
+
+/**
+ * Get glob patterns for MDX files, excluding files starting with underscore
+ */
+export function getMDXGlobPatterns(docsPath: string): string[] {
+  return [`${docsPath}/**/*.mdx`, `!${docsPath}/${MDX_IGNORE_PATTERN}`];
+}
+
+/**
  * Scans MDX files for MCPMetadata components and extracts server names
  */
 export async function scanForMCPComponents(
@@ -12,7 +24,10 @@ export async function scanForMCPComponents(
 
   try {
     // Find all MDX files in the docs directory
-    const mdxFiles = await glob('**/*.mdx', { cwd: docsPath });
+    const mdxFiles = await glob('**/*.mdx', {
+      cwd: docsPath,
+      ignore: [MDX_IGNORE_PATTERN],
+    });
 
     // Regex to match <MCPMetadata name="serverName" /> components
     const mcpComponentRegex = /<MCPMetadata\s+name=["']([^"']+)["'][^>]*\/?>/g;
@@ -48,7 +63,7 @@ export async function fetchServerData(
 ): Promise<string> {
   try {
     const command = `${thvCommand} registry info ${serverName}`;
-    console.log(`Executing: ${command}`);
+    // console.log(`Executing: ${command}`);
 
     const output = execSync(command, {
       encoding: 'utf-8',

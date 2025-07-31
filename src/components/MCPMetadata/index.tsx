@@ -19,8 +19,12 @@ export default function MCPMetadata({
   if (!pluginData || !pluginData.mcpServers) {
     return (
       <div className='alert alert--info'>
-        <strong>Loading:</strong> MCP metadata plugin is initializing. If this
-        persists, make sure the plugin is properly configured.
+        <strong>Loading MCP metadata...</strong>
+        <p>
+          The MCP metadata plugin is initializing. If this persists, make sure
+          the plugin is properly configured in <code>docusaurus.config.ts</code>
+          .
+        </p>
       </div>
     );
   }
@@ -30,21 +34,32 @@ export default function MCPMetadata({
   if (!serverData) {
     return (
       <div className='alert alert--warning'>
-        <strong>Loading metadata for &quot;{name}&quot;...</strong>
+        <strong>No metadata found for MCP server &quot;{name}&quot;</strong>
         <p>
-          If this persists, the server may not exist in the registry or the thv
-          command may not be available.
+          This usually means the server wasn&apos;t found when the plugin
+          scanned for MCP components.
         </p>
         <details>
-          <summary>Troubleshooting</summary>
+          <summary>How to fix this</summary>
           <ul>
-            <li>Check that the server name &quot;{name}&quot; is correct</li>
-            <li>Verify the server exists in the ToolHive registry</li>
             <li>
-              Ensure the <code>thv</code> command is available in your build
-              environment
+              <strong>If you just added this component:</strong> Restart the
+              development server (<code>npm run start</code>) to detect new MCP
+              components
             </li>
-            <li>Try restarting the development server</li>
+            <li>
+              <strong>Check the server name:</strong> Ensure &quot;{name}&quot;
+              is spelled correctly
+            </li>
+            <li>
+              <strong>Verify server exists:</strong> Run{' '}
+              <code>thv registry info {name}</code> manually to confirm the
+              server exists in the ToolHive registry
+            </li>
+            <li>
+              <strong>Check thv command:</strong> Ensure the <code>thv</code>{' '}
+              command is available in your build environment
+            </li>
           </ul>
         </details>
       </div>
