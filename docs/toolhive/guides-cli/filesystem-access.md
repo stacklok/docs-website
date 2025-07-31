@@ -214,7 +214,7 @@ If you want to place the database file in a different location inside the
 container, use the server's `--db` flag to specify the new path:
 
 ```bash
-thv run --volume ~/my-database.db:/data/my-database.db sqlite --db /data/my-database.db
+thv run --volume ~/my-database.db:/data/my-database.db sqlite -- --db /data/my-database.db
 ```
 
 ## Related information
