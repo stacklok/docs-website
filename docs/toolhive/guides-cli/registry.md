@@ -185,6 +185,6 @@ registry.
 
 - [`thv registry` command reference](../reference/cli/thv_registry.md)
 - [`thv search` command reference](../reference/cli/thv_search.md)
-- [`thv config set-registry-url` command reference](../reference/cli/thv_config_set-registry-url.md)
-- [`thv config get-registry-url` command reference](../reference/cli/thv_config_get-registry-url.md)
-- [`thv config unset-registry-url` command reference](../reference/cli/thv_config_unset-registry-url.md)
+- [`thv config set-registry-url` command reference](../reference/cli/thv_config_set-registry.md)
+- [`thv config get-registry-url` command reference](../reference/cli/thv_config_get-registry.md)
+- [`thv config unset-registry-url` command reference](../reference/cli/thv_config_unset-registry.md)
