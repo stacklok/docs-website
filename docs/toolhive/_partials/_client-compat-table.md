@@ -7,6 +7,10 @@
 | Claude Code CLI            |    ✅     |         ✅         | v1.0.27+                                       |
 | Windsurf IDE               |    ✅     |         ✅         |                                                |
 | Windsurf (JetBrains)       |    ✅     |         ✅         |                                                |
+| Sourcegraph Amp CLI        |    ✅     |         ✅         |                                                |
+| Sourcegraph Amp (VS Code)  |    ✅     |         ✅         |                                                |
+| Sourcegraph Amp (Cursor)   |    ✅     |         ✅         |                                                |
+| Sourcegraph Amp (Windsurf) |    ✅     |         ✅         |                                                |
 | GitHub Copilot (JetBrains) |    ✅     |         ❌         | v1.5.47+                                       |
 | Continue (VS Code)         |    ✅     |         ❌         | v1.0.14+                                       |
 | Continue (JetBrains)       |    ✅     |         ❌         | v1.0.23+                                       |
