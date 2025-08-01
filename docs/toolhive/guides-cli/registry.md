@@ -137,16 +137,24 @@ organizations that want to maintain their own private registry of MCP servers.
 To configure ToolHive to use a remote registry, set the registry URL:
 
 ```bash
-thv config set-registry-url <URL>
+thv config set-registry <URL>
 ```
 
 For example:
 
 ```bash
-thv config set-registry-url https://example.com/registry.json
+thv config set-registry https://example.com/registry.json
 ```
 
-The remote registry must be a JSON file that follows the same format as the
+### Set a local registry file
+
+To configure ToolHive to use a local registry, set the registry file:
+
+```bash
+thv config set-registry <PATH>
+```
+
+The registry must be a JSON file that follows the same format as the
 [built-in registry](https://github.com/stacklok/toolhive/blob/main/pkg/registry/data/registry.json).
 Once you configure a remote registry, all registry commands
 ([`thv registry list`](../reference/cli/thv_registry_list.md),
@@ -154,12 +162,12 @@ Once you configure a remote registry, all registry commands
 [`thv search`](../reference/cli/thv_search.md)) will use the remote registry
 instead of the built-in one.
 
-### Check the current registry URL
+### Check the current registry location
 
-To see which registry URL is currently configured:
+To see which registry (URL or path) is currently configured:
 
 ```bash
-thv config get-registry-url
+thv config get-registry
 ```
 
 If no custom registry is configured, this command indicates that the built-in
@@ -171,7 +179,7 @@ To remove the custom registry configuration and revert to using the built-in
 registry:
 
 ```bash
-thv config unset-registry-url
+thv config unset-registry
 ```
 
 This restores the default behavior of using ToolHive's built-in registry.
