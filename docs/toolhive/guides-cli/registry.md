@@ -126,10 +126,10 @@ and security profile before running it.
   including file system and network access (see
   [Custom permissions](./custom-permissions.mdx))
 
-## Use a remote registry
+## Use a custom registry
 
 By default, ToolHive uses a built-in registry of verified MCP servers. You can
-configure ToolHive to use a custom remote registry instead. This is useful for
+configure ToolHive to use a custom registry instead. This is useful for
 organizations that want to maintain their own private registry of MCP servers.
 
 ### Set a remote registry URL
@@ -193,6 +193,6 @@ registry.
 
 - [`thv registry` command reference](../reference/cli/thv_registry.md)
 - [`thv search` command reference](../reference/cli/thv_search.md)
-- [`thv config set-registry-url` command reference](../reference/cli/thv_config_set-registry.md)
-- [`thv config get-registry-url` command reference](../reference/cli/thv_config_get-registry.md)
-- [`thv config unset-registry-url` command reference](../reference/cli/thv_config_unset-registry.md)
+- [`thv config set-registry` command reference](../reference/cli/thv_config_set-registry.md)
+- [`thv config get-registry` command reference](../reference/cli/thv_config_get-registry.md)
+- [`thv config unset-registry` command reference](../reference/cli/thv_config_unset-registry.md)
