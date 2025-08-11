@@ -65,12 +65,12 @@ flowchart LR
   Proxy -->|Attaches/STDIO| MCP
 ```
 
-### SSE transport flow
+### Streamable HTTP and SSE transport flow
 
-For MCP servers using Server-Sent Events (SSE) transport, the proxy creates both
-a pod and a headless service. This allows direct HTTP/SSE communication between
-the proxy and MCP server while maintaining network isolation and service
-discovery.
+For MCP servers using Server-Sent Events (SSE) or Stremable HTTP transport, the
+proxy creates both a pod and a headless service. This allows direct HTTP/SSE or
+HTTP/Streamable HTTP communication between the proxy and MCP server while
+maintaining network isolation and service discovery.
 
 ```mermaid
 flowchart LR
@@ -87,8 +87,8 @@ flowchart LR
     MCPPod["POD: MCP Server"]
   end
 
-  Client["Client"] -->|HTTP/SSE| Proxy
-  Proxy -->|HTTP/SSE| MCP
+  Client["Client"] -->|HTTP| Proxy
+  Proxy -->|HTTP| MCP
   MCPService --> MCPPod
 ```
 
@@ -117,7 +117,7 @@ metadata:
   namespace: my-namespace # Update with your namespace
 spec:
   image: ghcr.io/stackloklabs/osv-mcp/server
-  transport: sse
+  transport: streamable-http
   port: 8080
   permissionProfile:
     type: builtin
@@ -153,8 +153,9 @@ When you apply an `MCPServer` resource, here's what happens:
    service to handle client connections
 4. The proxy creates the actual `MCPServer` pod containing your specified
    container image
-5. For STDIO transport, the proxy attaches directly to the pod; for SSE
-   transport, a headless service is created for direct pod communication
+5. For STDIO transport, the proxy attaches directly to the pod; for SSE and
+   Streamable HTTP transport, a headless service is created for direct pod
+   communication
 6. Clients can now connect through the service → proxy → MCP server chain to use
    the tools and resources (note: external clients will need an ingress
    controller or similar mechanism to access the service from outside the
@@ -217,9 +218,8 @@ metadata:
   namespace: development # Can be any namespace
 spec:
   image: ghcr.io/stackloklabs/gofetch/server
-  transport: sse
+  transport: streamable-http
   port: 8080
-  targetPort: 8080
   permissionProfile:
     type: builtin
     name: network
@@ -474,8 +474,8 @@ Common causes include:
   selectors
 - **Port configuration**: Verify the `port` field matches the MCP server's
   listening port
-- **Transport mismatch**: Ensure the `transport` field (stdio/sse) matches the
-  MCP server's capabilities
+- **Transport mismatch**: Ensure the `transport` field
+  (stdio/sse/streamable-http) matches the MCP server's capabilities
 - **Network policies**: Check if network policies are blocking communication
 
 </details>
