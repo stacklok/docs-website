@@ -1,23 +1,57 @@
----
-applyTo: '**/*.md,**/*.mdx'
----
+# Project overview
 
-# Writing and markdown instructions for documentation
+This is the user-facing documentation for ToolHive, an open source tool that
+helps you run and manage Model Context Protocol (MCP) servers easily and
+securely. The site is built using Docusaurus and deployed with Vercel.
+
+## Folder structure
+
+- `/docs`: contains the main documentation files. Each file corresponds to a
+  page in the documentation.
+- `/static`: contains static assets like images, icons, and other files that are
+  served directly.
+- `/src`: contains the source code for the website, including components,
+  styles, and customizations.
+
+## Primary configuration files
+
+- `/docusaurus.config.ts`: the main configuration file for Docusaurus, where you
+  define site metadata, theme, plugins, and other settings.
+- `/sidebars.ts`: defines the structure of the documentation sidebar, including
+  which pages appear in the sidebar and their order.
+- `/vercel.json`: configuration file for Vercel deployment, specifying build
+  settings and redirects.
+
+## Libraries and tools
+
+- Docusaurus for the documentation site framework.
+- React and TypeScript for building custom components and pages.
+- npm for package management.
+- Vercel for deployment and hosting.
+
+Code quality tools:
+
+- Prettier for code formatting.
+- markdownlint for enforcing Markdown style conventions.
+- ESLint for JavaScript/TypeScript linting.
 
 ## Audience
 
-The primary audience for this documentation is developers and DevOps
-professionals who want to run and manage Model Context Protocol (MCP) servers
-using ToolHive. They may be new to MCP servers or have some experience with
-them.
+The primary audience is developers and DevOps professionals who want to run and
+manage Model Context Protocol (MCP) servers using ToolHive. They may be new to
+MCP servers or have some experience with them.
 
 The documentation should be accessible to a wide range of technical users,
 including those who may not be familiar with the specific technologies used in
 ToolHive.
 
-## Language, tone, and voice
+## Writing style guide
 
-- The project's official language is US English.
+The primary goal of the documentation is to be clear, concise, and
+user-friendly. The writing style should be approachable and easy to understand,
+while still providing the necessary technical details.
+
+The project's official language is US English.
 
 ### Tone and voice
 
