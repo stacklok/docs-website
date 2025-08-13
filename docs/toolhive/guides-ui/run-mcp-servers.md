@@ -200,6 +200,24 @@ On the configuration form, enter:
 
 Click **Install server** to create and start the MCP server container.
 
+## Mount host files and folders (Volumes)
+
+Some MCP servers need access to files on your machine. You can mount host paths
+directly in the UI.
+
+1. In the server **Install / Configure** dialog, scroll to **Storage volumes**.
+2. Use the **first row** to create your mount:
+   - **Host path** — choose a file or folder on your computer.
+   - **Container path** — where it should appear inside the server (for example,
+     `/data`).
+   - (Optional) uncheck **Read-only** to allow the server to write. By default,
+     mounts are read-only.
+3. If you need additional mounts, click **Add a volume** and repeat.
+4. Click **Install server** to start the server with your volume(s).
+
+This applies to both registry-installed servers and custom servers (Docker image
+or source package).
+
 ## Manage MCP servers
 
 On the **MCP Servers** page, you can manage your installed MCP servers:
