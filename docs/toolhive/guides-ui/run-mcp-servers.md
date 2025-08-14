@@ -210,8 +210,8 @@ directly in the UI.
    - **Host path** — choose a file or folder on your computer.
    - **Container path** — where it should appear inside the server (for example,
      `/data`).
-   - (Optional) uncheck **Read-only** to allow the server to write. By default,
-     mounts are read-only.
+   - By default, mounts are in read-write mode. If you want your volume mount to
+     be **Read-only**, select the "Read-only access" option from the drop-down.
 3. If you need additional mounts, click **Add a volume** and repeat.
 4. Click **Install server** to start the server with your volume(s).
 
