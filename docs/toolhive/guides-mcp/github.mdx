@@ -8,7 +8,11 @@ import TabItem from '@theme/TabItem';
 
 ## Overview
 
-A brief overview of the MCP server, its purpose, and key features.
+The official GitHub MCP server provides access to the GitHub API, allowing AI
+agents to interact with GitHub repositories, issues, pull requests, and more.
+
+Documentation for the GitHub MCP server can be found in the
+[GitHub repository](https://github.com/github/github-mcp-server).
 
 ## Metadata
 
@@ -19,26 +23,152 @@ A brief overview of the MCP server, its purpose, and key features.
 <Tabs groupId='mode' queryString='mode'>
 <TabItem value='ui' label='UI' default>
 
-UI instructions go here
+Select the `github` MCP server in the ToolHive registry. In the **Secrets**
+section, add your GitHub personal access token to authenticate with the GitHub
+API, or select an existing secret that contains the token.
+
+Review the optional environment variables to customize the server's behavior.
+For example, you might want to limit the active toolsets or enable read-only
+mode. Refer to the
+[GitHub MCP server documentation](https://github.com/github/github-mcp-server?tab=readme-ov-file#tool-configuration)
+for the current list of toolsets.
+
+\[Optional\] Enable outbound network filtering on the **Network Isolation** tab
+to restrict the server's network access using the default profile contained in
+the registry.
+
+:::info GitHub Enterprise
+
+If you're working with a GitHub Enterprise instance, enter the instance URL in
+the `GITHUB_HOST` environment variable and update the network isolation settings
+to allow access to the enterprise domain.
+
+:::
 
 </TabItem>
 <TabItem value='cli' label='CLI'>
 
-CLI instructions go here
+Run with the default configuration. ToolHive will prompt you to enter your
+GitHub personal access token:
 
 ```bash
-thv run ...
+thv run github
 ```
+
+Create a secret named `github` containing your GitHub personal access token and
+run the server with the `--secret` flag:
+
+```bash
+thv secret set github
+thv run --secret github,target=GITHUB_PERSONAL_ACCESS_TOKEN github
+```
+
+Or, use the GitHub CLI to populate the secret with your token:
+
+```bash
+gh auth token | thv secret set github
+thv run --secret github,target=GITHUB_PERSONAL_ACCESS_TOKEN github
+```
+
+Enable network isolation using the default profile from the registry
+(appropriate for `github.com`) to restrict the server's network access:
+
+```bash
+thv run --isolate-network github
+```
+
+Limit the active toolsets (useful to avoid context overload) and enable
+read-only mode. Refer to the
+[GitHub MCP server documentation](https://github.com/github/github-mcp-server?tab=readme-ov-file#tool-configuration)
+for the current list of toolsets.
+
+```bash
+thv run -e GITHUB_TOOLSETS=repos,issues,pull_requests -e GITHUB_READ_ONLY=1 github
+```
+
+Enable the MCP server's dynamic tool discovery feature (currently in beta):
+
+```bash
+thv run -e GITHUB_DYNAMIC_TOOLSETS=1 github
+```
+
+:::info GitHub Enterprise
+
+Create a custom permission profile for your GitHub Enterprise instance:
+
+```json title="github-enterprise-profile.json"
+{
+  "network": {
+    "outbound": {
+      "insecure_allow_all": false,
+      "allow_host": ["github.your-enterprise.com"],
+      "allow_port": [443]
+    }
+  }
+}
+```
+
+Then run the server with the profile:
+
+```bash
+thv run \
+  -e GITHUB_HOST=https://github.your-enterprise.com \
+  --isolate-network --permission-profile github-enterprise-profile.json \
+  github
+```
+
+:::
 
 </TabItem>
 <TabItem value='k8s' label='Kubernetes'>
 
-Kubernetes manifest and instructions go here
+Create a Kubernetes secret containing your GitHub personal access token:
 
-```yaml title="fetch.yaml"
+```bash
+kubectl -n toolhive-system create secret generic github-token --from-literal=token=<YOUR_TOKEN>
+```
+
+Create a Kubernetes manifest to deploy the GitHub MCP server using your secret:
+
+```yaml {14-17} title="github.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
+metadata:
+  name: github
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/github/github-mcp-server:latest
+  transport: stdio
+  port: 8080
+  permissionProfile:
+    type: builtin
+    name: network
+  secrets:
+    - name: github-token
+      key: token
+      targetEnvName: GITHUB_PERSONAL_ACCESS_TOKEN
 ```
+
+Apply the manifest to your Kubernetes cluster:
+
+```bash
+kubectl apply -f github.yaml
+```
+
+:::info GitHub Enterprise
+
+If you're working with a GitHub Enterprise instance, add the `GITHUB_HOST`
+environment variable to the manifest:
+
+```yaml
+spec:
+  # Other values...
+  env:
+    - name: GITHUB_HOST
+      value: 'https://github.your-enterprise.com'
+```
+
+:::
 
 </TabItem>
 </Tabs>
