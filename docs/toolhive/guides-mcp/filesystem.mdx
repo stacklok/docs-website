@@ -8,7 +8,13 @@ import TabItem from '@theme/TabItem';
 
 ## Overview
 
-A brief overview of the MCP server, its purpose, and key features.
+The filesystem MCP server provides access to the local filesystem, allowing AI
+agents to read and write files as part of their workflows.
+
+Since most AI agent host applications like IDEs already have access to the local
+filesystem, this MCP server is primarily useful for demonstrating MCP
+capabilities or for headless environments where the host application does not
+provide filesystem access.
 
 ## Metadata
 
@@ -19,26 +25,113 @@ A brief overview of the MCP server, its purpose, and key features.
 <Tabs groupId='mode' queryString='mode'>
 <TabItem value='ui' label='UI' default>
 
-UI instructions go here
+Select the `filesystem` MCP server in the ToolHive registry.
+
+In the **Storage volumes** section, add one or more local files or folders to
+expose to the MCP server. In the drop-down, choose whether to mount the volume
+as read-only or read-write.
+
+:::note
+
+By default, the server expects files to be located in `/projects`. If you use a
+different container path, you must update the command arguments to replace
+`/projects` with your custom path.
+
+:::
+
+![Filesystem MCP server UI](/img/toolhive/mcp-guides/filesystem-mcp-ui-dark.webp)
+
+:::tip
+
+Since the server does not require any network access, optionally enable network
+isolation and do not add any hosts or ports to completely restrict outbound
+network access.
+
+:::
 
 </TabItem>
 <TabItem value='cli' label='CLI'>
 
-CLI instructions go here
+Mount a single directory from the host filesystem to the MCP server using the
+default container path:
 
 ```bash
-thv run ...
+thv run --volume /path/to/host/directory:/projects filesystem
+```
+
+:::note
+
+By default, the server expects files to be located in `/projects`. If you use a
+different container path, you must update the command arguments to replace
+`/projects` with your custom path.
+
+:::
+
+Mount multiple files or directories by repeating the `--volume` flag. This
+example mounts a directory under `/projects` and a file under `/data`, and
+updates the command arguments accordingly:
+
+```bash
+thv run \
+  --volume /path/to/host/directory1:/projects/dir1 \
+  --volume /path/to/host/file.txt:/data/file.txt:ro \
+  filesystem -- /projects /data
 ```
 
 </TabItem>
 <TabItem value='k8s' label='Kubernetes'>
 
-Kubernetes manifest and instructions go here
+Create a Kubernetes manifest to deploy the Filesys MCP server with a persistent
+volume claim.
 
-```yaml title="fetch.yaml"
+Update the `podTemplateSpec` section to include your specific volume claim and
+mount path:
+
+```yaml {15-18,23-26} title="filesystem.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
+metadata:
+  name: filesystem
+  namespace: toolhive-system
+spec:
+  image: mcp/filesystem:latest
+  transport: stdio
+  port: 8080
+  permissionProfile:
+    type: builtin
+    name: none
+  args:
+    - /projects
+  podTemplateSpec:
+    spec:
+      volumes:
+        - name: my-mcp-data
+          persistentVolumeClaim:
+            claimName: my-mcp-data-claim
+      containers:
+        - name: mcp
+          volumeMounts:
+            - mountPath: /projects/my-mcp-data
+              name: my-mcp-data
+              readOnly: true
+```
+
+:::note
+
+If you change the mount path from `/projects`, you must also update the `args`
+section to match the new path.
+
+:::
+
+Apply the manifest to your Kubernetes cluster:
+
+```bash
+kubectl apply -f filesystem.yaml
 ```
 
 </TabItem>
 </Tabs>
+
+## Related information
+
+- [File system access](../guides-cli/filesystem-access.md)
