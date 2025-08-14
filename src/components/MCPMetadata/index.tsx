@@ -5,13 +5,11 @@ import { PluginContent } from '../../../plugins/mcp-metadata-plugin/src/types';
 
 interface MCPMetadataProps {
   name: string;
-  showTitle?: boolean;
   className?: string;
 }
 
 export default function MCPMetadata({
   name,
-  showTitle = true,
   className,
 }: MCPMetadataProps): React.ReactElement {
   const pluginData = usePluginData('mcp-metadata-plugin') as PluginContent;
@@ -82,8 +80,7 @@ export default function MCPMetadata({
 
   return (
     <div className={className}>
-      {showTitle && <h2>Metadata</h2>}
-      <CodeBlock language='yaml' title='Server Metadata'>
+      <CodeBlock language='yaml' title='Server metadata'>
         {serverData}
       </CodeBlock>
     </div>
