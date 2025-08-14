@@ -66,6 +66,8 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-cli/install',
         'toolhive/guides-cli/registry',
         'toolhive/guides-cli/run-mcp-servers',
+        'toolhive/guides-cli/build-containers',
+        'toolhive/guides-cli/advanced-cicd',
         'toolhive/guides-cli/manage-mcp-servers',
         'toolhive/guides-cli/secrets-management',
         'toolhive/guides-cli/client-configuration',
