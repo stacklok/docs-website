@@ -50,7 +50,10 @@ On the configuration form, enter the following details:
 
    :::
 
-3. **Secrets** and **environment variables** expected by the server are
+3. To give the MCP server **access to the file system**, use the
+   [Volume mount](#volumes) feature. [Optional]
+
+4. **Secrets** and **environment variables** expected by the server are
    populated from the registry automatically. Required values are marked with an
    asterisk (\*).
    1. **Secrets**: Enter a value to create a new secret or select an existing
@@ -138,7 +141,10 @@ On the configuration form, enter:
    application-specific parameters. Refer to the MCP server's documentation for
    details.
 
-6. Any **secrets** or **environment variables** required by the MCP server.
+6. To give the MCP server **access to the file system**, use the
+   [Volume mount](#volumes) feature. [Optional]
+
+7. Any **secrets** or **environment variables** required by the MCP server.
    [Optional]\
    These might include API tokens, configuration options, or other sensitive
    data.
@@ -190,7 +196,10 @@ On the configuration form, enter:
    application-specific parameters. Refer to the MCP server's documentation for
    details.
 
-7. Any **secrets** or **environment variables** required by the MCP server.
+7. To give the MCP server **access to the file system**, use the
+   [Volume mount](#volumes) feature. [Optional]
+
+8. Any **secrets** or **environment variables** required by the MCP server.
    [Optional]\
    These might include API tokens, configuration options, or other sensitive
    data.
@@ -200,7 +209,7 @@ On the configuration form, enter:
 
 Click **Install server** to create and start the MCP server container.
 
-## Mount host files and folders (Volumes)
+## Mount host files and folders (Volumes) {#volumes}
 
 Some MCP servers need access to files on your machine. You can mount host paths
 directly in the UI.
