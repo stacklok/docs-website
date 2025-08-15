@@ -19,11 +19,11 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Tutorials',
+      label: 'Quickstarts',
       description: 'Step-by-step guides to get started with ToolHive',
       link: {
         type: 'generated-index',
-        slug: 'toolhive/tutorials',
+        slug: 'toolhive/quickstart',
         description:
           'Learn how to use ToolHive with these step-by-step tutorials',
       },
@@ -136,6 +136,20 @@ const sidebars: SidebarsConfig = {
         'toolhive/concepts/registry-criteria',
         'toolhive/concepts/observability',
       ],
+    },
+
+    {
+      type: 'category',
+      label: 'Tutorials',
+      description: 'Step-by-step guides to using ToolHive effectively',
+      link: {
+        type: 'generated-index',
+        slug: 'toolhive/tutorials',
+        description:
+          'Learn how to use ToolHive with these step-by-step tutorials',
+      },
+      collapsed: false,
+      items: ['toolhive/tutorials/custom-registry'],
     },
 
     'toolhive/faq',
