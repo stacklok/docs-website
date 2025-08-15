@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { glob } from 'glob';

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 import path from 'path';
 import type { Plugin, LoadContext } from '@docusaurus/types';
 import { PluginOptions, PluginContent } from './types';
