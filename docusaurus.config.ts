@@ -63,9 +63,8 @@ const config: Config = {
         theme: {
           customCss: [require.resolve('./src/css/custom.css')],
         },
-        gtag: {
-          trackingID: 'G-20VGJZ4D38',
-          anonymizeIP: true,
+        googleTagManager: {
+          containerId: 'GTM-KKJFZX3J',
         },
       } satisfies Preset.Options,
     ],
