@@ -11,6 +11,18 @@ IMPORT_DIR="./imports"
 DOCS_DIR="./docs"
 STATIC_DIR="./static"
 
+CLI_DOCS_SRC="${IMPORT_DIR}/toolhive/docs/cli"
+CLI_DOCS_DST="${DOCS_DIR}/toolhive/reference/cli"
+
+API_SPEC_SRC="${IMPORT_DIR}/toolhive/docs/server/swagger.yaml"
+API_SPEC_DST="${STATIC_DIR}/api-specs/toolhive-api.yaml"
+
+REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive/pkg/registry/data/schema.json"
+REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/toolhive-registry-schema.json"
+
+CRD_API_SRC="${IMPORT_DIR}/toolhive/docs/operator/crd-api.md"
+CRD_API_DST="${STATIC_DIR}/api-specs/toolhive-crd-api.md"
+
 # Test the required directories exist
 if [ ! -d "$IMPORT_DIR" ]; then
     mkdir -p "$IMPORT_DIR"
@@ -76,49 +88,59 @@ if [[ "$RELEASE_VERSION" =~ ^v.* ]]; then
     echo "Processing main CLI release: $RELEASE_VERSION"
     
     ## CLI reference
-    echo "Updating ToolHive CLI reference documentation in ${DOCS_DIR}/toolhive/reference/cli"
+    echo "Updating ToolHive CLI reference documentation in ${CLI_DOCS_DST}"
     
     # Remove existing CLI reference documentation files in case we remove any commands
-    rm -f ${DOCS_DIR}/toolhive/reference/cli/thv_*.md
+    rm -f ${CLI_DOCS_DST}/thv_*.md
     
     # Copy CLI documentation
-    if [ -d "${IMPORT_DIR}/toolhive/docs/cli" ]; then
-        cp -r ${IMPORT_DIR}/toolhive/docs/cli/* ${DOCS_DIR}/toolhive/reference/cli
+    if [ -d "${CLI_DOCS_SRC}" ]; then
+        cp -r ${CLI_DOCS_SRC}/* ${CLI_DOCS_DST}
         echo "CLI reference documentation updated successfully"
     else
-        echo "Warning: CLI documentation not found in ${IMPORT_DIR}/toolhive/docs/cli"
+        echo "Warning: CLI documentation not found in ${CLI_DOCS_SRC}"
     fi
     
     ## API reference
-    echo "Updating ToolHive API reference in ${STATIC_DIR}/api-specs"
+    echo "Updating ToolHive API reference at ${API_SPEC_DST}"
     
     # Copy API specification
-    if [ -f "${IMPORT_DIR}/toolhive/docs/server/swagger.yaml" ]; then
-        cp ${IMPORT_DIR}/toolhive/docs/server/swagger.yaml ${STATIC_DIR}/api-specs/toolhive-api.yaml
+    if [ -f "${API_SPEC_SRC}" ]; then
+        cp ${API_SPEC_SRC} ${API_SPEC_DST}
         echo "API reference updated successfully"
     else
-        echo "Warning: API specification not found in ${IMPORT_DIR}/toolhive/docs/server/swagger.yaml"
+        echo "Warning: API specification not found at ${API_SPEC_SRC}"
     fi
     
-    elif [[ "$RELEASE_VERSION" =~ ^toolhive-operator-crds-.* ]]; then
+    ## Registry schema
+    echo "Updating ToolHive registry JSON schema at ${REGISTRY_SCHEMA_DST}"
+    
+    if [ -f "${REGISTRY_SCHEMA_SRC}" ]; then
+        cp ${REGISTRY_SCHEMA_SRC} ${REGISTRY_SCHEMA_DST}
+        echo "Registry JSON schema updated successfully"
+    else
+        echo "Warning: Registry schema not found at ${REGISTRY_SCHEMA_SRC}"
+    fi
+
+elif [[ "$RELEASE_VERSION" =~ ^toolhive-operator-crds-.* ]]; then
     echo "Processing operator CRD release: $RELEASE_VERSION"
     
     ## CRD API reference
     echo "Updating ToolHive CRD API reference in ${STATIC_DIR}/api-specs"
     
     # Copy CRD API documentation
-    if [ -f "${IMPORT_DIR}/toolhive/docs/operator/crd-api.md" ]; then
+    if [ -f "${CRD_API_SRC}" ]; then
         # Remove h1 title from the CRD API documentation, Docusaurus will use the title from the front matter
-        sed '1{/^# /d;}' ${IMPORT_DIR}/toolhive/docs/operator/crd-api.md > ${STATIC_DIR}/api-specs/crd-api.md
+        sed '1{/^# /d;}' ${CRD_API_SRC} > ${CRD_API_DST}
         echo "CRD API reference updated successfully"
     else
-        echo "Warning: CRD API documentation not found in ${IMPORT_DIR}/toolhive/docs/operator/crd-api.md"
+        echo "Warning: CRD API documentation not found at ${CRD_API_SRC}"
     fi
     
     elif [[ "$RELEASE_VERSION" =~ ^toolhive-operator- ]]; then
     echo "Processing main operator release: $RELEASE_VERSION"
     echo "Placeholder: No specific processing implemented for this release type yet"
-    
+
 else
     echo "Unknown release type for tag: $RELEASE_VERSION"
     echo "Supported release types:"
