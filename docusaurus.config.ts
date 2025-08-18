@@ -139,6 +139,29 @@ const config: Config = {
           ],
         },
         {
+          type: 'dropdown',
+          label: 'References',
+          position: 'left',
+          items: [
+            {
+              label: 'ToolHive CLI commands',
+              to: 'toolhive/reference/cli/thv',
+            },
+            {
+              label: 'ToolHive API',
+              to: 'toolhive/reference/api',
+            },
+            {
+              label: 'ToolHive registry schema',
+              to: 'toolhive/reference/registry-schema',
+            },
+            {
+              label: 'ToolHive Operator CRD',
+              to: 'toolhive/reference/crd-spec',
+            },
+          ],
+        },
+        {
           href: 'https://github.com/stacklok',
           className: 'fa-brands fa-github fa-lg',
           position: 'right',
