@@ -62,6 +62,12 @@ thv stop <SERVER_NAME>
 This stops the server and the associated proxy process, removes the MCP server's
 entry from your configured clients, but keeps the container for future use.
 
+Add the `--group` flag to stop all servers in a specific group:
+
+```bash
+thv stop --group <GROUP_NAME>
+```
+
 Add the `--all` flag to stop all running servers.
 
 ### Restart a server
@@ -70,6 +76,12 @@ To restart a stopped MCP server and add it back to your configured clients:
 
 ```bash
 thv restart <SERVER_NAME>
+```
+
+Add the `--group` flag to restart all servers in a specific group:
+
+```bash
+thv restart --group <GROUP_NAME>
 ```
 
 ### Remove a server
@@ -83,6 +95,12 @@ thv rm <SERVER_NAME>
 This removes the container and cleans up the MCP server's entry in your
 configured clients. If the server is still running, it will be stopped as part
 of the removal.
+
+Add the `--group` flag to remove all servers in a specific group:
+
+```bash
+thv rm --group <GROUP_NAME>
+```
 
 :::note
 
