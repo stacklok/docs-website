@@ -132,6 +132,15 @@ By default, ToolHive uses a built-in registry of verified MCP servers. You can
 configure ToolHive to use a custom registry instead. This is useful for
 organizations that want to maintain their own private registry of MCP servers.
 
+The registry is a JSON file that follows the
+[ToolHive registry schema](../reference/registry-schema.mdx). Once you configure
+a custom registry, ToolHive uses it for all commands that interact with the
+registry, such as `thv registry list`, `thv registry info`, and `thv run`.
+
+Refer to the
+[built-in registry file](https://github.com/stacklok/toolhive/blob/main/pkg/registry/data/registry.json)
+for examples of MCP server entries.
+
 ### Set a remote registry URL
 
 To configure ToolHive to use a remote registry, set the registry URL:
@@ -153,14 +162,6 @@ To configure ToolHive to use a local registry, set the registry file:
 ```bash
 thv config set-registry <PATH>
 ```
-
-The registry must be a JSON file that follows the same format as the
-[built-in registry](https://github.com/stacklok/toolhive/blob/main/pkg/registry/data/registry.json).
-Once you configure a remote registry, all registry commands
-([`thv registry list`](../reference/cli/thv_registry_list.md),
-[`thv registry info`](../reference/cli/thv_registry_info.md),
-[`thv search`](../reference/cli/thv_search.md)) will use the remote registry
-instead of the built-in one.
 
 ### Check the current registry location
 
@@ -188,6 +189,8 @@ This restores the default behavior of using ToolHive's built-in registry.
 
 See [Run MCP servers](./run-mcp-servers.mdx) to run an MCP server from the
 registry.
+
+Learn how to [create a custom MCP registry](../tutorials/custom-registry.mdx).
 
 ## Related information
 

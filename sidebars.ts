@@ -19,13 +19,13 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Tutorials',
+      label: 'Get started',
       description: 'Step-by-step guides to get started with ToolHive',
       link: {
         type: 'generated-index',
-        slug: 'toolhive/tutorials',
+        slug: 'toolhive/quickstart',
         description:
-          'Learn how to use ToolHive with these step-by-step tutorials',
+          'Learn how to use ToolHive with these step-by-step tutorials.',
       },
       collapsed: false,
       items: [
@@ -129,12 +129,33 @@ const sidebars: SidebarsConfig = {
         type: 'generated-index',
         slug: 'toolhive/concepts',
         description:
-          'Learn about the key concepts behind ToolHive and the Model Context Protocol (MCP)',
+          'Learn about the key concepts behind ToolHive and the Model Context Protocol (MCP).',
       },
       items: [
         'toolhive/concepts/mcp-primer',
         'toolhive/concepts/registry-criteria',
         'toolhive/concepts/observability',
+      ],
+    },
+
+    {
+      type: 'category',
+      label: 'Tutorials',
+      description: 'Step-by-step guides to using ToolHive effectively',
+      link: {
+        type: 'generated-index',
+        slug: 'toolhive/tutorials',
+        description:
+          'Learn how to use ToolHive with these step-by-step tutorials.',
+      },
+      collapsed: false,
+      items: [
+        {
+          type: 'link',
+          href: '/toolhive/quickstart',
+          label: 'Quickstart guides',
+        },
+        'toolhive/tutorials/custom-registry',
       ],
     },
 
