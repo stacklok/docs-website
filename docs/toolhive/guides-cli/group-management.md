@@ -46,7 +46,7 @@ When running an MCP server, specify the group using the `--group` flag:
 
 ```bash
 thv run --group development fetch
-thv run --group production filesystem --volume /prod/repo:/workspace:ro
+thv run --group production filesystem --volume /prod/repo:/projects:ro
 ```
 
 :::info What's happening?
@@ -58,6 +58,15 @@ When you specify a group:
 
 :::
 
+A single workload can only belong to one group at a time. To run multiple
+instances of the same MCP server in different groups, use a unique name for each
+instance:
+
+```bash
+thv run --group development --name fetch-dev fetch
+thv run --group production --name fetch-prod fetch
+```
+
 ## Configure client access to groups
 
 You can configure MCP clients to access specific groups, giving you control over
@@ -68,7 +77,7 @@ which tools are available in different contexts.
 When registering a client, you can specify which group it should access:
 
 ```bash
-thv client register --group development
+thv client register <CLIENT_NAME> --group development
 ```
 
 This configures the client to only access servers in the `development` group.
