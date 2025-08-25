@@ -47,7 +47,7 @@ const config: Config = {
     mermaid: true,
   },
 
-  themes: ['@docusaurus/theme-mermaid'],
+  themes: ['@docusaurus/theme-mermaid', 'docusaurus-json-schema-plugin'],
 
   presets: [
     [
@@ -63,9 +63,8 @@ const config: Config = {
         theme: {
           customCss: [require.resolve('./src/css/custom.css')],
         },
-        gtag: {
-          trackingID: 'G-20VGJZ4D38',
-          anonymizeIP: true,
+        googleTagManager: {
+          containerId: 'GTM-KKJFZX3J',
         },
       } satisfies Preset.Options,
     ],
@@ -136,6 +135,29 @@ const config: Config = {
             {
               label: 'Kubernetes Operator',
               to: 'toolhive/guides-k8s',
+            },
+          ],
+        },
+        {
+          type: 'dropdown',
+          label: 'References',
+          position: 'left',
+          items: [
+            {
+              label: 'ToolHive CLI commands',
+              to: 'toolhive/reference/cli/thv',
+            },
+            {
+              label: 'ToolHive API',
+              to: 'toolhive/reference/api',
+            },
+            {
+              label: 'ToolHive registry schema',
+              to: 'toolhive/reference/registry-schema',
+            },
+            {
+              label: 'ToolHive Operator CRD',
+              to: 'toolhive/reference/crd-spec',
             },
           ],
         },
