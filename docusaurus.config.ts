@@ -74,6 +74,23 @@ const config: Config = {
     },
   },
 
+  future: {
+    v4: {
+      removeLegacyPostBuildHeadAttribute: true,
+      useCssCascadeLayers: true,
+    },
+    experimental_faster: {
+      swcJsLoader: false, // Disabled due to https://github.com/rohit-gohri/redocusaurus/issues/388
+      swcJsMinimizer: true,
+      swcHtmlMinimizer: true,
+      lightningCssMinimizer: true,
+      rspackBundler: true,
+      rspackPersistentCache: true,
+      ssgWorkerThreads: true,
+      mdxCrossCompilerCache: true,
+    },
+  },
+
   themes: ['@docusaurus/theme-mermaid', 'docusaurus-json-schema-plugin'],
 
   presets: [
