@@ -54,7 +54,7 @@ By default, the service name is set to `toolhive-mcp-proxy`, and the sampling
 rate is `0.1` (10%). You can customize these settings with additional
 [configuration options](#configuration-options).
 
-:::tip Recommendation
+:::tip[Recommendation]
 
 Set the `--otel-service-name` flag to a meaningful name for each MCP server.
 This helps you identify the server in your observability backend.

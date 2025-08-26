@@ -45,6 +45,11 @@ const config: Config = {
 
   markdown: {
     mermaid: true,
+    mdx1Compat: {
+      comments: false,
+      admonitions: false,
+      headingIds: true,
+    },
   },
 
   themes: ['@docusaurus/theme-mermaid', 'docusaurus-json-schema-plugin'],

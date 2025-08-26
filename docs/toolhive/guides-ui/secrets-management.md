@@ -48,7 +48,7 @@ Your ToolHive secrets are managed on the **Secrets** page. Here you can:
   - Update the secret value
   - Delete the secret
 
-:::important
+:::warning
 
 If you delete a secret that is in use by an MCP server, the server will continue
 running but you will not be able to restart it if stopped. You'll need to remove

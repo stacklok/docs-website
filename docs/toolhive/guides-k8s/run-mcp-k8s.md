@@ -137,7 +137,7 @@ Apply the resource:
 kubectl apply -f my-mcpserver.yaml
 ```
 
-:::info What's happening?
+:::info[What's happening?]
 
 When you apply an `MCPServer` resource, here's what happens:
 
@@ -243,7 +243,7 @@ spec:
       memory: '64Mi'
 ```
 
-:::info Container name requirement
+:::info[Container name requirement]
 
 When customizing containers in `podTemplateSpec`, you must use `name: mcp` for
 the main container. This ensures the proxy can properly manage the MCP server
@@ -367,7 +367,7 @@ to learn how to connect to MCP servers using different clients.
 - [Custom permissions](../guides-cli/custom-permissions.mdx) - Configure
   permission profiles
 
-:::important
+:::info[Important]
 
 Outbound network filtering using permission profiles isn't currently implemented
 in the ToolHive Operator. This is a roadmap feature planned for future releases.

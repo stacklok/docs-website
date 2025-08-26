@@ -17,7 +17,7 @@ Groups let you organize MCP servers and control client access:
 - **Environment management**: Organize servers by development stage
 - **Client customization**: Configure different tool sets for different clients
 
-:::info What's the default behavior?
+:::info[What's the default behavior?]
 
 All MCP servers are automatically assigned to the `default` group unless you
 specify otherwise. MCP clients configured without a specific group can access
@@ -49,7 +49,7 @@ thv run --group development fetch
 thv run --group production filesystem --volume /prod/repo:/projects:ro
 ```
 
-:::info What's happening?
+:::info[What's happening?]
 
 When you specify a group:
 

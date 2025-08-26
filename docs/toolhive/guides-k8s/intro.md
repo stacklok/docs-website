@@ -8,7 +8,7 @@ The ToolHive Kubernetes operator manages MCP servers in Kubernetes clusters. It
 lets you define MCP servers as Kubernetes resources and automates their
 deployment and management.
 
-:::info Experimental
+:::info[Experimental]
 
 The Kubernetes operator is still under active development and isn't recommended
 for production use cases yet. Specifically, the `MCPServer` Custom Resource
