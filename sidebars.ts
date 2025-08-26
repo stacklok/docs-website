@@ -66,6 +66,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-cli/install',
         'toolhive/guides-cli/registry',
         'toolhive/guides-cli/run-mcp-servers',
+        'toolhive/guides-cli/build-containers',
         'toolhive/guides-cli/manage-mcp-servers',
         'toolhive/guides-cli/group-management',
         'toolhive/guides-cli/secrets-management',
@@ -86,6 +87,7 @@ const sidebars: SidebarsConfig = {
           ],
         },
         'toolhive/guides-cli/telemetry-and-metrics',
+        'toolhive/guides-cli/advanced-cicd',
         {
           type: 'category',
           label: 'Command reference',

@@ -1,0 +1,390 @@
+---
+title: Build MCP server containers
+description:
+  How to build MCP server containers without running them using the ToolHive
+  CLI.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+This guide explains how to use the [`thv build`](../reference/cli/thv_build.md)
+command to build MCP server containers from protocol schemes without running
+them. This is useful for pre-building containers for Kubernetes deployments,
+CI/CD pipelines, and container registry workflows.
+
+## Overview
+
+The `thv build` command allows you to build containers from protocol schemes
+(`uvx://`, `npx://`, `go://`) without immediately running them. This provides
+several benefits:
+
+- **Pre-build containers** for faster deployment in Kubernetes environments
+- **Separate build and run phases** in CI/CD pipelines
+- **Custom image tagging** for container registry workflows
+- **Dockerfile generation** for inspection and customization
+- **Build validation** before deployment
+
+## Basic usage
+
+To build a container from a protocol scheme:
+
+```bash
+thv build <PROTOCOL_SCHEME>
+```
+
+For example:
+
+```bash
+# Build a Python MCP server using uvx
+thv build uvx://mcp-server-git
+
+# Build a Node.js MCP server using npx
+thv build npx://@modelcontextprotocol/server-filesystem
+
+# Build a Go MCP server
+thv build go://github.com/example/my-mcp-server@latest
+```
+
+:::info What's happening?
+
+When you run `thv build`, ToolHive:
+
+1. Detects the protocol scheme and extracts the package reference
+2. Generates a Dockerfile based on the appropriate template
+3. Builds a Docker image with the package installed
+4. Tags the image with an auto-generated name or your custom tag
+5. Displays the built image name for use with other tools
+
+:::
+
+## Custom image tagging
+
+Use the `--tag` (or `-t`) flag to specify a custom name and tag for the built
+image:
+
+```bash
+thv build --tag my-custom-name:latest npx://@modelcontextprotocol/server-filesystem
+```
+
+This is particularly useful for:
+
+- **Container registries**: Tag images for pushing to registries
+- **Kubernetes deployments**: Use predictable image names in manifests
+- **Version management**: Tag images with specific versions
+
+### Tagging examples
+
+<Tabs groupId='tagging' queryString='tagging'>
+<TabItem value='registry' label='Container Registry' default>
+
+Build and tag for pushing to a container registry:
+
+```bash
+# Build and tag for Docker Hub
+thv build --tag myusername/mcp-git-server:v1.0.0 uvx://mcp-server-git
+
+# Build and tag for GitHub Container Registry
+thv build --tag ghcr.io/myorg/mcp-filesystem:latest npx://@modelcontextprotocol/server-filesystem
+
+# Push to registry
+docker push ghcr.io/myorg/mcp-filesystem:latest
+```
+
+</TabItem>
+<TabItem value='kubernetes' label='Kubernetes'>
+
+Build images with predictable names for Kubernetes manifests:
+
+```bash
+# Build with a consistent tag
+thv build --tag mcp-servers/git-server:stable uvx://mcp-server-git
+
+# Use in Kubernetes manifest
+# spec:
+#   image: mcp-servers/git-server:stable
+```
+
+</TabItem>
+<TabItem value='versioning' label='Version Management'>
+
+Build multiple versions of the same server:
+
+```bash
+# Build different versions
+thv build --tag mcp-git:v1.0.0 uvx://mcp-server-git@1.0.0
+thv build --tag mcp-git:v1.1.0 uvx://mcp-server-git@1.1.0
+thv build --tag mcp-git:latest uvx://mcp-server-git@latest
+```
+
+</TabItem>
+</Tabs>
+
+## Protocol schemes
+
+The `thv build` command supports the same protocol schemes as
+[`thv run`](./run-mcp-servers.mdx#run-a-server-using-protocol-schemes):
+
+### Python (uvx)
+
+Build Python-based MCP servers using the uv package manager:
+
+```bash
+# Build with auto-generated name
+thv build uvx://mcp-server-git
+
+# Build with custom tag
+thv build --tag my-git-server:latest uvx://mcp-server-git@1.2.0
+```
+
+### Node.js (npx)
+
+Build Node.js-based MCP servers using npm:
+
+```bash
+# Build with auto-generated name
+thv build npx://@modelcontextprotocol/server-filesystem
+
+# Build with custom tag
+thv build --tag filesystem-server:v2.0 npx://@modelcontextprotocol/server-filesystem@2.0.0
+```
+
+### Go
+
+Build Go-based MCP servers:
+
+```bash
+# Build from remote Go module
+thv build --tag grafana-mcp:latest go://github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest
+
+# Build from local Go project
+thv build --tag my-local-server:dev go://./cmd/my-mcp-server
+```
+
+## Dockerfile generation
+
+Use the `--dry-run` flag to generate the Dockerfile without building the image:
+
+```bash
+# Output Dockerfile to stdout
+thv build --dry-run uvx://mcp-server-git
+
+# Save Dockerfile to a file
+thv build --dry-run --output Dockerfile.mcp-git uvx://mcp-server-git
+```
+
+This is useful for:
+
+- **Inspecting the build process** before building
+- **Customizing Dockerfiles** for specific requirements
+- **Understanding dependencies** and build steps
+- **Debugging build issues**
+
+### Example Dockerfile output
+
+```dockerfile
+# Generated by: thv build --dry-run uvx://mcp-server-git
+FROM python:3.12-slim
+
+# Install uv
+RUN pip install uv
+
+# Install the package
+RUN uv tool install mcp-server-git
+
+# Set the entrypoint
+ENTRYPOINT ["uv", "tool", "run", "mcp-server-git"]
+```
+
+## Kubernetes workflows
+
+The `thv build` command is especially useful for Kubernetes deployments where
+you want to pre-build containers before deploying them.
+
+### Pre-build workflow
+
+1. **Build the container** with a specific tag:
+
+   ```bash
+   thv build --tag ghcr.io/myorg/mcp-git:v1.0.0 uvx://mcp-server-git@1.0.0
+   ```
+
+2. **Push to container registry**:
+
+   ```bash
+   docker push ghcr.io/myorg/mcp-git:v1.0.0
+   ```
+
+3. **Deploy to Kubernetes** using the pre-built image:
+   ```yaml
+   apiVersion: toolhive.stacklok.dev/v1alpha1
+   kind: MCPServer
+   metadata:
+     name: git-server
+     namespace: production
+   spec:
+     image: ghcr.io/myorg/mcp-git:v1.0.0
+     transport: stdio
+     permissionProfile:
+       type: builtin
+       name: network
+   ```
+
+### CI/CD integration
+
+Integrate `thv build` into your CI/CD pipeline for automated container building:
+
+```yaml
+# Example GitHub Actions workflow
+name: Build and Deploy MCP Server
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ToolHive
+        uses: StacklokLabs/toolhive-actions/install@v0
+        with:
+          version: latest
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build MCP server
+        run: |
+          thv build --tag ghcr.io/${{ github.repository }}/mcp-server:${{ github.ref_name }} \
+            uvx://mcp-server-git@${{ github.ref_name }}
+
+      - name: Push to registry
+        run: |
+          docker push ghcr.io/${{ github.repository }}/mcp-server:${{ github.ref_name }}
+```
+
+For more advanced CI/CD patterns including multi-architecture builds, supply
+chain security, and change detection, see the
+[Advanced CI/CD with ToolHive](./advanced-cicd.mdx) guide.
+
+## Advanced usage
+
+### Build with custom CA certificates
+
+For corporate environments with custom certificate authorities:
+
+```bash
+# Use global CA certificate configuration
+thv config set-ca-cert /path/to/corporate-ca.crt
+thv build uvx://internal-mcp-server
+
+# Override CA certificate for specific build
+thv build --ca-cert /path/to/special-ca.crt uvx://special-server
+```
+
+### Build local Go projects
+
+Build MCP servers from local Go projects:
+
+```bash
+# Build from current directory
+cd my-go-mcp-project
+thv build --tag my-server:dev go://.
+
+# Build from relative path
+thv build --tag my-server:dev go://./cmd/server
+
+# Build from absolute path
+thv build --tag my-server:dev go:///path/to/my-project
+```
+
+## Comparison with thv run
+
+| Feature                   | `thv build`              | `thv run`                |
+| ------------------------- | ------------------------ | ------------------------ |
+| **Purpose**               | Build containers only    | Build and run containers |
+| **Output**                | Container image          | Running MCP server       |
+| **Use case**              | Pre-building, CI/CD      | Development, testing     |
+| **Kubernetes**            | Pre-build for deployment | Direct development       |
+| **Custom tagging**        | ✅ `--tag` flag          | ❌ Auto-generated names  |
+| **Dockerfile generation** | ✅ `--dry-run` flag      | ❌ Not available         |
+
+## Next steps
+
+- Use built containers with [`thv run`](./run-mcp-servers.mdx) for local
+  development
+- Deploy pre-built containers to [Kubernetes](../guides-k8s/run-mcp-k8s.md)
+- Set up [CI/CD pipelines](#cicd-integration) for automated building
+- Learn about [container registry workflows](#custom-image-tagging)
+
+## Related information
+
+- [`thv build` command reference](../reference/cli/thv_build.md)
+- [Run MCP servers](./run-mcp-servers.mdx)
+- [Run MCP servers in Kubernetes](../guides-k8s/run-mcp-k8s.md)
+- [Custom permissions](./custom-permissions.mdx)
+
+## Troubleshooting
+
+<details>
+<summary>Build fails with network errors</summary>
+
+If builds fail with network connectivity issues:
+
+1. **Check internet connectivity** for downloading packages
+2. **Configure CA certificates** for corporate environments:
+   ```bash
+   thv config set-ca-cert /path/to/corporate-ca.crt
+   ```
+3. **Use proxy settings** if required by your network
+4. **Verify package names** and versions exist in the respective registries
+
+</details>
+
+<details>
+<summary>Invalid image tag format</summary>
+
+If you get image tag validation errors:
+
+1. **Use valid Docker image tag format**: `name:tag` or `registry/name:tag`
+2. **Avoid special characters** except hyphens, underscores, and dots
+3. **Use lowercase names** for compatibility
+4. **Check tag length limits** (typically 128 characters)
+
+Example valid tags:
+
+```bash
+thv build --tag my-server:latest uvx://package
+thv build --tag ghcr.io/org/server:v1.0.0 npx://package
+```
+
+</details>
+
+<details>
+<summary>Package not found errors</summary>
+
+If the build fails because a package cannot be found:
+
+1. **Verify package exists** in the respective registry:
+   - Python: Check [PyPI](https://pypi.org/)
+   - Node.js: Check [npm](https://www.npmjs.com/)
+   - Go: Verify the module path and version
+
+2. **Check version specifiers**:
+
+   ```bash
+   # Correct version formats
+   thv build uvx://package@1.0.0
+   thv build npx://package@latest
+   thv build go://github.com/user/repo@v1.0.0
+   ```
+
+3. **For Go modules**, ensure the path includes the correct import path
+
+</details>

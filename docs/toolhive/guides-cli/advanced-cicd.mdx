@@ -1,0 +1,318 @@
+---
+title: Advanced CI/CD with ToolHive
+description:
+  Advanced CI/CD patterns for building and deploying MCP server containers with
+  ToolHive.
+---
+
+This guide covers advanced CI/CD patterns for building MCP server containers
+using ToolHive's [`thv build`](../reference/cli/thv_build.md) command. These
+patterns include multi-architecture builds, supply chain security, and efficient
+change detection.
+
+These patterns are intended for anyone building MCP server containers regularly,
+such as maintainers of MCP servers or organizations deploying custom servers or
+repackaging existing ones.
+
+## Prerequisites
+
+Before implementing these advanced patterns, ensure you have:
+
+- Basic understanding of [`thv build`](./build-containers.mdx) command
+- Experience with CI/CD pipelines (GitHub Actions, GitLab CI, etc.)
+- Container registry access for pushing images
+- Understanding of Docker Buildx for multi-architecture builds
+
+## Multi-architecture MCP server builds
+
+Build MCP server containers for multiple architectures (amd64, arm64) using
+Docker Buildx:
+
+```yaml
+name: Multi-arch Build
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install ToolHive
+        uses: StacklokLabs/toolhive-actions/install@v0
+        with:
+          version: latest
+
+      - name: Generate Dockerfile
+        run: |
+          thv build --dry-run --output Dockerfile uvx://mcp-server-git
+
+      - name: Build multi-arch container
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --tag ghcr.io/myorg/mcp-server:${{ github.ref_name }} \
+            --push \
+            .
+```
+
+## Supply chain security
+
+Enhance security with SBOM generation, provenance attestation, and image
+signing:
+
+```yaml
+name: Secure Build
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install ToolHive
+        uses: StacklokLabs/toolhive-actions/install@v0
+        with:
+          version: latest
+
+      - name: Generate Dockerfile
+        run: |
+          thv build --dry-run --output Dockerfile uvx://mcp-server-git
+
+      - name: Build with security features
+        uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/myorg/mcp-server:${{ github.ref_name }}
+          sbom: true # Generate Software Bill of Materials
+          provenance: true # Generate build provenance
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Sign container image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign --yes ghcr.io/myorg/mcp-server@${DIGEST}
+```
+
+## Efficient change detection
+
+Build only when relevant files change to optimize CI/CD performance:
+
+```yaml
+name: Conditional Build
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      build_needed: ${{ steps.changes.outputs.build_needed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changes
+        id: changes
+        run: |
+          # Check if MCP server configs or Dockerfiles changed
+          if git diff --name-only HEAD~1..HEAD | grep -E "(mcp-configs/|Dockerfile|\.thv)"; then
+            echo "build_needed=true" >> $GITHUB_OUTPUT
+          else
+            echo "build_needed=false" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.build_needed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ToolHive
+        uses: StacklokLabs/toolhive-actions/install@v0
+        with:
+          version: latest
+
+      - name: Build containers
+        run: |
+          thv build --tag ghcr.io/myorg/mcp-server:latest uvx://mcp-server-git
+```
+
+## Matrix builds for multiple servers
+
+Build multiple MCP servers in parallel using matrix strategies:
+
+```yaml
+name: Matrix Build
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        server:
+          - name: git-server
+            scheme: uvx://mcp-server-git
+          - name: filesystem-server
+            scheme: npx://@modelcontextprotocol/server-filesystem
+          - name: custom-server
+            scheme: go://github.com/myorg/custom-mcp-server@latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ToolHive
+        uses: StacklokLabs/toolhive-actions/install@v0
+        with:
+          version: latest
+
+      - name: Build ${{ matrix.server.name }}
+        run: |
+          thv build --tag ghcr.io/myorg/${{ matrix.server.name }}:${{ github.ref_name }} \
+            ${{ matrix.server.scheme }}
+
+      - name: Push ${{ matrix.server.name }}
+        run: |
+          docker push ghcr.io/myorg/${{ matrix.server.name }}:${{ github.ref_name }}
+```
+
+## Vulnerability scanning
+
+Integrate security scanning into your build pipeline:
+
+```yaml
+name: Secure Build with Scanning
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-and-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ToolHive
+        uses: StacklokLabs/toolhive-actions/install@v0
+        with:
+          version: latest
+
+      - name: Build container
+        run: |
+          thv build --tag mcp-server:scan uvx://mcp-server-git
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'mcp-server:scan'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Tag and push if scan passes
+        run: |
+          docker tag mcp-server:scan ghcr.io/myorg/mcp-server:${{ github.ref_name }}
+          docker push ghcr.io/myorg/mcp-server:${{ github.ref_name }}
+```
+
+## GitLab CI example
+
+For GitLab CI users, here's an equivalent pipeline:
+
+```yaml
+# .gitlab-ci.yml
+stages:
+  - build
+  - security
+  - deploy
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: '/certs'
+
+build:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    # Install ToolHive CLI using curl and jq to get the latest version
+    - |
+      VERSION=$(curl -s https://api.github.com/repos/stacklok/toolhive/releases/latest | jq -r .tag_name)
+      wget "https://github.com/stacklok/toolhive/releases/download/${VERSION}/toolhive_${VERSION#v}_linux_amd64.tar.gz"
+      tar -xzf "toolhive_${VERSION#v}_linux_amd64.tar.gz"
+      install -m 0755 thv /usr/local/bin/
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - thv build --tag $CI_REGISTRY_IMAGE/mcp-server:$CI_COMMIT_TAG
+      uvx://mcp-server-git
+    - docker push $CI_REGISTRY_IMAGE/mcp-server:$CI_COMMIT_TAG
+  only:
+    - tags
+
+security_scan:
+  stage: security
+  image: aquasec/trivy:latest
+  script:
+    - trivy image --exit-code 1 --severity HIGH,CRITICAL
+      $CI_REGISTRY_IMAGE/mcp-server:$CI_COMMIT_TAG
+  only:
+    - tags
+```
+
+## Best practices
+
+When implementing advanced CI/CD patterns:
+
+1. **Use specific tags** instead of `latest` for production deployments
+2. **Implement proper caching** to speed up builds
+3. **Scan for vulnerabilities** before pushing to production registries
+4. **Sign images** for supply chain security
+5. **Use matrix builds** for multiple MCP servers
+6. **Implement change detection** to avoid unnecessary builds
+7. **Store sensitive data** in CI/CD secrets, not in code
+
+## Related information
+
+- [Build MCP server containers](./build-containers.mdx)
+- [Run MCP servers in Kubernetes](../guides-k8s/run-mcp-k8s.md)
+- [`thv build` command reference](../reference/cli/thv_build.md)
+- [Secrets management](./secrets-management.mdx)
