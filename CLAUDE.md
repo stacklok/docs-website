@@ -172,7 +172,8 @@ conventions for Markdown files:
 - Use the `admonition` component for notes, tips, warnings, and other
   annotations. This provides a consistent look and feel across the site.
   - Use the `:::type` syntax to define the admonition type, such as `note`,
-    `tip`, `info`, `warning`, or `danger`.
+    `tip`, `info`, `warning`, or `danger`. Use square brackets to add a title,
+    e.g. `:::info[Title]`. Add empty lines around the start and end directives.
 - Place images in `static/img` using WebP, PNG, or SVG format.
 - Use the `ThemedImage` component to provide both light and dark mode
   screenshots for apps/UIs that support both.
