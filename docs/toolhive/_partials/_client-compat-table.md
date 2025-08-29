@@ -11,6 +11,7 @@
 | Sourcegraph Amp (VS Code)  |    ✅     |         ✅         |                                             |
 | Sourcegraph Amp (Cursor)   |    ✅     |         ✅         |                                             |
 | Sourcegraph Amp (Windsurf) |    ✅     |         ✅         |                                             |
+| LM Studio                  |    ✅     |         ✅         |                                             |
 | GitHub Copilot (JetBrains) |    ✅     |         ❌         | v1.5.47+                                    |
 | Continue (VS Code)         |    ✅     |         ❌         | v1.0.14+                                    |
 | Continue (JetBrains)       |    ✅     |         ❌         | v1.0.23+                                    |
