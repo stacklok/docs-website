@@ -47,6 +47,7 @@ const sidebars: SidebarsConfig = {
       },
       items: [
         'toolhive/guides-ui/install',
+        'toolhive/guides-ui/registry',
         'toolhive/guides-ui/run-mcp-servers',
         'toolhive/guides-ui/network-isolation',
         'toolhive/guides-ui/secrets-management',
