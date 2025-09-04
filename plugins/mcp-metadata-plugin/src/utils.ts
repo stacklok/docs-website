@@ -33,7 +33,8 @@ export async function scanForMCPComponents(
     });
 
     // Regex to match <MCPMetadata name="serverName" /> components
-    const mcpComponentRegex = /<MCPMetadata\s+name=["']([^"']+)["'][^>]*\/?>/g;
+    const mcpComponentRegex =
+      /<MCPMetadata\s+name=["']([a-zA-Z0-9_-]+)["'][^>]*\/?>/g;
 
     for (const file of mdxFiles) {
       try {
@@ -80,6 +81,6 @@ export async function fetchServerData(
       `Failed to fetch data for MCP server "${serverName}":`,
       error
     );
-    throw new Error(`Failed to fetch MCP server data: ${error.message}`);
+    throw new Error('Failed to fetch MCP server data. See logs for details.');
   }
 }
