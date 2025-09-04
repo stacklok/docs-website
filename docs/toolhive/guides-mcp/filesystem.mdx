@@ -1,0 +1,178 @@
+---
+title: Filesystem MCP server guide
+sidebar_label: Filesystem
+description: Using the Filesystem MCP server with ToolHive for file access.
+last_update:
+  author: danbarr
+  date: 2025-08-15
+---
+
+import useBaseUrl from '@docusaurus/useBaseUrl';
+import ThemedImage from '@theme/ThemedImage';
+
+## Overview
+
+The
+[Filesystem MCP server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
+provides access to the local filesystem, allowing AI agents to read and write
+files as part of their workflows.
+
+:::note
+
+Since most AI agent host applications like IDEs already have access to your
+working directory, this MCP server is primarily useful for access to files
+outside your working directory, headless environments where the host application
+does not provide filesystem access, or for demonstrating MCP capabilities.
+
+:::
+
+## Metadata
+
+<MCPMetadata name='filesystem' />
+
+## Usage
+
+<Tabs groupId='mode' queryString='mode'>
+<TabItem value='ui' label='UI' default>
+
+Select the `filesystem` MCP server in the ToolHive registry.
+
+In the **Storage volumes** section,
+[add local files or folders](../guides-ui/run-mcp-servers.md#volumes) to expose
+to the MCP server. In the drop-down, choose whether to mount the volume as
+read-only or read-write.
+
+:::note
+
+By default, the server expects files to be located in `/projects`. If you use a
+different container path, you must update the command arguments to replace
+`/projects` with your custom path.
+
+:::
+
+<ThemedImage
+  alt='Filesystem MCP server UI'
+  sources={{
+    light: useBaseUrl('/img/toolhive/mcp-guides/filesystem-mcp-ui-light.webp'),
+    dark: useBaseUrl('/img/toolhive/mcp-guides/filesystem-mcp-ui-dark.webp'),
+  }}
+  title='Filesystem MCP server UI'
+/>
+
+:::tip[Security tip]
+
+Since the server does not require any network access,
+[enable **network isolation**](../guides-ui/network-isolation.mdx) and do not
+add any hosts or ports to completely restrict its outbound network access.
+
+:::
+
+</TabItem>
+<TabItem value='cli' label='CLI'>
+
+[Mount a directory](../guides-cli/filesystem-access.md) from the host filesystem
+to the MCP server using the default container path:
+
+```bash
+thv run --volume /path/to/host/directory:/projects filesystem
+```
+
+:::note
+
+By default, the server expects files to be located in `/projects`. If you use a
+different container path, you must update the command arguments to replace
+`/projects` with your custom path.
+
+:::
+
+Mount multiple files or directories by repeating the `--volume` flag. This
+example mounts a directory under `/projects` and a file under `/data`, and
+updates the command arguments accordingly:
+
+```bash
+thv run \
+  --volume /path/to/host/directory1:/projects/dir1 \
+  --volume /path/to/host/file.txt:/data/file.txt:ro \
+  filesystem -- /projects /data
+```
+
+:::tip
+
+Since the server does not require any network access, add the
+`--isolate-network --permission-profile none` flags to completely restrict its
+outbound network access (see the
+[network isolation guide](../guides-cli/network-isolation.mdx)).
+
+:::
+
+</TabItem>
+<TabItem value='k8s' label='Kubernetes'>
+
+Create a Kubernetes manifest to deploy the Filesystem MCP server with a
+[persistent volume](../guides-k8s/run-mcp-k8s.md#mount-a-volume).
+
+Update the `podTemplateSpec` section to include your specific volume claim and
+mount path:
+
+```yaml {17-20,23-26} title="filesystem.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: filesystem
+  namespace: toolhive-system
+spec:
+  image: mcp/filesystem:latest
+  transport: stdio
+  port: 8080
+  permissionProfile:
+    type: builtin
+    name: none # Note, network isolation in K8s is not implemented yet
+  args:
+    - '/projects' # Update if you use a different mountPath below
+  podTemplateSpec:
+    spec:
+      volumes:
+        - name: my-mcp-data
+          persistentVolumeClaim:
+            claimName: my-mcp-data-claim
+      containers:
+        - name: mcp
+          volumeMounts:
+            - mountPath: /projects/my-mcp-data
+              name: my-mcp-data
+              readOnly: true
+```
+
+:::note
+
+If you change the mount path from `/projects`, you must also update the `args`
+section to include the path.
+
+:::
+
+Apply the manifest to your Kubernetes cluster:
+
+```bash
+kubectl apply -f filesystem.yaml
+```
+
+</TabItem>
+</Tabs>
+
+## Sample prompts
+
+Here are some sample prompts you can use to interact with the Filesystem MCP
+server:
+
+- "List all files in the `/projects` directory"
+- "Read the contents of the file `/projects/example.txt`"
+- "Write 'Hello, World!' to the file `/projects/hello.txt`"
+
+## Recommended practices
+
+- Mount only the directories or files required for your AI agent's tasks to
+  minimize resource usage and improve performance.
+- Use read-only mounts for directories or files that do not need to be modified
+  by the AI agent to prevent accidental changes.
+- Enable network isolation to restrict the server's outbound network access,
+  since the filesystem MCP server does not require any network connectivity.

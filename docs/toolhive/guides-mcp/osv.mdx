@@ -1,0 +1,125 @@
+---
+title: OSV MCP server guide
+sidebar_label: Open Source Vulnerabilities (OSV)
+description:
+  Using the Open Source Vulnerabilities database (OSV) MCP server with ToolHive.
+last_update:
+  author: danbarr
+  date: 2025-09-02
+---
+
+## Overview
+
+The [OSV MCP server](https://github.com/StacklokLabs/osv-mcp) provides access to
+the [Open Source Vulnerabilities database](https://osv.dev), which aggregates
+vulnerability data from multiple sources including GitHub Security Advisories,
+PyPA, RustSec, and many others. This server enables AI agents to:
+
+- Query vulnerabilities for specific package versions or Git commits
+- Perform batch vulnerability queries across multiple packages
+- Retrieve detailed vulnerability information by OSV ID
+- Access comprehensive vulnerability data including severity, affected versions,
+  and remediation guidance
+
+The server supports various package ecosystems including npm, PyPI, Go modules,
+Maven, NuGet, and more, making it an essential tool for security analysis and
+dependency management workflows.
+
+## Metadata
+
+<MCPMetadata name='osv' />
+
+## Usage
+
+<Tabs groupId='mode' queryString='mode'>
+<TabItem value='ui' label='UI' default>
+
+Select the `osv` MCP server in the ToolHive registry.
+
+The OSV MCP server does not require any additional configuration or secrets. It
+communicates directly with the public OSV API at `api.osv.dev`.
+
+:::tip[Security tip]
+
+Enable outbound network filtering on the **Network Isolation** tab to restrict
+the server's network access using the default profile contained in the registry.
+
+:::
+
+</TabItem>
+<TabItem value='cli' label='CLI'>
+
+Run with the default configuration:
+
+```bash
+thv run osv
+```
+
+Enable [network isolation](../guides-cli/network-isolation.mdx) using the
+default profile from the registry to restrict the server's network access to
+only the OSV API:
+
+```bash
+thv run --isolate-network osv
+```
+
+</TabItem>
+<TabItem value='k8s' label='Kubernetes'>
+
+Create a Kubernetes manifest to deploy the OSV MCP server:
+
+```yaml title="osv.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: osv
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/osv-mcp/server:0.0.7
+  transport: streamable-http
+  targetPort: 8080
+  port: 8080
+  permissionProfile:
+    type: builtin
+    name: network
+```
+
+Apply the manifest to your Kubernetes cluster:
+
+```bash
+kubectl apply -f osv.yaml
+```
+
+</TabItem>
+</Tabs>
+
+## Sample prompts
+
+Here are some sample prompts you can use to interact with the OSV MCP server:
+
+- "Check if the npm package lodash version 4.17.15 has any known
+  vulnerabilities"
+- "Query vulnerabilities for the Python package jinja2 version 2.4.1 and the Go
+  module github.com/gin-gonic/gin version 1.6.3"
+- "Get detailed information about vulnerability GHSA-vqj2-4v8m-8vrq including
+  affected versions and remediation steps"
+- "Check for vulnerabilities in commit hash
+  6879efc2c1596d11a6a6ad296f80063b558d5e0f"
+- "Scan these packages for vulnerabilities: express@4.17.1, react@16.13.0, and
+  django@3.0.5"
+- "Look up vulnerability CVE-2021-44228 and provide details about affected
+  packages and severity"
+
+## Recommended practices
+
+- **Use batch queries** when checking multiple packages to reduce API calls and
+  improve performance. The batch query tool can handle multiple packages in a
+  single request.
+- **Enable network isolation** to restrict the server's network access to only
+  the OSV API endpoints, improving security posture.
+- **Specify ecosystems accurately** (npm, PyPI, Go, Maven, etc.) to ensure
+  accurate vulnerability matching and reduce false positives.
+- **Use package URLs (PURLs)** when available for more precise package
+  identification across different ecosystems and registries.
+- **Monitor rate limits** when performing large-scale vulnerability scans to
+  avoid overwhelming the OSV API service.

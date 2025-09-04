@@ -1,0 +1,114 @@
+---
+title: Fetch MCP server guide
+sidebar_label: Fetch
+description: Using the Fetch MCP server with ToolHive to retrieve website data.
+last_update:
+  author: danbarr
+  date: 2025-08-15
+---
+
+## Overview
+
+A simple, lightweight MCP server that retrieves data from a website to add
+real-time context to an AI agent workflow.
+
+[GoFetch](https://github.com/StacklokLabs/gofetch) is a Go implementation of the
+original
+[Fetch MCP server](https://github.com/modelcontextprotocol/servers/tree/main/src/fetch)
+with improved performance and security, built by Stacklok.
+
+## Metadata
+
+<MCPMetadata name='fetch' />
+
+## Usage
+
+<Tabs groupId='mode' queryString='mode'>
+<TabItem value='ui' label='UI' default>
+
+Select the `fetch` MCP server in the ToolHive registry. No additional
+configuration is required to run it.
+
+By default, it can access any website. To restrict its network access,
+[enable **network isolation**](../guides-ui/network-isolation.mdx) and enter the
+allowed hosts and ports.
+
+</TabItem>
+<TabItem value='cli' label='CLI'>
+
+Run with the default configuration:
+
+```bash
+thv run fetch
+```
+
+To control which website resources the server can access, create a custom
+permission profile:
+
+```json title="fetch-profile.json"
+{
+  "network": {
+    "outbound": {
+      "insecure_allow_all": false,
+      "allow_host": [
+        "host.docker.internal",
+        "intranet.example.com",
+        ".googleapis.com"
+      ],
+      "allow_port": [443]
+    }
+  }
+}
+```
+
+Then run the server with the profile and
+[enable network isolation](../guides-cli/network-isolation.mdx):
+
+```bash
+thv run --isolate-network --permission-profile fetch-profile.json fetch
+```
+
+</TabItem>
+<TabItem value='k8s' label='Kubernetes'>
+
+Create a Kubernetes manifest to deploy the Fetch MCP server:
+
+```yaml title="fetch.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: fetch
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/gofetch/server:0.0.5
+  transport: streamable-http
+  targetPort: 8080
+  port: 8080
+  permissionProfile:
+    type: builtin
+    name: network
+```
+
+Apply the manifest to your Kubernetes cluster:
+
+```bash
+kubectl apply -f fetch.yaml
+```
+
+</TabItem>
+</Tabs>
+
+## Sample prompts
+
+Here are some sample prompts you can use to interact with the Fetch MCP server:
+
+- "Fetch the latest news from `https://news.ycombinator.com`"
+- "Get the current weather for `https://weather.com`"
+- "Retrieve the latest blog posts from `https://example.com/blog`"
+
+## Recommended practices
+
+- Use network isolation to restrict the server's outbound network access to the
+  specific hosts and ports required for your use case.
+- Enable [telemetry](../guides-cli/telemetry-and-metrics.md) to monitor tool
+  usage including URL access for security and auditing purposes.

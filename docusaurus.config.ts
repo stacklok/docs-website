@@ -19,6 +19,12 @@ const config: Config = {
         debug: false,
       },
     ],
+    [
+      './plugins/mcp-metadata-plugin',
+      {
+        thvCommand: 'thv', // Can be customized if thv is in a different path
+      },
+    ],
   ],
 
   // Set the production url of your site here
