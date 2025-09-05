@@ -130,12 +130,90 @@ export default function Home(): ReactNode {
           </ProductCard>
           <ProductCard
             contentType='text'
+            href='http://github.com/StacklokLabs/plotting-mcp'
+            title='Plotting MCP server'
+            linkText='Go to project'
+          >
+            The Plotting MCP server transforms CSV data into beautiful
+            visualizations.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
             href='http://github.com/StacklokLabs/sqlite-mcp'
             title='SQLite MCP server'
             linkText='Go to project'
           >
             The SQLite MCP server provides tools and resources that allow you to
             interact with SQLite databases.
+          </ProductCard>
+        </ProductGrid>
+
+        <h1 className='text--center'>Other MCP Projects</h1>
+
+        <ProductGrid layout='fixed-3' spacing='spacious'>
+          <ProductCard
+            contentType='text'
+            href='http://github.com/StacklokLabs/toolhive-buildkite-plugin'
+            title='ToolHive Buildkite Plugin'
+            linkText='Go to project'
+          >
+            <img
+              src='/img/mcp-servers/buildkite-logo.svg'
+              alt='Buildkite logo'
+              style={{
+                width: '60px',
+                height: 'auto',
+                float: 'right',
+                marginLeft: '0.5rem',
+                display: 'block',
+                maxWidth: '40%',
+              }}
+            />
+            A Buildkite plugin to run MCP servers in your CI/CD pipelines using
+            ToolHive.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='http://github.com/StacklokLabs/toolhive-actions'
+            title='ToolHive GitHub Actions'
+            linkText='Go to project'
+          >
+            <img
+              src='/img/mcp-servers/github-actions-logo.png'
+              alt='Buildkite logo'
+              style={{
+                width: '60px',
+                height: 'auto',
+                float: 'right',
+                marginLeft: '0.5rem',
+                display: 'block',
+                maxWidth: '40%',
+              }}
+            />
+            A collection of GitHub Actions to install ToolHive and run MCP
+            servers in your CI/CD workflows.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='http://github.com/StacklokLabs/yardstick'
+            title='Yardstick'
+            linkText='Go to project'
+          >
+            <img
+              src='/img/mcp-servers/yardstick-logo.webp'
+              alt='Yardstick logo'
+              style={{
+                width: '60px',
+                height: 'auto',
+                float: 'right',
+                marginLeft: '0.5rem',
+                marginBottom: '0.5rem',
+                display: 'block',
+                maxWidth: '40%',
+              }}
+            />
+            Yardstick is an MCP server and client reference implementation for
+            deterministic testing.
           </ProductCard>
         </ProductGrid>
       </main>
