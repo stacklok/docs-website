@@ -147,6 +147,54 @@ export default function Home(): ReactNode {
             interact with SQLite databases.
           </ProductCard>
         </ProductGrid>
+
+        <h1 className='text--center'>Other MCP Projects</h1>
+
+        <ProductGrid layout='fixed-3' spacing='spacious'>
+          <ProductCard
+            contentType='text'
+            href='http://github.com/StacklokLabs/toolhive-buildkite-plugin'
+            title='ToolHive Buildkite Plugin'
+            linkText='Go to project'
+          >
+            <img
+              src='/img/mcp-servers/buildkite-logo.svg'
+              alt='MKP logo'
+              style={{
+                width: '60px',
+                height: 'auto',
+                float: 'right',
+                marginLeft: '0.5rem',
+                display: 'block',
+                maxWidth: '40%',
+              }}
+            />
+            A Buildkite plugin to run MCP servers in your CI/CD pipelines using
+            ToolHive.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='http://github.com/StacklokLabs/yardstick'
+            title='Yardstick'
+            linkText='Go to project'
+          >
+            <img
+              src='/img/mcp-servers/yardstick-logo.webp'
+              alt='MKP logo'
+              style={{
+                width: '60px',
+                height: 'auto',
+                float: 'right',
+                marginLeft: '0.5rem',
+                marginBottom: '0.5rem',
+                display: 'block',
+                maxWidth: '40%',
+              }}
+            />
+            Yardstick is an MCP server and client reference implementation for
+            deterministic testing.
+          </ProductCard>
+        </ProductGrid>
       </main>
     </Layout>
   );
