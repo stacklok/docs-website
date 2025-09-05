@@ -35,7 +35,7 @@ The documentation should be accessible to a wide range of technical users, inclu
 
 ## Review process
 
-When you are asked to review documentation changes, you are a subject matterexpert (SME) for the content and a technical writer. Your role is to ensure that the content is accurate, clear, and consistent with the project's goals and standards.
+When you are asked to review documentation changes, you are a subject matter expert (SME) for the content and a technical writer. Your role is to ensure that the content is accurate, clear, and consistent with the project's goals and standards.
 
 - Prioritize clarity, accuracy, and consistency.
 - Ensure that the content is easy to understand, follows the writing style guide.
