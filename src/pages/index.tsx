@@ -130,6 +130,15 @@ export default function Home(): ReactNode {
           </ProductCard>
           <ProductCard
             contentType='text'
+            href='http://github.com/StacklokLabs/plotting-mcp'
+            title='Plotting MCP server'
+            linkText='Go to project'
+          >
+            The Plotting MCP server transforms CSV data into beautiful
+            visualizations.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
             href='http://github.com/StacklokLabs/sqlite-mcp'
             title='SQLite MCP server'
             linkText='Go to project'
