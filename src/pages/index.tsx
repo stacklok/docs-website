@@ -174,6 +174,27 @@ export default function Home(): ReactNode {
           </ProductCard>
           <ProductCard
             contentType='text'
+            href='http://github.com/StacklokLabs/toolhive-actions'
+            title='ToolHive GitHub Actions'
+            linkText='Go to project'
+          >
+            <img
+              src='/img/mcp-servers/github-actions-logo.png'
+              alt='Buildkite logo'
+              style={{
+                width: '60px',
+                height: 'auto',
+                float: 'right',
+                marginLeft: '0.5rem',
+                display: 'block',
+                maxWidth: '40%',
+              }}
+            />
+            A collection of GitHub Actions to install ToolHive and run MCP
+            servers in your CI/CD workflows.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
             href='http://github.com/StacklokLabs/yardstick'
             title='Yardstick'
             linkText='Go to project'
