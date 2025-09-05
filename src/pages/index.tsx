@@ -159,7 +159,7 @@ export default function Home(): ReactNode {
           >
             <img
               src='/img/mcp-servers/buildkite-logo.svg'
-              alt='MKP logo'
+              alt='Buildkite logo'
               style={{
                 width: '60px',
                 height: 'auto',
@@ -180,7 +180,7 @@ export default function Home(): ReactNode {
           >
             <img
               src='/img/mcp-servers/yardstick-logo.webp'
-              alt='MKP logo'
+              alt='Yardstick logo'
               style={{
                 width: '60px',
                 height: 'auto',
