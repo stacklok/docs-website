@@ -117,7 +117,7 @@ _Appears in:_
 | `audience` _string_ | Audience is the expected audience for the token |  |  |
 | `jwksUrl` _string_ | JWKSURL is the URL to fetch the JWKS from |  |  |
 | `introspectionUrl` _string_ | IntrospectionURL is the URL for token introspection endpoint |  |  |
-| `clientId` _string_ | ClientID is deprecated and will be removed in a future release. |  |  |
+| `clientId` _string_ | ClientID is the OIDC client ID |  |  |
 | `clientSecret` _string_ | ClientSecret is the client secret for introspection (optional) |  |  |
 | `thvCABundlePath` _string_ | ThvCABundlePath is the path to CA certificate bundle file for HTTPS requests<br />The file must be mounted into the pod (e.g., via ConfigMap or Secret volume) |  |  |
 | `jwksAuthTokenPath` _string_ | JWKSAuthTokenPath is the path to file containing bearer token for JWKS/OIDC requests<br />The file must be mounted into the pod (e.g., via Secret volume) |  |  |
@@ -137,7 +137,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `serviceAccount` _string_ | ServiceAccount is deprecated and will be removed in a future release. |  |  |
+| `serviceAccount` _string_ | ServiceAccount is the name of the service account to validate tokens for<br />If empty, uses the pod's service account |  |  |
 | `namespace` _string_ | Namespace is the namespace of the service account<br />If empty, uses the MCPServer's namespace |  |  |
 | `audience` _string_ | Audience is the expected audience for the token | toolhive |  |
 | `issuer` _string_ | Issuer is the OIDC issuer URL | https://kubernetes.default.svc |  |
@@ -237,6 +237,7 @@ _Appears in:_
 | `oidcConfig` _[OIDCConfigRef](#oidcconfigref)_ | OIDCConfig defines OIDC authentication configuration for the MCP server |  |  |
 | `authzConfig` _[AuthzConfigRef](#authzconfigref)_ | AuthzConfig defines authorization policy configuration for the MCP server |  |  |
 | `tools` _string array_ | ToolsFilter is the filter on tools applied to the MCP server |  |  |
+| `telemetry` _[TelemetryConfig](#telemetryconfig)_ | Telemetry defines observability configuration for the MCP server |  |  |
 
 
 #### MCPServerStatus
@@ -294,6 +295,43 @@ _Appears in:_
 | `inline` _[InlineOIDCConfig](#inlineoidcconfig)_ | Inline contains direct OIDC configuration<br />Only used when Type is "inline" |  |  |
 
 
+#### OpenTelemetryConfig
+
+
+
+OpenTelemetryConfig defines pure OpenTelemetry configuration
+
+
+
+_Appears in:_
+- [TelemetryConfig](#telemetryconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `enabled` _boolean_ | Enabled controls whether OpenTelemetry is enabled | false |  |
+| `endpoint` _string_ | Endpoint is the OTLP endpoint URL for tracing and metrics |  |  |
+| `serviceName` _string_ | ServiceName is the service name for telemetry<br />If not specified, defaults to the MCPServer name |  |  |
+| `headers` _string array_ | Headers contains authentication headers for the OTLP endpoint<br />Specified as key=value pairs |  |  |
+| `insecure` _boolean_ | Insecure indicates whether to use HTTP instead of HTTPS for the OTLP endpoint | false |  |
+| `metrics` _[OpenTelemetryMetricsConfig](#opentelemetrymetricsconfig)_ | Metrics defines OpenTelemetry metrics-specific configuration |  |  |
+
+
+#### OpenTelemetryMetricsConfig
+
+
+
+OpenTelemetryMetricsConfig defines OpenTelemetry metrics configuration
+
+
+
+_Appears in:_
+- [OpenTelemetryConfig](#opentelemetryconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `enabled` _boolean_ | Enabled controls whether OTLP metrics are sent | true |  |
+
+
 #### OutboundNetworkPermissions
 
 
@@ -332,6 +370,22 @@ _Appears in:_
 
 
 
+#### PrometheusConfig
+
+
+
+PrometheusConfig defines Prometheus-specific configuration
+
+
+
+_Appears in:_
+- [TelemetryConfig](#telemetryconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `enabled` _boolean_ | Enabled controls whether Prometheus metrics endpoint is exposed | false |  |
+
+
 #### ProxyDeploymentOverrides
 
 
@@ -347,6 +401,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `annotations` _object (keys:string, values:string)_ | Annotations to add or override on the resource |  |  |
 | `labels` _object (keys:string, values:string)_ | Labels to add or override on the resource |  |  |
+| `podTemplateMetadataOverrides` _[ResourceMetadataOverrides](#resourcemetadataoverrides)_ |  |  |  |
 | `env` _[EnvVar](#envvar) array_ | Env are environment variables to set in the proxy container (thv run process)<br />These affect the toolhive proxy itself, not the MCP server it manages |  |  |
 
 
@@ -435,6 +490,23 @@ _Appears in:_
 | `name` _string_ | Name is the name of the secret |  | Required: \{\} <br /> |
 | `key` _string_ | Key is the key in the secret itself |  | Required: \{\} <br /> |
 | `targetEnvName` _string_ | TargetEnvName is the environment variable to be used when setting up the secret in the MCP server<br />If left unspecified, it defaults to the key |  |  |
+
+
+#### TelemetryConfig
+
+
+
+TelemetryConfig defines observability configuration for the MCP server
+
+
+
+_Appears in:_
+- [MCPServerSpec](#mcpserverspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `openTelemetry` _[OpenTelemetryConfig](#opentelemetryconfig)_ | OpenTelemetry defines OpenTelemetry configuration |  |  |
+| `prometheus` _[PrometheusConfig](#prometheusconfig)_ | Prometheus defines Prometheus-specific configuration |  |  |
 
 
 #### Volume
