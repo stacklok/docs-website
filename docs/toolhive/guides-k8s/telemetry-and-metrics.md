@@ -70,7 +70,7 @@ If you want to enable ToolHive to export tracing information, you can enable the
 `spec.telemetry.openTelemetry.tracing.enabled` flag.
 
 You can also set the sampling rate of your traces by setting the
-`spec.telemetry.openTelemetry.tracing.sampleRate` option to a number netween 0
+`spec.telemetry.openTelemetry.tracing.sampleRate` option to a number between 0
 and 1.0. By default this will be `0.05` which equates to 5% of all requests.
 
 :::note
