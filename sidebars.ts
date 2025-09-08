@@ -161,6 +161,7 @@ const sidebars: SidebarsConfig = {
           label: 'Quickstart guides',
         },
         'toolhive/tutorials/custom-registry',
+        'toolhive/tutorials/vault-integration',
       ],
     },
 
