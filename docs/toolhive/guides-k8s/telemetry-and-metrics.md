@@ -262,14 +262,13 @@ Coming soon.
 
 Adjust sampling rates based on your environment:
 
-- **Development**:
+- **Development**: `spec.telemetry.openTelemetry.tracing.samplingRate: 1.0`
+  (100% sampling)
+- **Production**: `spec.telemetry.openTelemetry.tracing.samplingRate 0.01` (1%
+  sampling for high-traffic systems)
+- **Default**: `spec.telemetry.openTelemetry.tracing.samplingRate 0.05` (5%
+  sampling)
 
-  ```yaml
-  spec:
-    telemetry:
-      openTelemetry:
-        tracing:
-          samplingRate: 1.0  # 100% sampling
 ### Network overhead
 
 Telemetry adds minimal overhead when properly configured:
