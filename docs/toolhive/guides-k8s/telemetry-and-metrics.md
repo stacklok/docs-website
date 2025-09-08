@@ -130,8 +130,8 @@ graph LR
     B --> C[AWS CloudWatch]
     B --> D[Splunk]
     B --> E[New Relic]
-    B <--> E[Prometheus]
-    B --> F[Other OTLP backends]
+    B <--> F[Prometheus]
+    B --> G[Other OTLP backends]
 ```
 
 You can run the OpenTelemetry Collector inside of a Kubernetes cluster, follow
