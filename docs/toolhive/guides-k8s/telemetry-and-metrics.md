@@ -99,7 +99,7 @@ You can expose Prometheus-style metrics at `/metrics` on the main transport port
 for local scraping by enabling the `spec.telemetry.prometheus.enabled` flag.
 
 To access the metrics, you can use `curl` or any Prometheus-compatible scraper.
-The metrics are available at `http://<HOST>:<PORT>/metrics`, where `<HOST` is
+The metrics are available at `http://<HOST>:<PORT>/metrics`, where `<HOST>` is
 resolvable address of the ToolHive ProxyRunner fronting your MCP server pod and
 `<PORT>` is the port of which the ProxyRunner service is configured to expose
 for traffic.
