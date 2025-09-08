@@ -262,11 +262,14 @@ Coming soon.
 
 Adjust sampling rates based on your environment:
 
-- **Development**: `--otel-sampling-rate 1.0` (100% sampling)
-- **Production**: `--otel-sampling-rate 0.01` (1% sampling for high-traffic
-  systems)
-- **Default**: `--otel-sampling-rate 0.05` (5% sampling)
+- **Development**:
 
+  ```yaml
+  spec:
+    telemetry:
+      openTelemetry:
+        tracing:
+          samplingRate: 1.0  # 100% sampling
 ### Network overhead
 
 Telemetry adds minimal overhead when properly configured:
