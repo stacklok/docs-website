@@ -39,7 +39,7 @@ thv run \
   --otel-service-name fetch-mcp \
   --otel-insecure \
   --otel-tracing-enabled \
-  --otel-metrics-enabled
+  --otel-metrics-enabled \
   fetch
 ```
 
@@ -174,6 +174,8 @@ thv config otel set-endpoint api.honeycomb.io
 thv config otel set-metrics-enabled true
 thv config otel set-tracing-enabled true
 thv config otel set-sampling-rate 0.25
+thv config otel set-enable-prometheus-metrics-path true
+thv config otel set-insecure true
 ```
 
 Each command has a corresponding `get` and `unset` command to retrieve or remove
