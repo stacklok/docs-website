@@ -225,9 +225,14 @@ start successfully:
 # Watch the pod start up
 kubectl get pods -n toolhive-system -w
 
-# Check pod logs (replace POD_NAME with actual pod name)
-kubectl logs -n toolhive-system POD_NAME -c vault-agent
-kubectl logs -n toolhive-system POD_NAME -c proxy-runner
+# Get the pod name
+POD_NAME=$(kubectl get pods -n toolhive-system \
+    -l app.kubernetes.io/instance=github-vault \
+    -o jsonpath="{.items[0].metadata.name}")
+
+# Check pod logs
+kubectl logs -n toolhive-system $POD_NAME -c vault-agent
+kubectl logs -n toolhive-system $POD_NAME -c toolhive
 ```
 
 You should see the Vault Agent successfully authenticate and retrieve secrets,
@@ -238,17 +243,24 @@ and the ToolHive proxy runner start with the injected environment variables.
 Test that your MCP server has access to the secrets by checking the running pod:
 
 ```bash
-# Get the pod name
-POD_NAME=$(kubectl get pods -n toolhive-system \
+# Get the proxy pod name - note the instance name is the same
+# as the name of our MCPServer
+PROXY_POD_NAME=$(kubectl get pods -n toolhive-system \
     -l app.kubernetes.io/instance=github-vault \
     -o jsonpath="{.items[0].metadata.name}")
 
+# Get the mcp server pod name - note the instance name is the same
+# as the name of our MCPServer
+MCP_POD_NAME=$(kubectl get pods -ntoolhive-system \
+    -lapp=github-vault,toolhive-tool-type=mcp \
+     -ojsonpath='{.items[0].metadata.name}')
+
 # Verify the Vault Agent wrote the secret file
-kubectl exec -n toolhive-system "$POD_NAME" -c toolhive -- \
+kubectl exec -n toolhive-system "$PROXY_POD_NAME" -c toolhive -- \
     cat /vault/secrets/github-config
 
 # Check that the environment variable is available to the MCP server
-kubectl get pod github-vault-0 -n toolhive-system -o jsonpath='{range .spec.containers[?(@.name=="mcp")].env[*]}{.name}{"="}{.value}{"\n"}{end}'
+kubectl get pod $MCP_POD_NAME -n toolhive-system -o jsonpath='{range .spec.containers[?(@.name=="mcp")].env[*]}{.name}{"="}{.value}{"\n"}{end}'
 ```
 
 ## Security best practices
