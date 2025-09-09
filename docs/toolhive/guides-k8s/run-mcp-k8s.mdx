@@ -346,7 +346,66 @@ kubectl apply -f my-mcpserver-with-secrets-eso.yaml
 This example shows how to use [Vault](https://developer.hashicorp.com/vault) to
 inject secrets into the ToolHive containers for consumption.
 
-Chris to flesh out with Jakub
+Injecting secrets using Vault is done with its agent sidecar container, but
+before you can start injecting secrets into the container there are some steps
+to do before hand. This includes setting up Vault to be able to authenticate and
+pull the necessary secrets. We will not detail here how to do this as there are
+some very helpful
+[Vault guides](https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-sidecar)
+on setting this up, but before we can inject secrets into the ToolHive
+containers we need to have the following:
+
+- Vault available
+- Vault configured for Kubernetes authentication
+- Vault policy created to be able to read the desired secrets
+- Vault role created that is bound to the ToolHive ProxyRunner Service Account
+  in order to enable authentication
+
+```yaml {23-33} title="my-mcpserver-with-vault-secrets-injection.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: github-vault-generic
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/github/github-mcp-server:latest
+  transport: stdio
+  port: 9095
+  permissionProfile:
+    type: builtin
+    name: network
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+  resourceOverrides:
+    proxyDeployment:
+      podTemplateMetadataOverrides:
+        annotations:
+          # Enable Vault Agent injection
+          vault.hashicorp.com/agent-inject: 'true'
+          vault.hashicorp.com/role: '<ROLE_NAME_CREATE_IN_VAULT>'
+
+          # Inject GitHub configuration secret
+          vault.hashicorp.com/agent-inject-secret-github-config: 'workload-secrets/data/github-mcp/config'
+          vault.hashicorp.com/agent-inject-template-github-config: |
+            {{- with secret "workload-secrets/data/github-mcp/config" -}}
+            GITHUB_PERSONAL_ACCESS_TOKEN={{ .Data.data.token }}
+            {{- end -}}
+```
+
+Apply the MCPServer resource:
+
+```bash
+kubectl apply -f my-mcpserver-with-vault-secrets-injection.yaml
+```
+
+The Vault agent sidecar will now inject secrets from the
+`workload-secrets/data/github-mcp/config` inside of Vault, into the ProxyRunner
+container.
 
 </TabItem>
 </Tabs>
