@@ -84,6 +84,7 @@ const sidebars: SidebarsConfig = {
           },
           items: [
             'toolhive/guides-cli/filesystem-access',
+            'toolhive/guides-cli/thvignore',
             'toolhive/guides-cli/network-isolation',
           ],
         },
