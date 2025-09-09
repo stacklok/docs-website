@@ -263,6 +263,7 @@ forward data to Honeycomb. This example sends data directly to Honeycomb:
 ```bash
 thv run \
   --otel-endpoint api.honeycomb.io \
+  --otel-metrics-enabled=false \
   --otel-headers "x-honeycomb-team=<YOUR_API_KEY>" \
   --otel-service-name production-mcp-proxy \
   <SERVER>
