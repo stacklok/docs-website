@@ -1,0 +1,288 @@
+---
+title: HashiCorp Vault integration
+description:
+  Learn how to securely manage MCP server secrets using HashiCorp Vault with
+  ToolHive Kubernetes Operator.
+---
+
+This tutorial shows how to integrate HashiCorp Vault with the ToolHive
+Kubernetes Operator to securely manage secrets for your MCP servers. Using
+Vault's Agent Injector, you can automatically provision secrets into MCP server
+pods without exposing sensitive data in your Kubernetes manifests.
+
+As an example, we'll be deploying a GitHub MCP server.
+
+:::info[Prerequisites]
+
+Before starting this tutorial, ensure you have:
+
+- A Kubernetes cluster with the ToolHive Operator installed
+- kubectl configured to access your cluster
+- Helm 3.x installed
+- Basic familiarity with HashiCorp Vault concepts
+- A GitHub Personal Access Token (PAT)
+
+If you need help installing the ToolHive Operator, see the
+[Kubernetes quickstart guide](./quickstart-k8s.mdx).
+
+:::
+
+## Overview
+
+The integration works by using HashiCorp Vault's Agent Injector to automatically
+inject secrets into MCP server pods. When you add specific annotations to your
+MCPServer resource, the Vault Agent Injector:
+
+1. Detects the annotations and injects a Vault Agent sidecar
+2. Authenticates with Vault using Kubernetes service account tokens of the
+   `proxyrunner` pod
+3. Retrieves secrets from Vault and writes them to a shared volume
+4. Makes the secrets available as environment variables to your MCP server pod
+
+## Step 1: Install and configure Vault
+
+First, install Vault with the Agent Injector enabled in your Kubernetes cluster.
+
+### Install Vault using Helm
+
+Add the HashiCorp Helm repository and install Vault:
+
+```bash
+# Add HashiCorp Helm repository
+helm repo add hashicorp https://helm.releases.hashicorp.com
+helm repo update
+
+# Create vault namespace
+kubectl create namespace vault
+
+# Install Vault with Agent Injector
+helm install vault hashicorp/vault \
+    --namespace vault \
+    --set "server.dev.enabled=true" \
+    --set "server.dev.devRootToken=dev-only-token" \
+    --set "injector.enabled=true"
+```
+
+:::warning[Development setup only]
+
+This tutorial uses Vault in development mode (`server.dev.enabled=true`) with a
+static root token for simplicity. **Do not use this configuration in
+production**. For production deployments, follow the [Vault production hardening
+guide][vault-hardening].
+
+:::
+
+Wait for the Vault pod to be ready:
+
+```bash
+kubectl wait --for=condition=ready pod vault-0 \
+    --namespace vault \
+    --timeout=300s
+```
+
+### Configure Vault authentication
+
+Configure Vault to authenticate Kubernetes service accounts:
+
+```bash
+# Get the Vault pod name
+VAULT_POD=$(kubectl get pods --namespace vault \
+    -l app.kubernetes.io/name=vault \
+    -o jsonpath="{.items[0].metadata.name}")
+
+# Enable Kubernetes auth method
+kubectl exec --namespace vault "$VAULT_POD" -- \
+    vault auth enable kubernetes
+
+# Configure Kubernetes auth
+kubectl exec --namespace vault "$VAULT_POD" -- \
+    vault write auth/kubernetes/config \
+        kubernetes_host="https://kubernetes.default.svc:443" \
+        kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+        token_reviewer_jwt=@/var/run/secrets/kubernetes.io/serviceaccount/token
+```
+
+### Set up secrets engine and policies
+
+Enable a key-value secrets engine and create the necessary policies:
+
+```bash
+# Enable KV secrets engine
+kubectl exec --namespace vault "$VAULT_POD" -- \
+    vault secrets enable -path=workload-secrets kv-v2
+
+# Create Vault policy for MCP workloads
+kubectl exec --namespace vault "$VAULT_POD" -- \
+    sh -c 'vault policy write toolhive-workload-secrets - << EOF
+path "auth/token/lookup-self" { capabilities = ["read"] }
+path "auth/token/renew-self" { capabilities = ["update"] }
+path "workload-secrets/data/github-mcp/*" { capabilities = ["read"] }
+EOF'
+
+# Create Kubernetes auth role
+kubectl exec --namespace vault "$VAULT_POD" -- \
+    vault write auth/kubernetes/role/toolhive-mcp-workloads \
+        bound_service_account_names="*-proxy-runner,mcp-*" \
+        bound_service_account_namespaces="toolhive-system" \
+        policies="toolhive-workload-secrets" \
+        audience="https://kubernetes.default.svc.cluster.local" \
+        ttl="1h" \
+        max_ttl="4h"
+```
+
+## Step 2: Store secrets in Vault
+
+Create secrets for your MCP servers in Vault. This example shows how to store a
+GitHub personal access token:
+
+```bash
+# Store GitHub MCP server configuration
+kubectl exec --namespace vault "$VAULT_POD" -- \
+    vault kv put workload-secrets/github-mcp/config \
+        token="ghp_your_github_token_here" \
+        organization="your-org"
+```
+
+You can verify the secret was stored correctly:
+
+```bash
+kubectl exec --namespace vault "$VAULT_POD" -- \
+    vault kv get workload-secrets/github-mcp/config
+```
+
+## Step 3: Configure your MCPServer resource
+
+Create an MCPServer resource with Vault annotations to enable automatic secret
+injection. The key is using the `podTemplateMetadataOverrides` field to add
+annotations to the proxy runner pods:
+
+```yaml title="github-mcp-with-vault.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: github-vault
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/github/github-mcp-server:latest
+  transport: stdio
+  port: 9095
+  permissionProfile:
+    type: builtin
+    name: network
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+  resourceOverrides:
+    proxyDeployment:
+      podTemplateMetadataOverrides:
+        annotations:
+          # Enable Vault Agent injection
+          vault.hashicorp.com/agent-inject: 'true'
+          vault.hashicorp.com/role: 'toolhive-mcp-workloads'
+
+          # Inject GitHub configuration secret
+          vault.hashicorp.com/agent-inject-secret-github-config: 'workload-secrets/data/github-mcp/config'
+          vault.hashicorp.com/agent-inject-template-github-config: |
+            {{- with secret "workload-secrets/data/github-mcp/config" -}}
+            GITHUB_PERSONAL_ACCESS_TOKEN={{ .Data.data.token }}
+            {{- end -}}
+```
+
+### Understanding the annotations
+
+The key annotations that enable Vault integration are:
+
+- `vault.hashicorp.com/agent-inject: "true"` - Enables Vault Agent injection for
+  this pod
+- `vault.hashicorp.com/role: "toolhive-mcp-workloads"` - Specifies the Vault
+  role to use for authentication
+- `vault.hashicorp.com/agent-inject-secret-github-config` - Tells Vault to
+  retrieve a secret and make it available as a file
+- `vault.hashicorp.com/agent-inject-template-github-config` - Uses a Vault
+  template to format the secret as environment variables
+
+When ToolHive detects the `vault.hashicorp.com/agent-inject` annotation, it
+automatically configures the proxy runner to read environment variables from the
+`/vault/secrets/` directory where the Vault Agent writes the rendered templates.
+
+## Step 4: Deploy your MCPServer
+
+Apply your MCPServer configuration:
+
+```bash
+kubectl apply -f github-mcp-with-vault.yaml
+```
+
+Monitor the deployment to ensure both the Vault Agent and ToolHive proxy runner
+start successfully:
+
+```bash
+# Watch the pod start up
+kubectl get pods -n toolhive-system -w
+
+# Get the pod name
+POD_NAME=$(kubectl get pods -n toolhive-system \
+    -l app.kubernetes.io/instance=github-vault \
+    -o jsonpath="{.items[0].metadata.name}")
+
+# Check pod logs
+kubectl logs -n toolhive-system $POD_NAME -c vault-agent
+kubectl logs -n toolhive-system $POD_NAME -c toolhive
+```
+
+You should see the Vault Agent successfully authenticate and retrieve secrets,
+and the ToolHive proxy runner start with the injected environment variables.
+
+## Step 5: Verify the integration
+
+Test that your MCP server has access to the secrets by checking the running pod:
+
+```bash
+# Get the proxy pod name - note the instance name is the same
+# as the name of our MCPServer
+PROXY_POD_NAME=$(kubectl get pods -n toolhive-system \
+    -l app.kubernetes.io/instance=github-vault \
+    -o jsonpath="{.items[0].metadata.name}")
+
+# Get the mcp server pod name - note the instance name is the same
+# as the name of our MCPServer
+MCP_POD_NAME=$(kubectl get pods -ntoolhive-system \
+    -lapp=github-vault,toolhive-tool-type=mcp \
+     -ojsonpath='{.items[0].metadata.name}')
+
+# Verify the Vault Agent wrote the secret file
+kubectl exec -n toolhive-system "$PROXY_POD_NAME" -c toolhive -- \
+    cat /vault/secrets/github-config
+
+# Check that the environment variable is available to the MCP server
+kubectl get pod $MCP_POD_NAME -n toolhive-system -o jsonpath='{range .spec.containers[?(@.name=="mcp")].env[*]}{.name}{"="}{.value}{"\n"}{end}'
+```
+
+## Security best practices
+
+:::tip[Production recommendations]
+
+- Use Vault in production mode with proper TLS certificates
+- Implement least-privilege policies for secret access
+- Enable audit logging in Vault
+- Regularly rotate Vault tokens and secrets
+- Monitor Vault Agent logs for authentication issues
+- Use namespace isolation for different environments
+
+:::
+
+## Related information
+
+- [Kubernetes quickstart guide](./quickstart-k8s.mdx)
+- [Secrets management guide](../guides-cli/secrets-management.mdx)
+- [HashiCorp Vault documentation](https://developer.hashicorp.com/vault/docs)
+- [Vault Agent Injector documentation][vault-injector]
+
+[vault-hardening]:
+  https://developer.hashicorp.com/vault/tutorials/operations/production-hardening
+[vault-injector]:
+  https://developer.hashicorp.com/vault/docs/platform/k8s/injector
