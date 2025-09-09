@@ -132,7 +132,7 @@ when running an MCP server with the `thv run` command:
 
 ```bash
 thv run [--otel-endpoint <URL>] [--otel-service-name <NAME>] \
-  [--otel-metrics-enabled]  [--otel-tracing-enabled] \
+  [--otel-metrics-enabled=<true|false>]  [--otel-tracing-enabled=<true|false>] \
   [--otel-sampling-rate <RATE>] [--otel-headers <KEY=VALUE>] \
   [--otel-insecure] [--otel-enable-prometheus-metrics-path] \
   <SERVER>
