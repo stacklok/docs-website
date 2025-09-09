@@ -33,7 +33,7 @@ chart. To install a specific version, append `--version <VERSION>` to the
 command, for example:
 
 ```bash
-helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds --version 0.0.7
+helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds --version 0.0.21
 ```
 
 ## Install the operator
@@ -52,7 +52,7 @@ chart. To install a specific version, append `--version <VERSION>` to the
 command, for example:
 
 ```bash
-helm upgrade -i toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --create-namespace --version 0.1.1
+helm upgrade -i toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --create-namespace --version 0.2.10
 ```
 
 Verify the installation:
@@ -81,7 +81,7 @@ and set a specific ToolHive version, create a `values.yaml` file:
 ```yaml title="values.yaml"
 operator:
   replicaCount: 2
-  toolhiveRunnerImage: ghcr.io/stacklok/toolhive:v0.1.8 # or `latest`
+  toolhiveRunnerImage: ghcr.io/stacklok/toolhive:v0.2.17 # or `latest`
 ```
 
 Install the operator with your custom values:
@@ -222,8 +222,14 @@ kubectl logs -n toolhive-system <TOOLHIVE_OPERATOR_POD_NAME>
 
 ## Upgrade the operator
 
-To upgrade the ToolHive operator to a new version, use the same command you used
-to install it:
+To upgrade the ToolHive operator to a new version, use the same commands you
+used to install it. First, upgrade the CRDs if a new version is available:
+
+```bash
+helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds
+```
+
+Then upgrade the operator itself:
 
 ```bash
 helm upgrade toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --reuse-values
