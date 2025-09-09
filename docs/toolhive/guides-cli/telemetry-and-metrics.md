@@ -38,8 +38,6 @@ thv run \
   --otel-endpoint localhost:4318 \
   --otel-service-name fetch-mcp \
   --otel-insecure \
-  --otel-tracing-enabled \
-  --otel-metrics-enabled \
   fetch
 ```
 
@@ -72,8 +70,6 @@ context like deployment environment or service version to your traces.
 ```bash
 thv run \
   --otel-endpoint api.honeycomb.io \
-  --otel-tracing-enabled \
-  --otel-metrics-enabled \
   --otel-headers "x-honeycomb-team=<YOUR_API_KEY>" \
   --otel-env-vars "NODE_ENV,DEPLOYMENT_ENV,SERVICE_VERSION" \
   fetch
@@ -117,8 +113,6 @@ This example exports to Honeycomb and enables the Prometheus metrics endpoint:
 ```bash
 thv run \
   --otel-endpoint api.honeycomb.io \
-  --otel-tracing-enabled \
-  --otel-metrics-enabled \
   --otel-headers "x-honeycomb-team=<YOUR_API_KEY>" \
   --otel-enable-prometheus-metrics-path \
   fetch
@@ -147,8 +141,8 @@ thv run [--otel-endpoint <URL>] [--otel-service-name <NAME>] \
 | Flag                                    | Description                                                   | Default              |
 | --------------------------------------- | ------------------------------------------------------------- | -------------------- |
 | `--otel-endpoint`                       | OTLP endpoint (e.g., `api.honeycomb.io`)                      | None                 |
-| `--otel-metrics-enabled`                | Enable OTLP metrics export (when OTLP endpoint is configured) | `false`              |
-| `--otel-tracing-enabled`                | Enable distributed tracing (when OTLP endpoint is configured) | `false`              |
+| `--otel-metrics-enabled`                | Enable OTLP metrics export (when OTLP endpoint is configured) | `true`               |
+| `--otel-tracing-enabled`                | Enable distributed tracing (when OTLP endpoint is configured) | `true`               |
 | `--otel-service-name`                   | Service name for telemetry                                    | `toolhive-mcp-proxy` |
 | `--otel-sampling-rate`                  | Trace sampling rate (0.0-1.0)                                 | `0.1` (10%)          |
 | `--otel-headers`                        | Authentication headers in `key=value` format                  | None                 |
@@ -217,8 +211,6 @@ OTLP http receiver port (default is `4318`):
 ```bash
 thv run \
   --otel-endpoint localhost:4318 \
-  --otel-tracing-enabled \
-  --otel-metrics-enabled \
   --otel-insecure \
   fetch
 ```
@@ -255,7 +247,6 @@ by setting the OTLP endpoint to Jaeger's collector:
 ```bash
 thv run \
   --otel-endpoint localhost:4318 \
-  --otel-tracing-enabled \
   --otel-insecure \
   <SERVER>
 ```
@@ -272,8 +263,6 @@ forward data to Honeycomb. This example sends data directly to Honeycomb:
 ```bash
 thv run \
   --otel-endpoint api.honeycomb.io \
-  --otel-tracing-enabled \
-  --otel-metrics-enabled \
   --otel-headers "x-honeycomb-team=<YOUR_API_KEY>" \
   --otel-service-name production-mcp-proxy \
   <SERVER>
@@ -308,8 +297,6 @@ You can also send data directly to
 ```bash
 thv run \
   --otel-endpoint otlp-gateway-prod-us-central-0.grafana.net \
-  --otel-tracing-enabled \
-  --otel-metrics-enabled \
   --otel-headers "Authorization=Basic $(echo -n 'user:password' | base64)" \
   <SERVER>
 ```
