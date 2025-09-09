@@ -247,6 +247,7 @@ by setting the OTLP endpoint to Jaeger's collector:
 ```bash
 thv run \
   --otel-endpoint localhost:4318 \
+  --otel-metrics-enabled=false \
   --otel-insecure \
   <SERVER>
 ```
@@ -263,7 +264,6 @@ forward data to Honeycomb. This example sends data directly to Honeycomb:
 ```bash
 thv run \
   --otel-endpoint api.honeycomb.io \
-  --otel-metrics-enabled=false \
   --otel-headers "x-honeycomb-team=<YOUR_API_KEY>" \
   --otel-service-name production-mcp-proxy \
   <SERVER>
