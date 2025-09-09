@@ -251,9 +251,9 @@ create it.
 
 ## Next steps
 
-See [Run MCP servers in Kubernetes](./run-mcp-k8s.md) to learn how to create and
-manage MCP servers using the ToolHive operator in your Kubernetes cluster. The
-operator supports deploying MCPServer resources based on the deployment mode
+See [Run MCP servers in Kubernetes](./run-mcp-k8s.mdx) to learn how to create
+and manage MCP servers using the ToolHive operator in your Kubernetes cluster.
+The operator supports deploying MCPServer resources based on the deployment mode
 configured during installation.
 
 ## Related information
