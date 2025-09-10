@@ -118,6 +118,7 @@ metadata:
 spec:
   image: ghcr.io/stackloklabs/osv-mcp/server
   transport: streamable-http
+  targetPort: 8080
   port: 8080
   permissionProfile:
     type: builtin
@@ -219,6 +220,7 @@ metadata:
 spec:
   image: ghcr.io/stackloklabs/gofetch/server
   transport: streamable-http
+  targetPort: 8080
   port: 8080
   permissionProfile:
     type: builtin
