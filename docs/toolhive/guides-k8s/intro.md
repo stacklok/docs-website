@@ -57,4 +57,4 @@ Kubernetes cluster. Helm simplifies the installation process and lets you manage
 the operator using Helm charts.
 
 Once the operator is installed, you can create and manage MCP servers using the
-[`MCPServer` custom resource](./run-mcp-k8s.md).
+[`MCPServer` custom resource](./run-mcp-k8s.mdx).

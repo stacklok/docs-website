@@ -255,10 +255,25 @@ process.
 
 ### Run a server with secrets
 
-For MCP servers that require authentication tokens or other secrets, add the
-`secrets` field to the `MCPServer` resource. This example shows how to use a
-Kubernetes secret to pass a GitHub personal access token to the `github` MCP
-server.
+When your MCP servers require authentication tokens or other secrets, ToolHive
+supports multiple secrets management methods to fit your existing
+infrastructure. Choose the method that best suits your needs:
+
+<Tabs groupId='secret-manager' queryString='secret-manager'>
+<TabItem value='kubernetes-native' label='Kubernetes secrets' default>
+
+ToolHive can reference existing Kubernetes secrets to inject sensitive data into
+your MCP server pods as environment variables. This example demonstrates how to
+pass a GitHub personal access token to the `github` MCP server.
+
+First, create the secret. The secret must exist in the same namespace as your
+MCP server and the key must match what you specify in the `MCPServer` resource.
+
+```bash
+kubectl -n production create secret generic github-token --from-literal=token=<YOUR_TOKEN>
+```
+
+Next, define the `MCPServer` resource to reference the secret:
 
 ```yaml {13-16} title="my-mcpserver-with-secrets.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
@@ -279,19 +294,87 @@ spec:
       targetEnvName: GITHUB_PERSONAL_ACCESS_TOKEN
 ```
 
-First, create the secret. Note that the secret must be created in the same
-namespace as the MCP server and the key must match the one specified in the
-`MCPServer` resource.
-
-```bash
-kubectl -n production create secret generic github-token --from-literal=token=<YOUR_TOKEN>
-```
-
-Apply the MCPServer resource:
+Finally, apply the MCPServer resource:
 
 ```bash
 kubectl apply -f my-mcpserver-with-secrets.yaml
 ```
+
+</TabItem>
+<TabItem value='eso' label='External Secrets Operator'>
+
+[External Secrets Operator](https://external-secrets.io/) is a Kubernetes
+operator that integrates external secret management systems and syncs secrets
+into Kubernetes as native resources. This example demonstrates how to use
+ESO-managed secrets with your MCP server.
+
+:::note
+
+When you use the External Secrets Operator, your MCP server definition will look
+the same as the Kubernetes-native example. This is because the External Secrets
+Operator creates standard Kubernetes secrets from external sources.
+
+:::
+
+First, create a secret using the
+[ExternalSecret resource](https://external-secrets.io/latest/api/externalsecret/).
+The exact configuration depends on your external secret management system. The
+secret must exist in the same namespace as your MCP server and the key must
+match what you specify in the `MCPServer` resource.
+
+Next, define the `MCPServer` resource to reference the secret:
+
+```yaml {13-16} title="my-mcpserver-with-secrets-eso.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: github
+  namespace: production # Can be any namespace
+spec:
+  image: ghcr.io/github/github-mcp-server
+  transport: stdio
+  port: 8080
+  permissionProfile:
+    type: builtin
+    name: network
+  secrets:
+    - name: github-token
+      key: token
+      targetEnvName: GITHUB_PERSONAL_ACCESS_TOKEN
+```
+
+Finally, apply the MCPServer resource:
+
+```bash
+kubectl apply -f my-mcpserver-with-secrets-eso.yaml
+```
+
+</TabItem>
+<TabItem value='vault' label='HashiCorp Vault'>
+
+HashiCorp Vault provides multiple integration methods for Kubernetes
+environments:
+
+1. [Vault Sidecar Agent Injector](https://developer.hashicorp.com/vault/docs/deploy/kubernetes/injector),
+   which injects a sidecar container into your pod to fetch and renew secrets
+2. [Vault Secrets Operator](https://developer.hashicorp.com/vault/docs/deploy/kubernetes/vso),
+   which creates Kubernetes secrets from Vault secrets (similar to the External
+   Secrets Operator)
+3. [Vault CSI Provider](https://developer.hashicorp.com/vault/docs/deploy/kubernetes/csi),
+   which mounts secrets directly into your pod as files
+
+ToolHive supports the first two methods. When you use the Vault Secrets
+Operator, your MCP server definition will look the same as the Kubernetes-native
+example because the Vault Secrets Operator creates standard Kubernetes secrets
+from Vault.
+
+The Vault Sidecar Agent Injector requires additional configuration in your
+`MCPServer` resource to add the required annotations. For a complete example,
+see the
+[HashiCorp Vault integration tutorial](../tutorials/vault-integration.mdx).
+
+</TabItem>
+</Tabs>
 
 ### Mount a volume
 
