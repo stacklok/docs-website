@@ -103,17 +103,64 @@ states.
 
 ## Install a custom MCP server
 
-You're not limited to the MCP servers in the registry. You can also run your own
-custom MCP servers using Docker images or source packages.
+You're not limited to the MCP servers in the registry. You can run remote MCP
+providing a url or your own local custom MCP servers using Docker images or
+source packages.
 
-On the **MCP Servers** page, click **Add server**, then choose **Custom MCP
-server** in the drop-down menu. Or if this is your first MCP server, click **Add
-custom server** on the introductory screen.
+### Remote MCP server
+
+On the **MCP Servers** page, click **Add an MCP server**, then choose **Add a
+remote MCP server** in the drop-down menu. Or if this is your first MCP server,
+on the introductory screen.
+
+On the configuration form, enter:
+
+1. A unique **name** for the MCP server. [Required]
+
+2. the server **url** of the MCP server. [Required]
+
+3. The **transport protocol** that the MCP server uses. [Required] ToolHive
+   supports server-sent events (SSE), and Streamable HTTP (default value) for
+   real-time communication. The protocol must match what the MCP server
+   supports.
+
+4. The authorization method (default **None** simple transparent forwarding).
+   ToolHive supports OAuth2/OIDC, and dynamic client registration.
+
+   Selecting **OAuth2** authentication method:
+   - the **authorize URL** where users are redirected to authenticate and
+     authorize your MCP. [Required]
+   - the **token url** where your application exchanges the authorization code
+     for access tokens. [Required]
+   - the **client id** for your application registered with the OAuth provider.
+     [Required]
+   - the **client secret** key that proves your application's identity.
+     [Required]
+   - the **scopes** list of permissions your app is requesting
+
+   Selecting **OIDC** authentication method:
+   - the base **issuer URL** of the OIDC provider. [Required]
+   - the **client id** for your application registered with the OIDC provider.
+     [Required]
+   - the **client secret** key that proves your application's identity.
+     [Required]
+   - the **PKCE** Proof Key for Code Exchange (RFC 7636), automatically enables
+     PKCE flow without client_secret
+
+5. the **callback port** for the authentication redirect.
+
+Click **Install server** to run the MCP server.
+
+### Local custom MCP server
+
+On the **MCP Servers** page, click **Add an MCP server**, then choose **Add
+custom local server** in the drop-down menu. Or if this is your first MCP
+server, on the introductory screen.
 
 In the **Custom MCP server** dialog, choose [Docker image](#from-a-docker-image)
 or [Package manager](#from-a-source-package).
 
-### From a Docker image
+#### From a Docker image
 
 Select the **Docker image** option. This allows you to run any MCP server that
 is available as a Docker image in a remote registry or locally on your system.
@@ -154,7 +201,7 @@ On the configuration form, enter:
 
 Click **Install server** to create and start the MCP server container.
 
-### From a source package
+#### From a source package
 
 Select the **Package manager** option. This allows you to run an MCP server from
 a source package.
