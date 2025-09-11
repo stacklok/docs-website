@@ -135,19 +135,19 @@ On the configuration form, enter:
    - The **client ID** for your application registered with the OAuth provider.
      [Required]
    - The **client secret** key that proves your application's identity.
-     [Required]
-   - The **scopes** list of permissions your app is requesting
+     [Optional]
+   - The **scopes** list of permissions your app is requesting. [Optional]
 
    Selecting **OIDC** authentication method:
    - The base **issuer URL** of the OIDC provider. [Required]
    - The **client ID** for your application registered with the OIDC provider.
      [Required]
    - The **client secret** key that proves your application's identity.
-     [Required]
+     [Optional]
    - The **PKCE** Proof Key for Code Exchange (RFC 7636), automatically enables
-     PKCE flow without client_secret
+     PKCE flow without client_secret. [Optional]
 
-5. The **callback port** for the authentication redirect.
+5. The **callback port** for the authentication redirect. [Required]
 
 Click **Install server** to run the MCP server.
 
