@@ -17,8 +17,10 @@ To see all currently running MCP servers:
 thv list
 ```
 
-This shows the server name, package, status, url, port, tool type, group, and created at. Remote
-servers display their target URL in the URL column. The word 'remote' is indicated in both the package and tool type columns, making it easy to identify remote servers.
+This shows the server name, package, status, url, port, tool type, group, and created
+at. Remote servers display their target URL in the URL column. The word 'remote'
+is  indicated in both the package and tool type columns, making it easy to
+identify remote servers.
 
 To include stopped servers in the list:
 
@@ -81,6 +83,7 @@ thv restart <SERVER_NAME>
 ```
 
 For remote servers, restarting will:
+
 1. Recreate the proxy process
 2. Re-establish connection to the remote server
 3. Re-authenticate with the remote server (triggers new OAuth flow)
