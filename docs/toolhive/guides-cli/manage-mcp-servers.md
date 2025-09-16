@@ -30,7 +30,9 @@ thv list --all
 
 ### View server logs
 
-To view the logs of a running or stopped MCP server, use the
+#### Containerized servers
+
+To view the logs of a running or stopped containerized MCP server, use the
 [`thv logs`](../reference/cli/thv_logs.md) command. You can optionally follow
 the logs with the `--follow` option, which shows the most recent log entries and
 updates in real time.
@@ -39,8 +41,11 @@ updates in real time.
 thv logs <SERVER_NAME> [--follow]
 ```
 
-Logs are stored in the ToolHive application directory. The path depends on your
-platform:
+#### Remote servers
+
+The thv logs command only works with local containers. For remote MCP servers,
+there’s no container to read logs from, so you’ll need to check the log files
+directly in the ToolHive application directory. The path depends on your platform:
 
 - **macOS**: `~/Library/Application Support/toolhive/logs/<SERVER_NAME>.log`
 - **Linux**: `~/.local/share/toolhive/logs/<SERVER_NAME>.log`
