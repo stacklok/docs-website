@@ -18,7 +18,7 @@ thv list
 ```
 
 This shows the server name, package, status, url, port, tool type, group, and created at. Remote
-servers will show their target URL in url, and remote in package and tool type columns making it easy to identify them.
+servers display their target URL in the URL column. The word 'remote' is indicated in both the package and tool type columns, making it easy to identify remote servers.
 
 To include stopped servers in the list:
 
