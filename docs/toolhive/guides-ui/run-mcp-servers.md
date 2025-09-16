@@ -156,13 +156,14 @@ On the configuration form, enter:
 
 Click **Install server** to connect to the remote MCP server.
 
-#### Configuration and authentication examples
+<details>
+<summary>View examples of remote MCP authentication configuration</summary>
 
-##### Remote MCP server with no client credentials
+#### Remote MCP server with no client credentials
 
-This example shows how to connect to a remote MCP server using automatic OAuth
-client registration, where ToolHive handles all the authentication setup for
-you.
+This example shows how to connect to notion remote MCP server using automatic
+OAuth client registration, where ToolHive handles all the authentication setup
+for you.
 
 1. On the **MCP Servers** page, click **Add an MCP server**.
 2. Select **Add a remote MCP server** from the drop-down menu.
@@ -181,10 +182,10 @@ you.
 This is the simplest way to connect to a remote MCP server that supports
 automatic client registration, as it requires minimal configuration from you.
 
-##### Remote MCP server with OAuth2 authentication
+#### Remote MCP server with OAuth2 authentication
 
-This example shows how to connect to a remote MCP server that requires OAuth2
-authentication, such as a GitHub MCP server.
+This example shows how to connect to GitHub remote MCP server that requires
+OAuth2 authentication, such as a GitHub MCP server.
 
 1. On the **MCP Servers** page, click **Add an MCP server**.
 2. Select **Add a remote MCP server** from the drop-down menu.
@@ -220,10 +221,10 @@ first:
 4. Click **Register application**
 5. Copy the **Client ID** and generate a **Client secret** to use in ToolHive UI
 
-##### Remote MCP server with OIDC authentication
+#### Remote MCP server with OIDC authentication
 
-This example shows how to connect to a remote MCP server using OpenID Connect
-(OIDC) authentication with GitHub as the identity provider.
+This example shows how to connect to GitHub remote MCP server using OpenID
+Connect (OIDC) authentication with GitHub as the identity provider.
 
 1. On the **MCP Servers** page, click **Add an MCP server**.
 2. Select **Add a remote MCP server** from the drop-down menu.
@@ -247,6 +248,8 @@ This example shows how to connect to a remote MCP server using OpenID Connect
 **NOTE**: For OIDC authentication with GitHub, you can use the same OAuth app
 created in the previous example. The OIDC flow provides additional security
 features and standardized token handling compared to traditional OAuth2.
+
+</details>
 
 ### Local custom MCP server
 
