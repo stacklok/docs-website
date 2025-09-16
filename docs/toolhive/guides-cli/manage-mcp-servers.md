@@ -45,7 +45,8 @@ thv logs <SERVER_NAME> [--follow]
 
 The thv logs command only works with local containers. For remote MCP servers,
 there’s no container to read logs from, so you’ll need to check the log files
-directly in the ToolHive application directory. The path depends on your platform:
+directly in the ToolHive application directory. The path depends on your
+platform:
 
 - **macOS**: `~/Library/Application Support/toolhive/logs/<SERVER_NAME>.log`
 - **Linux**: `~/.local/share/toolhive/logs/<SERVER_NAME>.log`
