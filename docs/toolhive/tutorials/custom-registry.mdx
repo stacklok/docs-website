@@ -80,11 +80,50 @@ Create a new file called `registry.json` and add the following content:
         }
       }
     }
-  }
+  },
+  "groups": [
+    {
+      "name": "dev-toolkit",
+      "description": "Essential MCP servers for development workflows",
+      "servers": {
+        "fetch-tool": {
+          "description": "A web content fetching MCP server for development",
+          "image": "ghcr.io/stackloklabs/gofetch/server:latest",
+          "status": "Active",
+          "tier": "Community",
+          "transport": "streamable-http",
+          "args": ["--user-agent", "Mozilla/5.0 (compatible;DevBot/1.0)"],
+          "tags": ["web", "fetch", "dev"],
+          "tools": ["fetch"],
+          "permissions": {
+            "network": {
+              "outbound": {
+                "allow_host": [".github.com", ".stackoverflow.com"],
+                "allow_port": [80, 443]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
 ```
 
-This registry defines a single MCP server called `my-fetch` with:
+This registry defines:
+
+- A single MCP server called `my-fetch` in the top-level `servers` section
+- A group called `dev-toolkit` with its own independent server called
+  `fetch-tool`
+
+Groups are optional - you can omit the entire `groups` section if you only need
+individual servers. Groups are independent entities that contain their own
+complete server definitions. The `dev-toolkit` group includes a `fetch-tool`
+server that's similar to the top-level `my-fetch` server but with different
+configuration (different user agent, different allowed hosts for development
+purposes).
+
+Each server definition includes:
 
 - A description explaining its purpose
 - The container image to use
@@ -92,6 +131,9 @@ This registry defines a single MCP server called `my-fetch` with:
 - A list of tools it provides
 - Command-line arguments for customization
 - Network permissions for security
+
+Groups provide an organizational layer that allows you to run multiple related
+servers together as a cohesive unit.
 
 ### Step 2: Configure ToolHive to use your registry
 
@@ -190,6 +232,15 @@ thv run my-fetch
 The server should start successfully, demonstrating that your custom registry is
 working correctly.
 
+You can also run the entire group:
+
+```bash
+thv group run dev-toolkit
+```
+
+This starts all servers in the `dev-toolkit` group (in this case, just the
+`fetch-tool` server).
+
 </TabItem>
 </Tabs>
 
@@ -233,6 +284,156 @@ After updating the file, the new server is immediately available for ToolHive
 CLI commands. For the UI, navigate to the registry settings and click **Save**
 to see the new server listed.
 
+## Working with groups
+
+Groups allow you to organize related MCP servers and run them together as a
+cohesive unit. This is particularly useful for:
+
+- **Team-specific toolkits**: Create groups for different teams (frontend,
+  backend, DevOps)
+- **Workflow-based organization**: Group servers needed for specific workflows
+  (testing, deployment, monitoring)
+- **Environment-specific configurations**: Different server configurations for
+  development, staging, and production
+
+### Group structure
+
+Groups in your registry have the following structure:
+
+```json
+{
+  "groups": [
+    {
+      "name": "group-name",
+      "description": "Description of what this group provides",
+      "servers": {
+        "server-name": {
+          // Complete server definition
+        }
+      },
+      "remote_servers": {
+        "remote-server-name": {
+          // Complete remote server definition
+        }
+      }
+    }
+  ]
+}
+```
+
+### Key characteristics of groups
+
+- **Independent server definitions**: Each group contains complete server
+  configurations, not references to top-level servers
+- **Self-contained**: Groups can define servers with the same names as top-level
+  servers but with different configurations
+- **Organizational only**: Groups provide organization but don't affect server
+  runtime behavior
+- **Flexible membership**: Servers can appear in multiple groups with different
+  configurations
+
+### Example: Multi-group registry
+
+Here's a more comprehensive example showing how groups can organize servers for
+different purposes:
+
+```json title='advanced-registry.json'
+{
+  "$schema": "https://raw.githubusercontent.com/stacklok/toolhive/main/pkg/registry/data/schema.json",
+  "version": "1.0.0",
+  "last_updated": "2025-08-15T10:00:00Z",
+  "servers": {
+    "production-fetch": {
+      "description": "Production web content fetching server",
+      "image": "ghcr.io/stackloklabs/gofetch/server:latest",
+      "status": "Active",
+      "tier": "Community",
+      "transport": "streamable-http",
+      "permissions": {
+        "network": {
+          "outbound": {
+            "allow_host": [".company.com"],
+            "allow_port": [443]
+          }
+        }
+      }
+    }
+  },
+  "groups": [
+    {
+      "name": "frontend-dev",
+      "description": "Tools for frontend development team",
+      "servers": {
+        "dev-fetch": {
+          "description": "Development web content fetching with broader access",
+          "image": "ghcr.io/stackloklabs/gofetch/server:latest",
+          "status": "Active",
+          "tier": "Community",
+          "transport": "streamable-http",
+          "permissions": {
+            "network": {
+              "outbound": {
+                "allow_host": ["*"],
+                "allow_port": [80, 443]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "testing-suite",
+      "description": "Servers needed for automated testing workflows",
+      "servers": {
+        "test-fetch": {
+          "description": "Restricted fetch server for testing",
+          "image": "ghcr.io/stackloklabs/gofetch/server:latest",
+          "status": "Active",
+          "tier": "Community",
+          "transport": "streamable-http",
+          "args": ["--timeout", "5s"],
+          "permissions": {
+            "network": {
+              "outbound": {
+                "allow_host": ["test.example.com"],
+                "allow_port": [443]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+This registry provides:
+
+- A production-ready `production-fetch` server at the top level
+- A `frontend-dev` group with a more permissive `dev-fetch` server
+- A `testing-suite` group with a restricted `test-fetch` server
+
+Each server has the same base image but different configurations appropriate for
+its use case.
+
+### Running groups
+
+You can run entire groups using the group command:
+
+```bash
+# Run all servers in the frontend-dev group
+thv group run frontend-dev
+
+# Run all servers in the testing-suite group
+thv group run testing-suite
+
+# You can also pass environment variables and secrets to group runs
+thv group run frontend-dev --env DEV_MODE=true --secret API_KEY=my-secret
+```
+
+Groups provide a convenient way to start multiple related servers with a single
+command.
+
 ## Production considerations
 
 While this tutorial uses a local file for simplicity, in production environments
@@ -257,11 +458,13 @@ You've successfully:
 - Created a custom MCP registry following the JSON schema
 - Configured ToolHive to use your custom registry
 - Added MCP servers with proper metadata and permissions
-- Tested your registry by listing and running servers
+- Created groups to organize related servers
+- Tested your registry by listing and running both individual servers and groups
 
-You can now maintain your own curated list of MCP servers tailored to your
-organization's needs. The registry can include both public servers from
-container registries and private servers hosted within your organization.
+You can now maintain your own curated list of MCP servers and groups tailored to
+your organization's needs. The registry can include both public servers from
+container registries and private servers hosted within your organization,
+organized into logical groups for different teams or workflows.
 
 ## Next steps
 
