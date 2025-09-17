@@ -1,0 +1,236 @@
+---
+title: Configure tools for MCP servers on Kubernetes
+description:
+  Filter and rename MCP server tools using the MCPToolConfig CRD and
+  toolConfigRef.
+---
+
+## Overview
+
+Use the MCPToolConfig Custom Resource Definition (CRD) to centrally manage which
+tools an MCP server exposes, and optionally rename tools or override their
+descriptions. You reference the configuration from an MCPServer using the
+toolConfigRef field.
+
+- toolsFilter: allow‑list the tools to expose.
+- toolsOverride: rename tools and/or change their descriptions.
+- Same‑namespace only: an MCPServer can reference only MCPToolConfig objects in
+  the same namespace.
+- Precedence: toolConfigRef takes precedence over the deprecated spec.tools
+  field on MCPServer.
+
+## Prerequisites
+
+- ToolHive operator installed. See
+  [Deploy the operator using Helm](./deploy-operator-helm.md).
+- Permissions to create namespaced resources (and optionally RBAC for servers
+  that need cluster access).
+
+## Define a basic tool filter
+
+This example exposes only three tools on a server:
+
+```yaml title="toolconfig-basic.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPToolConfig
+metadata:
+  name: basic-tool-filter
+  namespace: default
+spec:
+  toolsFilter:
+    - read_file
+    - write_file
+    - list_directory
+```
+
+## Rename tools and override descriptions
+
+You can rename tools to match your team's conventions and refine their
+descriptions:
+
+```yaml title="toolconfig-with-overrides.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPToolConfig
+metadata:
+  name: github-tools-config
+  namespace: default
+spec:
+  toolsFilter:
+    - create_pull_request
+    - get_pull_request
+    - list_pull_requests
+    - merge_pull_request
+  toolsOverride:
+    create_pull_request:
+      name: github_create_pr
+      description: Create a new GitHub pull request
+    get_pull_request:
+      name: github_get_pr
+      description: Retrieve details of a GitHub pull request
+    list_pull_requests:
+      name: github_list_prs
+      description: List pull requests in a repository
+    merge_pull_request:
+      name: github_merge_pr
+      description: Merge a GitHub pull request
+```
+
+## Reference the configuration from an MCP server
+
+Add toolConfigRef to your MCPServer. toolConfigRef overrides spec.tools
+(deprecated).
+
+```yaml title="mcpserver-with-toolconfig.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: mkp
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/mkp/server:0.2.3
+  transport: streamable-http
+  targetPort: 8080
+  port: 8080
+  serviceAccount: mkp-sa
+  toolConfigRef:
+    name: mkp-tools
+  args:
+    - '--read-write=true'
+```
+
+## End‑to‑end example (cluster‑scoped RBAC)
+
+The following manifest shows a minimal, end‑to‑end setup that runs the MKP
+server inside the cluster, grants it wide permissions (for demo only), defines
+an MCPToolConfig, and references it from the server:
+
+```yaml title="mkp-with-toolconfig.yaml"
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mkp-sa
+  namespace: toolhive-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mkp-cluster-role
+rules:
+  - apiGroups: ['*']
+    resources: ['*']
+    verbs: ['*']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mkp-cluster-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mkp-cluster-role
+subjects:
+  - kind: ServiceAccount
+    name: mkp-sa
+    namespace: toolhive-system
+---
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPToolConfig
+metadata:
+  name: mkp-tools
+  namespace: toolhive-system
+spec:
+  toolsFilter:
+    - homelab_k8s_apply_resource
+    - homelab_k8s_delete_resource
+    - homelab_k8s_get_resource
+    - homelab_k8s_list_resources
+    - homelab_k8s_post_resource
+  toolsOverride:
+    apply_resource:
+      name: homelab_k8s_apply_resource
+      description: |
+        Apply (create or update) a Kubernetes resource.
+        Required:
+          - resource: plural resource name (e.g., deployments, services)
+          - version: API version (e.g., v1, v1beta1)
+          - manifest: full resource manifest (apiVersion, kind, metadata, spec)
+        Optional:
+          - group: API group (e.g., apps, networking.k8s.io)
+          - resource_type: clustered|namespaced (default inferred from resource; use namespaced and provide namespace when required)
+          - namespace: target namespace for namespaced resources
+    delete_resource:
+      name: homelab_k8s_delete_resource
+      description: |
+        Delete a Kubernetes resource.
+        Required:
+          - resource, version, name
+        Optional:
+          - group, namespace (for namespaced resources)
+    get_resource:
+      name: homelab_k8s_get_resource
+      description: |
+        Get a Kubernetes resource or its subresource (e.g., status, scale, logs).
+        - For pod logs, supported parameters include: container, previous, sinceSeconds, sinceTime, timestamps, limitBytes, tailLines.
+        - For subresources, set subresource: status|scale|logs etc.
+        - For namespaced resources, set namespace.
+    list_resources:
+      name: homelab_k8s_list_resources
+      description: |
+        List Kubernetes resources with flexible filtering.
+        Supported parameters:
+          - namespace (for namespaced resources)
+          - label_selector
+          - include_annotations (bool), include_annotation_keys, exclude_annotation_keys (wildcards supported with *)
+          - limit (0 = no limit), continue (for pagination)
+    post_resource:
+      name: homelab_k8s_post_resource
+      description: |
+        Post to a Kubernetes resource or subresource (e.g., exec).
+        - Provide body according to subresource.
+        - For exec, body fields: command (string or array), container (optional), timeout (seconds, optional).
+        - For namespaced resources, set namespace.
+---
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: mkp
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/mkp/server:0.2.3
+  transport: streamable-http
+  targetPort: 8080
+  port: 8080
+  serviceAccount: mkp-sa
+  toolConfigRef:
+    name: mkp-tools
+  args:
+    - '--read-write=true'
+```
+
+:::warning[Least privilege]
+
+The ClusterRole above is intentionally broad for demonstration. In production,
+scope permissions to the minimum your workflows require.
+
+:::
+
+## Inspect status and troubleshoot
+
+Use kubectl to inspect status and track change propagation:
+
+```bash
+kubectl -n toolhive-system get mcptoolconfigs
+kubectl -n toolhive-system get mcptoolconfig mkp-tools -o yaml
+kubectl -n toolhive-system get mcpserver mkp -o yaml
+```
+
+- If an MCPToolConfig is still referenced, deletion is blocked by a finalizer.
+  Remove all toolConfigRef references first.
+- If an MCPServer references a missing MCPToolConfig, the server enters Failed
+  and the controller logs include the missing name and namespace.
+
+## Related
+
+- See the [Kubernetes CRD reference](../reference/crd-spec.mdx) for the full
+  MCPToolConfig and MCPServerSpec schemas.
+- Learn how to [run the MKP server in Kubernetes](../guides-mcp/k8s.mdx).

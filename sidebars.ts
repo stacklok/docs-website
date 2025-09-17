@@ -122,6 +122,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/intro',
         'toolhive/guides-k8s/deploy-operator-helm',
         'toolhive/guides-k8s/run-mcp-k8s',
+        'toolhive/guides-k8s/tool-config',
         'toolhive/guides-k8s/telemetry-and-metrics',
         'toolhive/guides-k8s/logging-infrastructure',
         'toolhive/reference/crd-spec',
