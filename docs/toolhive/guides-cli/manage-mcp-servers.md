@@ -17,7 +17,10 @@ To see all currently running MCP servers:
 thv list
 ```
 
-This shows the server name, status, transport method, port, and URL.
+This shows the server name, package, status, url, port, tool type, group, and
+created at. Remote servers display their target URL in the URL column. The word
+'remote' is indicated in both the package and tool type columns, making it easy
+to identify remote servers.
 
 To include stopped servers in the list:
 
@@ -27,7 +30,9 @@ thv list --all
 
 ### View server logs
 
-To view the logs of a running or stopped MCP server, use the
+#### Containerized servers
+
+To view the logs of a running or stopped containerized MCP server, use the
 [`thv logs`](../reference/cli/thv_logs.md) command. You can optionally follow
 the logs with the `--follow` option, which shows the most recent log entries and
 updates in real time.
@@ -36,7 +41,11 @@ updates in real time.
 thv logs <SERVER_NAME> [--follow]
 ```
 
-Logs are stored in the ToolHive application directory. The path depends on your
+#### Remote servers
+
+The thv logs command only works with local containers. For remote MCP servers,
+there’s no container to read logs from, so you’ll need to check the log files
+directly in the ToolHive application directory. The path depends on your
 platform:
 
 - **macOS**: `~/Library/Application Support/toolhive/logs/<SERVER_NAME>.log`
@@ -60,7 +69,9 @@ thv stop <SERVER_NAME>
 ```
 
 This stops the server and the associated proxy process, removes the MCP server's
-entry from your configured clients, but keeps the container for future use.
+entry from your configured clients, but keeps the container for future use. For
+remote servers, this terminates the proxy process but preserves the
+configuration.
 
 Add the `--group` flag to stop all servers in a specific group:
 
@@ -78,6 +89,12 @@ To restart a stopped MCP server and add it back to your configured clients:
 thv restart <SERVER_NAME>
 ```
 
+For remote servers, restarting will:
+
+1. Recreate the proxy process
+2. Re-establish connection to the remote server
+3. Re-authenticate with the remote server (triggers new OAuth flow)
+
 Add the `--group` flag to restart all servers in a specific group:
 
 ```bash
@@ -94,7 +111,8 @@ thv rm <SERVER_NAME>
 
 This removes the container and cleans up the MCP server's entry in your
 configured clients. If the server is still running, it will be stopped as part
-of the removal.
+of the removal. For remote servers, this removes the proxy process,
+configuration, and stored authentication tokens.
 
 Add the `--group` flag to remove all servers in a specific group:
 
@@ -109,6 +127,18 @@ won't clean up the MCP server's entry in your configured clients. Use
 [`thv rm`](../reference/cli/thv_rm.md) to make sure the entry is removed.
 
 :::
+
+### Remote server authentication
+
+Remote servers with OAuth authentication will automatically refresh tokens when
+they expire during normal operation. However, restarting a remote server always
+triggers a new OAuth authentication flow:
+
+```bash
+thv restart <REMOTE_SERVER_NAME>
+```
+
+This will always prompt for re-authentication, even if valid tokens exist.
 
 ## Related information
 
