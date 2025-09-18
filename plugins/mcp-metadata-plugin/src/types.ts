@@ -3,6 +3,7 @@
 
 export interface PluginOptions {
   thvCommand?: string; // Custom thv command path
+  failOnError?: boolean; // Whether to fail the build on thv command errors
 }
 
 export interface PluginContent {
