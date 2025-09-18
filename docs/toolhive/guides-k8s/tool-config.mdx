@@ -28,7 +28,7 @@ apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPToolConfig
 metadata:
   name: basic-tool-filter
-  namespace: default
+  namespace: toolhive-system
 spec:
   toolsFilter:
     - read_file
@@ -36,179 +36,147 @@ spec:
     - list_directory
 ```
 
+:::note[Empty filter] If `toolsFilter` is omitted or empty, all tools are
+allowed. :::
+
 ## Rename tools and override descriptions
 
-You can rename tools to match your team's conventions and refine their
-descriptions:
+You can rename tools to clearly distinguish different deployments or scopes, and
+refine their descriptions to add usage guidance.
+
+A common pattern is running the same MCP server multiple times for different
+scopes (for example, separate GitHub orgs, repos, or environments). Renaming
+tools makes intent obvious and helps prevent mistakes.
 
 ```yaml title="toolconfig-with-overrides.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPToolConfig
 metadata:
   name: github-tools-config
-  namespace: default
+  namespace: toolhive-system
 spec:
+  # Only expose GitHub PR-related tools
   toolsFilter:
     - create_pull_request
     - get_pull_request
     - list_pull_requests
     - merge_pull_request
+
+  # You can override name, description, or both (they are independent)
   toolsOverride:
+    # Override only the name
     create_pull_request:
       name: github_create_pr
-      description: Create a new GitHub pull request
+
+    # Override only the description (keep the original name)
     get_pull_request:
-      name: github_get_pr
-      description: Retrieve details of a GitHub pull request
+      description: Retrieve details of a specific GitHub pull request
+
+    # Override both name and description
     list_pull_requests:
       name: github_list_prs
       description: List pull requests in a repository
+
     merge_pull_request:
       name: github_merge_pr
       description: Merge a GitHub pull request
 ```
 
-The key in the `toolsOverride` object is the _original tool name_, while the
-`name` field contains the _new name_ that clients will see.
+The key in the `toolsOverride` map is the original tool name; the `name` field is the user-visible (overridden) name.
+
+:::info[Override fields]
+You can override name or description independently. Leave one unset to keep the original value from the MCP server. Both fields cannot be empty at the same time.
+:::
+
+:::tip[When to rename?]
+If you run the same server for different scopes (for example, prod vs. sandbox), use distinct tool names like `github_prod_create_pr` and `github_sandbox_create_pr` to make intent clear to clients.
+:::
 
 ## Reference the configuration from an MCP server
 
-Add toolConfigRef to your MCPServer. toolConfigRef overrides spec.tools
-(deprecated).
+Add `toolConfigRef` to your `MCPServer`. `toolConfigRef` takes precedence over
+the deprecated `spec.tools` field on `MCPServer`.
 
 ```yaml {12-13} title="mcpserver-with-toolconfig.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
-  name: mkp
+  name: github
   namespace: toolhive-system
 spec:
-  image: ghcr.io/stackloklabs/mkp/server:0.2.3
-  transport: streamable-http
-  targetPort: 8080
+  image: ghcr.io/github/github-mcp-server
+  transport: stdio
   port: 8080
-  serviceAccount: mkp-sa
   toolConfigRef:
-    name: mkp-tools
-  args:
-    - '--read-write=true'
+    name: github-tools-config
 ```
 
-## End‑to‑end example (cluster‑scoped RBAC)
+:::note[Filtering and overrides together] When you use `toolsFilter` and
+`toolsOverride` together, filter by the user-visible (overridden) names. Tool
+calls using overridden names are forwarded to the actual tool. :::
 
-The following manifest shows a minimal, end‑to‑end setup that runs the MKP
-server inside the cluster, grants it wide permissions (for demo only), defines
-an MCPToolConfig, and references it from the server:
+## Example: org-scoped tool names
 
-```yaml title="mkp-with-toolconfig.yaml"
-apiVersion: v1
-kind: ServiceAccount
+Run the GitHub MCP twice, once per organization, and rename tools so intent is
+clear to clients.
+
+```yaml title="github-org-scoped-tools.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPToolConfig
 metadata:
-  name: mkp-sa
+  name: github-acme-tools
   namespace: toolhive-system
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: mkp-cluster-role
-rules:
-  - apiGroups: ['*']
-    resources: ['*']
-    verbs: ['*']
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: mkp-cluster-role-binding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: mkp-cluster-role
-subjects:
-  - kind: ServiceAccount
-    name: mkp-sa
-    namespace: toolhive-system
+spec:
+  toolsFilter:
+    - github_acme_create_pr
+    - github_acme_get_pr
+  toolsOverride:
+    create_pull_request:
+      name: github_acme_create_pr
+    get_pull_request:
+      name: github_acme_get_pr
 ---
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPToolConfig
 metadata:
-  name: mkp-tools
+  name: github-foocorp-tools
   namespace: toolhive-system
 spec:
   toolsFilter:
-    - homelab_k8s_apply_resource
-    - homelab_k8s_delete_resource
-    - homelab_k8s_get_resource
-    - homelab_k8s_list_resources
-    - homelab_k8s_post_resource
+    - github_foocorp_create_pr
+    - github_foocorp_get_pr
   toolsOverride:
-    apply_resource:
-      name: homelab_k8s_apply_resource
-      description: |
-        Apply (create or update) a Kubernetes resource.
-        Required:
-          - resource: plural resource name (e.g., deployments, services)
-          - version: API version (e.g., v1, v1beta1)
-          - manifest: full resource manifest (apiVersion, kind, metadata, spec)
-        Optional:
-          - group: API group (e.g., apps, networking.k8s.io)
-          - resource_type: clustered|namespaced (default inferred from resource; use namespaced and provide namespace when required)
-          - namespace: target namespace for namespaced resources
-    delete_resource:
-      name: homelab_k8s_delete_resource
-      description: |
-        Delete a Kubernetes resource.
-        Required:
-          - resource, version, name
-        Optional:
-          - group, namespace (for namespaced resources)
-    get_resource:
-      name: homelab_k8s_get_resource
-      description: |
-        Get a Kubernetes resource or its subresource (e.g., status, scale, logs).
-        - For pod logs, supported parameters include: container, previous, sinceSeconds, sinceTime, timestamps, limitBytes, tailLines.
-        - For subresources, set subresource: status|scale|logs etc.
-        - For namespaced resources, set namespace.
-    list_resources:
-      name: homelab_k8s_list_resources
-      description: |
-        List Kubernetes resources with flexible filtering.
-        Supported parameters:
-          - namespace (for namespaced resources)
-          - label_selector
-          - include_annotations (bool), include_annotation_keys, exclude_annotation_keys (wildcards supported with *)
-          - limit (0 = no limit), continue (for pagination)
-    post_resource:
-      name: homelab_k8s_post_resource
-      description: |
-        Post to a Kubernetes resource or subresource (e.g., exec).
-        - Provide body according to subresource.
-        - For exec, body fields: command (string or array), container (optional), timeout (seconds, optional).
-        - For namespaced resources, set namespace.
+    create_pull_request:
+      name: github_foocorp_create_pr
+    get_pull_request:
+      name: github_foocorp_get_pr
 ---
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
-  name: mkp
+  name: github-acme
   namespace: toolhive-system
 spec:
-  image: ghcr.io/stackloklabs/mkp/server:0.2.3
-  transport: streamable-http
-  targetPort: 8080
+  image: ghcr.io/github/github-mcp-server
+  transport: stdio
   port: 8080
-  serviceAccount: mkp-sa
+  # (Use credentials that scope access to the acme-org here)
   toolConfigRef:
-    name: mkp-tools
-  args:
-    - '--read-write=true'
+    name: github-acme-tools
+---
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: github-foocorp
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/github/github-mcp-server
+  transport: stdio
+  port: 8080
+  # (Use credentials that scope access to the foo-corp org here)
+  toolConfigRef:
+    name: github-foocorp-tools
 ```
-
-:::warning[Least privilege]
-
-The ClusterRole above is intentionally broad for demonstration. In production,
-scope permissions to the minimum your workflows require.
-
-:::
 
 ## Inspect status and troubleshoot
 
@@ -216,8 +184,8 @@ Use kubectl to inspect status and track change propagation:
 
 ```bash
 kubectl -n toolhive-system get mcptoolconfigs
-kubectl -n toolhive-system get mcptoolconfig mkp-tools -o yaml
-kubectl -n toolhive-system get mcpserver mkp -o yaml
+kubectl -n toolhive-system get mcptoolconfig github-tools-config -o yaml
+kubectl -n toolhive-system get mcpserver github -o yaml
 ```
 
 - If an MCPToolConfig is still referenced, deletion is blocked by a finalizer.
