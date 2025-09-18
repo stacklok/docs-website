@@ -268,23 +268,38 @@ purposes:
   },
   "groups": [
     {
-      "name": "frontend-dev",
-      "description": "Tools for frontend development team",
+      "name": "devops-toolkit",
+      "description": "Complete DevOps toolkit for development teams",
       "servers": {
-        "dev-fetch": {
-          "description": "Development web content fetching with broader access",
-          "image": "ghcr.io/stackloklabs/gofetch/server:latest",
+        "github": {
+          "description": "GitHub integration for repository and issue management",
+          "image": "ghcr.io/github/github-mcp-server:v0.15.0",
+          "status": "Active",
+          "tier": "Official",
+          "transport": "stdio",
+          "env_vars": [
+            {
+              "name": "GITHUB_PERSONAL_ACCESS_TOKEN",
+              "description": "GitHub personal access token",
+              "required": true,
+              "secret": true
+            }
+          ]
+        },
+        "heroku": {
+          "description": "Heroku platform deployment and management",
+          "image": "ghcr.io/stacklok/dockyard/npx/heroku-mcp-server:1.0.7",
           "status": "Active",
           "tier": "Community",
-          "transport": "streamable-http",
-          "permissions": {
-            "network": {
-              "outbound": {
-                "allow_host": ["*"],
-                "allow_port": [80, 443]
-              }
+          "transport": "stdio",
+          "env_vars": [
+            {
+              "name": "HEROKU_API_KEY",
+              "description": "Heroku API key",
+              "required": true,
+              "secret": true
             }
-          }
+          ]
         }
       }
     },
@@ -317,25 +332,27 @@ purposes:
 This registry provides:
 
 - A production-ready `production-fetch` server at the top level
-- A `frontend-dev` group with a more permissive `dev-fetch` server
+- A `devops-toolkit` group with GitHub and Heroku servers for complete DevOps
+  workflows
 - A `testing-suite` group with a restricted `test-fetch` server
 
-Each server has the same base image but different configurations appropriate for
-its use case.
+Notice how the `devops-toolkit` group contains multiple servers that work
+together—GitHub for repository management and Heroku for
+deployment—demonstrating how groups can bundle related functionality.
 
 ### Run registry groups
 
 You can run entire groups using the group command:
 
 ```bash
-# Run all servers in the frontend-dev group
-thv group run frontend-dev
+# Run all servers in the devops-toolkit group (GitHub + Heroku)
+thv group run devops-toolkit
 
 # Run all servers in the testing-suite group
 thv group run testing-suite
 
-# You can also pass environment variables and secrets to group runs
-thv group run frontend-dev --env DEV_MODE=true --secret API_KEY=my-secret
+# You can also pass environment variables and secrets to specific servers in the group
+thv group run devops-toolkit --secret github-token,target=github.GITHUB_PERSONAL_ACCESS_TOKEN --secret heroku-key,target=heroku.HEROKU_API_KEY
 ```
 
 Groups provide a convenient way to start multiple related servers with a single
