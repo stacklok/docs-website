@@ -23,6 +23,8 @@ const config: Config = {
       './plugins/mcp-metadata-plugin',
       {
         thvCommand: 'thv', // Can be customized if thv is in a different path
+        failOnError:
+          process.env.NODE_ENV === 'production' || process.env.CI === 'true',
       },
     ],
   ],

@@ -13,28 +13,23 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 1
 fi
 
-#API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive/releases/latest"
+API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive/releases/latest"
 
 # Fetch release information
-#RELEASE_JSON=$(curl -sf "$API_ENDPOINT" || {
-#    echo "Failed to fetch release information from GitHub API"
-#    exit 1
-#})
-#RELEASE_VERSION=$(echo "$RELEASE_JSON" | jq -r '.tag_name // empty' | sed 's/^v//')
-#RELEASE_TARBALL=$(echo "$RELEASE_JSON" | jq -r \
-#    --arg version "$RELEASE_VERSION" \
-#    '.assets[] | select(.name == "toolhive_" + $version + "_linux_amd64.tar.gz") | .browser_download_url // empty')
+RELEASE_JSON=$(curl -sf "$API_ENDPOINT" || {
+    echo "Failed to fetch release information from GitHub API"
+    exit 1
+})
+RELEASE_VERSION=$(echo "$RELEASE_JSON" | jq -r '.tag_name // empty' | sed 's/^v//')
+RELEASE_TARBALL=$(echo "$RELEASE_JSON" | jq -r \
+    --arg version "$RELEASE_VERSION" \
+    '.assets[] | select(.name == "toolhive_" + $version + "_linux_amd64.tar.gz") | .browser_download_url // empty')
 
-#if [ -z "$RELEASE_TARBALL" ]; then
-#    echo "Failed to get release tarball URL for release: ${RELEASE_VERSION}"
-#    echo "Please check if the tag exists in the repository"
-#    exit 1
-#fi
-
-# Temporary fix for early exit if container runtime isn't found
-
-RELEASE_VERSION="v0.2.17"
-RELEASE_TARBALL="https://github.com/stacklok/toolhive/releases/download/v0.2.17/toolhive_0.2.17_linux_amd64.tar.gz"
+if [ -z "$RELEASE_TARBALL" ]; then
+    echo "Failed to get release tarball URL for release: ${RELEASE_VERSION}"
+    echo "Please check if the tag exists in the repository"
+    exit 1
+fi
 
 # Determine installation location based on write permissions
 if [[ -w "/usr/local/bin" ]]; then
@@ -72,5 +67,9 @@ chmod +x /tmp/thv
 cp /tmp/thv "$INSTALL_DIR/thv"
 rm -f /tmp/toolhive.tar.gz /tmp/thv
 
-echo "ToolHive CLI (thv) installed successfully. Version: $RELEASE_VERSION"
-echo "The 'thv' command is now available in your PATH."
+thv version || {
+    echo "Installation failed: 'thv' command is not working."
+    exit 1
+}
+
+echo "ToolHive CLI (thv) installed successfully."

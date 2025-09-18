@@ -14,7 +14,7 @@ export default function mcpMetadataPlugin(
   context: LoadContext,
   options: PluginOptions = {}
 ): Plugin<PluginContent> {
-  const { thvCommand = 'thv' } = options;
+  const { thvCommand = 'thv', failOnError = false } = options;
 
   return {
     name: 'mcp-metadata-plugin',
@@ -53,6 +53,11 @@ export default function mcpMetadataPlugin(
             `Failed to fetch data for MCP server: ${serverName}`,
             error
           );
+
+          if (failOnError) {
+            throw error; // This will fail the build
+          }
+
           // Store error message as fallback
           serverData[serverName] = `# Error fetching data for ${serverName}
 # ${error.message}
