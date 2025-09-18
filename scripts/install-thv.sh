@@ -34,7 +34,7 @@ fi
 # Temporary fix for early exit if container runtime isn't found
 
 RELEASE_VERSION="v0.2.9"
-RELEASE_TARBALL="https://github.com/stacklok/toolhive/releases/download/v0.2.9/toolhive_0.2.9__linux_amd64.tar.gz"
+RELEASE_TARBALL="https://github.com/stacklok/toolhive/releases/download/v0.2.9/toolhive_0.2.9_linux_amd64.tar.gz"
 
 # Determine installation location based on write permissions
 if [[ -w "/usr/local/bin" ]]; then
