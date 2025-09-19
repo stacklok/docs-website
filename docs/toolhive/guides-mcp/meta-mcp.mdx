@@ -27,14 +27,46 @@ Key features include:
 - **Intelligent routing**: Automatically routes requests to the appropriate MCP
   server based on tool requirements
 
+This approach helps you avoid problems associated with context overload and tool
+confusion by narrowing down the toolset to only those relevant for a given task.
+It also simplifies client configurations by providing a single access point to
+multiple MCP servers.
+
 ## Metadata
 
 <MCPMetadata name='meta-mcp' />
 
 ## Usage
 
-<Tabs groupId='mode' queryString='mode'>
+The meta-mcp server is specifically designed to work with
+[ToolHive groups](../guides-cli/group-management.md). The recommended setup is
+to run meta-mcp in its own dedicated group (e.g., "meta") and have other MCP
+servers in a separate group (e.g., "default"). This keeps client configurations
+clean and allows meta-mcp to discover and route to tools across all connected
+MCP servers.
 
+Clients using meta-mcp should be configured to connect only to the meta group.
+The meta-mcp server discovers and routes requests to tools in the default group.
+
+```mermaid
+flowchart TB
+  subgraph meta["ToolHive group: meta"]
+    direction TB
+    metamcp["meta-mcp server"]
+  end
+  subgraph def["ToolHive group: default"]
+    direction TB
+    mcp1["mcp1"]
+    mcp2["mcp2"]
+    mcp3["mcp3"]
+  end
+
+  client(["Client"]) <-- connects --> meta
+  metamcp <-. discovers/routes .-> def
+  client x-. 🚫 .-x def
+```
+
+<Tabs groupId='mode' queryString='mode'>
 <TabItem value='ui' label='UI'>
 
 The meta-mcp server uses ToolHive groups to function. While you need the
@@ -42,7 +74,6 @@ ToolHive UI to run meta-mcp, it doesn't support group management yet, so you'll
 need to use the CLI for setup.
 
 </TabItem>
-
 <TabItem value='cli' label='CLI' default>
 
 :::info[Prerequisites]
@@ -50,13 +81,8 @@ need to use the CLI for setup.
 You need both the ToolHive CLI and UI to use the meta-mcp server because it
 depends on the UI's API server for tool discovery and management.
 
-- ToolHive UI (version >= 0.6.0) must be running for setup
+- ToolHive UI (version >= 0.6.0) must be running during setup and operation
 - ToolHive CLI (version >= 0.3.1)
-
-The meta-mcp server should run in a
-[dedicated group](../guides-cli/group-management.md) to keep client
-configurations clean. Other MCP servers that you want to access through meta-mcp
-should be in a separate group.
 
 :::
 
@@ -80,12 +106,23 @@ thv client setup
 thv client list-registered
 ```
 
+:::note
+
+If your client was previously registered with the default group, unregister it.
+For example, to unregister Cursor:
+
+```bash
+thv client remove cursor --group default
+```
+
+:::
+
 **Step 3: Add MCP servers to the default group**
 
 ```bash
 # Add MCP servers that you want to access through meta-mcp
 thv run github
-thv run filesystem
+thv run fetch
 thv run time
 
 # Verify the configuration - meta-mcp should be in 'meta' group, others in 'default'
@@ -97,8 +134,9 @@ thv list
 
 ## Sample prompts
 
-Once meta-mcp is configured and running, you can use it with natural language
-prompts. The server automatically discovers and routes to appropriate tools:
+Once meta-mcp is configured and running, you can use the same prompts you would
+normally use with individual MCP servers. The meta-mcp server automatically
+discovers and routes to appropriate tools.
 
 **Direct task examples:**
 
@@ -117,9 +155,10 @@ prompts. The server automatically discovers and routes to appropriate tools:
 
 ## Available tools
 
-The meta-mcp server provides two main tools:
+The meta-mcp server provides two tools of its own for tool discovery and
+execution.
 
-### find_tool
+### `find_tool`
 
 Discovers available tools that match your requirements using hybrid search
 (semantic + keyword).
@@ -131,7 +170,7 @@ Discovers available tools that match your requirements using hybrid search
 - `tool_keywords`: Space-separated keywords of the task or capability needed
   (e.g., "list issues github", "SQL query postgres")
 
-### call_tool
+### `call_tool`
 
 Executes a specific tool with provided parameters after discovery.
 
