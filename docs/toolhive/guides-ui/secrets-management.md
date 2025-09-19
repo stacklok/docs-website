@@ -59,5 +59,5 @@ using the same name.
 
 ## Related information
 
-- [Run MCP servers](./run-mcp-servers.md)
+- [Run MCP servers](./run-mcp-servers.mdx)
 - [Client configuration](./client-configuration.mdx)

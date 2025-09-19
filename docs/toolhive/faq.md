@@ -63,7 +63,7 @@ services and platforms like:
 Yes. You can run any MCP server from a container image or source package, even
 if it's not in the registry. Just provide the image name or package details when
 starting the server using the CLI or UI. See the custom MCP server section in
-the [UI guide](./guides-ui/run-mcp-servers.md#install-a-custom-mcp-server) and
+the [UI guide](./guides-ui/run-mcp-servers.mdx#install-a-custom-mcp-server) and
 [CLI guide](./guides-cli/run-mcp-servers.mdx#run-a-custom-mcp-server) for more
 details.
 
