@@ -1,0 +1,157 @@
+---
+title: Meta-mcp MCP server guide
+sidebar_label: Meta-mcp
+description:
+  Using the meta-mcp server with ToolHive for intelligent tool discovery and
+  unified MCP server access.
+last_update:
+  author: ptelang
+  date: 2025-09-18
+---
+
+## Overview
+
+The meta-mcp server acts as an intelligent intermediary between AI clients and
+multiple MCP servers. It provides tool discovery, unified access to multiple MCP
+servers through a single endpoint, and intelligent routing of requests to
+appropriate MCP tools.
+
+Key features include:
+
+- **Tool discovery**: Uses hybrid search (semantic + keyword) to find the right
+  tools for your tasks
+- **Unified access**: Single endpoint to access all your MCP servers without
+  managing multiple connections
+- **Tool management**: Seamlessly manage large numbers of MCP tools across
+  different servers
+- **Intelligent routing**: Automatically routes requests to the appropriate MCP
+  server based on tool requirements
+
+## Metadata
+
+<MCPMetadata name='meta-mcp' />
+
+## Usage
+
+<Tabs groupId='mode' queryString='mode'>
+
+<TabItem value='ui' label='UI'>
+
+The meta-mcp server uses ToolHive groups to function. While you need the
+ToolHive UI to run meta-mcp, it doesn't support group management yet, so you'll
+need to use the CLI for setup.
+
+</TabItem>
+
+<TabItem value='cli' label='CLI' default>
+
+:::info[Prerequisites]
+
+You need both the ToolHive CLI and UI to use the meta-mcp server because it
+depends on the UI's API server for tool discovery and management.
+
+- ToolHive UI (version >= 0.6.0) must be running for setup
+- ToolHive CLI (version >= 0.3.1)
+
+The meta-mcp server should run in a
+[dedicated group](../guides-cli/group-management.md) to keep client
+configurations clean. Other MCP servers that you want to access through meta-mcp
+should be in a separate group.
+
+:::
+
+**Step 1: Create a dedicated group and run meta-mcp**
+
+```bash
+# Create the meta group
+thv group create meta
+
+# Run meta-mcp in the dedicated group
+thv run --group meta meta-mcp
+```
+
+**Step 2: Configure your AI client for the meta group**
+
+```bash
+# Register your AI client with the meta group
+thv client setup
+
+# Verify the configuration
+thv client list-registered
+```
+
+**Step 3: Add MCP servers to the default group**
+
+```bash
+# Add MCP servers that you want to access through meta-mcp
+thv run github
+thv run filesystem
+thv run time
+
+# Verify the configuration - meta-mcp should be in 'meta' group, others in 'default'
+thv list
+```
+
+</TabItem>
+</Tabs>
+
+## Sample prompts
+
+Once meta-mcp is configured and running, you can use it with natural language
+prompts. The server automatically discovers and routes to appropriate tools:
+
+**Direct task examples:**
+
+- "Get the details of GitHub issue 1911 from stacklok/toolhive repo"
+- "List recent PRs from stacklok/toolhive repo"
+
+**The meta-mcp workflow:**
+
+1. Your AI client sends the request to meta-mcp
+2. Meta-mcp uses hybrid search (semantic + keyword) to find relevant tools
+   across all connected MCP servers
+3. Meta-mcp server returns the short list of matching tools to the client
+4. Client selects one tool from the short list and uses meta-mcp to call that
+   tool
+5. Results are returned from meta-mcp to the client
+
+## Available tools
+
+The meta-mcp server provides two main tools:
+
+### find_tool
+
+Discovers available tools that match your requirements using hybrid search
+(semantic + keyword).
+
+**Parameters:**
+
+- `tool_description`: Description of the task or capability needed (e.g., "web
+  search", "analyze CSV file")
+- `tool_keywords`: Space-separated keywords of the task or capability needed
+  (e.g., "list issues github", "SQL query postgres")
+
+### call_tool
+
+Executes a specific tool with provided parameters after discovery.
+
+**Parameters:**
+
+- `server_name`: Name of the MCP server providing the tool
+- `tool_name`: Name of the tool to execute
+- `parameters`: Dictionary of arguments required by the tool
+
+## Recommended practices
+
+- **Use descriptive group names**: Keep meta-mcp in a dedicated group to
+  maintain clean client configurations
+- **Regular updates**: Keep both ToolHive and meta-mcp updated for the latest
+  features and compatibility
+
+:::tip[Best Practice]
+
+Start with a small set of MCP servers in the default group and gradually add
+more as you become familiar with meta-mcp's tool discovery capabilities. This
+makes it easier to understand which tools are being used for different tasks.
+
+:::
