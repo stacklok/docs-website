@@ -16,10 +16,14 @@ list to run it securely with just a few clicks.
 
 ### Select an MCP server
 
-To install an MCP server from the registry:
+To install an MCP server (local
+<img src="/img/mcp-servers/local-mcp.svg" width="16" class="theme-icon"
+alt="Local MCP icon" /> or remote
+<img src="/img/mcp-servers/remote-mcp.svg" width="16" class="theme-icon"
+alt="Remote MCP icon" />) from the registry:
 
 1. Open the **Registry** page from the menu bar.
-2. Browse or search for the MCP server you want to install.
+2. Browse or search for the MCP server you want to install,.
 3. Click on the desired MCP server to open its details page. Here you can review
    more information about the server like its:
    - Description
@@ -29,7 +33,15 @@ To install an MCP server from the registry:
    - A link to the GitHub repository for more details and usage documentation
 4. Click the **Install server** button to start the installation process.
 
-### Configure the server
+### Configure the server {#configure-server}
+
+<Tabs queryString="server-type" lazy>
+  <TabItem
+    value='local'
+    label={<><img src="/img/mcp-servers/local-mcp.svg" width="16"
+    className="theme-icon spacing-icon" alt="Local MCP icon" /> Local MCP</>}
+    default>
+   **Local MCP servers** run directly on your machine using containers engine.
 
 On the configuration form, enter the following details:
 
@@ -71,12 +83,86 @@ GitHub repository is provided on each server's details page.
 
 :::
 
+  </TabItem>
+  <TabItem
+    value='remote'
+    label={<><img src="/img/mcp-servers/remote-mcp.svg" width="16"
+    className="theme-icon spacing-icon" alt="Remote MCP icon" /> Remote MCP</>}>
+    **Remote MCP servers** are hosted services that you connect to. They offer:
+
+On the configuration form, that is pre-filled, enter the following details:
+
+1. A unique **name** for the MCP server. [Required]
+2. The **URL** of the remote MCP server. [Required]
+3. The **transport protocol** that the MCP server uses. [Required]\
+   ToolHive supports server-sent events (SSE) and Streamable HTTP (default) for
+   real-time communication. The protocol must match what the MCP server
+   supports.
+4. **Authorization method**: Choose how ToolHive should authenticate with the
+   remote server.\
+   The default is **Dynamic Client Registration**. For MCP servers that fully
+   implement the MCP authorization spec including dynamic client registration
+   (RFC7591), ToolHive automatically:
+   - Discovers OAuth/OIDC endpoints
+   - Registers a new OAuth client
+   - Obtains and manages client credentials
+   - Handles token lifecycle automatically
+
+   For MCP servers that require manual configuration, ToolHive supports OAuth2
+   and OIDC authentication. Obtain the necessary information from the MCP
+   server's documentation or administrator.
+
+   **OAuth2 authentication options:**
+   - **Authorize URL**: The URL where users are redirected to authenticate and
+     authorize access to the MCP server. [Required]
+   - **Token URL**: The URL where your application exchanges the authorization
+     code for access tokens. [Required]
+   - **Client ID**: Your application's identifier registered with the OAuth
+     provider. [Required]
+   - **Client secret**: The secret key that proves your application's identity.
+     Enter a value to create a new secret or select an existing secret from the
+     provider. Secrets are stored securely and can be used by the MCP server
+     without exposing them in plaintext. Refer to the
+     [Secrets Management](https://docs.stacklok.com/toolhive/guides-ui/secrets-management)
+     section for detail. [Optional]
+   - **Scopes**: List of permissions your application is requesting. [Optional]
+
+   **OIDC authentication options:**
+   - **Issuer URL**: The base URL of the OIDC provider. [Required]
+   - **Client ID**: Your application's identifier registered with the OIDC
+     provider. [Required]
+   - **Client secret**: The secret key that proves your application's identity.
+     Enter a value to create a new secret or select an existing secret from the
+     provider. Secrets are stored securely and can be used by the MCP server
+     without exposing them in plaintext. Refer to the
+     [Secrets Management](https://docs.stacklok.com/toolhive/guides-ui/secrets-management)
+     section for detail. [Optional]
+   - **PKCE**: Enable Proof Key for Code Exchange (RFC 7636) for enhanced
+     security without requiring a client secret. [Optional]
+
+5. The **callback port** for the authentication redirect. [Required]
+
+Click **Install server** to connect to the remote MCP server.
+
+Refer to
+[examples of remote MCP authentication configuration](?server-type=remote&custom-type=custom_remote#remote-mcp-examples)
+for detailed setup guides.
+
+  </TabItem>
+</Tabs>
+
 ### Network isolation
 
-You can optionally enable network isolation for the MCP server. This allows you
-to control the MCP server's network access, restricting it to only the necessary
-resources and preventing it from accessing the internet or other external
-networks.
+You can optionally enable network isolation for local MCP servers. This allows
+you to control the MCP server's network access, restricting it to only the
+necessary resources and preventing it from accessing the internet or other
+external networks.
+
+:::info
+
+Network isolation is only available for local MCP servers.
+
+:::
 
 See the [Network isolation](./network-isolation.mdx) guide for details on how to
 configure network isolation for MCP servers in ToolHive.
@@ -107,151 +193,14 @@ You're not limited to the MCP servers in the registry. You can run remote MCP
 servers by providing a URL, or your own local custom MCP servers using Docker
 images or source packages.
 
-### Remote MCP server
+## Install a custom MCP server {#custom-mcp-server}
 
-On the **MCP Servers** page, click **Add an MCP server**, then choose **Add a
-remote MCP server** in the drop-down menu.
-
-On the configuration form, enter:
-
-1. A unique **name** for the MCP server. [Required]
-2. The **URL** of the remote MCP server. [Required]
-3. The **transport protocol** that the MCP server uses. [Required]\
-   ToolHive supports server-sent events (SSE) and Streamable HTTP (default) for
-   real-time communication. The protocol must match what the MCP server
-   supports.
-4. **Authorization method**: Choose how ToolHive should authenticate with the
-   remote server.\
-   The default is **None**, when no client credentials are provided, ToolHive
-   can automatically register an OAuth client with the authorization server:
-   - Discover OAuth/OIDC endpoints
-   - Register a new OAuth client
-   - Obtain and manage client credentials
-   - Handle token lifecycle automatically
-
-   ToolHive also supports OAuth2 and OIDC authentication with dynamic client
-   registration.
-
-   **OAuth2 authentication options:**
-   - **Authorize URL**: The URL where users are redirected to authenticate and
-     authorize access to the MCP server. [Required]
-   - **Token URL**: The URL where your application exchanges the authorization
-     code for access tokens. [Required]
-   - **Client ID**: Your application's identifier registered with the OAuth
-     provider. [Required]
-   - **Client secret**: The secret key that proves your application's identity.
-     [Optional]
-   - **Scopes**: List of permissions your application is requesting. [Optional]
-
-   **OIDC authentication options:**
-   - **Issuer URL**: The base URL of the OIDC provider. [Required]
-   - **Client ID**: Your application's identifier registered with the OIDC
-     provider. [Required]
-   - **Client secret**: The secret key that proves your application's identity.
-     [Optional]
-   - **PKCE**: Enable Proof Key for Code Exchange (RFC 7636) for enhanced
-     security without requiring a client secret. [Optional]
-
-5. The **callback port** for the authentication redirect. [Required]
-
-Click **Install server** to connect to the remote MCP server.
-
-<details>
-<summary>View examples of remote MCP authentication configuration</summary>
-
-#### Remote MCP server with no client credentials
-
-This example shows how to connect to notion remote MCP server using automatic
-OAuth client registration, where ToolHive handles all the authentication setup
-for you.
-
-1. On the **MCP Servers** page, click **Add an MCP server**.
-2. Select **Add a remote MCP server** from the drop-down menu.
-3. Fill in the configuration form:
-   - **Server name**: `notion-mcp-server`
-   - **URL**: `https://mcp.notion.com/mcp`
-   - **Transport protocol**: Select **Streamable HTTP**
-   - **Authorization method**: Select **None**
-   - **Callback port**: `45673` (or any available port on your system)
-4. Click **Install server** to start the automatic registration flow.
-5. ToolHive automatically discovers the OAuth endpoints, registers a new client,
-   and handles the authentication process.
-6. Your browser opens for authentication, and after successful authorization,
-   the remote MCP server appears in your server list with a "Running" status.
-
-This is the simplest way to connect to a remote MCP server that supports
-automatic client registration, as it requires minimal configuration from you.
-
-#### Remote MCP server with OAuth2 authentication
-
-This example shows how to connect to GitHub remote MCP server that requires
-OAuth2 authentication, such as a GitHub MCP server.
-
-1. On the **MCP Servers** page, click **Add an MCP server**.
-2. Select **Add a remote MCP server** from the drop-down menu.
-3. Fill in the configuration form:
-   - **Server name**: `github-remote-oauth`
-   - **URL**: `https://api.githubcopilot.com/mcp/`
-   - **Transport protocol**: Select **Streamable HTTP**
-   - **Authorization method**: Select **OAuth2**
-   - **Authorize URL**: `https://github.com/login/oauth/authorize`
-   - **Token URL**: `https://github.com/login/oauth/access_token`
-   - **Client ID**: Your GitHub OAuth app client ID (e.g.,
-     `Og44jirLIaUgSiTDNGA3`)
-   - **Client secret**: Your GitHub OAuth app client secret
-   - **Scopes**: `public_repo` (comma-separated list of required permissions)
-   - **Callback port**: `45673` (or any available port on your system)
-4. Click **Install server** to start the authentication flow.
-5. ToolHive opens your browser to authenticate with GitHub and authorize the
-   application.
-6. After successful authentication, the remote MCP server appears in your server
-   list with a "Running" status.
-
-**NOTE**: If you don't have a GitHub OAuth app yet, you need to create one
-first:
-
-1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
-2. Click **New OAuth App**
-3. Fill in the application details:
-   - **Application name**: Choose a descriptive name (e.g., "ToolHive GitHub
-     MCP")
-   - **Homepage URL**: Your application's homepage or `http://localhost`
-   - **Authorization callback URL**: `http://localhost:45673/callback` (match
-     the callback port in ToolHive UI)
-4. Click **Register application**
-5. Copy the **Client ID** and generate a **Client secret** to use in ToolHive UI
-
-#### Remote MCP server with OIDC authentication
-
-This example shows how to connect to GitHub remote MCP server using OpenID
-Connect (OIDC) authentication with GitHub as the identity provider.
-
-1. On the **MCP Servers** page, click **Add an MCP server**.
-2. Select **Add a remote MCP server** from the drop-down menu.
-3. Fill in the configuration form:
-   - **Server name**: `github-remote-oidc`
-   - **URL**: `https://api.githubcopilot.com/mcp/`
-   - **Transport protocol**: Select **Streamable HTTP**
-   - **Authorization method**: Select **OIDC**
-   - **Issuer URL**: `https://github.com/login/oauth`
-   - **Client ID**: Your GitHub OAuth app client ID (e.g.,
-     `Og44jirLIaUgSiTDNGA3`)
-   - **Client secret**: Your GitHub OAuth app client secret (optional for PKCE)
-   - **PKCE**: Enable this option for enhanced security without requiring a
-     client secret
-   - **Callback port**: `45673` (or any available port on your system)
-4. Click **Install server** to start the authentication flow.
-5. ToolHive opens your browser to authenticate with GitHub using OIDC.
-6. After successful authentication, the remote MCP server appears in your server
-   list with a "Running" status.
-
-**NOTE**: For OIDC authentication with GitHub, you can use the same OAuth app
-created in the previous example. The OIDC flow provides additional security
-features and standardized token handling compared to traditional OAuth2.
-
-</details>
-
-### Local custom MCP server
+<Tabs queryString="custom-type" lazy>
+  <TabItem
+    value='custom_local'
+    label={<><img src="/img/mcp-servers/local-mcp.svg" width="16"
+    className="theme-icon spacing-icon" alt="Local MCP icon" /> Custom Local MCP</>}
+    default>
 
 On the **MCP Servers** page, click **Add an MCP server**, then choose **Add
 custom local server** in the drop-down menu. Or if this is your first MCP
@@ -260,7 +209,7 @@ server, on the introductory screen.
 In the **Custom MCP server** dialog, choose [Docker image](#from-a-docker-image)
 or [Package manager](#from-a-source-package).
 
-#### From a Docker image
+### From a Docker image
 
 Select the **Docker image** option. This allows you to run any MCP server that
 is available as a Docker image in a remote registry or locally on your system.
@@ -301,7 +250,7 @@ On the configuration form, enter:
 
 Click **Install server** to create and start the MCP server container.
 
-#### From a source package
+### From a source package
 
 Select the **Package manager** option. This allows you to run an MCP server from
 a source package.
@@ -355,6 +304,161 @@ On the configuration form, enter:
    - For non-sensitive environment variables, enter the name and value directly.
 
 Click **Install server** to create and start the MCP server container.
+</TabItem> <TabItem value='custom_remote'
+label={<><img src="/img/mcp-servers/remote-mcp.svg" width="16"
+    className="theme-icon spacing-icon" alt="Remote MCP icon" /> Custom Remote
+MCP</>}>
+
+On the **MCP Servers** page, click **Add an MCP server**, then choose **Add a
+remote MCP server** in the drop-down menu.
+
+On the configuration form, enter:
+
+1. A unique **name** for the MCP server. [Required]
+2. The **URL** of the remote MCP server. [Required]
+3. The **transport protocol** that the MCP server uses. [Required]\
+   ToolHive supports server-sent events (SSE) and Streamable HTTP (default) for
+   real-time communication. The protocol must match what the MCP server
+   supports.
+4. **Authorization method**: Choose how ToolHive should authenticate with the
+   remote server.\
+   The default is **Dynamic Client Registration**. For MCP servers that fully
+   implement the MCP authorization spec including dynamic client registration
+   (RFC7591), ToolHive automatically:
+   - Discovers OAuth/OIDC endpoints
+   - Registers a new OAuth client
+   - Obtains and manages client credentials
+   - Handles token lifecycle automatically
+
+   For MCP servers that require manual configuration, ToolHive supports OAuth2
+   and OIDC authentication. Obtain the necessary information from the MCP
+   server's documentation or administrator.
+
+   **OAuth2 authentication options:**
+   - **Authorize URL**: The URL where users are redirected to authenticate and
+     authorize access to the MCP server. [Required]
+   - **Token URL**: The URL where your application exchanges the authorization
+     code for access tokens. [Required]
+   - **Client ID**: Your application's identifier registered with the OAuth
+     provider. [Required]
+   - **Client secret**: The secret key that proves your application's identity.
+     Enter a value to create a new secret or select an existing secret from the
+     provider. Secrets are stored securely and can be used by the MCP server
+     without exposing them in plaintext. Refer to the
+     [Secrets Management](https://docs.stacklok.com/toolhive/guides-ui/secrets-management)
+     section for detail. [Optional]
+   - **Scopes**: List of permissions your application is requesting. [Optional]
+
+   **OIDC authentication options:**
+   - **Issuer URL**: The base URL of the OIDC provider. [Required]
+   - **Client ID**: Your application's identifier registered with the OIDC
+     provider. [Required]
+   - **Client secret**: The secret key that proves your application's identity.
+     Enter a value to create a new secret or select an existing secret from the
+     provider. Secrets are stored securely and can be used by the MCP server
+     without exposing them in plaintext. Refer to the
+     [Secrets Management](https://docs.stacklok.com/toolhive/guides-ui/secrets-management)
+     section for detail. [Optional]
+   - **PKCE**: Enable Proof Key for Code Exchange (RFC 7636) for enhanced
+     security without requiring a client secret. [Optional]
+
+5. The **callback port** for the authentication redirect. [Required]
+
+Click **Install server** to connect to the remote MCP server.
+
+<details id="remote-mcp-examples">
+<summary >View examples of remote MCP authentication configuration</summary>
+
+#### Remote MCP server with dynamic client registration
+
+Dynamic client registration is the preferred approach for any MCP server that
+supports it, as ToolHive handles all authentication setup automatically with
+minimal configuration required. Notion's remote MCP server is one example that
+supports this feature:
+
+1. On the **MCP Servers** page, click **Add an MCP server**.
+2. Select **Add a remote MCP server** from the drop-down menu.
+3. Fill in the configuration form:
+   - **Server name**: `notion-mcp-server`
+   - **URL**: `https://mcp.notion.com/mcp`
+   - **Transport protocol**: Select **Streamable HTTP**
+   - **Authorization method**: Select **Dynamic Client Registration**
+   - **Callback port**: `45673` (or any available port on your system)
+4. Click **Install server** to start the automatic registration flow.
+5. ToolHive discovers the OAuth endpoints, registers a new client, and handles
+   the authentication process.
+6. Your browser opens for authentication. After you authorize access, the remote
+   MCP server appears in your server list with a "Running" status.
+
+#### Remote MCP server with OAuth2 authentication
+
+GitHub's remote MCP server requires manual OAuth configuration. You'll need to
+create a GitHub OAuth app and provide the details in ToolHive.
+
+First, create a GitHub OAuth app:
+
+1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
+2. Click **New OAuth App**
+3. Fill in the application details:
+   - **Application name**: Choose a descriptive name (e.g., "ToolHive GitHub
+     MCP")
+   - **Homepage URL**: Your application's homepage or `http://localhost`
+   - **Authorization callback URL**: `http://localhost:45673/callback` (the port
+     number must match the **Callback port** you will enter in ToolHive)
+4. Click **Register application**
+5. Copy the **Client ID** and generate a **Client secret** for use in ToolHive
+
+Configure the remote MCP server in ToolHive:
+
+1. On the **MCP Servers** page, click **Add an MCP server**.
+2. Select **Add a remote MCP server** from the drop-down menu.
+3. Fill in the configuration form:
+   - **Server name**: `github-remote-oauth`
+   - **URL**: `https://api.githubcopilot.com/mcp/`
+   - **Transport protocol**: Select **Streamable HTTP**
+   - **Authorization method**: Select **OAuth2**
+   - **Authorize URL**: `https://github.com/login/oauth/authorize`
+   - **Token URL**: `https://github.com/login/oauth/access_token`
+   - **Client ID**: Your GitHub OAuth app client ID (e.g.,
+     `Og44jirLIaUgSiTDNGA3`)
+   - **Client secret**: Your GitHub OAuth app client secret
+   - **Scopes**: `public_repo` (comma-separated list of required permissions)
+   - **Callback port**: `45673` (or any available port on your system)
+4. Click **Install server** to start the authentication flow.
+5. ToolHive opens your browser to authenticate with GitHub and authorize the
+   application.
+6. After you authenticate successfully, the remote MCP server appears in your
+   server list with a "Running" status.
+
+#### Remote MCP server with OIDC authentication
+
+GitHub's remote MCP server also supports OIDC authentication, which provides
+additional security features and standardized token handling. Use the same
+GitHub OAuth app from the previous example.
+
+1. On the **MCP Servers** page, click **Add an MCP server**.
+2. Select **Add a remote MCP server** from the drop-down menu.
+3. Fill in the configuration form:
+   - **Server name**: `github-remote-oidc`
+   - **URL**: `https://api.githubcopilot.com/mcp/`
+   - **Transport protocol**: Select **Streamable HTTP**
+   - **Authorization method**: Select **OIDC**
+   - **Issuer URL**: `https://github.com/login/oauth`
+   - **Client ID**: Your GitHub OAuth app client ID (e.g.,
+     `Og44jirLIaUgSiTDNGA3`)
+   - **Client secret**: Your GitHub OAuth app client secret (optional for PKCE)
+   - **PKCE**: Enable this option for enhanced security without requiring a
+     client secret
+   - **Callback port**: `45673` (or any available port on your system)
+4. Click **Install server** to start the authentication flow.
+5. ToolHive opens your browser to authenticate with GitHub using OIDC.
+6. After you authenticate successfully, the remote MCP server appears in your
+   server list with a "Running" status.
+
+</details>
+
+  </TabItem>
+</Tabs>
 
 ## Mount host files and folders (Volumes) {#volumes}
 
