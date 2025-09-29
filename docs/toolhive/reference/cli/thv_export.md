@@ -18,7 +18,8 @@ Export a workload's run configuration to a file
 Export a workload's run configuration to a file for sharing or backup.
 
 The exported configuration can be used with 'thv run --from-config <path>' to recreate
-the same workload with identical settings.
+the same workload with identical settings as a persistent server that can be
+stopped, restarted, and managed like any other workload.
 
 Examples:
 
