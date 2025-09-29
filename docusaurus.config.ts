@@ -262,6 +262,12 @@ const config: Config = {
       appId: '5VBG92C77M',
       apiKey: 'd47061076173b8f8974c70dd94efb676',
       indexName: 'stacklok',
+      askAi: {
+        indexName: 'stacklok-markdown',
+        apiKey: 'd47061076173b8f8974c70dd94efb676',
+        appId: '5VBG92C77M',
+        assistantId: '7acHoXQLOA6U',
+      },
       contextualSearch: true,
     },
   } satisfies Preset.ThemeConfig,
