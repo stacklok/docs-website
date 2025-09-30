@@ -20,6 +20,16 @@ const config: Config = {
       },
     ],
     [
+      'docusaurus-pushfeedback',
+      {
+        project: '8lp399irfx',
+        buttonStyle: 'dark',
+        buttonPosition: 'bottom-right',
+        modalPosition: 'bottom-right',
+        customFont: true,
+      },
+    ],
+    [
       './plugins/mcp-metadata-plugin',
       {
         thvCommand: 'thv', // Can be customized if thv is in a different path
