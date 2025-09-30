@@ -46,7 +46,8 @@ Configure the remote MCP server in ToolHive:
    - **Token URL**: `https://github.com/login/oauth/access_token`
    - **Client ID**: Your GitHub OAuth app client ID (e.g.,
      `Og44jirLIaUgSiTDNGA3`)
-   - **Client secret**: Your GitHub OAuth app client secret
+   - **Client secret**: Your GitHub OAuth app client secret (optional if PKCE is
+     enabled)
    - **Scopes**: `repo,user:email` (comma-separated list of required
      permissions)
    - **PKCE**: Enable this option for enhanced security without requiring a
@@ -71,7 +72,8 @@ GitHub OAuth app from the previous example.
    - **Issuer URL**: `https://github.com/login/oauth`
    - **Client ID**: Your GitHub OAuth app client ID (e.g.,
      `Og44jirLIaUgSiTDNGA3`)
-   - **Client secret**: Your GitHub OAuth app client secret (optional for PKCE)
+   - **Client secret**: Your GitHub OAuth app client secret (optional if PKCE is
+     enabled)
    - **PKCE**: Enable this option for enhanced security without requiring a
      client secret
 1. When you install the server, ToolHive opens your browser to authenticate with
