@@ -17,10 +17,9 @@ To see all currently running MCP servers:
 thv list
 ```
 
-This shows the server name, package, status, url, port, tool type, group, and
-created at. Remote servers display their target URL in the URL column. The word
-'remote' is indicated in both the package and tool type columns, making it easy
-to identify remote servers.
+This shows details about each running server, including its name, package
+(container image), status, URL for connecting clients, group, and when it was
+created.
 
 To include stopped servers in the list:
 
