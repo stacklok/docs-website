@@ -49,10 +49,10 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-ui/install',
         'toolhive/guides-ui/registry',
         'toolhive/guides-ui/run-mcp-servers',
-        'toolhive/guides-ui/playground',
         'toolhive/guides-ui/network-isolation',
         'toolhive/guides-ui/secrets-management',
         'toolhive/guides-ui/client-configuration',
+        'toolhive/guides-ui/playground',
       ],
     },
 
