@@ -52,6 +52,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-ui/network-isolation',
         'toolhive/guides-ui/secrets-management',
         'toolhive/guides-ui/client-configuration',
+        'toolhive/guides-ui/playground',
       ],
     },
 
