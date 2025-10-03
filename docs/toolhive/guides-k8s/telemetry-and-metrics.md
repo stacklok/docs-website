@@ -278,6 +278,11 @@ Telemetry adds minimal overhead when properly configured:
 
 ## Related information
 
+- Tutorial:
+  [Collect telemetry for MCP workloads](../tutorials/opentelemetry.mdx) -
+  Step-by-step guide to set up a local observability stack
+- [Telemetry and monitoring concepts](../concepts/observability.md) - Overview
+  of ToolHive's observability architecture
 - [Kubernetes CRD reference](../reference/crd-spec.mdx) - Reference for the
   `MCPServer` Custom Resource Definition (CRD)
 - [Deploy the operator using Helm](./deploy-operator-helm.md) - Install the
