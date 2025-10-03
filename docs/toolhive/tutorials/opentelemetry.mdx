@@ -16,9 +16,9 @@ workloads using [OpenTelemetry](https://opentelemetry.io/) with
 [Prometheus](https://prometheus.io/) for metrics collection, and
 [Grafana](https://grafana.com/) for visualization.
 
-By the end, you'll have a complete, industry-standard observability
-observability solution that captures detailed traces and metrics, giving you
-visibility into your MCP server performance and usage patterns.
+By the end, you'll have a complete, industry-standard observability solution
+that captures detailed traces and metrics, giving you visibility into your MCP
+server performance and usage patterns.
 
 <ThemedImage
   alt='Grafana dashboard showing MCP telemetry'
@@ -121,18 +121,22 @@ The architecture for each deployment method:
 graph TB
     A[AI client]
     THV[ToolHive CLI]
-    MCP[MCP server<br>containers]
-    OTEL[OTel Collector]
-    J[Jaeger]
-    P[Prometheus]
-    G[Grafana]
+    Proxy[Proxy process]
+    subgraph Docker[**Docker**]
+      MCP[MCP server<br>container]
+      OTEL[OTel Collector]
+      J[Jaeger]
+      P[Prometheus]
+      G[Grafana]
+    end
 
-    A -- HTTP --> MCP
-    THV -. manages .-> MCP
-    THV -- OpenTelemetry data --> OTEL
+    THV -. manages .-> MCP & Proxy
+    Proxy -- HTTP or stdio --> MCP
+    Proxy -- OpenTelemetry data --> OTEL
     OTEL -- traces --> J
     OTEL -- metrics --> P
     G -- visualization --> P
+    A -- HTTP --> Proxy
 ```
 
 Your setup will include:
@@ -148,21 +152,23 @@ Your setup will include:
 ```mermaid
 graph TB
     A[AI client]
-    THV[ToolHive Operator]
-    MCP[MCP server pods]
-    OTEL[OTel Collector]
-    J[Jaeger]
-    P[Prometheus]
-    G[Grafana]
-
-    A -- HTTP<br>via ingress --> MCP
     subgraph K8s[**K8s Cluster**]
-      THV -. manages .-> MCP
-      THV -- OpenTelemetry data --> OTEL
-      OTEL -- traces --> J
-      OTEL -- metrics --> P
-      G -- visualization --> P
+      THV[ToolHive Operator]
+      Proxy[Proxyrunner pod]
+      MCP[MCP server pod]
+      OTEL[OTel Collector]
+      J[Jaeger]
+      P[Prometheus]
+      G[Grafana]
     end
+
+    A -- HTTP<br>via ingress --> Proxy
+    THV -. manages .-> Proxy
+    Proxy -. manages .-> MCP
+    Proxy -- OpenTelemetry data --> OTEL
+    OTEL -- traces --> J
+    OTEL -- metrics --> P
+    G -- visualization --> P
 ```
 
 Your setup will include:
