@@ -322,6 +322,8 @@ Telemetry adds minimal overhead when properly configured:
 
 ## Related information
 
+- Tutorial:
+  [Collect telemetry for MCP workloads](../tutorials/opentelemetry.mdx)
 - [Telemetry and monitoring concepts](../concepts/observability.md)
 - [`thv run` command reference](../reference/cli/thv_run.md)
 - [Run MCP servers](run-mcp-servers.mdx)
