@@ -73,6 +73,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-cli/group-management',
         'toolhive/guides-cli/secrets-management',
         'toolhive/guides-cli/client-configuration',
+        'toolhive/guides-cli/proxy-stdio',
         {
           type: 'category',
           label: 'Custom permissions',

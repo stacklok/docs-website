@@ -18,7 +18,7 @@
 | Continue (JetBrains)       |    ✅     |         ❌         | v1.0.23+                                    |
 | PydanticAI                 |    ✅     |         ❌         | v0.2.18+                                    |
 | ChatGPT Desktop            |    ❌     |         ❌         | See [workaround for STDIO-only clients][4]  |
-| Claude Desktop             |    ❌     |         ❌         | See [workaround for STDIO-only clients][4]  |
+| Claude Desktop             |    ✅     |         ✅         | v0.2.7+                                     |
 | Kiro                       |    ❌     |         ❌         | See [workaround for STDIO-only clients][4]  |
 
 [3]: /toolhive/reference/client-compatibility.mdx#vs-code-with-copilot
