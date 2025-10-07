@@ -157,7 +157,6 @@ const sidebars: SidebarsConfig = {
         description:
           'Learn how to use ToolHive with these step-by-step tutorials.',
       },
-      collapsed: false,
       items: [
         {
           type: 'link',
@@ -166,6 +165,7 @@ const sidebars: SidebarsConfig = {
         },
         'toolhive/tutorials/custom-registry',
         'toolhive/tutorials/vault-integration',
+        'toolhive/tutorials/opentelemetry',
       ],
     },
 
