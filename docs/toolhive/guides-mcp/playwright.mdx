@@ -5,7 +5,7 @@ description:
   Using the Playwright MCP server with ToolHive for browser automation.
 last_update:
   author: danbarr
-  date: 2025-08-27
+  date: 2025-10-07
 ---
 
 import useBaseUrl from '@docusaurus/useBaseUrl';
@@ -105,13 +105,13 @@ thv run playwright
 Emulate a mobile device for responsive testing:
 
 ```bash
-thv run playwright -- --port 8931 --device "iPhone 15"
+thv run playwright -- --port 8931 --allowed-hosts "*" --device "iPhone 15"
 ```
 
 Restrict access to specific domains:
 
 ```bash
-thv run playwright -- --port 8931 --allowed-origins "example.com;trusted-site.com"
+thv run playwright -- --port 8931 --allowed-hosts "*" --allowed-origins "example.com;trusted-site.com"
 ```
 
 Mount a host directory (e.g., `~/playwright-output`) to save browser output
@@ -119,21 +119,21 @@ files like screenshots and traces:
 
 ```bash
 mkdir ~/playwright-output
-thv run --volume ~/playwright-output:/browser-output playwright -- --port 8931 --output-dir /browser-output --save-trace --save-session
+thv run --volume ~/playwright-output:/browser-output playwright -- --port 8931 --allowed-hosts "*" --output-dir /browser-output --save-trace --save-session
 ```
 
 You can run multiple instances of the server with different configurations by
 giving each a unique name:
 
 ```bash
-thv run --name playwright-desktop playwright -- --port 8931 --device "Desktop Chrome" --viewport-size 1920,1080
-thv run --name playwright-iphone playwright -- --port 8931 --device "iPhone 15"
+thv run --name playwright-desktop playwright -- --port 8931 --allowed-hosts "*" --device "Desktop Chrome" --viewport-size 1920,1080
+thv run --name playwright-iphone playwright -- --port 8931 --allowed-hosts "*" --device "iPhone 15"
 ```
 
 :::note[Important]
 
-Don't remove the `--port 8931` argument, as the server requires it to function
-correctly in ToolHive.
+Don't remove the `--port 8931` or ` --allowed-hosts "*"` arguments, as the
+server requires it to function correctly in ToolHive.
 
 :::
 
@@ -149,13 +149,15 @@ metadata:
   name: playwright
   namespace: toolhive-system
 spec:
-  image: mcr.microsoft.com/playwright/mcp:v0.0.36
+  image: mcr.microsoft.com/playwright/mcp:v0.0.41
   transport: streamable-http
   targetPort: 8931
   port: 8080
   args:
     - '--port'
     - '8931'
+    - '--allowed-hosts'
+    - '*'
 ```
 
 Apply the manifest to your Kubernetes cluster:
@@ -164,22 +166,25 @@ Apply the manifest to your Kubernetes cluster:
 kubectl apply -f playwright.yaml
 ```
 
-For production deployments with network restrictions:
+For production deployments with network restrictions, add the
+`--allowed-origins` argument with a list of trusted domains:
 
-```yaml title="playwright-restricted.yaml"
+```yaml {16-17} title="playwright-restricted.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
   name: playwright
   namespace: toolhive-system
 spec:
-  image: mcr.microsoft.com/playwright/mcp:v0.0.36
+  image: mcr.microsoft.com/playwright/mcp:v0.0.41
   transport: streamable-http
   targetPort: 8931
   port: 8080
   args:
     - '--port'
     - '8931'
+    - '--allowed-hosts'
+    - '*'
     - '--allowed-origins'
     - 'example.com;trusted-domain.org'
 ```
@@ -187,20 +192,22 @@ spec:
 Mount a persistent volume to save browser output files like screenshots and
 traces:
 
-```yaml {13-14,22-25,28-31} title="playwright-with-volume.yaml"
+```yaml {16-17,25-28,31-34} title="playwright-with-volume.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
   name: playwright
   namespace: toolhive-system
 spec:
-  image: mcr.microsoft.com/playwright/mcp:v0.0.36
+  image: mcr.microsoft.com/playwright/mcp:v0.0.41
   transport: streamable-http
   targetPort: 8931
   port: 8080
   args:
     - '--port'
     - '8931'
+    - '--allowed-hosts'
+    - '*'
     - '--output-dir'
     - '/browser-output'
     - '--save-trace'
