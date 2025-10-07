@@ -247,27 +247,57 @@ Copilot for JetBrains supports SSE (`"type": "sse"`) and Streamable HTTP
 
 ### STDIO-only client configuration
 
-If your client only supports the STDIO transport, you can use the
-[remote-mcp](https://www.npmjs.com/package/mcp-remote) npm package to proxy the
-ToolHive MCP sever over STDIO.
+Some MCP clients, like Claude Desktop, only support MCP servers that communicate
+via STDIO transport. However, many popular MCP servers use Server-Sent Events
+(SSE) or Streamable HTTP transport protocols.
 
-Example configuration:
+ToolHive's `thv proxy stdio` command transforms servers using SSE or Streamable
+HTTP into STDIO-compatible processes, enabling these clients to work with any
+MCP server.
+
+**How it works:**
+
+1. ToolHive runs the MCP server in its container with its default transport
+   (SSE, HTTP, or other)
+2. The `thv proxy stdio` command sets up a STDIO-level wrapper pointing to that
+   existing server
+3. Your client interacts with this wrapper just like any other STDIO MCP server
+
+**Example:**
+
+First, run an MCP server with SSE transport:
+
+```bash
+thv run osv --transport sse --name osv
+```
+
+Then configure your client to use the proxy stdio command. For Claude Desktop,
+update your configuration file (typically located at
+`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
 ```json
 {
   "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "http://localhost:19046/sse#github",
-        "--transport",
-        "sse"
-      ]
+    "osv": {
+      "command": "thv",
+      "args": ["proxy", "stdio", "osv"]
     }
   }
 }
 ```
+
+:::tip
+
+The workload name you pass to `thv proxy stdio` (in this case, `osv`) must match
+the name you used when running the server with `thv run`.
+
+:::
+
+After restarting your client, the MCP server's tools will be available for use,
+even though it uses SSE transport.
+
+For more details, see the
+[`thv proxy stdio` CLI reference](../reference/cli/thv_proxy_stdio.md).
 
 ## Related information
 
