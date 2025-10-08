@@ -49,9 +49,6 @@ ToolHive supports five ways to run an MCP server:
 	   $ thv run --from-config <path>
 
    Runs an MCP server using a previously exported configuration file.
-   This saves a real configuration file and creates a persistent workload that
-   can be stopped, restarted, and managed like any other server. Cannot
-   be used with other flags.
 
 5. Remote MCP server:
 
