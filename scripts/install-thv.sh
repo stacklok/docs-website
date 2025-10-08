@@ -67,5 +67,9 @@ chmod +x /tmp/thv
 cp /tmp/thv "$INSTALL_DIR/thv"
 rm -f /tmp/toolhive.tar.gz /tmp/thv
 
-echo "ToolHive CLI (thv) installed successfully. Version: $RELEASE_VERSION"
-echo "The 'thv' command is now available in your PATH."
+thv version || {
+    echo "Installation failed: 'thv' command is not working."
+    exit 1
+}
+
+echo "ToolHive CLI (thv) installed successfully."

@@ -132,20 +132,23 @@ when running an MCP server with the `thv run` command:
 
 ```bash
 thv run [--otel-endpoint <URL>] [--otel-service-name <NAME>] \
+  [--otel-metrics-enabled=<true|false>]  [--otel-tracing-enabled=<true|false>] \
   [--otel-sampling-rate <RATE>] [--otel-headers <KEY=VALUE>] \
   [--otel-insecure] [--otel-enable-prometheus-metrics-path] \
   <SERVER>
 ```
 
-| Flag                                    | Description                                                 | Default              |
-| --------------------------------------- | ----------------------------------------------------------- | -------------------- |
-| `--otel-endpoint`                       | OTLP endpoint (e.g., `api.honeycomb.io`)                    | None                 |
-| `--otel-service-name`                   | Service name for telemetry                                  | `toolhive-mcp-proxy` |
-| `--otel-sampling-rate`                  | Trace sampling rate (0.0-1.0)                               | `0.1` (10%)          |
-| `--otel-headers`                        | Authentication headers in `key=value` format                | None                 |
-| `--otel-env-vars`                       | List of environment variables to include in telemetry spans | None                 |
-| `--otel-insecure`                       | Connect using HTTP instead of HTTPS                         | `false`              |
-| `--otel-enable-prometheus-metrics-path` | Enable `/metrics` endpoint                                  | `false`              |
+| Flag                                    | Description                                                   | Default              |
+| --------------------------------------- | ------------------------------------------------------------- | -------------------- |
+| `--otel-endpoint`                       | OTLP endpoint (e.g., `api.honeycomb.io`)                      | None                 |
+| `--otel-metrics-enabled`                | Enable OTLP metrics export (when OTLP endpoint is configured) | `true`               |
+| `--otel-tracing-enabled`                | Enable distributed tracing (when OTLP endpoint is configured) | `true`               |
+| `--otel-service-name`                   | Service name for telemetry                                    | `toolhive-mcp-proxy` |
+| `--otel-sampling-rate`                  | Trace sampling rate (0.0-1.0)                                 | `0.1` (10%)          |
+| `--otel-headers`                        | Authentication headers in `key=value` format                  | None                 |
+| `--otel-env-vars`                       | List of environment variables to include in telemetry spans   | None                 |
+| `--otel-insecure`                       | Connect using HTTP instead of HTTPS                           | `false`              |
+| `--otel-enable-prometheus-metrics-path` | Enable `/metrics` endpoint                                    | `false`              |
 
 ### Global configuration
 
@@ -162,7 +165,11 @@ rate:
 
 ```bash
 thv config otel set-endpoint api.honeycomb.io
+thv config otel set-metrics-enabled true
+thv config otel set-tracing-enabled true
 thv config otel set-sampling-rate 0.25
+thv config otel set-enable-prometheus-metrics-path true
+thv config otel set-insecure true
 ```
 
 Each command has a corresponding `get` and `unset` command to retrieve or remove
@@ -240,6 +247,7 @@ by setting the OTLP endpoint to Jaeger's collector:
 ```bash
 thv run \
   --otel-endpoint localhost:4318 \
+  --otel-metrics-enabled=false \
   --otel-insecure \
   <SERVER>
 ```
@@ -314,6 +322,8 @@ Telemetry adds minimal overhead when properly configured:
 
 ## Related information
 
+- Tutorial:
+  [Collect telemetry for MCP workloads](../tutorials/opentelemetry.mdx)
 - [Telemetry and monitoring concepts](../concepts/observability.md)
 - [`thv run` command reference](../reference/cli/thv_run.md)
 - [Run MCP servers](run-mcp-servers.mdx)

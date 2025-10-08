@@ -417,13 +417,15 @@ groups:
 Now that you understand how ToolHive's observability works, you can:
 
 1. **Choose a monitoring backend** that fits your needs and budget
-2. **Enable telemetry** when running your servers:
+2. **Follow the tutorial** to set up a local observability stack with
+   [OpenTelemetry, Jaeger, Prometheus, and Grafana](../tutorials/opentelemetry.mdx)
+3. **Enable telemetry** when running your servers:
    - [using the ToolHive CLI](../guides-cli/telemetry-and-metrics.md)
    - using the Kubernetes operator (not yet supported -
      [contributions welcome](https://github.com/stacklok/toolhive/releases/tag/v0.2.0))
-3. **Set up basic dashboards** to track request rates, error rates, and response
+4. **Set up basic dashboards** to track request rates, error rates, and response
    times
-4. **Configure alerts** for critical issues
+5. **Configure alerts** for critical issues
 
 The telemetry system works automatically once enabled, providing immediate
 insights into your MCP server performance and usage patterns.

@@ -1,0 +1,216 @@
+---
+title: Configure tools for MCP servers on Kubernetes
+description:
+  Filter and rename MCP server tools using the MCPToolConfig CRD and
+  toolConfigRef.
+---
+
+## Overview
+
+Use the MCPToolConfig Custom Resource Definition (CRD) to centrally manage which
+tools an MCP server exposes, and optionally rename tools or override their
+descriptions. You reference the configuration from an MCPServer using the
+`toolConfigRef` field.
+
+- toolsFilter: allow-list the tools to expose.
+- toolsOverride: rename tools and/or change their descriptions.
+- Same-namespace only: an MCPServer can reference only MCPToolConfig objects in
+  the same namespace.
+- Precedence: toolConfigRef takes precedence over the deprecated spec.tools
+  field on MCPServer.
+
+## Define a basic tool filter
+
+This example exposes only three tools on a server:
+
+```yaml title="toolconfig-basic.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPToolConfig
+metadata:
+  name: basic-tool-filter
+  namespace: toolhive-system
+spec:
+  toolsFilter:
+    - read_file
+    - write_file
+    - list_directory
+```
+
+:::note[Empty filter]
+
+If `toolsFilter` is omitted or empty, all tools are allowed.
+
+:::
+
+## Rename tools and override descriptions
+
+You can rename tools to clearly distinguish different deployments or scopes, and
+refine their descriptions to add usage guidance.
+
+A common pattern is running the same MCP server multiple times for different
+scopes (for example, separate GitHub orgs, repos, or environments). Renaming
+tools makes intent obvious and helps prevent mistakes.
+
+```yaml title="toolconfig-with-overrides.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPToolConfig
+metadata:
+  name: github-tools-config
+  namespace: toolhive-system
+spec:
+  # Only expose GitHub PR-related tools
+  toolsFilter:
+    - create_pull_request
+    - get_pull_request
+    - list_pull_requests
+    - merge_pull_request
+
+  # You can override name, description, or both (they are independent)
+  toolsOverride:
+    # Override only the name
+    create_pull_request:
+      name: github_create_pr
+
+    # Override only the description (keep the original name)
+    get_pull_request:
+      description: Retrieve details of a specific GitHub pull request
+
+    # Override both name and description
+    list_pull_requests:
+      name: github_list_prs
+      description: List pull requests in a repository
+
+    merge_pull_request:
+      name: github_merge_pr
+      description: Merge a GitHub pull request
+```
+
+The key in the `toolsOverride` map is the original tool name; the `name` field
+is the user-visible (overridden) name.
+
+:::info[Override fields]
+
+You can override name or description independently. Leave one unset to keep the
+original value from the MCP server. Both fields cannot be empty at the same
+time.
+
+:::
+
+:::tip[When to rename?]
+
+If you run the same server for different scopes (for example, prod vs. sandbox),
+use distinct tool names like `github_prod_create_pr` and
+`github_sandbox_create_pr` to make intent clear to clients.
+
+:::
+
+## Reference the configuration from an MCP server
+
+Add `toolConfigRef` to your `MCPServer`. `toolConfigRef` takes precedence over
+the deprecated `spec.tools` field on `MCPServer`.
+
+```yaml {12-13} title="mcpserver-with-toolconfig.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: github
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/github/github-mcp-server
+  transport: stdio
+  port: 8080
+  toolConfigRef:
+    name: github-tools-config
+```
+
+:::note[Filtering and overrides together]
+
+When you use `toolsFilter` and `toolsOverride` together, filter by the
+user-visible (overridden) names. Tool calls using overridden names are forwarded
+to the actual tool.
+
+:::
+
+## Example: org-scoped tool names
+
+Run the GitHub MCP twice, once per organization, and rename tools so intent is
+clear to clients.
+
+```yaml title="github-org-scoped-tools.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPToolConfig
+metadata:
+  name: github-acme-tools
+  namespace: toolhive-system
+spec:
+  toolsFilter:
+    - github_acme_create_pr
+    - github_acme_get_pr
+  toolsOverride:
+    create_pull_request:
+      name: github_acme_create_pr
+    get_pull_request:
+      name: github_acme_get_pr
+---
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPToolConfig
+metadata:
+  name: github-foocorp-tools
+  namespace: toolhive-system
+spec:
+  toolsFilter:
+    - github_foocorp_create_pr
+    - github_foocorp_get_pr
+  toolsOverride:
+    create_pull_request:
+      name: github_foocorp_create_pr
+    get_pull_request:
+      name: github_foocorp_get_pr
+---
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: github-acme
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/github/github-mcp-server
+  transport: stdio
+  port: 8080
+  # (Use credentials that scope access to the acme-org here)
+  toolConfigRef:
+    name: github-acme-tools
+---
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: github-foocorp
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/github/github-mcp-server
+  transport: stdio
+  port: 8080
+  # (Use credentials that scope access to the foo-corp org here)
+  toolConfigRef:
+    name: github-foocorp-tools
+```
+
+## Inspect status and troubleshoot
+
+Use kubectl to inspect status and track change propagation:
+
+```bash
+kubectl -n toolhive-system get mcptoolconfigs
+kubectl -n toolhive-system get mcptoolconfig github-tools-config -o yaml
+kubectl -n toolhive-system get mcpserver github -o yaml
+```
+
+- If an MCPToolConfig is still referenced, deletion is blocked by a finalizer.
+  Remove all toolConfigRef references first.
+- If an MCPServer references a missing MCPToolConfig, the server enters Failed
+  and the controller logs include the missing name and namespace.
+
+## Related
+
+- See the [Kubernetes CRD reference](../reference/crd-spec.mdx) for the full
+  MCPToolConfig and MCPServerSpec schemas.
+- Learn how to [run the MKP server in Kubernetes](../guides-mcp/k8s.mdx).

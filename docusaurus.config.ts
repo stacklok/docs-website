@@ -20,9 +20,21 @@ const config: Config = {
       },
     ],
     [
+      'docusaurus-pushfeedback',
+      {
+        project: '8lp399irfx',
+        buttonStyle: 'dark',
+        buttonPosition: 'bottom-right',
+        modalPosition: 'bottom-right',
+        customFont: true,
+      },
+    ],
+    [
       './plugins/mcp-metadata-plugin',
       {
         thvCommand: 'thv', // Can be customized if thv is in a different path
+        failOnError:
+          process.env.NODE_ENV === 'production' || process.env.CI === 'true',
       },
     ],
   ],
@@ -39,7 +51,7 @@ const config: Config = {
   projectName: 'docs-website', // Usually your repo name.
 
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'warn',
+  onBrokenAnchors: 'warn',
 
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
@@ -55,6 +67,10 @@ const config: Config = {
       comments: false,
       admonitions: false,
       headingIds: true,
+    },
+    hooks: {
+      onBrokenMarkdownLinks: 'warn',
+      onBrokenMarkdownImages: 'throw',
     },
   },
 
@@ -256,6 +272,12 @@ const config: Config = {
       appId: '5VBG92C77M',
       apiKey: 'd47061076173b8f8974c70dd94efb676',
       indexName: 'stacklok',
+      askAi: {
+        indexName: 'stacklok-markdown',
+        apiKey: 'd47061076173b8f8974c70dd94efb676',
+        appId: '5VBG92C77M',
+        assistantId: '7acHoXQLOA6U',
+      },
       contextualSearch: true,
     },
   } satisfies Preset.ThemeConfig,

@@ -33,7 +33,7 @@ chart. To install a specific version, append `--version <VERSION>` to the
 command, for example:
 
 ```bash
-helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds --version 0.0.7
+helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds --version 0.0.21
 ```
 
 ## Install the operator
@@ -52,7 +52,7 @@ chart. To install a specific version, append `--version <VERSION>` to the
 command, for example:
 
 ```bash
-helm upgrade -i toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --create-namespace --version 0.1.1
+helm upgrade -i toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --create-namespace --version 0.2.10
 ```
 
 Verify the installation:
@@ -70,7 +70,8 @@ kubectl logs -f -n toolhive-system <TOOLHIVE_OPERATOR_POD_NAME>
 ```
 
 This shows you the logs of the operator pod, which can help you debug any
-issues.
+issues. For comprehensive logging and audit capabilities, see the
+[Logging infrastructure](./logging-infrastructure.md) guide.
 
 ## Customize the operator
 
@@ -81,7 +82,7 @@ and set a specific ToolHive version, create a `values.yaml` file:
 ```yaml title="values.yaml"
 operator:
   replicaCount: 2
-  toolhiveRunnerImage: ghcr.io/stacklok/toolhive:v0.1.8 # or `latest`
+  toolhiveRunnerImage: ghcr.io/stacklok/toolhive:v0.2.17 # or `latest`
 ```
 
 Install the operator with your custom values:
@@ -222,8 +223,14 @@ kubectl logs -n toolhive-system <TOOLHIVE_OPERATOR_POD_NAME>
 
 ## Upgrade the operator
 
-To upgrade the ToolHive operator to a new version, use the same command you used
-to install it:
+To upgrade the ToolHive operator to a new version, use the same commands you
+used to install it. First, upgrade the CRDs if a new version is available:
+
+```bash
+helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds
+```
+
+Then upgrade the operator itself:
 
 ```bash
 helm upgrade toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --reuse-values
@@ -251,9 +258,9 @@ create it.
 
 ## Next steps
 
-See [Run MCP servers in Kubernetes](./run-mcp-k8s.md) to learn how to create and
-manage MCP servers using the ToolHive operator in your Kubernetes cluster. The
-operator supports deploying MCPServer resources based on the deployment mode
+See [Run MCP servers in Kubernetes](./run-mcp-k8s.mdx) to learn how to create
+and manage MCP servers using the ToolHive operator in your Kubernetes cluster.
+The operator supports deploying MCPServer resources based on the deployment mode
 configured during installation.
 
 ## Related information

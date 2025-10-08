@@ -1,0 +1,136 @@
+---
+title: Hide sensitive files with .thvignore
+description:
+  Use .thvignore to prevent secrets from leaking into MCP containers while
+  keeping fast bind mounts for development.
+---
+
+Some MCP servers need access to your project files, but you don't want to expose
+secrets like `.env`, SSH keys, or cloud credentials. ToolHive supports a
+`.thvignore` mechanism that masks selected paths from the container while
+keeping all other files available through a live bind mount for a smooth
+developer experience.
+
+## How it works
+
+When you mount a directory and a `.thvignore` file is present at the mount
+source, ToolHive resolves the ignore patterns and overlays those paths inside
+the container:
+
+- Directories (for example, `.ssh/`, `node_modules/`): overlaid using a tmpfs
+  mount at the container path
+- Files (for example, `.env`, `secrets.json`): overlaid using a bind mount of a
+  shared, empty host file at the container path
+
+The rest of the files remain bind-mounted from your host, so edits are visible
+in the container immediately.
+
+## Create an ignore file
+
+Create a file named `.thvignore` at the root of the directory you intend to
+mount. Use simple, gitignore-like patterns:
+
+```text
+# secrets
+.env
+.env.*
+*.key
+*.pem
+
+# cloud credentials
+.aws/
+.gcp/
+
+# SSH keys
+.ssh/
+
+# OS junk
+.DS_Store
+```
+
+Guidelines:
+
+- `dir/` matches a directory directly under the mount source
+- `file.ext` matches a file directly under the mount source
+- `*.ext` matches any file with that extension directly under the mount source
+- Lines starting with `#` are comments; blank lines are ignored
+
+:::info[Pattern matching]
+
+ToolHive uses simple gitignore-like patterns. Advanced gitignore glob syntax
+like `**/*.env` (to match files in any subdirectory) is not currently supported.
+Patterns only match files and directories directly under the mount source.
+
+:::
+
+## Run a server with .thvignore
+
+Mount your project directory as usual. ToolHive automatically reads `.thvignore`
+if present:
+
+```bash
+thv run --volume ./my-project:/projects filesystem
+```
+
+To print resolved overlay targets for debugging:
+
+```bash
+thv run --volume ./my-project:/projects \
+  --print-resolved-overlays \
+  filesystem
+```
+
+The resolved overlays are logged to the workload's log file. For a complete list
+of options, see the [`thv run` command reference](../reference/cli/thv_run.md).
+
+## Global ignore patterns
+
+You can define global ignore patterns in a platform-specific location:
+
+- **Linux**: `~/.config/toolhive/thvignore`
+- **macOS**: `~/Library/Application Support/toolhive/thvignore`
+- **Windows**: `%LOCALAPPDATA%\toolhive\thvignore`
+
+Patterns contained in the global configuration are loaded in addition to a local
+`.thvignore` file. To disable global patterns for a specific workload, use the
+`--ignore-globally=false` option:
+
+```bash
+thv run --ignore-globally=false --volume ./my-project:/projects filesystem
+```
+
+:::tip[Recommendation]
+
+Set machine-wide patterns (for example, `.aws/`, `.gcp/`, `.ssh/`, `*.pem`,
+`.docker/config.json`) in the global file, and keep app-specific patterns (for
+example, `.env*`, build artifacts) in your project's local `.thvignore`.
+
+:::
+
+## Troubleshooting
+
+<details>
+<summary>Overlays didn't apply</summary>
+
+- Ensure `.thvignore` exists in the mount source directory (not elsewhere)
+- Confirm patterns match actual names relative to the mount source
+- Run with `--print-resolved-overlays` and check the workload's log file path
+  displayed by `thv run`
+
+</details>
+
+<details>
+<summary>Can't list a parent directory</summary>
+
+- On SELinux systems, listing a parent directory may fail even though specific
+  files are accessible. Probe individual paths instead (for example, `stat` or
+  `cat`).
+
+</details>
+
+## Related information
+
+- [File system access](./filesystem-access.md)
+- [Run MCP servers](./run-mcp-servers.mdx)
+- [Network isolation](./network-isolation.mdx)
+- [`thv run` command reference](../reference/cli/thv_run.md)

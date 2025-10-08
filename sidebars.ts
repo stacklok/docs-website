@@ -52,6 +52,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-ui/network-isolation',
         'toolhive/guides-ui/secrets-management',
         'toolhive/guides-ui/client-configuration',
+        'toolhive/guides-ui/playground',
       ],
     },
 
@@ -84,6 +85,7 @@ const sidebars: SidebarsConfig = {
           },
           items: [
             'toolhive/guides-cli/filesystem-access',
+            'toolhive/guides-cli/thvignore',
             'toolhive/guides-cli/network-isolation',
           ],
         },
@@ -121,6 +123,9 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/intro',
         'toolhive/guides-k8s/deploy-operator-helm',
         'toolhive/guides-k8s/run-mcp-k8s',
+        'toolhive/guides-k8s/tool-config',
+        'toolhive/guides-k8s/telemetry-and-metrics',
+        'toolhive/guides-k8s/logging-infrastructure',
         'toolhive/reference/crd-spec',
       ],
     },
@@ -152,7 +157,6 @@ const sidebars: SidebarsConfig = {
         description:
           'Learn how to use ToolHive with these step-by-step tutorials.',
       },
-      collapsed: false,
       items: [
         {
           type: 'link',
@@ -160,6 +164,8 @@ const sidebars: SidebarsConfig = {
           label: 'Quickstart guides',
         },
         'toolhive/tutorials/custom-registry',
+        'toolhive/tutorials/vault-integration',
+        'toolhive/tutorials/opentelemetry',
       ],
     },
 

@@ -185,6 +185,179 @@ thv config unset-registry
 
 This restores the default behavior of using ToolHive's built-in registry.
 
+## Organize servers with registry groups
+
+Registry groups allow you to organize related MCP servers and run them together
+as a cohesive unit. This is particularly useful for creating team-specific
+toolkits, workflow-based server collections, or environment-specific
+configurations.
+
+:::note
+
+Registry groups are different from [runtime groups](./group-management.md).
+Registry groups organize server definitions within registry files, while runtime
+groups organize running server instances for access control.
+
+:::
+
+### Group structure
+
+Groups are defined as a top-level array in your custom registry:
+
+```json
+{
+  "servers": {
+    // Individual servers
+  },
+  "groups": [
+    {
+      "name": "group-name",
+      "description": "Description of what this group provides",
+      "servers": {
+        "server-name": {
+          // Complete server definition
+        }
+      },
+      "remote_servers": {
+        "remote-server-name": {
+          // Complete remote server definition
+        }
+      }
+    }
+  ]
+}
+```
+
+### Key characteristics
+
+- **Optional**: Groups are entirely optional. Omit the `groups` section if you
+  only need individual servers
+- **Independent server definitions**: Each group contains complete server
+  configurations, not references to top-level servers
+- **Self-contained**: Groups can define servers with the same names as top-level
+  servers but with different configurations
+- **Flexible membership**: The same server can appear in multiple groups with
+  different configurations
+
+### Example: Multi-environment groups
+
+Here's an example showing how groups can organize servers for different
+purposes:
+
+```json title='registry-with-groups.json'
+{
+  "$schema": "https://raw.githubusercontent.com/stacklok/toolhive/main/pkg/registry/data/schema.json",
+  "version": "1.0.0",
+  "last_updated": "2025-08-15T10:00:00Z",
+  "servers": {
+    "production-fetch": {
+      "description": "Production web content fetching server",
+      "image": "ghcr.io/stackloklabs/gofetch/server:latest",
+      "status": "Active",
+      "tier": "Community",
+      "transport": "streamable-http",
+      "permissions": {
+        "network": {
+          "outbound": {
+            "allow_host": [".company.com"],
+            "allow_port": [443]
+          }
+        }
+      }
+    }
+  },
+  "groups": [
+    {
+      "name": "devops-toolkit",
+      "description": "Complete DevOps toolkit for development teams",
+      "servers": {
+        "github": {
+          "description": "GitHub integration for repository and issue management",
+          "image": "ghcr.io/github/github-mcp-server:v0.15.0",
+          "status": "Active",
+          "tier": "Official",
+          "transport": "stdio",
+          "env_vars": [
+            {
+              "name": "GITHUB_PERSONAL_ACCESS_TOKEN",
+              "description": "GitHub personal access token",
+              "required": true,
+              "secret": true
+            }
+          ]
+        },
+        "heroku": {
+          "description": "Heroku platform deployment and management",
+          "image": "ghcr.io/stacklok/dockyard/npx/heroku-mcp-server:1.0.7",
+          "status": "Active",
+          "tier": "Community",
+          "transport": "stdio",
+          "env_vars": [
+            {
+              "name": "HEROKU_API_KEY",
+              "description": "Heroku API key",
+              "required": true,
+              "secret": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "testing-suite",
+      "description": "Servers needed for automated testing workflows",
+      "servers": {
+        "test-fetch": {
+          "description": "Restricted fetch server for testing",
+          "image": "ghcr.io/stackloklabs/gofetch/server:latest",
+          "status": "Active",
+          "tier": "Community",
+          "transport": "streamable-http",
+          "args": ["--timeout", "5s"],
+          "permissions": {
+            "network": {
+              "outbound": {
+                "allow_host": ["test.example.com"],
+                "allow_port": [443]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+This registry provides:
+
+- A production-ready `production-fetch` server at the top level
+- A `devops-toolkit` group with GitHub and Heroku servers for complete DevOps
+  workflows
+- A `testing-suite` group with a restricted `test-fetch` server
+
+Notice how the `devops-toolkit` group contains multiple servers that work
+together—GitHub for repository management and Heroku for
+deployment—demonstrating how groups can bundle related functionality.
+
+### Run registry groups
+
+You can run entire groups using the group command:
+
+```bash
+# Run all servers in the devops-toolkit group (GitHub + Heroku)
+thv group run devops-toolkit
+
+# Run all servers in the testing-suite group
+thv group run testing-suite
+
+# You can also pass environment variables and secrets to specific servers in the group
+thv group run devops-toolkit --secret github-token,target=github.GITHUB_PERSONAL_ACCESS_TOKEN --secret heroku-key,target=heroku.HEROKU_API_KEY
+```
+
+Groups provide a convenient way to start multiple related servers with a single
+command.
+
 ## Next steps
 
 See [Run MCP servers](./run-mcp-servers.mdx) to run an MCP server from the
