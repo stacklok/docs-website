@@ -5,7 +5,7 @@ description:
   Using the Context7 MCP server with ToolHive for up-to-date documentation.
 last_update:
   author: danbarr
-  date: 2025-08-27
+  date: 2025-10-08
 ---
 
 ## Overview
@@ -39,25 +39,21 @@ While Context7 works without an API key, registering at
 - Priority access during peak usage
 - Better performance for frequent queries
 
-:::note
-
-Currently, the Context7 MCP server only supports a CLI argument for the API key.
-This means ToolHive's secrets management cannot be used to inject the key as an
-environment variable. Instead, you must pass the API key directly as a
-command-line argument when starting the server.
-
-:::
-
 <Tabs groupId='mode' queryString='mode'>
 <TabItem value='ui' label='UI' default>
 
-Select the `context7` MCP server in the ToolHive registry. The server works
-without authentication for basic usage, but you can add an API key for higher
-rate limits.
+**Remote MCP server**
 
-In the **Command arguments** section, optionally add `--api-key YOUR_API_KEY` if
-you have a Context7 API key. This provides higher rate limits and priority
-access.
+Select the `context7-remote` MCP server in the ToolHive registry. Currently,
+ToolHive doesn't support adding custom headers for remote MCP servers, so using
+the remote server is limited to basic usage without an API key.
+
+**Local MCP server**
+
+Select the `context7` MCP server in the ToolHive registry.
+
+The server works without authentication for basic usage, but you can optionally
+add an API key in the **Secrets** section for higher rate limits.
 
 :::tip[Security tip]
 
@@ -69,19 +65,18 @@ the server's network access using the default profile contained in the registry.
 </TabItem>
 <TabItem value='cli' label='CLI'>
 
-Run with the default configuration (no API key required for basic usage):
+For basic (unauthenticated) usage, you can connect directly to Context7's public
+MCP server:
+
+```bash
+thv run context7-remote
+```
+
+Alternatively, run the local containerized MCP server with the default
+configuration (no API key required for basic usage):
 
 ```bash
 thv run context7
-```
-
-If you have a Context7 API key for higher rate limits, you can pass it directly
-as a command-line argument. You can store the key in a ToolHive secret and
-retrieve it when starting the server:
-
-```bash
-thv secret set context7
-thv run context7 -- --api-key $(thv secret get context7)
 ```
 
 Enable [network isolation](../guides-cli/network-isolation.mdx) using the
@@ -91,10 +86,18 @@ default profile from the registry to restrict the server's network access:
 thv run --isolate-network context7
 ```
 
+If you have a Context7 API key for higher rate limits, create a secret named
+`context7` containing your API key and run the server with the `--secret` flag:
+
+```bash
+thv secret set context7
+thv run --secret context7,target=CONTEXT7_API_KEY context7
+```
+
 Combine API key with network isolation:
 
 ```bash
-thv run --isolate-network context7 -- --api-key $(thv secret get context7)
+thv run --secret context7,target=CONTEXT7_API_KEY --isolate-network context7
 ```
 
 </TabItem>
@@ -109,7 +112,7 @@ metadata:
   name: context7
   namespace: toolhive-system
 spec:
-  image: ghcr.io/stacklok/dockyard/npx/context7:1.0.14
+  image: ghcr.io/stacklok/dockyard/npx/context7:1.0.21
   transport: stdio
   port: 8080
 ```
@@ -120,21 +123,23 @@ Apply the manifest to your cluster:
 kubectl apply -f context7.yaml
 ```
 
-For higher rate limits, add your API key as a command-line argument:
+If you have a Context7 API key for higher rate limits, create a Kubernetes
+secret containing your Context7 API key:
 
-```yaml {8} title="context7-with-auth.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: MCPServer
-metadata:
-  name: context7
-  namespace: toolhive-system
+```bash
+kubectl -n toolhive-system create secret generic context7-api-key --from-literal=token=<YOUR_TOKEN>
+```
+
+Then add a `secrets` section to the manifest file above to pass the API key as
+an environment variable:
+
+```yaml title="context7-with-auth.yaml"
 spec:
-  image: ghcr.io/stacklok/dockyard/npx/context7:1.0.14
-  args:
-    - '--api-key'
-    - 'YOUR_API_KEY'
-  transport: stdio
-  port: 8080
+  # ...
+  secrets:
+    - name: context7-api-key
+      key: token
+      targetEnvName: CONTEXT7_API_KEY
 ```
 
 </TabItem>
@@ -159,10 +164,10 @@ Here are practical prompts you can use with the Context7 MCP server:
 
 ## Recommended practices
 
-- Add `use context7` to your prompts to automatically fetch up-to-date
+- Include `use context7` in your prompts to automatically fetch current
   documentation for the libraries you're working with.
-- When you know the exact library, you can specify it directly using the
-  Context7 ID format: `use library /supabase/supabase for api and docs`
+- When you know the exact library, specify it directly using the Context7 ID
+  format, for example: `use library /supabase/supabase for api and docs`
 - Consider setting up a rule in your MCP client to automatically invoke Context7
   for code-related queries, eliminating the need to manually add `use context7`
   to each prompt.
