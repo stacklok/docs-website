@@ -1,0 +1,165 @@
+---
+title: Authentication and authorization
+description:
+  How to set up authentication and authorization for MCP servers using the
+  ToolHive CLI.
+sidebar_position: 60
+---
+
+import OidcPrerequisites from '../_partials/_oidc-prerequisites.md';
+import BasicCedarConfig from '../_partials/_basic-cedar-config.md';
+import AuthTroubleshooting from '../_partials/_auth-troubleshooting.md';
+
+This guide shows you how to secure your MCP servers using OAuth-based
+authentication and Cedar-based authorization policies with the ToolHive CLI.
+
+:::info
+
+Authentication and authorization are emerging capabilities in the MCP ecosystem.
+The official MCP authorization specification is still evolving, and client
+support for these features is limited. ToolHive is leading the way in
+implementing these capabilities, but you may encounter some limitations with
+certain clients.
+
+:::
+
+## Prerequisites
+
+<OidcPrerequisites />
+
+## Set up authentication
+
+### Step 1: Gather OIDC configuration
+
+First, collect the necessary information from your identity provider:
+
+- Client ID
+- Audience value
+- Issuer URL
+- JWKS URL (for key verification)
+
+### Step 2: Run an MCP server with authentication
+
+Use the following command to start an MCP server with authentication enabled:
+
+```bash
+thv run \
+  --oidc-audience <your-audience> \
+  --oidc-client-id <your-client-id> \
+  --oidc-issuer <https://your-oidc-issuer.com> \
+  --oidc-jwks-url <https://your-oidc-issuer.com/path/to/jwks> \
+  <server-name>
+```
+
+Replace the placeholders with your actual OIDC configuration.
+
+### Step 3: Test authentication
+
+Once your server is running with authentication enabled, clients must include a
+valid JWT (JSON Web Token) in the `Authorization` header of each HTTP request.
+The token should:
+
+- Be issued by your configured identity provider
+- Include the correct audience claim
+- Not be expired
+- Have a valid signature
+
+:::note Client support limitations
+
+Client support for authentication is limited at this time. While some clients
+support HTTP headers with SSE MCP client configurations, we do not recommend
+passing JWT tokens in this way since it requires manual configuration and
+exposes your token in plain text.
+
+We are working on a solution within ToolHive to securely handle authentication
+for clients. Stay tuned for updates on this feature.
+
+:::
+
+:::note Obtaining JWT tokens
+
+How to obtain JWT tokens varies by identity provider and is outside the scope of
+this guide. Consult your identity provider's documentation for specific
+instructions on:
+
+- Interactive user authentication flows (OAuth 2.0 Authorization Code flow)
+- Service-to-service authentication (Client Credentials flow)
+- API token generation and management
+
+For Kubernetes service accounts, tokens are automatically mounted at
+`/var/run/secrets/kubernetes.io/serviceaccount/token` in pods.
+
+:::
+
+To verify that authentication is working, you can use a tool like `curl` to make
+a request to your MCP server:
+
+```bash
+curl -H "Authorization: Bearer <your-jwt-token>" \
+     <toolhive-server-url>
+```
+
+## Set up authorization
+
+ToolHive uses Amazon's Cedar policy language for fine-grained, secure-by-default
+authorization. Authorization is explicit: if a request is not explicitly
+permitted by a policy, it is denied. Deny rules always take precedence over
+permit rules.
+
+### Step 1: Create an authorization configuration file
+
+<BasicCedarConfig />
+
+Save this file to a location accessible to ToolHive, such as
+`/path/to/authz-config.json`.
+
+### Step 2: Run an MCP server with authorization
+
+Start your MCP server with the authorization configuration:
+
+```bash
+thv run \
+  --authz-config /path/to/authz-config.json \
+  <server-name>
+```
+
+You can combine this with the authentication parameters from the previous
+section:
+
+```bash
+thv run \
+  --oidc-audience <your-audience> \
+  --oidc-client-id <your-client-id> \
+  --oidc-issuer <https://your-oidc-issuer.com> \
+  --oidc-jwks-url <https://your-oidc-issuer.com/path/to/jwks> \
+  --authz-config /path/to/authz-config.json \
+  <server-name>
+```
+
+### Step 3: Test authorization
+
+Once your server is running with authorization enabled, clients will be subject
+to the Cedar policies defined in your configuration file. When a client attempts
+to perform an action, ToolHive will evaluate the request against the policies.
+If the request is permitted, the action will proceed; otherwise, it will be
+denied with a 403 Forbidden response.
+
+## Troubleshooting
+
+<AuthTroubleshooting />
+
+### CLI-specific issues
+
+If you're having issues with the CLI:
+
+1. Verify that the configuration file path is correct and accessible
+2. Check that the server name matches an available MCP server
+3. Ensure all required CLI flags are provided
+
+## Related information
+
+- For conceptual understanding, see
+  [Authentication and authorization framework](../concepts/auth-framework.md)
+- For detailed Cedar policy syntax, see
+  [Cedar policies](../concepts/cedar-policies.md) and the
+  [Cedar documentation](https://docs.cedarpolicy.com/)
