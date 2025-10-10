@@ -1,0 +1,22 @@
+Before you begin, make sure you have:
+
+- ToolHive installed and working
+- Basic familiarity with OAuth, OIDC, and JWT concepts
+- An identity provider that supports OpenID Connect (OIDC), such as Google,
+  GitHub, Microsoft Entra ID (Azure AD), Okta, Auth0, or Kubernetes (for service
+  accounts)
+
+From your identity provider, you'll need:
+
+- Client ID
+- Audience value
+- Issuer URL
+- JWKS URL (for key verification)
+
+> ToolHive uses OIDC to connect to your existing identity provider, so you can
+> authenticate with your own credentials (for example, Google login) or with
+> service account tokens (for example, in Kubernetes). ToolHive never sees your
+> password, only signed tokens from your identity provider.
+
+For background on authentication, authorization, and Cedar policy examples, see
+[Authentication and authorization framework](../concepts/auth-framework.md).
