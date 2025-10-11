@@ -192,19 +192,19 @@ const config: Config = {
           href: 'https://github.com/stacklok',
           className: 'fa-brands fa-github fa-lg',
           position: 'right',
-          'aria-label': 'GitHub',
+          'aria-label': 'Stacklok on GitHub',
         },
         {
           href: 'https://discord.gg/stacklok',
           className: 'fa-brands fa-discord fa-lg',
           position: 'right',
-          'aria-label': 'Discord',
+          'aria-label': 'Join Stacklok on Discord',
         },
         {
           href: 'https://youtube.com/@stacklok',
           className: 'fa-brands fa-youtube fa-lg',
           position: 'right',
-          'aria-label': 'YouTube',
+          'aria-label': 'Stacklok on YouTube',
         },
       ],
     },
@@ -221,11 +221,11 @@ const config: Config = {
           items: [
             {
               html: `<div style="display: flex;">
-                       <a href="https://github.com/stacklok" target="_blank" class="footer__icon--custom navbar__link"><i class="fa-brands fa-github fa-xl"></i></a>
-                       <a href="https://discord.gg/stacklok" target="_blank" class="footer__icon--custom navbar__link"><i class="fa-brands fa-discord fa-xl"></i></a>
-                       <a href="https://youtube.com/@stacklok" target="_blank" class="footer__icon--custom navbar__link"><i class="fa-brands fa-youtube fa-xl"></i></a>
-                       <a href="https://linkedin.com/company/stacklok" target="_blank" class="footer__icon--custom navbar__link"><i class="fa-brands fa-linkedin fa-xl"></i></a>
-                       <a href="https://x.com/stacklokHQ" target="_blank" class="footer__icon--custom navbar__link"><i class="fa-brands fa-x-twitter fa-xl"></i></a>
+                       <a href="https://github.com/stacklok" target="_blank" class="footer__icon--custom navbar__link" aria-label="Stacklok on GitHub"><i class="fa-brands fa-github fa-xl"></i></a>
+                       <a href="https://discord.gg/stacklok" target="_blank" class="footer__icon--custom navbar__link" aria-label="Join Stacklok on Discord"><i class="fa-brands fa-discord fa-xl"></i></a>
+                       <a href="https://youtube.com/@stacklok" target="_blank" class="footer__icon--custom navbar__link" aria-label="Stacklok on YouTube"><i class="fa-brands fa-youtube fa-xl"></i></a>
+                       <a href="https://linkedin.com/company/stacklok" target="_blank" class="footer__icon--custom navbar__link" aria-label="Stacklok on LinkedIn"><i class="fa-brands fa-linkedin fa-xl"></i></a>
+                       <a href="https://x.com/stacklokHQ" target="_blank" class="footer__icon--custom navbar__link" aria-label="Stacklok on X (Twitter)"><i class="fa-brands fa-x-twitter fa-xl"></i></a>
                      </div>`,
             },
           ],
