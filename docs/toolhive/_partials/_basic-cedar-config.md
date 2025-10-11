@@ -24,5 +24,9 @@ format:
 You can also define custom resource attributes in `entities_json` for per-tool
 ownership or sensitivity labels.
 
-> For more policy examples and advanced usage, see
-> [Cedar policies](../concepts/cedar-policies.md).
+:::tip
+
+For more policy examples and advanced usage, see
+[Cedar policies](../concepts/cedar-policies.md).
+
+:::

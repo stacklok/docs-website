@@ -255,4 +255,4 @@ requirements.
 ## Related information
 
 - For detailed policy writing guidance, see
-  [Cedar policies](./cedar-policies.mdcedar-policies.md)
+  [Cedar policies](./cedar-policies.md)
