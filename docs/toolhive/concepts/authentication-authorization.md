@@ -9,9 +9,6 @@ This document explains the concepts behind ToolHive's authentication and
 authorization framework, which secures MCP servers by verifying client identity
 and controlling access to resources.
 
-> For step-by-step setup and troubleshooting, see
-> [Securing MCP servers with authentication and authorization](../how-to/authentication-authorization.md).
-
 ## Understanding authentication vs. authorization
 
 When you secure MCP servers, it's critical to understand the strong separation
@@ -343,12 +340,10 @@ This restricts access based on the client's location.
 
 ## Related information
 
-- For practical steps to configure authentication and authorization, see
-  [Authentication and authorization](../how-to/authentication-authorization.md)
-- For security best practices, see
-  [Security reference](../reference/security.md)
-- For container security details, see
-  [Container security model](container-security-model.md)
+- For configuration and setup with the ToolHive CLI, see
+  [Authentication and authorization](../guides-cli/auth.mdx)
+- For Kubernetes deployment, see
+  [Authentication and authorization in Kubernetes](../guides-k8s/auth-k8s.mdx)
 - For detailed Cedar policy syntax, see
   [Cedar documentation](https://docs.cedarpolicy.com/)
 

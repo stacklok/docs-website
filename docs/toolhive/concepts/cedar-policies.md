@@ -169,7 +169,7 @@ security requirements.
 JWT claims from your identity provider become available in policies with a
 `claim_` prefix. You can use these claims in two ways:
 
-### On the principal entity
+**On the principal entity:**
 
 ```text
 permit(principal, action == Action::"call_tool", resource == Tool::"weather") when {
@@ -177,7 +177,7 @@ permit(principal, action == Action::"call_tool", resource == Tool::"weather") wh
 };
 ```
 
-### In the context
+**In the context:**
 
 ```text
 permit(principal, action == Action::"call_tool", resource == Tool::"weather") when {
@@ -193,7 +193,7 @@ readable.
 Tool arguments become available in policies with an `arg_` prefix. This lets you
 create policies based on the specific parameters of requests:
 
-### On the resource entity
+**On the resource entity:**
 
 ```text
 permit(principal, action == Action::"call_tool", resource == Tool::"weather") when {
@@ -201,7 +201,7 @@ permit(principal, action == Action::"call_tool", resource == Tool::"weather") wh
 };
 ```
 
-### In the context
+**In the context:**
 
 ```text
 permit(principal, action == Action::"call_tool", resource == Tool::"weather") when {
@@ -407,5 +407,3 @@ When policies don't work as expected, follow this systematic approach:
   [Authentication and authorization framework](./auth-framework.md)
 - For detailed Cedar policy syntax, see
   [Cedar documentation](https://docs.cedarpolicy.com/)
-
-<!-- markdownlint-disable-file MD024 -->

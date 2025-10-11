@@ -13,10 +13,10 @@ From your identity provider, you'll need:
 - Issuer URL
 - JWKS URL (for key verification)
 
-> ToolHive uses OIDC to connect to your existing identity provider, so you can
-> authenticate with your own credentials (for example, Google login) or with
-> service account tokens (for example, in Kubernetes). ToolHive never sees your
-> password, only signed tokens from your identity provider.
+ToolHive uses OIDC to connect to your existing identity provider, so you can
+authenticate with your own credentials (for example, Google login) or with
+service account tokens (for example, in Kubernetes). ToolHive never sees your
+password, only signed tokens from your identity provider.
 
 For background on authentication, authorization, and Cedar policy examples, see
 [Authentication and authorization framework](../concepts/auth-framework.md).
