@@ -1,8 +1,7 @@
 ---
-title: Authentication and authorization framework
+title: Authentication and authorization
 description:
   Understanding ToolHive's authentication and authorization framework concepts.
-sidebar_position: 50
 ---
 
 This document explains the concepts behind ToolHive's authentication and

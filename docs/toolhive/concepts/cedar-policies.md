@@ -2,7 +2,6 @@
 title: Cedar policies
 description:
   Writing and configuring Cedar policies for MCP server authorization.
-sidebar_position: 51
 ---
 
 This document provides detailed guidance on writing and configuring Cedar
