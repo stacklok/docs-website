@@ -1,0 +1,420 @@
+---
+title: Proxy with authentication
+description:
+  How to use the ToolHive proxy command with authentication for MCP servers.
+---
+
+This guide explains how to use the `thv proxy` command to create a standalone
+transparent HTTP proxy with authentication support for MCP servers. The proxy
+provides flexible authentication options for both incoming requests to the
+proxy and outgoing requests to remote MCP servers.
+
+## Overview
+
+The `thv proxy` command creates a standalone HTTP proxy that forwards requests
+to an MCP server endpoint. Unlike `thv run`, which creates a managed workload,
+`thv proxy` runs as a standalone process without container management.
+
+Key capabilities:
+
+- **Transparent request forwarding** to any MCP server endpoint
+- **OAuth/OIDC authentication** to remote MCP servers
+- **Automatic authentication detection** via WWW-Authenticate headers
+- **OIDC-based access control** for incoming proxy requests
+- **Dynamic client registration** (RFC 7591) for automatic OAuth client setup
+- **Secure credential handling** via files or environment variables
+
+## Authentication modes
+
+The proxy supports four authentication scenarios:
+
+1. **No authentication**: Simple transparent forwarding
+2. **Outgoing authentication**: Authenticate to remote MCP servers using
+   OAuth/OIDC
+3. **Incoming authentication**: Protect the proxy endpoint with OIDC validation
+4. **Bidirectional**: Both incoming and outgoing authentication
+
+## Basic proxy setup
+
+### Simple transparent proxy
+
+Create a basic proxy without authentication:
+
+```bash
+thv proxy my-server --target-uri http://localhost:8080
+```
+
+This creates a proxy that forwards all requests to `http://localhost:8080`
+without any authentication.
+
+### Specify proxy host and port
+
+By default, the proxy listens on `127.0.0.1` with a random port. To specify
+custom values:
+
+```bash
+thv proxy my-server \
+  --target-uri http://localhost:8080 \
+  --host 0.0.0.0 \
+  --port 8000
+```
+
+## Outgoing authentication to remote servers
+
+The proxy can authenticate to remote MCP servers that require OAuth or OIDC
+authentication. This is useful when you need to access protected remote
+services.
+
+### OIDC authentication
+
+For OpenID Connect-compliant servers, provide the issuer URL and client
+credentials:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /path/to/secret
+```
+
+:::warning[Secure credential handling]
+
+Always use `--remote-auth-client-secret-file` instead of
+`--remote-auth-client-secret` in production environments. The file-based
+approach prevents credentials from appearing in process lists or command
+history.
+
+:::
+
+### OAuth2 authentication
+
+For non-OIDC OAuth2 servers, specify the authorization and token endpoints
+explicitly:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-authorize-url https://auth.example.com/oauth/authorize \
+  --remote-auth-token-url https://auth.example.com/oauth/token \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /path/to/secret
+```
+
+### Auto-detect authentication
+
+The proxy can automatically detect if a remote server requires authentication
+by examining WWW-Authenticate headers:
+
+```bash
+thv proxy my-server \
+  --target-uri https://protected-api.com \
+  --remote-auth-client-id my-client-id
+```
+
+When authentication is detected, the proxy automatically initiates the
+appropriate OAuth flow.
+
+### Dynamic client registration
+
+When no client credentials are provided, the proxy can automatically register
+an OAuth client using RFC 7591 dynamic client registration:
+
+```bash
+thv proxy my-server \
+  --target-uri https://protected-api.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com
+```
+
+This feature:
+
+- Eliminates the need to pre-configure OAuth clients
+- Automatically discovers the registration endpoint via OIDC
+- Supports PKCE flow for enhanced security
+
+:::info
+
+Dynamic client registration requires the remote authorization server to support
+RFC 7591. Not all OAuth providers support this feature.
+
+:::
+
+## Incoming authentication (proxy protection)
+
+You can protect the proxy endpoint itself with OIDC validation, requiring
+clients to provide valid JWT tokens when connecting to the proxy.
+
+### OIDC validation for incoming requests
+
+```bash
+thv proxy my-server \
+  --target-uri http://localhost:8080 \
+  --oidc-issuer https://auth.example.com \
+  --oidc-audience my-audience \
+  --oidc-client-id my-client-id
+```
+
+This configuration:
+
+- Requires clients to include a valid JWT in the `Authorization` header
+- Validates the token signature, expiration, and claims
+- Extracts identity information for authorization decisions
+
+### Token introspection
+
+For advanced scenarios, you can use token introspection:
+
+```bash
+thv proxy my-server \
+  --target-uri http://localhost:8080 \
+  --oidc-issuer https://auth.example.com \
+  --oidc-audience my-audience \
+  --oidc-client-id my-client-id \
+  --oidc-client-secret my-client-secret \
+  --oidc-introspection-url https://auth.example.com/oauth/introspect
+```
+
+## Bidirectional authentication
+
+Combine incoming and outgoing authentication for end-to-end security:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://remote-auth.example.com \
+  --remote-auth-client-id remote-client-id \
+  --remote-auth-client-secret-file /path/to/remote-secret \
+  --oidc-issuer https://local-auth.example.com \
+  --oidc-audience my-audience \
+  --oidc-client-id local-client-id
+```
+
+This setup:
+
+1. Validates incoming requests from clients using OIDC
+2. Authenticates outgoing requests to the remote server using OAuth/OIDC
+3. Provides complete authentication chain from client to remote server
+
+## Advanced configuration
+
+### Custom OAuth scopes
+
+Specify the OAuth scopes required by the remote server:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /path/to/secret \
+  --remote-auth-scopes openid,profile,email,custom-scope
+```
+
+:::note
+
+If `--remote-auth-scopes` is not specified, OIDC authentication defaults to
+`openid,profile,email`.
+
+:::
+
+### Authentication timeout
+
+Adjust the timeout for slow networks or interactive authentication flows:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /path/to/secret \
+  --remote-auth-timeout 2m
+```
+
+### Headless authentication
+
+For non-interactive environments (CI/CD, servers), skip browser-based OAuth
+flows:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /path/to/secret \
+  --remote-auth-skip-browser
+```
+
+This requires client credentials flow or pre-authorized tokens.
+
+### Custom OAuth callback port
+
+The proxy uses a temporary HTTP server for OAuth callbacks during
+authentication. To specify a custom callback port:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /path/to/secret \
+  --remote-auth-callback-port 9000
+```
+
+The default callback port is `8666`.
+
+### Resource URL for OAuth discovery
+
+For servers using RFC 9728 OAuth 2.0 Authorization Server Metadata for Resource
+Indicators, specify the resource URL:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /path/to/secret \
+  --resource-url https://resource.example.com
+```
+
+## Credential management
+
+### Client secret sources
+
+OAuth client secrets can be provided via three methods (in order of
+precedence):
+
+1. `--remote-auth-client-secret` flag (not recommended for production)
+2. `--remote-auth-client-secret-file` flag (recommended)
+3. `TOOLHIVE_REMOTE_OAUTH_CLIENT_SECRET` environment variable
+
+#### Using environment variables
+
+```bash
+export TOOLHIVE_REMOTE_OAUTH_CLIENT_SECRET="your-secret-here"
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id
+```
+
+#### Using secret files
+
+```bash
+echo "your-secret-here" > /secure/path/secret.txt
+chmod 600 /secure/path/secret.txt
+
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /secure/path/secret.txt
+```
+
+## Common use cases
+
+### Protecting a local MCP server
+
+Run a local MCP server and protect it with OIDC authentication:
+
+```bash
+# Start your MCP server on localhost:8080
+# Then create a protected proxy
+thv proxy protected-mcp \
+  --target-uri http://localhost:8080 \
+  --port 3000 \
+  --oidc-issuer https://auth.example.com \
+  --oidc-audience mcp-users \
+  --oidc-client-id mcp-proxy
+```
+
+Clients now connect to `http://localhost:3000` with valid JWT tokens.
+
+### Accessing a protected remote MCP server
+
+Connect to a remote MCP server that requires OAuth authentication:
+
+```bash
+thv proxy remote-mcp \
+  --target-uri https://api.example.com/mcp \
+  --port 3000 \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id your-client-id \
+  --remote-auth-client-secret-file /path/to/secret
+```
+
+Clients connect to `http://localhost:3000` without handling OAuth flows.
+
+### Creating a secure gateway
+
+Set up a secure gateway with authentication on both sides:
+
+```bash
+thv proxy secure-gateway \
+  --target-uri https://api.example.com/mcp \
+  --port 3000 \
+  --remote-auth \
+  --remote-auth-issuer https://remote.example.com \
+  --remote-auth-client-id remote-id \
+  --remote-auth-client-secret-file /path/to/remote-secret \
+  --oidc-issuer https://local.example.com \
+  --oidc-audience gateway-users \
+  --oidc-client-id gateway-proxy
+```
+
+## Troubleshooting
+
+### Authentication flow fails
+
+If OAuth/OIDC authentication fails:
+
+1. Verify the issuer URL is correct and accessible
+2. Check that client ID and secret are valid
+3. Ensure the redirect URI is properly configured in your OAuth provider
+4. Check the callback port is not blocked by firewalls
+5. Use `--debug` flag for detailed logs:
+
+   ```bash
+   thv proxy my-server --debug \
+     --target-uri https://api.example.com \
+     --remote-auth \
+     --remote-auth-issuer https://auth.example.com \
+     --remote-auth-client-id my-client-id \
+     --remote-auth-client-secret-file /path/to/secret
+   ```
+
+### Dynamic client registration fails
+
+If automatic client registration doesn't work:
+
+1. Verify the authorization server supports RFC 7591
+2. Check that the OIDC discovery endpoint is accessible
+3. Ensure the issuer URL includes `/.well-known/openid-configuration`
+4. Try with explicit client credentials instead
+
+### Token validation fails
+
+If incoming token validation fails:
+
+1. Verify the JWT is properly formatted
+2. Check that the `Authorization` header uses `Bearer` scheme
+3. Ensure the token hasn't expired
+4. Verify the audience and issuer match your configuration
+5. Check JWKS URL is accessible for signature verification
+
+## Related information
+
+- [`thv proxy` command reference](../reference/cli/thv_proxy.md)
+- [Authentication and authorization](./auth.mdx)
+- [Authentication and authorization framework](../concepts/auth-framework.md)
