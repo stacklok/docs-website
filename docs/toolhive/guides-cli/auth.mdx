@@ -98,6 +98,494 @@ curl -H "Authorization: Bearer <your-jwt-token>" \
      <toolhive-server-url>
 ```
 
+## Set up proxy authentication
+
+ToolHive provides a standalone `thv proxy` command that creates transparent HTTP
+proxies with advanced authentication capabilities. This is different from using
+`thv run` with authentication—the proxy command creates a standalone proxy
+process without managing workloads or containers.
+
+### When to use proxy authentication
+
+Use the `thv proxy` command when you need:
+
+- **Outgoing authentication**: Authenticate to remote MCP servers using
+  OAuth/OIDC, with the proxy handling token management and refresh
+- **Incoming authentication**: Protect a proxy endpoint with OIDC validation,
+  requiring clients to provide valid JWT tokens
+- **Bidirectional authentication**: Secure both incoming requests to the proxy
+  and outgoing requests to remote servers
+- **Dynamic client registration**: Automatically register OAuth clients using
+  RFC 7591, eliminating the need for pre-configuration
+- **Standalone proxy**: Run a proxy without creating a managed workload
+
+### Basic proxy with outgoing authentication
+
+To create a proxy that authenticates to a remote MCP server:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /path/to/secret
+```
+
+The proxy will:
+
+1. Handle the OAuth/OIDC flow with the remote server
+2. Manage token storage and automatic refresh
+3. Forward authenticated requests transparently
+
+Your clients connect to the local proxy without needing to handle
+authentication.
+
+### Proxy with incoming authentication
+
+To protect the proxy endpoint itself with OIDC validation:
+
+```bash
+thv proxy my-server \
+  --target-uri http://localhost:8080 \
+  --oidc-issuer https://auth.example.com \
+  --oidc-audience my-audience \
+  --oidc-client-id my-client-id
+```
+
+Clients must include a valid JWT token when connecting to the proxy.
+
+### Bidirectional proxy authentication
+
+Combine both incoming and outgoing authentication for end-to-end security:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://remote-auth.example.com \
+  --remote-auth-client-id remote-client-id \
+  --remote-auth-client-secret-file /path/to/remote-secret \
+  --oidc-issuer https://local-auth.example.com \
+  --oidc-audience my-audience \
+  --oidc-client-id local-client-id
+```
+
+### Authentication modes
+
+The `thv proxy` command supports four authentication scenarios:
+
+1. **No authentication**: Simple transparent forwarding
+2. **Outgoing authentication**: Authenticate to remote MCP servers using
+   OAuth/OIDC
+3. **Incoming authentication**: Protect the proxy endpoint with OIDC validation
+4. **Bidirectional**: Both incoming and outgoing authentication
+
+### OAuth2 authentication (non-OIDC)
+
+For non-OIDC OAuth2 servers, specify the authorization and token endpoints
+explicitly:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-authorize-url https://auth.example.com/oauth/authorize \
+  --remote-auth-token-url https://auth.example.com/oauth/token \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /path/to/secret
+```
+
+### Auto-detect authentication
+
+The proxy can automatically detect if a remote server requires authentication by
+examining WWW-Authenticate headers:
+
+```bash
+thv proxy my-server \
+  --target-uri https://protected-api.com \
+  --remote-auth-client-id my-client-id
+```
+
+When authentication is detected, the proxy automatically initiates the
+appropriate OAuth flow.
+
+### Dynamic client registration
+
+When no client credentials are provided, the proxy can automatically register an
+OAuth client using RFC 7591 dynamic client registration:
+
+```bash
+thv proxy my-server \
+  --target-uri https://protected-api.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com
+```
+
+This feature:
+
+- Eliminates the need to pre-configure OAuth clients
+- Automatically discovers the registration endpoint via OIDC
+- Supports PKCE flow for enhanced security
+
+:::info
+
+Dynamic client registration requires the remote authorization server to support
+RFC 7591. Not all OAuth providers support this feature.
+
+:::
+
+### Token introspection
+
+For advanced scenarios, you can use token introspection for incoming
+authentication:
+
+```bash
+thv proxy my-server \
+  --target-uri http://localhost:8080 \
+  --oidc-issuer https://auth.example.com \
+  --oidc-audience my-audience \
+  --oidc-client-id my-client-id \
+  --oidc-client-secret my-client-secret \
+  --oidc-introspection-url https://auth.example.com/oauth/introspect
+```
+
+### Advanced proxy configuration
+
+#### Custom OAuth scopes
+
+Specify the OAuth scopes required by the remote server:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /path/to/secret \
+  --remote-auth-scopes openid,profile,email,custom-scope
+```
+
+:::note
+
+If `--remote-auth-scopes` is not specified, OIDC authentication defaults to
+`openid,profile,email`.
+
+:::
+
+#### Authentication timeout
+
+Adjust the timeout for slow networks or interactive authentication flows:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /path/to/secret \
+  --remote-auth-timeout 2m
+```
+
+#### Headless authentication
+
+For non-interactive environments (CI/CD, servers), skip browser-based OAuth
+flows:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /path/to/secret \
+  --remote-auth-skip-browser
+```
+
+This requires client credentials flow or pre-authorized tokens.
+
+#### Custom proxy host and port
+
+By default, the proxy listens on `127.0.0.1` with a random port. To specify
+custom values:
+
+```bash
+thv proxy my-server \
+  --target-uri http://localhost:8080 \
+  --host 0.0.0.0 \
+  --port 8000
+```
+
+#### Custom OAuth callback port
+
+The proxy uses a temporary HTTP server for OAuth callbacks during
+authentication. To specify a custom callback port:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /path/to/secret \
+  --remote-auth-callback-port 9000
+```
+
+The default callback port is `8666`.
+
+### Credential management
+
+#### Client secret sources
+
+OAuth client secrets can be provided via three methods (in order of precedence):
+
+1. `--remote-auth-client-secret` flag (not recommended for production)
+2. `--remote-auth-client-secret-file` flag (recommended)
+3. `TOOLHIVE_REMOTE_OAUTH_CLIENT_SECRET` environment variable
+
+:::warning[Secure credential handling]
+
+Always use `--remote-auth-client-secret-file` instead of
+`--remote-auth-client-secret` in production environments. The file-based
+approach prevents credentials from appearing in process lists or command
+history.
+
+:::
+
+#### Using environment variables
+
+```bash
+export TOOLHIVE_REMOTE_OAUTH_CLIENT_SECRET="your-secret-here"
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id
+```
+
+#### Using secret files
+
+```bash
+echo "your-secret-here" > /secure/path/secret.txt
+chmod 600 /secure/path/secret.txt
+
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret-file /secure/path/secret.txt
+```
+
+### Common proxy use cases
+
+#### Protecting a local MCP server
+
+Run a local MCP server and protect it with OIDC authentication:
+
+```bash
+# Start your MCP server on localhost:8080
+# Then create a protected proxy
+thv proxy protected-mcp \
+  --target-uri http://localhost:8080 \
+  --port 3000 \
+  --oidc-issuer https://auth.example.com \
+  --oidc-audience mcp-users \
+  --oidc-client-id mcp-proxy
+```
+
+Clients now connect to `http://localhost:3000` with valid JWT tokens.
+
+#### Accessing a protected remote MCP server
+
+Connect to a remote MCP server that requires OAuth authentication:
+
+```bash
+thv proxy remote-mcp \
+  --target-uri https://api.example.com/mcp \
+  --port 3000 \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id your-client-id \
+  --remote-auth-client-secret-file /path/to/secret
+```
+
+Clients connect to `http://localhost:3000` without handling OAuth flows.
+
+#### Creating a secure gateway
+
+Set up a secure gateway with authentication on both sides:
+
+```bash
+thv proxy secure-gateway \
+  --target-uri https://api.example.com/mcp \
+  --port 3000 \
+  --remote-auth \
+  --remote-auth-issuer https://remote.example.com \
+  --remote-auth-client-id remote-id \
+  --remote-auth-client-secret-file /path/to/remote-secret \
+  --oidc-issuer https://local.example.com \
+  --oidc-audience gateway-users \
+  --oidc-client-id gateway-proxy
+```
+
+### Token exchange (RFC 8693)
+
+The `thv proxy` command supports OAuth 2.0 Token Exchange (RFC 8693), which
+allows you to securely exchange one token for another. This is useful when you
+need to obtain downstream tokens with different audiences, scopes, or token
+types.
+
+#### When to use token exchange
+
+Token exchange is valuable in scenarios where:
+
+- You have a user's authentication token but need a different token to access a
+  backend service
+- You need to exchange an ID token for an access token (or vice versa)
+- You're working with Google Cloud Workload Identity Federation or similar
+  services
+- You need to obtain tokens with specific audiences or scopes for downstream
+  services
+
+#### Basic token exchange setup
+
+To enable token exchange with the proxy:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --token-exchange-url https://auth.example.com/oauth/token \
+  --token-exchange-client-id exchange-client-id \
+  --token-exchange-client-secret-file /path/to/exchange-secret
+```
+
+The proxy will:
+
+1. Extract the token from incoming requests (Authorization header)
+2. Exchange it for a new token using the token exchange endpoint
+3. Forward requests with the exchanged token to the target server
+
+#### Token exchange configuration
+
+##### Subject token type
+
+Specify the type of token to exchange using
+`--token-exchange-subject-token-type`:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --token-exchange-url https://auth.example.com/oauth/token \
+  --token-exchange-client-id exchange-client-id \
+  --token-exchange-client-secret-file /path/to/exchange-secret \
+  --token-exchange-subject-token-type id_token
+```
+
+Supported values:
+
+- `access_token`: Exchange an access token
+- `id_token`: Exchange an ID token
+
+##### Target audience
+
+Specify the audience for the exchanged token:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --token-exchange-url https://auth.example.com/oauth/token \
+  --token-exchange-client-id exchange-client-id \
+  --token-exchange-client-secret-file /path/to/exchange-secret \
+  --token-exchange-audience https://backend.example.com
+```
+
+##### Custom scopes
+
+Request specific scopes for the exchanged token:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --token-exchange-url https://auth.example.com/oauth/token \
+  --token-exchange-client-id exchange-client-id \
+  --token-exchange-client-secret-file /path/to/exchange-secret \
+  --token-exchange-scopes read,write,admin
+```
+
+##### Custom token header
+
+By default, the exchanged token is injected in the `Authorization` header. To
+use a custom header:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --token-exchange-url https://auth.example.com/oauth/token \
+  --token-exchange-client-id exchange-client-id \
+  --token-exchange-client-secret-file /path/to/exchange-secret \
+  --token-exchange-header-name X-Custom-Auth
+```
+
+#### Token exchange with OAuth flow
+
+You can combine token exchange with the proxy's OAuth authentication:
+
+```bash
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --remote-auth \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id auth-client-id \
+  --remote-auth-client-secret-file /path/to/auth-secret \
+  --token-exchange-url https://auth.example.com/oauth/token \
+  --token-exchange-client-id exchange-client-id \
+  --token-exchange-client-secret-file /path/to/exchange-secret \
+  --token-exchange-audience https://backend.example.com
+```
+
+In this mode:
+
+1. The proxy authenticates using OAuth and obtains tokens
+2. The proxy exchanges the obtained token for a downstream token
+3. Requests are forwarded with the exchanged token
+
+#### Client secret sources
+
+Token exchange client secrets follow the same precedence as other OAuth secrets:
+
+1. `--token-exchange-client-secret` flag (not recommended for production)
+2. `--token-exchange-client-secret-file` flag (recommended)
+3. `TOOLHIVE_TOKEN_EXCHANGE_CLIENT_SECRET` environment variable
+
+Example using environment variable:
+
+```bash
+export TOOLHIVE_TOKEN_EXCHANGE_CLIENT_SECRET="your-exchange-secret"
+thv proxy my-server \
+  --target-uri https://api.example.com \
+  --token-exchange-url https://auth.example.com/oauth/token \
+  --token-exchange-client-id exchange-client-id
+```
+
+#### Token exchange use case: Google Cloud Workload Identity
+
+A common use case is exchanging tokens for Google Cloud Workload Identity
+Federation:
+
+```bash
+thv proxy gcp-service \
+  --target-uri https://api.example.com \
+  --token-exchange-url https://sts.googleapis.com/v1/token \
+  --token-exchange-client-id gcp-client-id \
+  --token-exchange-client-secret-file /path/to/gcp-secret \
+  --token-exchange-audience //iam.googleapis.com/projects/PROJECT_ID/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID \
+  --token-exchange-subject-token-type id_token
+```
+
+This configuration exchanges your ID token for a Google Cloud access token that
+can be used to access GCP services.
+
 ## Set up authorization
 
 ToolHive uses Amazon's Cedar policy language for fine-grained, secure-by-default
@@ -162,5 +650,3 @@ If you're having issues with the CLI:
 - For detailed Cedar policy syntax, see
   [Cedar policies](../concepts/cedar-policies.md) and the
   [Cedar documentation](https://docs.cedarpolicy.com/)
-- For standalone proxy with authentication, see
-  [Proxy with authentication](./proxy-authentication.mdx)
