@@ -13,8 +13,10 @@ last_update:
 
 The meta-mcp server acts as an intelligent intermediary between AI clients and
 multiple MCP servers. It provides tool discovery, unified access to multiple MCP
-servers through a single endpoint, and intelligent routing of requests to
-appropriate MCP tools.
+servers through a single endpoint, and routing of requests to the MCP servers.
+When a required MCP server isn't installed, meta-mcp automatically searches the
+ToolHive registry and dynamically installs the necessary server to complete the
+task.
 
 :::info[Status]
 
@@ -31,29 +33,48 @@ Key features include:
   managing multiple connections
 - **Tool management**: Seamlessly manage large numbers of MCP tools across
   different servers
-- **Intelligent routing**: Automatically routes requests to the appropriate MCP
-  server based on tool requirements
+- **Intelligent routing**: Routes requests to the requested MCP server and tool
+- **Dynamic Server Installation**: Automatically discovers and installs missing
+  MCP servers from the ToolHive registry when needed for a task
 
 This approach helps you avoid problems associated with context overload and tool
 confusion by narrowing down the toolset to only those relevant for a given task.
 It also simplifies client configurations by providing a single access point to
 multiple MCP servers.
 
-The meta-mcp workflow:
+The meta-mcp workflow when relevant MCP server is installed:
 
 1. Your AI client sends the request to meta-mcp
 2. Meta-mcp uses hybrid search (semantic + keyword) to find relevant tools
-   across all connected MCP servers
+   across all installed MCP servers
 3. Meta-mcp server returns the short list of matching tools to the client
 4. Client selects one tool from the short list and uses meta-mcp to call that
    tool
 5. Results are returned from meta-mcp to the client
 
+The meta-mcp workflow when relevant MCP server is not installed:
+
+1. Your AI client sends the request to meta-mcp
+2. Meta-mcp uses hybrid search (semantic + keyword) to find tools across all
+   installed MCP servers
+3. Meta-mcp server returns the short list of matching tools to the client
+4. AI client finds that none of the tools are suitable for the request
+5. AI client sends a request to search the ToolHive registry for relevant
+   servers
+6. Meta-mcp uses hybrid search (semantic + keyword) to find relevant servers
+7. Meta-mcp server returns the short list of matching servers to the client
+8. AI client requests installation of a MCP server
+9. Meta-mcp server installs the MCP server automatically if no security
+   credentials are needed. If security credentials are needed, meta-mcp server
+   guides the user to ToolHive for entering the credentials
+10. After installation, the flow is identical to the flow when a MCP server is
+    installed.
+
 ## Metadata
 
 <MCPMetadata name='meta-mcp' />
 
-## Usage
+## Usage on local machine
 
 The meta-mcp server is specifically designed to work with
 [ToolHive groups](../guides-cli/group-management.md). The recommended setup is
@@ -109,8 +130,12 @@ depends on the UI's API server for tool discovery and management.
 # Create the meta group
 thv group create meta
 
-# Run meta-mcp in the dedicated group
+# Run meta-mcp in the dedicated group with access to server from all groups
 thv run --group meta meta-mcp
+
+# Alternately, run meta-mcp in the dedicated group with access to servers
+# from the specified server groups
+thv run --group meta meta-mcp --env ALLOWED_GROUPS="default,test"
 ```
 
 **Step 2: Configure your AI client for the meta group**
@@ -148,6 +173,12 @@ thv list
 
 </TabItem>
 </Tabs>
+
+## Deployment in Kubernetes
+
+Meta-mcp is supported in Kubernetes enviornment. Follow
+[this guide](https://github.com/StacklokLabs/meta-mcp/blob/main/docs/kubernetes-integration.md)
+for deployment.
 
 ## Sample prompts
 
@@ -188,6 +219,49 @@ Executes a specific tool with provided parameters after discovery.
 - `server_name`: Name of the MCP server providing the tool
 - `tool_name`: Name of the tool to execute
 - `parameters`: Dictionary of arguments required by the tool
+
+### `list_tools`
+
+List all available tools across all MCP servers.
+
+**Parameters**
+
+None
+
+### `search_registry`
+
+Search for tools in the ToolHive registry when find_tool doesn't return a
+relevant tool.
+
+**Parameters:**
+
+- `tool_description`: Description of the task or capability needed (e.g., "web
+  search", "analyze CSV file")
+- `tool_keywords`: Space-separated keywords of the task or capability needed
+  (e.g., "list issues github", "SQL query postgres")
+
+### `install_server`
+
+Install and start an MCP server from the ToolHive registry.
+
+**Parameters:**
+
+- `server_name`: Name of the server from search_registry() results (found in the
+  mcp_server_name field)
+
+## Advanced configuration using environment variables
+
+Meta-mcp server can be configured using following enviornment variables.
+
+- MAX_TOOLS_TO_RETURN: Number of tools to return from find_tool (default: 8)
+- TOOL_DISTANCE_THRESHOLD: Distance threshold for tool similarity (default: 1.0)
+- MAX_TOOL_RESPONSE_TOKENS: Maximum number of tokens to return from call_tool
+  (default: None)
+- WORKLOAD_POLLING_INTERVAL: Polling interval for running MCP servers (default:
+  60 seconds)
+- REGISTRY_POLLING_INTERVAL: Polling interval for ToolHive registry (default: 24
+  hours)
+- RUNTIME_MODE: Runtime mode for MCP servers: docker or k8s (default: docker)
 
 ## Recommended practices
 
