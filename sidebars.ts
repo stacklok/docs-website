@@ -48,9 +48,21 @@ const sidebars: SidebarsConfig = {
       items: [
         'toolhive/guides-ui/install',
         'toolhive/guides-ui/registry',
-        'toolhive/guides-ui/run-mcp-servers',
-        'toolhive/guides-ui/network-isolation',
-        'toolhive/guides-ui/secrets-management',
+        {
+          type: 'category',
+          label: 'Run MCP servers',
+          description: 'How to install and run MCP servers in the ToolHive UI',
+          collapsed: false,
+          collapsible: false,
+          link: {
+            type: 'doc',
+            id: 'toolhive/guides-ui/run-mcp-servers',
+          },
+          items: [
+            'toolhive/guides-ui/secrets-management',
+            'toolhive/guides-ui/network-isolation',
+          ],
+        },
         'toolhive/guides-ui/client-configuration',
         'toolhive/guides-ui/playground',
       ],
@@ -67,11 +79,22 @@ const sidebars: SidebarsConfig = {
       items: [
         'toolhive/guides-cli/install',
         'toolhive/guides-cli/registry',
-        'toolhive/guides-cli/run-mcp-servers',
-        'toolhive/guides-cli/build-containers',
-        'toolhive/guides-cli/manage-mcp-servers',
-        'toolhive/guides-cli/group-management',
-        'toolhive/guides-cli/secrets-management',
+        {
+          type: 'category',
+          label: 'Run MCP servers',
+          description: 'How to run MCP servers with the ToolHive CLI',
+          collapsed: false,
+          collapsible: false,
+          link: {
+            type: 'doc',
+            id: 'toolhive/guides-cli/run-mcp-servers',
+          },
+          items: [
+            'toolhive/guides-cli/manage-mcp-servers',
+            'toolhive/guides-cli/group-management',
+            'toolhive/guides-cli/secrets-management',
+          ],
+        },
         'toolhive/guides-cli/client-configuration',
         {
           type: 'category',
@@ -79,6 +102,7 @@ const sidebars: SidebarsConfig = {
           description:
             'How to configure filesystem and network access for MCP servers',
           collapsed: false,
+          collapsible: false,
           link: {
             type: 'doc',
             id: 'toolhive/guides-cli/custom-permissions',
@@ -91,6 +115,7 @@ const sidebars: SidebarsConfig = {
         },
         'toolhive/guides-cli/telemetry-and-metrics',
         'toolhive/guides-cli/auth',
+        'toolhive/guides-cli/build-containers',
         'toolhive/guides-cli/advanced-cicd',
         {
           type: 'category',
@@ -124,9 +149,9 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/intro',
         'toolhive/guides-k8s/deploy-operator-helm',
         'toolhive/guides-k8s/run-mcp-k8s',
-        'toolhive/guides-k8s/tool-config',
+        'toolhive/guides-k8s/customize-tools',
         'toolhive/guides-k8s/telemetry-and-metrics',
-        'toolhive/guides-k8s/logging-infrastructure',
+        'toolhive/guides-k8s/logging',
         'toolhive/guides-k8s/auth-k8s',
         'toolhive/reference/crd-spec',
       ],

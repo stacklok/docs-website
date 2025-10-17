@@ -1,0 +1,212 @@
+---
+title: Notion MCP server guide
+sidebar_label: Notion
+description:
+  Using the Notion remote MCP server with ToolHive to access your Notion
+  workspace.
+last_update:
+  author: danbarr
+  date: 2025-10-07
+---
+
+## Overview
+
+The official [Notion remote MCP server](https://developers.notion.com/docs/mcp)
+provides access to your Notion workspace through the Notion API, allowing AI
+agents to search, read, create, and manage pages, databases, and other content
+in your Notion workspace.
+
+This is a remote MCP server that uses OAuth authentication with dynamic client
+registration, meaning ToolHive handles all authentication setup automatically
+with minimal configuration required.
+
+## Metadata
+
+<MCPMetadata name='notion-remote' />
+
+## Usage
+
+<Tabs groupId='mode' queryString='mode'>
+<TabItem value='ui' label='UI' default>
+
+Select the `notion-remote` MCP server in the ToolHive registry.
+
+The server is preconfigured with the following settings:
+
+- **Server URL**: `https://mcp.notion.com/mcp`
+- **Transport**: Streamable HTTP
+- **Authorization method**: Dynamic Client Registration
+
+In the **Callback port** field, enter the port that ToolHive should use to
+listen for the OAuth callback. This can be any available port on your machine.
+
+When you install the server, ToolHive:
+
+1. Discovers the OAuth endpoints automatically
+2. Registers a new OAuth client with Notion
+3. Opens your browser for authentication
+
+After you authorize access in your browser, the remote MCP server appears in
+your server list with a "Running" status.
+
+</TabItem>
+<TabItem value='cli' label='CLI'>
+
+Run the Notion remote MCP server with the default configuration:
+
+```bash
+thv run notion-remote
+```
+
+When you run the server, ToolHive:
+
+1. Discovers the OAuth endpoints automatically
+2. Registers a new OAuth client with Notion
+3. Opens your browser for authentication
+
+Customize the OAuth callback port if the default port (`8777`) is unavailable:
+
+```bash
+thv run --remote-auth-callback-port 50051 notion-remote
+```
+
+After successful authentication, the server will be available to your configured
+MCP clients.
+
+To restart the server (which triggers a new OAuth authentication flow):
+
+```bash
+thv restart notion-remote
+```
+
+</TabItem>
+<TabItem value='k8s' label='Kubernetes'>
+
+:::note
+
+The ToolHive Kubernetes operator does not currently support remote MCP servers.
+Instead, you can run the
+[local Notion MCP server](https://github.com/makenotion/notion-mcp-server) in
+Kubernetes using a static integration key.
+
+:::
+
+Create an integration in Notion to obtain an authentication token by following
+the instructions in the MCP server's
+[README](https://github.com/makenotion/notion-mcp-server?tab=readme-ov-file#installation).
+
+Create a Kubernetes secret containing your Notion integration token
+("`ntn_****`"):
+
+```bash
+kubectl -n toolhive-system create secret generic notion-token --from-literal=token=<YOUR_TOKEN>
+```
+
+Create a Kubernetes manifest to deploy the Notion MCP server using your secret:
+
+```yaml {14-17} title="notion.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: notion
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stacklok/dockyard/npx/notion:1.9.0
+  transport: stdio
+  port: 8080
+  permissionProfile:
+    type: builtin
+    name: network
+  secrets:
+    - name: notion-token
+      key: token
+      targetEnvName: NOTION_TOKEN
+```
+
+Apply the manifest to your Kubernetes cluster:
+
+```bash
+kubectl apply -f notion.yaml
+```
+
+</TabItem>
+</Tabs>
+
+## Sample prompts
+
+Here are some sample prompts you can use to interact with the Notion MCP server:
+
+- "Search my Notion workspace for pages about 'project planning'"
+- "Create a new page in my Notion workspace titled 'Meeting Notes' with today's
+  date"
+- "Find all database entries in my Task List database where status is 'To Do'"
+- "Update the page titled 'Weekly Report' with a summary of this week's
+  accomplishments"
+- "List all pages in my 'Engineering' teamspace"
+- "Create a new Notion database for tracking customer feedback with columns for
+  name, date, and feedback text"
+- "Add a comment to the page titled 'Q4 Planning' with my feedback"
+- "Search for pages created by john@example.com in the last 30 days"
+
+## Recommended practices
+
+- **Scope your access**: When authenticating, review the permissions requested
+  and only grant access to the workspaces you need for your use case.
+- **Test with read operations**: Start with search and fetch operations to
+  familiarize yourself with the server's capabilities before making changes to
+  your workspace.
+- **Use specific searches**: Instead of broad workspace searches, narrow down
+  results by searching within specific pages, databases, or teamspaces for
+  better performance.
+- **Understand the data model**: Notion has a specific hierarchy (workspaces,
+  teamspaces, pages, databases, data sources). Understanding this structure
+  helps craft more effective prompts.
+- **Be cautious with updates**: The MCP server can modify and delete content in
+  your Notion workspace. Always review changes before applying them to important
+  pages or databases.
+- **Handle authentication errors**: If you see authentication errors, restart
+  the server to trigger a new OAuth flow: `thv restart notion-remote`
+
+## Troubleshooting
+
+<details>
+<summary>OAuth authentication fails</summary>
+
+If OAuth authentication fails or times out:
+
+1. Ensure the callback port is not blocked by a firewall
+2. Check that your browser allows pop-ups from ToolHive
+3. Try restarting the server with `thv restart notion-remote`
+
+</details>
+<details>
+<summary>Server shows "Running" but tools don't work</summary>
+
+The server may have lost authentication. Restart the server to re-authenticate:
+
+```bash
+thv restart notion-remote
+```
+
+</details>
+<details>
+<summary>Can't find content in search results</summary>
+
+- Notion search uses semantic search, which may return different results than
+  exact keyword matching
+- Try using more specific search terms or filtering by page, database, or
+  teamspace
+- Check that you have access to the content you're searching for (permissions
+  may limit results)
+
+</details>
+<details>
+<summary>Rate limits</summary>
+
+Notion's API has rate limits. If you encounter rate limit errors:
+
+- Reduce the frequency of requests
+- Use more specific queries to reduce the amount of data retrieved
+- Wait for the rate limit to reset (typically a few minutes)
+
+</details>
