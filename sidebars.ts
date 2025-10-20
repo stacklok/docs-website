@@ -115,6 +115,7 @@ const sidebars: SidebarsConfig = {
           ],
         },
         'toolhive/guides-cli/telemetry-and-metrics',
+        'toolhive/guides-cli/auth',
         'toolhive/guides-cli/build-containers',
         'toolhive/guides-cli/advanced-cicd',
         {
@@ -152,6 +153,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/customize-tools',
         'toolhive/guides-k8s/telemetry-and-metrics',
         'toolhive/guides-k8s/logging',
+        'toolhive/guides-k8s/auth-k8s',
         'toolhive/reference/crd-spec',
       ],
     },
@@ -170,6 +172,8 @@ const sidebars: SidebarsConfig = {
         'toolhive/concepts/mcp-primer',
         'toolhive/concepts/registry-criteria',
         'toolhive/concepts/observability',
+        'toolhive/concepts/auth-framework',
+        'toolhive/concepts/cedar-policies',
       ],
     },
 
