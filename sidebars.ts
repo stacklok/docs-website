@@ -59,6 +59,7 @@ const sidebars: SidebarsConfig = {
             id: 'toolhive/guides-ui/run-mcp-servers',
           },
           items: [
+            'toolhive/guides-ui/group-management',
             'toolhive/guides-ui/secrets-management',
             'toolhive/guides-ui/network-isolation',
           ],
