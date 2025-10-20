@@ -115,6 +115,7 @@ const sidebars: SidebarsConfig = {
           ],
         },
         'toolhive/guides-cli/telemetry-and-metrics',
+        'toolhive/guides-cli/test-mcp-servers',
         'toolhive/guides-cli/build-containers',
         'toolhive/guides-cli/advanced-cicd',
         {
