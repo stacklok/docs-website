@@ -79,6 +79,95 @@ Only the environment variables you specify will be included in spans, and
 they'll appear as attributes with the `environment.` prefix (e.g.,
 `environment.NODE_ENV`).
 
+### Add custom resource attributes
+
+You can add custom metadata to all telemetry signals (traces and metrics) using
+custom resource attributes. These attributes are useful for adding context like
+team ownership, deployment region, server type, or any other metadata that helps
+you filter and query your telemetry data in observability platforms.
+
+Custom attributes are attached globally to all telemetry signals from the MCP
+server, making them available for filtering, grouping, and searching in your
+observability backend.
+
+#### Using the CLI flag
+
+Use the `--otel-custom-attributes` flag to specify custom attributes as
+comma-separated key=value pairs:
+
+```bash
+thv run \
+  --otel-endpoint api.honeycomb.io \
+  --otel-headers "x-honeycomb-team=<YOUR_API_KEY>" \
+  --otel-custom-attributes "server_type=production,region=us-east-1,team=platform" \
+  fetch
+```
+
+Attribute keys may contain letters, numbers, dots (`.`), underscores (`_`), and
+hyphens (`-`). Spaces and most other punctuation are not allowed in keys.
+Attribute values can contain any UTF-8 string, including URLs. For more details,
+see the
+[OpenTelemetry Resource Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/resource/#attributes):
+
+```bash
+thv run \
+  --otel-endpoint api.honeycomb.io \
+  --otel-custom-attributes "service.version=1.2.3,api.endpoint=https://api.example.com" \
+  fetch
+```
+
+#### Using environment variables
+
+You can also set custom attributes using the standard OpenTelemetry environment
+variable `OTEL_RESOURCE_ATTRIBUTES`:
+
+```bash
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=staging,service.namespace=backend"
+thv run --otel-endpoint api.honeycomb.io fetch
+```
+
+#### Combining both methods
+
+When using both the CLI flag and environment variable, attributes from both
+sources are combined:
+
+```bash
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"
+thv run \
+  --otel-endpoint api.honeycomb.io \
+  --otel-custom-attributes "region=us-west-2,team=infrastructure" \
+  fetch
+```
+
+This will add all three attributes to your telemetry data:
+
+- `deployment.environment=production` (from environment variable)
+- `region=us-west-2` (from CLI flag)
+- `team=infrastructure` (from CLI flag)
+
+#### Common use cases
+
+Custom attributes are particularly useful for:
+
+- **Critical context**: Add critical context to telemetry (e.g., service, host,
+  or environment) so data is meaningful and traceable.
+- **Fast filtering and troubleshooting**: Enable fast filtering, grouping, and
+  correlation across distributed components during troubleshooting.
+- **Consistent metadata:** Support standardized metadata via OpenTelemetry
+  semantic conventions for reliable observability across systems.
+- **Root-cause analysis:** Pinpoint which resource is responsible for
+  performance issues.
+- **Telemetry enrichment:** Enable automatic or manual enrichment using resource
+  detectors and the OpenTelemetry Collector.
+
+:::tip
+
+Choose attribute names that follow OpenTelemetry semantic conventions when
+possible. For example, use `deployment.environment` instead of `env` for better
+compatibility with observability tools.
+
+:::
+
 ### Enable Prometheus metrics
 
 You can expose Prometheus-style metrics at `/metrics` on the main transport port
@@ -134,6 +223,7 @@ when running an MCP server with the `thv run` command:
 thv run [--otel-endpoint <URL>] [--otel-service-name <NAME>] \
   [--otel-metrics-enabled=<true|false>]  [--otel-tracing-enabled=<true|false>] \
   [--otel-sampling-rate <RATE>] [--otel-headers <KEY=VALUE>] \
+  [--otel-custom-attributes <KEY=VALUE>] [--otel-env-vars <VAR1,VAR2>] \
   [--otel-insecure] [--otel-enable-prometheus-metrics-path] \
   <SERVER>
 ```
@@ -146,6 +236,7 @@ thv run [--otel-endpoint <URL>] [--otel-service-name <NAME>] \
 | `--otel-service-name`                   | Service name for telemetry                                    | `toolhive-mcp-proxy` |
 | `--otel-sampling-rate`                  | Trace sampling rate (0.0-1.0)                                 | `0.1` (10%)          |
 | `--otel-headers`                        | Authentication headers in `key=value` format                  | None                 |
+| `--otel-custom-attributes`              | Custom resource attributes in `key=value` format              | None                 |
 | `--otel-env-vars`                       | List of environment variables to include in telemetry spans   | None                 |
 | `--otel-insecure`                       | Connect using HTTP instead of HTTPS                           | `false`              |
 | `--otel-enable-prometheus-metrics-path` | Enable `/metrics` endpoint                                    | `false`              |
