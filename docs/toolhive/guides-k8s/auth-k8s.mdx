@@ -33,7 +33,8 @@ You'll need:
 
 ## Choose your authentication approach
 
-There are two main ways to authenticate with MCP servers running in Kubernetes:
+There are three main ways to authenticate with MCP servers running in
+Kubernetes:
 
 ### Approach 1: External identity provider authentication
 
@@ -44,7 +45,18 @@ providers like Google, GitHub, Microsoft Entra ID, Okta, or Auth0.
 
 <OidcPrerequisites />
 
-### Approach 2: Kubernetes service-to-service authentication
+### Approach 2: Shared OIDC configuration with ConfigMap
+
+Use this when you want to share the same OIDC configuration across multiple
+MCPServers. This is ideal for managing multiple servers with the same external
+identity provider.
+
+**Prerequisites for shared OIDC:**
+
+- External identity provider configured (same as Approach 1)
+- Understanding of Kubernetes ConfigMaps
+
+### Approach 3: Kubernetes service-to-service authentication
 
 Use this when you have client applications running in the same Kubernetes
 cluster that need to call MCP servers. This approach uses Kubernetes service
@@ -121,6 +133,75 @@ For Kubernetes service accounts, tokens are automatically mounted at
 `/var/run/secrets/kubernetes.io/serviceaccount/token` in pods.
 
 :::
+
+## Set up shared OIDC configuration with ConfigMap
+
+### Step 1: Create OIDC ConfigMap
+
+Create a ConfigMap containing the OIDC configuration:
+
+```yaml title="shared-oidc-config.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shared-oidc-config
+  namespace: toolhive-system
+data:
+  oidc.json: |
+    {
+      "issuer": "https://auth.example.com",
+      "audience": "https://mcp.example.com",
+      "clientId": "shared-client-id",
+      "jwksUrl": "https://auth.example.com/.well-known/jwks.json"
+    }
+```
+
+```bash
+kubectl apply -f shared-oidc-config.yaml
+```
+
+### Step 2: Reference ConfigMap in MCPServer
+
+Create MCPServer resources that reference the shared configuration:
+
+```yaml title="mcp-server-with-configmap-oidc.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: weather-server-shared-oidc
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: sse
+  port: 8080
+  permissionProfile:
+    type: builtin
+    name: network
+  # Reference shared OIDC configuration
+  oidcConfig:
+    type: configMap
+    configMap:
+      name: shared-oidc-config
+      key: oidc.json
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+```
+
+```bash
+kubectl apply -f mcp-server-with-configmap-oidc.yaml
+```
+
+### Benefits of ConfigMap approach
+
+- **Centralized management**: Update OIDC settings in one place
+- **Consistency**: Ensure all MCPServers use identical authentication config
+- **GitOps friendly**: Manage configuration separately from MCPServer resources
+- **Multi-server deployments**: Deploy multiple servers with same auth easily
 
 ## Set up Kubernetes service-to-service authentication
 
