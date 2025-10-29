@@ -140,14 +140,14 @@ spec:
         - |
           permit(
             principal,
-            action == Action::"tools/list",
+            action == Action::"list_tools",
             resource
           );
         # Allow users with 'analyst' role to call read-only tools
         - |
           permit(
             principal,
-            action == Action::"tools/call",
+            action == Action::"call_tool",
             resource
           )
           when {
@@ -290,7 +290,7 @@ spec:
         - |
           permit(
             principal,
-            action == Action::"tools/list",
+            action == Action::"list_tools",
             resource
           );
 
@@ -298,7 +298,7 @@ spec:
         - |
           permit(
             principal,
-            action == Action::"tools/call",
+            action == Action::"call_tool",
             resource
           )
           when {
@@ -310,7 +310,7 @@ spec:
         - |
           permit(
             principal,
-            action == Action::"tools/call",
+            action == Action::"call_tool",
             resource
           )
           when {
@@ -322,7 +322,7 @@ spec:
         - |
           forbid(
             principal,
-            action == Action::"tools/call",
+            action == Action::"call_tool",
             resource
           )
           when {
@@ -330,10 +330,11 @@ spec:
           };
 ```
 
-Available principal attributes depend on the claims in your JWT tokens. Common
-claims include:
+Available principal attributes depend on the claims in your JWT tokens. These
+are examples of common JWT claims that can be referenced in policies; actual
+available attributes depend on your identity provider's token configuration:
 
-- `sub` - Subject (user ID)
+- `sub` - Subject (User ID)
 - `email` - Email address
 - `name` - Display name
 - `groups` - Group memberships (array)
@@ -403,7 +404,9 @@ spec:
       name: token-exchange-creds
       key: client-secret
     audience: https://mcp.analytics.example.com
-    scope: 'analytics:read analytics:write'
+    scopes:
+      - 'analytics:read'
+      - 'analytics:write'
 ```
 
 Then reference it in your proxy:
@@ -571,20 +574,25 @@ Audit logs are structured JSON written to stdout:
 
 ```json
 {
-  "audit_id": "550e8400-e29b-41d4-a716-446655440000",
+  "loggedAt": "2025-10-29T10:15:30.123Z",
   "type": "mcp_tools_call",
   "outcome": "success",
+  "source": "remote-proxy",
+  "component": "analytics-proxy",
   "subjects": {
     "user": "jane.doe@company.com",
     "user_id": "user-123"
   },
   "target": {
     "method": "tools/call",
-    "tool": "query_data"
+    "name": "query_data"
   },
   "metadata": {
-    "duration_ms": 234,
-    "transport": "http"
+    "auditId": "550e8400-e29b-41d4-a716-446655440000",
+    "extra": {
+      "duration_ms": 234,
+      "transport": "http"
+    }
   }
 }
 ```
@@ -605,12 +613,10 @@ spec:
 
 Metrics are exposed at `/metrics` and include:
 
-- `http_requests_total` - Total HTTP requests
-- `http_request_duration_seconds` - Request duration
-- `mcp_tools_list_total` - Tools list operations
-- `mcp_tools_call_total` - Tool call operations
-- `auth_validation_total` - Token validations
-- `auth_validation_failures_total` - Failed token validations
+- `toolhive_mcp_requests_total` - Total MCP requests
+- `toolhive_mcp_request_duration_seconds` - Request duration
+- `toolhive_mcp_tool_calls_total` - Tool call operations
+- `toolhive_mcp_active_connections` - Number of active connections
 
 ### OpenTelemetry
 
@@ -697,9 +703,19 @@ Common causes:
 Verify your token claims:
 
 ```bash
-# Decode JWT (requires jq)
-echo "<TOKEN>" | cut -d. -f2 | base64 -d | jq
+# Decode JWT payload (requires jq)
+# This handles base64url and missing padding
+echo "<TOKEN>" | cut -d. -f2 | tr '_-' '/+' | awk '{l=length($0)%4; if(l>0) printf "%s", substr("====",1,4-l); print $0}' | base64 -d 2>/dev/null | jq
 ```
+
+:::note
+
+JWTs use base64url encoding and may omit padding characters (`=`). The command
+above converts base64url to standard base64 and adds padding if needed. If you
+get an "invalid input" error, check your shell and base64 version, or manually
+add padding to the payload.
+
+:::
 
 </details>
 
