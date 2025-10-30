@@ -43,81 +43,104 @@ and securely.
 
 ## ToolHive vs. MCP specification
 
-The official Model Context Protocol (MCP) specification recommends OAuth
-2.1-based authorization for HTTP transports, which can require each MCP server
-to implement OAuth endpoints and manage tokens. ToolHive takes a different
-approach: it centralizes authentication and authorization in its proxy layer,
-using OIDC for authentication and Cedar for fine-grained authorization. This
-means you don't need to implement OAuth flows or scope management in every
-server—just configure ToolHive with your IdP and write clear policies. This
-approach is more flexible, secure, and easier to manage for you and your team.
+The
+[official Model Context Protocol (MCP) specification](https://modelcontextprotocol.io/docs/tutorials/security/authorization)
+recommends OAuth 2.1-based authorization for HTTP transports, which requires
+each MCP server to act as an OAuth resource server that validates access tokens
+and enforces scope-based access control. ToolHive takes a different approach: it
+centralizes authentication and authorization in its proxy layer, using
+OAuth/OIDC for authentication and Cedar for fine-grained authorization. This
+means you don't need to implement token validation or scope management in every
+server—just configure ToolHive with your IdP and write clear Cedar policies.
+This approach is more flexible, secure, and easier to manage for you and your
+team.
 
 ## Authentication framework
 
-ToolHive uses OpenID Connect (OIDC), an identity layer built on top of OAuth
-2.0, for authentication. OIDC is a widely adopted, interoperable protocol that
-lets you connect ToolHive to any OIDC-compliant identity provider (IdP), such as
-Google, GitHub, Microsoft Entra ID (Azure AD), Okta, Auth0, or even Kubernetes
-service accounts. ToolHive never handles your raw passwords or credentials;
-instead, it relies on signed identity tokens (usually JWTs) issued by your
-trusted provider.
+ToolHive uses OAuth-based authentication with support for both OAuth 2.1 and
+OpenID Connect (OIDC), enabling both JWT tokens and opaque token validation.
+This lets you connect ToolHive to any OAuth 2.1 or OIDC-compliant identity
+provider (IdP), such as Google, GitHub, Microsoft Entra ID (Azure AD), Okta,
+Auth0, or even Kubernetes service accounts. ToolHive never handles your raw
+passwords or credentials; instead, it relies on access tokens issued by your
+trusted provider—either self-contained JWT tokens or opaque tokens validated
+through token introspection.
 
-### Why use OIDC?
+### Why use OAuth-based authentication?
 
-OIDC provides several key advantages for securing MCP servers:
+OAuth-based authentication provides several key advantages for securing MCP
+servers:
 
-- **Standard and interoperable:** You can connect ToolHive to any OIDC-compliant
-  IdP without custom code, supporting both human users and automated services.
+- **Standard and interoperable:** You can connect ToolHive to any OAuth 2.1 or
+  OIDC-compliant IdP without custom code, supporting both human users and
+  automated services.
 - **Proven and secure:** Authentication is delegated to battle-tested identity
   systems, which handle login UI, multi-factor authentication, and password
   storage.
 - **Decoupled identity management:** You can use your existing SSO/IdP
   infrastructure, making onboarding and management seamless.
-- **Flexible for users and services:** OIDC supports both interactive user login
-  (for example, Google sign-in) and service-to-service authentication (for
-  example, Kubernetes service account tokens).
+- **Flexible for users and services:** This authentication framework supports
+  both interactive user login (for example, Google sign-in) and
+  service-to-service authentication (for example, Kubernetes service account
+  tokens).
 
 ### Real-world authentication scenarios
 
-Understanding how OIDC works in practice helps you design better security for
-your MCP servers:
+Understanding how OAuth-based authentication works in practice helps you design
+better security for your MCP servers:
 
-**User login via Google (OIDC):** You can run an MCP server that requires
+**User login via Google:** You can run an MCP server that requires
 authentication using your Google credentials. ToolHive delegates login to
-Google, receives a signed ID token, and uses it to authenticate you. This means
-users get a familiar login experience while you benefit from Google's security
-infrastructure.
+Google, receives an access token (either a JWT or an opaque token), and
+validates it to authenticate you. This means users get a familiar login
+experience while you benefit from Google's security infrastructure.
 
 **Service-to-service auth with Kubernetes:** If you run a microservice in a
-Kubernetes cluster, it can present its service account token (an OIDC JWT) to
-ToolHive. ToolHive validates the token using the cluster's OIDC issuer and JWKS
-URL, enabling secure, automated authentication for your internal services.
+Kubernetes cluster, it can present its service account token (typically an OIDC
+JWT) to ToolHive. ToolHive validates the token using the cluster's OIDC issuer
+and JWKS endpoint, enabling secure, automated authentication for your internal
+services.
 
-### JWT-based authentication
+### Token-based authentication
 
-ToolHive uses JSON Web Tokens (JWTs) for authentication. JWTs are compact,
-self-contained tokens that securely transmit identity information. Each JWT has
-three parts:
+ToolHive supports two types of access tokens for authentication:
+
+**JWT tokens (JSON Web Tokens):** Self-contained tokens that include identity
+information within the token itself. JWTs are validated locally using
+cryptographic signatures and consist of three parts:
 
 1. **Header:** Metadata about the token
 2. **Payload:** Claims about the entity (typically you or your service)
 3. **Signature:** Ensures the token hasn't been altered
 
+**Opaque tokens:** Reference tokens that don't contain identity information
+directly. ToolHive validates these tokens by querying the identity provider's
+token introspection endpoint to retrieve the associated claims.
+
+ToolHive automatically detects the token type and uses the appropriate
+validation method—attempting JWT validation first and falling back to token
+introspection if needed.
+
 ### Authentication flow
 
 The authentication process follows these steps:
 
-1. **Token acquisition:** You obtain a JWT from your identity provider.
-2. **Token presentation:** You include the JWT in your requests to ToolHive.
-3. **Token validation:** ToolHive validates the JWT's signature, expiration, and
-   claims.
+1. **Token acquisition:** You obtain an access token from your identity
+   provider.
+2. **Token presentation:** You include the token in your requests to ToolHive
+   (typically in the Authorization header).
+3. **Token validation:** ToolHive validates the token using either:
+   - **Local validation:** For JWT tokens, verifying the signature, expiration,
+     and claims using the provider's public keys (JWKS)
+   - **Remote validation:** For opaque tokens, querying the provider's
+     introspection endpoint to verify the token and retrieve claims
 4. **Identity extraction:** ToolHive extracts your identity information from the
-   validated JWT.
+   validated token claims.
 
 ```mermaid
 flowchart TD
-    Client -->|OIDC Token| ToolHive
-    ToolHive -->|Validate Token| OIDC_Provider[OIDC Provider]
+    Client -->|Access Token| ToolHive
+    ToolHive -->|Validate Token| Identity_Provider[Identity Provider]
     ToolHive -->|Evaluate Cedar Policy| Cedar_Authorizer[Cedar Authorizer]
     Cedar_Authorizer -->|Permit| MCP_Server
     Cedar_Authorizer -->|Deny| Denied[403 Forbidden]
@@ -125,7 +148,8 @@ flowchart TD
 
 ### Identity providers
 
-ToolHive can integrate with any provider that supports OIDC, including:
+ToolHive can integrate with any provider that supports OAuth 2.1 or OIDC,
+including:
 
 - Google
 - GitHub
@@ -136,6 +160,25 @@ ToolHive can integrate with any provider that supports OIDC, including:
 
 This flexibility lets you use your existing identity infrastructure for both
 users and services, reducing operational overhead and improving security.
+
+### Token validation methods
+
+ToolHive supports multiple token validation methods to work with different
+identity providers:
+
+- **JWT validation:** For providers that issue JWT tokens, ToolHive validates
+  tokens locally using the provider's JWKS endpoint. This verifies the token's
+  signature, expiration, and claims without calling the identity provider for
+  each request.
+- **Token introspection:** For providers that issue opaque tokens, ToolHive
+  validates tokens by querying the provider's introspection endpoint. This
+  supports RFC 7662 (OAuth 2.0 Token Introspection), Google's tokeninfo API, and
+  GitHub's token validation API.
+
+ToolHive automatically detects the token type—it first attempts JWT validation,
+and if that fails, it falls back to token introspection. This means you don't
+need to configure which validation method to use; ToolHive handles it
+automatically based on the token format.
 
 ## Authorization framework
 
@@ -177,8 +220,8 @@ ToolHive's authorization framework consists of:
 
 When a request arrives at an MCP server with authorization enabled:
 
-1. The JWT middleware authenticates the client and adds JWT claims to the
-   request context
+1. The authentication middleware authenticates the client and adds token claims
+   to the request context
 2. The authorization middleware extracts information from the request
    (principal, action, resource, and any arguments)
 3. The Cedar authorizer evaluates policies to determine if the request is
@@ -188,9 +231,9 @@ When a request arrives at an MCP server with authorization enabled:
 
 ```mermaid
 flowchart TD
-    Client -->|JWT| ToolHive
-    ToolHive -->|Validate JWT| JWT_Middleware
-    JWT_Middleware -->|Extract Claims| Authz_Middleware
+    Client -->|Access Token| ToolHive
+    ToolHive -->|Validate Token| Auth_Middleware
+    Auth_Middleware -->|Extract Claims| Authz_Middleware
     Authz_Middleware -->|Evaluate Cedar Policies| Cedar_Authorizer
     Cedar_Authorizer -->|Permit| MCP_Server
     Cedar_Authorizer -->|Deny| Denied[403 Forbidden]
