@@ -4,14 +4,14 @@ description:
   Configure and manage logging for ToolHive in Kubernetes environments
 ---
 
-The ToolHive Kubernetes operator provides comprehensive logging capabilities for
-monitoring, auditing, and troubleshooting MCP servers in production
-environments. This guide focuses on the essential pieces: log formats, minimal
-configuration, and simple integrations.
+ToolHive provides structured JSON logging for MCP servers in Kubernetes, giving
+you detailed operational insights and compliance audit trails. You can configure
+log levels, enable audit logging for tracking MCP operations, and integrate with
+common log collection systems like Fluentd, Filebeat, and Splunk.
 
 ## Overview
 
-ToolHive Operator provides two types of logs:
+The ToolHive operator provides two types of logs:
 
 1. **Standard application logs** - Structured operational logs from the ToolHive
    operator and proxy components
@@ -19,23 +19,23 @@ ToolHive Operator provides two types of logs:
 
 ```mermaid
 flowchart TB
-  subgraph Sources["Log Sources"]
-    Op["ToolHive Operator"]
-    Proxy["HTTP Proxy Pods"]
-    MCP["MCP Server Pods"]
+  subgraph Sources["Log sources"]
+    Op["ToolHive operator"]
+    Proxy["HTTP proxy pods"]
+    MCP["MCP server pods"]
   end
 
-  subgraph Processing["Log Processing"]
-    Stdout["Standard Output<br>(Structured JSON)"]
-    Audit["Audit Logger<br>(Structured JSON)"]
+  subgraph Processing["Log processing"]
+    Stdout["Standard output<br>(structured JSON)"]
+    Audit["Audit logger<br>(structured JSON)"]
   end
 
-  subgraph Destinations["Log Destinations"]
-    K8s["Kubernetes Logs"]
-    File["Audit Log Files"]
-    ELK["ELK Stack"]
+  subgraph Destinations["Log destinations"]
+    K8s["Kubernetes logs"]
+    ELK["ELK stack"]
     Splunk["Splunk"]
     Datadog["Datadog"]
+    Etc["...other collectors"]
   end
 
   Op --> Stdout
@@ -43,55 +43,65 @@ flowchart TB
   MCP --> Stdout
 
   Stdout --> K8s
-  Audit --> File & K8s
+  Audit --> K8s
 
-  K8s --> ELK & Splunk & Datadog
+  K8s --> ELK & Splunk & Datadog & Etc
 ```
 
-## Log formats and content specifications
+## Structured application logs
 
-### Standard application logs
+ToolHive automatically outputs structured JSON logs to the standard output
+(stdout) of the operator and HTTP proxy (`proxyrunner`) pods.
 
-ToolHive uses structured JSON logging. All logs are output in a consistent JSON
-format for easy parsing and analysis.
-
-#### Log format specification
+All logs use a consistent format for easy parsing by log collectors:
 
 ```json
 {
   "level": "info",
-  "ts": 1704067200.123456,
-  "caller": "controllers/mcpserver_controller.go:123",
-  "msg": "Starting MCP server",
-  "server": "github",
-  "transport": "sse",
-  "container": "thv-github-abc123",
-  "namespace": "default",
-  "version": "0.1.0"
+  "ts": 1761934317.963125,
+  "caller": "logger/logger.go:39",
+  "msg": "MCP server github started successfully"
 }
 ```
 
-#### Field definitions
+### Key fields in application logs
 
-| Field       | Type   | Description                                       |
-| ----------- | ------ | ------------------------------------------------- |
-| `level`     | string | Log level: `debug`, `info`, `warn`, `error`       |
-| `ts`        | float  | Unix timestamp with microseconds                  |
-| `caller`    | string | Source code location                              |
-| `msg`       | string | Log message                                       |
-| `server`    | string | MCP server name                                   |
-| `transport` | string | Transport type: `stdio`, `sse`, `streamable-http` |
-| `container` | string | Container name                                    |
-| `namespace` | string | Kubernetes namespace                              |
-| `version`   | string | Component version                                 |
+| Field    | Type   | Description                                      |
+| -------- | ------ | ------------------------------------------------ |
+| `level`  | string | Log level: `debug`, `info`, `warn`, `error`      |
+| `ts`     | float  | Unix timestamp with microseconds                 |
+| `caller` | string | Source file and line number of the log statement |
+| `msg`    | string | Log message (exact content varies by event)      |
 
-### Audit logs
+## Enable audit logging
 
-Audit logs provide detailed, structured records of all MCP operations for
-security and compliance purposes. When audit is enabled, the ToolHive proxy
-generates structured audit events for every MCP operation.
+Audit logs provide detailed records of all MCP operations for security and
+compliance. To enable audit logging, set the `audit.enabled` field to `true` in
+your MCP server manifest:
 
-#### Audit log format specification
+```yaml {10-12}
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: <SERVER_NAME>
+  namespace: toolhive-system
+spec:
+  image: <SERVER_IMAGE>
+  # ... other spec fields ...
+
+  # Enable audit logging
+  audit:
+    enabled: true
+```
+
+ToolHive writes audit logs to stdout alongside standard application logs. Your
+log collector can differentiate them using the `audit_id` field or by filtering
+for `"msg": "audit_event"`.
+
+### Audit log format
+
+When audit logging is enabled, each MCP operation generates a structured audit
+event:
 
 ```json
 {
@@ -129,7 +139,41 @@ generates structured audit events for every MCP operation.
 }
 ```
 
-#### Audit field definitions
+:::info[User information in audit logs]
+
+User information in the `subjects` field comes from JWT claims when OIDC
+authentication is configured. The system uses the `name`, `preferred_username`,
+or `email` claim (in that order) for the display name. If authentication is not
+configured, the `user_id` field is set to `local`.
+
+:::
+
+#### Key fields in audit logs
+
+| Field           | Description                                   |
+| --------------- | --------------------------------------------- |
+| `audit_id`      | Unique identifier for the audit event         |
+| `type`          | Type of MCP operation (see event types below) |
+| `outcome`       | Result: `success` or `failure`                |
+| `component`     | Name of the MCP server                        |
+| `subjects.user` | User display name (from JWT claims)           |
+| `target.method` | MCP method called                             |
+| `target.name`   | Tool/resource name                            |
+
+#### Common audit event types
+
+| Event Type           | Description               |
+| -------------------- | ------------------------- |
+| `mcp_initialize`     | MCP server initialization |
+| `mcp_tool_call`      | Tool execution request    |
+| `mcp_tools_list`     | List available tools      |
+| `mcp_resource_read`  | Resource access           |
+| `mcp_resources_list` | List available resources  |
+
+<details>
+<summary>Complete audit field reference</summary>
+
+#### Audit log fields
 
 | Field                        | Type   | Description                                                             |
 | ---------------------------- | ------ | ----------------------------------------------------------------------- |
@@ -145,15 +189,15 @@ generates structured audit events for every MCP operation.
 | `source.type`                | string | Source type (e.g., "network")                                           |
 | `source.value`               | string | Source identifier (e.g., IP address)                                    |
 | `source.extra`               | object | Additional source metadata                                              |
-| `subjects`                   | object | User/identity information                                               |
+| `subjects`                   | object | User and identity information                                           |
 | `subjects.user`              | string | User display name (from JWT claims: name, preferred_username, or email) |
 | `subjects.user_id`           | string | User identifier (from JWT sub claim)                                    |
-| `subjects.client_name`       | string | Optional: Client application name (if present in JWT claims)            |
-| `subjects.client_version`    | string | Optional: Client version (if present in JWT claims)                     |
+| `subjects.client_name`       | string | Client application name (optional, from JWT claims)                     |
+| `subjects.client_version`    | string | Client version (optional, from JWT claims)                              |
 | `target`                     | object | Target resource information                                             |
 | `target.endpoint`            | string | API endpoint path                                                       |
 | `target.method`              | string | MCP method called                                                       |
-| `target.name`                | string | Tool/resource name                                                      |
+| `target.name`                | string | Tool or resource name                                                   |
 | `target.type`                | string | Target type (e.g., "tool")                                              |
 | `metadata`                   | object | Additional metadata                                                     |
 | `metadata.extra.duration_ms` | number | Operation duration in milliseconds                                      |
@@ -174,58 +218,41 @@ generates structured audit events for every MCP operation.
 | `mcp_ping`           | Health check pings        |
 | `mcp_completion`     | Request completion        |
 
-## Configuration
+</details>
 
-### Operator-level logging
+## Set up log collection
 
-Configure logging for the ToolHive operator in the Helm values:
+ToolHive outputs structured JSON logs that work with your existing log
+collection infrastructure. The examples below show basic host-based
+configurations for common log collectors. Adapt these patterns to match your
+organization's logging setup.
 
-```yaml
-# values.yaml
-operator:
-  # Log level is controlled by the debug flag
-  debug: false # Production: use info level (set to true for debug level)
-```
+:::note[Prerequisites]
 
-### MCPServer logging configuration
+These examples assume:
 
-Configure audit logging for individual MCP servers in the MCPServer resource:
+- Container logs are available at `/var/log/pods/`
+- You have a standard Kubernetes logging setup
+- Deployment manifests are handled separately
+- You're using host-based log collection
 
-```yaml
-apiVersion: mcp.toolhive.io/v1alpha1
-kind: MCPServer
-metadata:
-  name: github-server
-spec:
-  image: ghcr.io/stacklok/toolhive/servers/github:latest
+:::
 
-  # Audit logging configuration
-  audit:
-    enabled: true # Audit logs are output to stdout alongside standard logs
-```
+:::tip[Use your existing collection methods]
 
-:::info Audit logs are output to stdout alongside standard application logs. Log
-collectors can differentiate between standard and audit logs by checking for the
-presence of the `audit_id` field.
+If your organization uses sidecar-based or operator-based log collection (such
+as Fluent Bit sidecars or the Fluentd Operator), adapt these configuration
+patterns to work with your existing infrastructure.
 
-Note: User information in the `subjects` field is populated from JWT claims when
-OIDC authentication is configured. The system uses the `name`,
-`preferred_username`, or `email` claim (in that order) for the display name.
-Without authentication middleware, the user appears as "anonymous". :::
+:::
 
-## Minimal collectors
-
-The examples below show minimal configurations only. They assume a standard
-Kubernetes setup where container stdout/stderr is written to files under
-/var/log/containers/. They do not include deployment manifests.
-
-### Fluentd (minimal)
+### Configure Fluentd
 
 ```text
 # fluentd.conf
 <source>
   @type tail
-  path /var/log/containers/*toolhive*.log
+  path /var/log/pods/*toolhive*.log
   tag toolhive
   read_from_head true
   <parse>
@@ -263,13 +290,13 @@ Kubernetes setup where container stdout/stderr is written to files under
 </label>
 ```
 
-### Filebeat (minimal)
+### Configure Filebeat
 
 ```yaml
 filebeat.inputs:
   - type: container
     paths:
-      - /var/log/containers/*toolhive*.log
+      - /var/log/pods/*toolhive*.log
     json.keys_under_root: true
     json.add_error_key: true
 
@@ -281,11 +308,11 @@ output.elasticsearch:
     - index: 'toolhive-%{+yyyy.MM.dd}'
 ```
 
-### Splunk (minimal)
+### Configure Splunk
 
 ```ini
 # inputs.conf
-[monitor:///var/log/containers/*toolhive*]
+[monitor:///var/log/pods/*toolhive*]
 sourcetype = _json
 index = toolhive
 
@@ -302,12 +329,19 @@ DEST_KEY = _MetaData:Index
 FORMAT = toolhive_audit
 ```
 
-## Best practices
+## Security considerations
 
-### Security considerations
+Protect your log data by implementing appropriate access controls and
+encryption:
 
-- Encrypt audit logs at rest and in transit.
-- Implement RBAC to restrict access to pod logs.
+### Encrypt logs
+
+- Encrypt audit logs at rest and in transit
+- Use TLS for log shipping to external systems
+
+### Restrict log access
+
+Implement RBAC to control who can access pod logs:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -320,3 +354,12 @@ rules:
     resources: ['pods/log']
     verbs: ['get', 'list']
 ```
+
+## Next steps
+
+- Learn about [telemetry and metrics](./telemetry-and-metrics.mdx) to complement
+  your logging setup
+- See the [observability overview](../concepts/observability.mdx) for the
+  complete monitoring picture
+- Check the [Kubernetes CRD reference](../reference/crd-spec.mdx) for complete
+  configuration options
