@@ -1,0 +1,471 @@
+---
+title: Authentication and authorization
+description:
+  How to set up authentication and authorization for MCP servers in Kubernetes
+  using the ToolHive Operator.
+---
+
+import OidcPrerequisites from '../_partials/_oidc-prerequisites.mdx';
+import BasicCedarConfig from '../_partials/_basic-cedar-config.mdx';
+import AuthTroubleshooting from '../_partials/_auth-troubleshooting.mdx';
+
+This guide shows you how to secure your MCP servers in Kubernetes using
+authentication and authorization with the ToolHive Operator.
+
+:::info
+
+Authentication and authorization are emerging capabilities in the MCP ecosystem.
+The official MCP authorization specification is still evolving, and client
+support for these features is limited. ToolHive is leading the way in
+implementing these capabilities, but you may encounter some limitations with
+certain clients.
+
+:::
+
+## Prerequisites
+
+You'll need:
+
+- Kubernetes cluster with RBAC enabled
+- ToolHive Operator installed (see
+  [Deploy the ToolHive Operator with Helm](./deploy-operator-helm.mdx))
+- `kubectl` access to your cluster
+
+## Choose your authentication approach
+
+There are three main ways to authenticate with MCP servers running in
+Kubernetes:
+
+### Approach 1: External identity provider authentication
+
+Use this when you want to authenticate users or external services using
+providers like Google, GitHub, Microsoft Entra ID, Okta, or Auth0.
+
+**Prerequisites for external IdP:**
+
+<OidcPrerequisites />
+
+### Approach 2: Shared OIDC configuration with ConfigMap
+
+Use this when you want to share the same OIDC configuration across multiple
+MCPServers. This is ideal for managing multiple servers with the same external
+identity provider.
+
+**Prerequisites for shared OIDC:**
+
+- External identity provider configured (same as Approach 1)
+- Understanding of Kubernetes ConfigMaps
+
+### Approach 3: Kubernetes service-to-service authentication
+
+Use this when you have client applications running in the same Kubernetes
+cluster that need to call MCP servers. This approach uses Kubernetes service
+account tokens for authentication.
+
+**Prerequisites for service-to-service:**
+
+- Client applications running in Kubernetes pods
+- Understanding of Kubernetes service accounts and RBAC
+
+## Set up external identity provider authentication
+
+**Step 1: Create an MCPServer with external OIDC**
+
+Create an `MCPServer` resource configured to accept tokens from your external
+identity provider. The ToolHive proxy will handle authentication before
+forwarding requests to the MCP server.
+
+```yaml title="mcp-server-external-auth.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: weather-server-external
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: sse
+  port: 8080
+  permissionProfile:
+    type: builtin
+    name: network
+  # Authentication configuration for external IdP
+  oidcConfig:
+    type: inline
+    inline:
+      issuer: 'https://your-oidc-issuer.com'
+      audience: 'your-audience'
+      clientId: 'your-client-id'
+      jwksUrl: 'https://your-oidc-issuer.com/path/to/jwks'
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+```
+
+Replace the OIDC placeholders with your actual identity provider configuration.
+
+**Step 2: Apply the MCPServer resource**
+
+```bash
+kubectl apply -f mcp-server-external-auth.yaml
+```
+
+**Step 3: Test external authentication**
+
+Clients connecting to this MCP server must include a valid JWT token from your
+configured identity provider in their requests. The ToolHive proxy will validate
+the token before allowing access to the MCP server.
+
+:::note[Obtaining JWT tokens]
+
+How to obtain JWT tokens varies by identity provider and is outside the scope of
+this guide. Consult your identity provider's documentation for specific
+instructions on:
+
+- Interactive user authentication flows (OAuth 2.0 Authorization Code flow)
+- Service-to-service authentication (Client Credentials flow)
+- API token generation and management
+
+For Kubernetes service accounts, tokens are automatically mounted at
+`/var/run/secrets/kubernetes.io/serviceaccount/token` in pods.
+
+:::
+
+## Set up shared OIDC configuration with ConfigMap
+
+**Step 1: Create OIDC ConfigMap**
+
+Create a ConfigMap containing the OIDC configuration:
+
+```yaml title="shared-oidc-config.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shared-oidc-config
+  namespace: toolhive-system
+data:
+  oidc.json: |
+    {
+      "issuer": "https://auth.example.com",
+      "audience": "https://mcp.example.com",
+      "clientId": "shared-client-id",
+      "jwksUrl": "https://auth.example.com/.well-known/jwks.json"
+    }
+```
+
+```bash
+kubectl apply -f shared-oidc-config.yaml
+```
+
+**Step 2: Reference ConfigMap in MCPServer**
+
+Create MCPServer resources that reference the shared configuration:
+
+```yaml title="mcp-server-with-configmap-oidc.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: weather-server-shared-oidc
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: sse
+  port: 8080
+  permissionProfile:
+    type: builtin
+    name: network
+  # Reference shared OIDC configuration
+  oidcConfig:
+    type: configMap
+    configMap:
+      name: shared-oidc-config
+      key: oidc.json
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+```
+
+```bash
+kubectl apply -f mcp-server-with-configmap-oidc.yaml
+```
+
+### Benefits of ConfigMap approach
+
+- **Centralized management**: Update OIDC settings in one place
+- **Consistency**: Ensure all MCPServers use identical authentication config
+- **GitOps friendly**: Manage configuration separately from MCPServer resources
+- **Multi-server deployments**: Deploy multiple servers with same auth easily
+
+## Set up Kubernetes service-to-service authentication
+
+This approach is ideal when you have client applications running in the same
+Kubernetes cluster that need to call MCP servers.
+
+**Step 1: Create service account for client application**
+
+Create a service account that your client application will use:
+
+```yaml title="client-service-account.yaml"
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-client
+  namespace: client-apps
+```
+
+```bash
+kubectl apply -f client-service-account.yaml
+```
+
+**Step 2: Create MCPServer for service-to-service auth**
+
+Create an `MCPServer` resource configured to accept Kubernetes service account
+tokens:
+
+```yaml title="mcp-server-k8s-auth.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: weather-server-k8s
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: sse
+  port: 8080
+  permissionProfile:
+    type: builtin
+    name: network
+  # Authentication configuration for Kubernetes service accounts
+  oidcConfig:
+    type: kubernetes
+    kubernetes:
+      serviceAccount: 'mcp-client'
+      namespace: 'client-apps'
+      audience: 'toolhive'
+      issuer: 'https://kubernetes.default.svc'
+      jwksUrl: 'https://kubernetes.default.svc/openid/v1/jwks'
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+```
+
+This configuration only allows requests from pods using the `mcp-client` service
+account in the `client-apps` namespace.
+
+```bash
+kubectl apply -f mcp-server-k8s-auth.yaml
+```
+
+**Step 3: Deploy client application with service account**
+
+Deploy your client application using the service account:
+
+```yaml title="client-app.yaml"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-client-app
+  namespace: client-apps
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-client-app
+  template:
+    metadata:
+      labels:
+        app: mcp-client-app
+    spec:
+      serviceAccountName: mcp-client
+      containers:
+        - name: client
+          image: your-client-app:latest
+          env:
+            - name: MCP_SERVER_URL
+              value: 'http://weather-server-k8s.toolhive-system.svc.cluster.local:8080'
+```
+
+```bash
+kubectl apply -f client-app.yaml
+```
+
+Your client application can now authenticate to the MCP server using its
+Kubernetes service account token, which is automatically mounted at
+`/var/run/secrets/kubernetes.io/serviceaccount/token`.
+
+## Set up authorization
+
+Both authentication approaches can use the same authorization configuration
+using Cedar policies.
+
+**Step 1: Create authorization configuration**
+
+<BasicCedarConfig />
+
+**Step 2: Create a ConfigMap with policies**
+
+Store your authorization configuration in a ConfigMap:
+
+```yaml title="authz-configmap.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authz-config
+  namespace: toolhive-system
+data:
+  authz-config.json: |
+    {
+      "version": "1.0",
+      "type": "cedarv1",
+      "cedar": {
+        "policies": [
+          "permit(principal, action == Action::\"call_tool\", resource == Tool::\"weather\");",
+          "permit(principal == Client::\"alice123\", action == Action::\"call_tool\", resource == Tool::\"admin_tool\");",
+          "permit(principal, action == Action::\"call_tool\", resource) when { principal.claim_roles.contains(\"premium\") };"
+        ],
+        "entities_json": "[]"
+      }
+    }
+```
+
+```bash
+kubectl apply -f authz-configmap.yaml
+```
+
+**Step 3: Update MCPServer to use authorization**
+
+Add the authorization configuration to your `MCPServer` resources:
+
+```yaml title="mcp-server-with-authz.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: weather-server-with-authz
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: sse
+  port: 8080
+  permissionProfile:
+    type: builtin
+    name: network
+  # Authentication configuration
+  oidcConfig:
+    type: kubernetes
+    kubernetes:
+      serviceAccount: 'mcp-client'
+      namespace: 'client-apps'
+      audience: 'toolhive'
+      issuer: 'https://kubernetes.default.svc'
+      jwksUrl: 'https://kubernetes.default.svc/openid/v1/jwks'
+  # Authorization configuration
+  authzConfig:
+    type: configMap
+    configMap:
+      name: authz-config
+      key: authz-config.json
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+```
+
+```bash
+kubectl apply -f mcp-server-with-authz.yaml
+```
+
+## Test your setup
+
+### Test external IdP authentication
+
+1. Deploy the external IdP configuration
+2. Obtain a valid JWT token from your identity provider
+3. Make a request to the MCP server including the token
+
+### Test service-to-service authentication
+
+1. Deploy both the MCP server and client application
+2. Check that the client can successfully call the MCP server
+3. Verify authentication in the ToolHive proxy logs:
+
+```bash
+kubectl logs -n toolhive-system -l app.kubernetes.io/name=weather-server-k8s
+```
+
+### Test authorization
+
+1. Make requests that should be permitted by your policies
+2. Make requests that should be denied
+3. Check the proxy logs to see authorization decisions
+
+## Related information
+
+- For conceptual understanding, see
+  [Authentication and authorization framework](../concepts/auth-framework.mdx)
+- For detailed Cedar policy syntax, see
+  [Cedar policies](../concepts/cedar-policies.mdx) and the
+  [Cedar documentation](https://docs.cedarpolicy.com/)
+- For running MCP servers without authentication, see
+  [Run MCP servers in Kubernetes](./run-mcp-k8s.mdx)
+- For ToolHive Operator installation, see
+  [Deploy the ToolHive Operator with Helm](./deploy-operator-helm.mdx)
+
+## Troubleshooting
+
+<AuthTroubleshooting />
+
+<details>
+<summary>Kubernetes-specific issues</summary>
+
+**MCPServer resource issues:**
+
+- Check the MCPServer status: `kubectl get mcpserver -n toolhive-system`
+- Describe the resource for details:
+  `kubectl describe mcpserver weather-server-k8s -n toolhive-system`
+
+**Service account issues:**
+
+- Verify the service account exists: `kubectl get sa -n client-apps mcp-client`
+- Check RBAC permissions if needed
+
+**ConfigMap mounting issues:**
+
+- Verify the ConfigMap exists:
+  `kubectl get configmap -n toolhive-system authz-config`
+- Check the ConfigMap content:
+  `kubectl get configmap authz-config -n toolhive-system -o yaml`
+
+**OIDC configuration issues:**
+
+- For external IdP: Ensure the issuer URL is accessible from within the cluster
+- For Kubernetes auth: Ensure the Kubernetes API server has OIDC enabled
+- Check that the JWKS URL returns valid keys
+
+**Network connectivity:**
+
+- Verify pods can reach the Kubernetes API server
+- Check cluster DNS resolution
+- Test service-to-service connectivity:
+  `kubectl exec -n client-apps deployment/mcp-client-app -- curl http://weather-server-k8s.toolhive-system.svc.cluster.local:8080`
+
+**ToolHive Operator issues:**
+
+- Check operator logs:
+  `kubectl logs -n toolhive-system -l app.kubernetes.io/name=toolhive-operator`
+- Verify the operator is running: `kubectl get pods -n toolhive-system`
+
+</details>
