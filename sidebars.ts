@@ -177,6 +177,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/concepts/observability',
         'toolhive/concepts/auth-framework',
         'toolhive/concepts/cedar-policies',
+        'toolhive/concepts/backend-auth',
       ],
     },
 
