@@ -7,7 +7,7 @@ description:
 
 This document explains how ToolHive helps MCP servers authenticate to
 third-party APIs and backend services exposed through the MCP servers. You'll
-learn about the back end authentication patterns ToolHive supports, why its
+learn about the backend authentication patterns ToolHive supports, why its
 approach improves security and multi-tenancy, and how it simplifies MCP server
 development.
 
@@ -28,7 +28,7 @@ how clients authenticate to the MCP server itself. That topic is covered in
 The MCP specification focuses on authorization to the MCP server but doesn't
 specify how an MCP server should authenticate to the services it exposes. This
 is intentionally left to implementers, which makes sense from a specification
-perspective but leaves MCP server creators without clear guidance.
+perspective but leaves MCP server developers without clear guidance.
 
 Many MCP servers today either embed static API keys or require custom
 authentication code. This creates several problems:
@@ -66,10 +66,10 @@ because:
 
 ToolHive supports multiple patterns for obtaining external access tokens,
 depending on the relationship between your identity provider (IdP) and the
-external service. All patterns assume OAuth-based authentication—for services
-using other authentication methods (like database connections with static
+external service. All patterns assume OAuth-based authentication. For services
+using other authentication methods (such as database connections with static
 credentials), consider integrations with secret management systems like
-HashiCorp Vault.
+[HashiCorp Vault](../tutorials/vault-integration.mdx).
 
 ToolHive implements two main patterns:
 
@@ -83,12 +83,15 @@ exchange, ToolHive can exchange the internal token for an external one.
 flowchart LR
     User[User]
     IDP[Identity Provider]
+    ToolHive[ToolHive Middleware]
     MCP[MCP Server]
     Upstream[Upstream Service]
 
     User -->|login & receive token| IDP
-    MCP -->|subject_token → exchange| IDP
-    IDP -->|external_token issued| MCP
+    User -->|request with token| ToolHive
+    ToolHive -->|subject_token → exchange| IDP
+    IDP -->|external_token issued| ToolHive
+    ToolHive -->|pass external_token| MCP
     MCP -->|calls with external_token| Upstream
     Upstream -->|validates token| IDP
 ```
@@ -114,14 +117,16 @@ can issue tokens for Google Cloud services based on your corporate identity.
 flowchart LR
     User[User]
     IDP1[IdP A - User Login]
+    ToolHive[ToolHive Middleware]
     IDP2[IdP B - Federated]
     MCP[MCP Server]
     Upstream[Upstream Service]
 
     User -->|login & receive token_A| IDP1
-    IDP1 -->|submit token_A| IDP2
-    IDP2 -->|issue token_B| IDP1
-    IDP1 -->|pass token_B| MCP
+    User -->|request with token_A| ToolHive
+    ToolHive -->|submit token_A| IDP2
+    IDP2 -->|issue token_B| ToolHive
+    ToolHive -->|pass token_B| MCP
     MCP -->|call with token_B| Upstream
     Upstream -->|validate token_B| IDP2
 ```
@@ -162,7 +167,7 @@ sequenceDiagram
 
 ### Token transformation
 
-When a client authenticates to ToolHive, they receive a token scoped for the MCP
+When a client authenticates to ToolHive, it receives a token scoped for the MCP
 server:
 
 ```json
