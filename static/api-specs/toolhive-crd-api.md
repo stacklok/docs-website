@@ -160,25 +160,6 @@ _Appears in:_
 | `externalAuthConfigRef` _[ExternalAuthConfigRef](#externalauthconfigref)_ | ExternalAuthConfigRef references an MCPExternalAuthConfig resource<br />Only used when Type is "external_auth_config_ref" |  |  |
 
 
-#### CapabilitiesSummary
-
-
-
-CapabilitiesSummary summarizes aggregated capabilities
-
-
-
-_Appears in:_
-- [VirtualMCPServerStatus](#virtualmcpserverstatus)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `toolCount` _integer_ | ToolCount is the total number of tools exposed |  |  |
-| `resourceCount` _integer_ | ResourceCount is the total number of resources exposed |  |  |
-| `promptCount` _integer_ | PromptCount is the total number of prompts exposed |  |  |
-| `compositeToolCount` _integer_ | CompositeToolCount is the number of composite tools defined |  |  |
-
-
 #### CircuitBreakerConfig
 
 
@@ -300,27 +281,6 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `prefixFormat` _string_ | PrefixFormat defines the prefix format for the "prefix" strategy<br />Supports placeholders: \{workload\}, \{workload\}_, \{workload\}. | \{workload\}_ |  |
 | `priorityOrder` _string array_ | PriorityOrder defines the workload priority order for the "priority" strategy |  |  |
-
-
-#### DiscoveredBackend
-
-
-
-DiscoveredBackend represents a discovered backend MCPServer
-
-
-
-_Appears in:_
-- [VirtualMCPServerStatus](#virtualmcpserverstatus)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `name` _string_ | Name is the name of the backend MCPServer |  | Required: \{\} <br /> |
-| `authConfigRef` _string_ | AuthConfigRef is the name of the discovered MCPExternalAuthConfig<br />Empty if backend has no external auth config |  |  |
-| `authType` _string_ | AuthType is the type of authentication configured |  |  |
-| `status` _string_ | Status is the current status of the backend |  | Enum: [ready degraded unavailable] <br /> |
-| `lastHealthCheck` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#time-v1-meta)_ | LastHealthCheck is the timestamp of the last health check |  |  |
-| `url` _string_ | URL is the URL of the backend MCPServer |  |  |
 
 
 
@@ -447,6 +407,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
+| `type` _string_ | Type defines the authentication type: anonymous, local, or oidc |  | Enum: [anonymous local oidc] <br /> |
 | `oidcConfig` _[OIDCConfigRef](#oidcconfigref)_ | OIDCConfig defines OIDC authentication configuration<br />Reuses MCPServer OIDC patterns |  |  |
 | `authzConfig` _[AuthzConfigRef](#authzconfigref)_ | AuthzConfig defines authorization policy configuration<br />Reuses MCPServer authz patterns |  |  |
 
@@ -1010,7 +971,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `image` _string_ | Image is the container image for the MCP server |  | Required: \{\} <br /> |
 | `transport` _string_ | Transport is the transport method for the MCP server (stdio, streamable-http or sse) | stdio | Enum: [stdio streamable-http sse] <br /> |
-| `proxyMode` _string_ | ProxyMode is the proxy mode for stdio transport (sse or streamable-http)<br />This setting is only used when Transport is "stdio" | sse | Enum: [sse streamable-http] <br /> |
+| `proxyMode` _string_ | ProxyMode is the proxy mode for stdio transport (sse or streamable-http)<br />This setting is only used when Transport is "stdio" | streamable-http | Enum: [sse streamable-http] <br /> |
 | `port` _integer_ | Port is the port to expose the MCP server on<br />Deprecated: Use ProxyPort instead | 8080 | Maximum: 65535 <br />Minimum: 1 <br /> |
 | `targetPort` _integer_ | TargetPort is the port that MCP server listens to<br />Deprecated: Use McpPort instead |  | Maximum: 65535 <br />Minimum: 1 <br /> |
 | `proxyPort` _integer_ | ProxyPort is the port to expose the proxy runner on | 8080 | Maximum: 65535 <br />Minimum: 1 <br /> |
@@ -1742,8 +1703,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `tokenUrl` _string_ | TokenURL is the OAuth 2.0 token endpoint URL for token exchange |  | Required: \{\} <br /> |
-| `clientId` _string_ | ClientID is the OAuth 2.0 client identifier |  | Required: \{\} <br /> |
-| `clientSecretRef` _[SecretKeyRef](#secretkeyref)_ | ClientSecretRef is a reference to a secret containing the OAuth 2.0 client secret |  | Required: \{\} <br /> |
+| `clientId` _string_ | ClientID is the OAuth 2.0 client identifier<br />Optional for some token exchange flows (e.g., Google Cloud Workforce Identity) |  |  |
+| `clientSecretRef` _[SecretKeyRef](#secretkeyref)_ | ClientSecretRef is a reference to a secret containing the OAuth 2.0 client secret<br />Optional for some token exchange flows (e.g., Google Cloud Workforce Identity) |  |  |
 | `audience` _string_ | Audience is the target audience for the exchanged token |  | Required: \{\} <br /> |
 | `scopes` _string array_ | Scopes is a list of OAuth 2.0 scopes to request for the exchanged token |  |  |
 | `externalTokenHeaderName` _string_ | ExternalTokenHeaderName is the name of the custom header to use for the exchanged token.<br />If set, the exchanged token will be added to this custom header (e.g., "X-Upstream-Token").<br />If empty or not set, the exchanged token will replace the Authorization header (default behavior). |  |  |
@@ -1976,6 +1937,7 @@ _Appears in:_
 | `compositeToolRefs` _[CompositeToolDefinitionRef](#compositetooldefinitionref) array_ | CompositeToolRefs references VirtualMCPCompositeToolDefinition resources<br />for complex, reusable workflows |  |  |
 | `tokenCache` _[TokenCacheConfig](#tokencacheconfig)_ | TokenCache configures token caching behavior |  |  |
 | `operational` _[OperationalConfig](#operationalconfig)_ | Operational defines operational settings like timeouts and health checks |  |  |
+| `serviceType` _string_ | ServiceType specifies the Kubernetes service type for the Virtual MCP server | ClusterIP | Enum: [ClusterIP NodePort LoadBalancer] <br /> |
 | `podTemplateSpec` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#rawextension-runtime-pkg)_ | PodTemplateSpec defines the pod template to use for the Virtual MCP server<br />This allows for customizing the pod configuration beyond what is provided by the other fields.<br />Note that to modify the specific container the Virtual MCP server runs in, you must specify<br />the 'vmcp' container name in the PodTemplateSpec.<br />This field accepts a PodTemplateSpec object as JSON/YAML. |  | Type: object <br /> |
 
 
@@ -1993,8 +1955,6 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#condition-v1-meta) array_ | Conditions represent the latest available observations of the VirtualMCPServer's state |  |  |
-| `discoveredBackends` _[DiscoveredBackend](#discoveredbackend) array_ | DiscoveredBackends lists discovered backend configurations when source=discovered |  |  |
-| `capabilities` _[CapabilitiesSummary](#capabilitiessummary)_ | Capabilities summarizes aggregated capabilities from all backends |  |  |
 | `observedGeneration` _integer_ | ObservedGeneration is the most recent generation observed for this VirtualMCPServer |  |  |
 | `phase` _[VirtualMCPServerPhase](#virtualmcpserverphase)_ | Phase is the current phase of the VirtualMCPServer | Pending | Enum: [Pending Ready Degraded Failed] <br /> |
 | `message` _string_ | Message provides additional information about the current phase |  |  |
