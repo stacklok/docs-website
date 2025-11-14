@@ -1,0 +1,371 @@
+---
+title: Configure secure ingress for MCP servers on Kubernetes
+description:
+  A guide to setting up secure ingress for MCP servers running on a Kubernetes
+  cluster using the ToolHive Operator.
+---
+
+In this tutorial, you'll learn how to configure secure ingress for MCP servers
+running on a Kubernetes cluster using the ToolHive Operator. By the end, you'll
+have a working MCP server accessible via a secure HTTPS endpoint.
+
+To achieve this, you'll use the ngrok Kubernetes Operator to create secure
+tunnels to your MCP servers. This setup ensures that your MCP servers are
+accessible over HTTPS, providing a secure way to interact with them.
+
+## What you'll learn
+
+- How to install and configure the ngrok Kubernetes Operator.
+- How to create secure tunnels for MCP servers.
+- How to access MCP servers via HTTPS.
+
+## Prerequisites
+
+Before you begin, ensure you have the following:
+
+- A Kubernetes cluster with the ToolHive Operator installed. See the
+  [Kubernetes quickstart guide](./quickstart-k8s.mdx) for instructions.
+- kubectl command-line tool configured to interact with your cluster.
+- An [ngrok account](https://ngrok.com/) to obtain an authentication token. A
+  free account is sufficient for this tutorial.
+
+## Step 1: Install the ngrok Kubernetes Operator
+
+These steps are a simplified version of the instructions found in the
+[ngrok documentation](https://ngrok.com/docs/getting-started/kubernetes/gateway-api).
+
+First, you'll need to install the
+[ngrok Kubernetes Operator](https://ngrok.com/docs/k8s) in your cluster using
+Helm:
+
+```bash
+helm repo add ngrok https://charts.ngrok.com
+helm repo update
+```
+
+Obtain your ngrok authentication token and create an API key from the ngrok
+dashboard, then set them as environment variables:
+
+```bash
+export NGROK_AUTHTOKEN="your_ngrok_auth_token"
+export NGROK_API_KEY="your_ngrok_api_key"
+```
+
+Install the Gateway API CRDs and a GatewayClass resource:
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.3.0/standard-install.yaml
+
+kubectl apply -f -<<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: ngrok
+spec:
+  controllerName: ngrok.com/gateway-controller
+EOF
+```
+
+Finally, install the ngrok Operator using Helm:
+
+```bash
+helm install ngrok-operator ngrok/ngrok-operator \
+--namespace ngrok-operator \
+--create-namespace \
+--set defaultDomainReclaimPolicy=Retain \
+--set credentials.apiKey=$NGROK_API_KEY \
+--set credentials.authtoken=$NGROK_AUTHTOKEN
+```
+
+## Step 2: Deploy an MCP server
+
+Next, deploy an MCP server using the ToolHive Operator. This example deploys the
+["MKP" MCP server](../guides-mcp/k8s.mdx) to manage the Kubernetes cluster:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/stacklok/toolhive/refs/heads/main/examples/operator/mcp-servers/mcpserver_mkp.yaml
+```
+
+Get the details of the MCP server's `Service` to identify the port to expose. If
+you used the example above, the service name is `mcp-mkp-proxy` in the
+`toolhive-system` namespace and the port is `8080`:
+
+```bash
+kubectl get service mcp-mkp-proxy -n toolhive-system
+```
+
+The output should look similar to this:
+
+```plaintext
+NAME            TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE
+mcp-mkp-proxy   ClusterIP   10.96.106.88   <none>        8080/TCP   2m19s
+```
+
+## Step 3: Create an ngrok Gateway resource
+
+Now, create a Gateway and HTTPRoute resource to expose the MCP server securely
+via ngrok.
+
+For this step, you'll need to obtain your dev domain or custom domain from the
+[ngrok dashboard](https://dashboard.ngrok.com/domains). If you have a free
+account, it will be in the format `<RANDOM_NAME>.ngrok-free.app`. Replace
+`<YOUR_NGROK_DOMAIN>` with your actual domain in the YAML below.
+
+Create a file named `ngrok-mcp-gateway.yaml` with the following content:
+
+```yaml {12,29,35-37} title="ngrok-mcp-gateway.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: ngrok-gateway
+  namespace: toolhive-system
+spec:
+  gatewayClassName: ngrok
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: <YOUR_NGROK_DOMAIN>
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mkp-mcp-route
+  namespace: toolhive-system
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: ngrok-gateway
+      namespace: toolhive-system
+  hostnames:
+    - <YOUR_NGROK_DOMAIN>
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: mcp-mkp-proxy
+          port: 8080
+```
+
+Apply the configuration to your cluster:
+
+```bash
+kubectl apply -f ngrok-mcp-gateway.yaml
+```
+
+## Step 4: Access the MCP server
+
+After a few moments, the ngrok Operator will create a secure tunnel to your MCP
+server. You can access it using the domain you specified in the Gateway
+resource.
+
+Use the ToolHive CLI to verify connectivity to the MCP server:
+
+```bash
+thv mcp list tools --server https://<YOUR_NGROK_DOMAIN>/mcp
+```
+
+The output should display a list of tools managed by the MCP server, confirming
+that you have successfully set up secure ingress using ngrok. For the "MKP" MCP
+server, you should see output similar to this:
+
+```plaintext
+TOOLS:
+NAME             DESCRIPTION
+get_resource     Get a Kubernetes resource or its subresource
+list_resources   List Kubernetes resources
+```
+
+## Optional: Tunnel multiple MCP servers with URLRewrites
+
+If you have multiple MCP servers and want to expose them via the same ngrok
+Gateway, you can use URL rewrites in the HTTPRoute resource. Note that this
+option requires a paid ngrok plan, or using some of your $5 credit that comes
+with a free account.
+
+Run one ore more additional MCP servers, for example:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/stacklok/toolhive/refs/heads/main/examples/operator/mcp-servers/mcpserver_fetch.yaml
+```
+
+Then, update the `ngrok-mcp-gateway.yaml` file. Update the `rules` section of
+the existing `HTTPRoute` resource to give the MKP MCP server a path prefix of
+`/mkp` and add a `URLRewrite` filter.
+
+```yaml {8,12-17} title="ngrok-mcp-gateway.yaml"
+# ... existing HTTPRoute resource ...
+spec:
+  # ... existing spec ...
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mkp
+      backendRefs:
+        - name: mcp-mkp-proxy
+          port: 8080
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+```
+
+Then, add a new rule for the Fetch MCP server with a path prefix of `/fetch`,
+again replacing `<YOUR_NGROK_DOMAIN>` with your actual domain:
+
+```yaml {14,19,21-22} title="ngrok-mcp-gateway.yaml"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: fetch-mcp-route
+  namespace: toolhive-system
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: ngrok-gateway
+      namespace: toolhive-system
+  hostnames:
+    - <YOUR_NGROK_DOMAIN>
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /fetch
+      backendRefs:
+        - name: mcp-fetch-proxy
+          port: 8080
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+```
+
+At this point, your `ngrok-mcp-gateway.yaml` file should contain one `Gateway`
+resource and two `HTTPRoute` resources.
+
+<details>
+<summary>Full example of updated <code>ngrok-mcp-gateway.yaml</code></summary>
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: ngrok-gateway
+  namespace: toolhive-system
+spec:
+  gatewayClassName: ngrok
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: <YOUR_NGROK_DOMAIN>
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mkp-mcp-route
+  namespace: toolhive-system
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: ngrok-gateway
+      namespace: toolhive-system
+  hostnames:
+    - <YOUR_NGROK_DOMAIN>
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mkp
+      backendRefs:
+        - name: mcp-mkp-proxy
+          port: 8080
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: ""
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: fetch-mcp-route
+  namespace: toolhive-system
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: ngrok-gateway
+      namespace: toolhive-system
+  hostnames:
+    - <YOUR_NGROK_DOMAIN>
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /fetch
+      backendRefs:
+        - name: mcp-fetch-proxy
+          port: 8080
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: ""
+```
+</details>
+
+Apply the updated configuration to your cluster:
+
+```bash
+kubectl apply -f ngrok-mcp-gateway.yaml
+```
+
+You can now access both MCP servers using the same ngrok domain with different
+path prefixes:
+
+```bash
+thv mcp list tools --server https://<YOUR_NGROK_DOMAIN>/mkp/mcp
+thv mcp list tools --server https://<YOUR_NGROK_DOMAIN>/fetch/mcp
+```
+
+## Clean up
+
+To remove the ngrok resources from your cluster and ngrok account, run the
+following:
+
+```bash
+# Delete the Gateway and HTTPRoute resources
+kubectl delete -f ngrok-mcp-gateway.yaml
+
+# Delete the ngrok CRDs
+kubectl delete $(kubectl get crd -o name | grep "ngrok")
+
+# Uninstall the ngrok Operator
+helm uninstall ngrok-operator -n ngrok-operator
+kubectl delete namespace ngrok-operator
+```
+
+## What's next?
+
+This tutorial demonstrated how to set up secure ingress for MCP servers using
+the ngrok Kubernetes Operator. A similar approach can be used with other
+Kubernetes ingress and gateway solutions that you use in your cluster.

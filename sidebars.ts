@@ -201,6 +201,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/tutorials/custom-registry',
         'toolhive/tutorials/vault-integration',
         'toolhive/tutorials/opentelemetry',
+        'toolhive/tutorials/k8s-ingress-ngrok',
       ],
     },
 
