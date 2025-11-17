@@ -248,23 +248,6 @@ _Appears in:_
 | `key` _string_ | Key is the key in the ConfigMap that contains the OIDC configuration | oidc.json |  |
 
 
-#### ConfigMapSource
-
-
-
-ConfigMapSource defines ConfigMap source configuration
-
-
-
-_Appears in:_
-- [MCPRegistrySource](#mcpregistrysource)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `name` _string_ | Name is the name of the ConfigMap |  | MinLength: 1 <br />Required: \{\} <br /> |
-| `key` _string_ | Key is the key in the ConfigMap that contains the registry data | registry.json | MinLength: 1 <br /> |
-
-
 #### ConflictResolutionConfig
 
 
@@ -732,7 +715,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `type` _string_ | Type is the type of source (configmap, git, api) | configmap | Enum: [configmap git api] <br /> |
 | `format` _string_ | Format is the data format (toolhive, upstream) | toolhive | Enum: [toolhive upstream] <br /> |
-| `configmap` _[ConfigMapSource](#configmapsource)_ | ConfigMap defines the ConfigMap source configuration<br />Only used when Type is "configmap" |  |  |
+| `configMapRef` _[ConfigMapKeySelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#configmapkeyselector-v1-core)_ | ConfigMapRef defines the ConfigMap source configuration<br />Only used when Type is "configmap" |  |  |
 | `git` _[GitSource](#gitsource)_ | Git defines the Git repository source configuration<br />Only used when Type is "git" |  |  |
 | `api` _[APISource](#apisource)_ | API defines the API source configuration<br />Only used when Type is "api" |  |  |
 
@@ -1351,7 +1334,7 @@ _Appears in:_
 | `annotations` _object (keys:string, values:string)_ | Annotations to add or override on the resource |  |  |
 | `labels` _object (keys:string, values:string)_ | Labels to add or override on the resource |  |  |
 | `podTemplateMetadataOverrides` _[ResourceMetadataOverrides](#resourcemetadataoverrides)_ |  |  |  |
-| `env` _[EnvVar](#envvar) array_ | Env are environment variables to set in the proxy container (thv run process)<br />These affect the toolhive proxy itself, not the MCP server it manages |  |  |
+| `env` _[EnvVar](#envvar) array_ | Env are environment variables to set in the proxy container (thv run process)<br />These affect the toolhive proxy itself, not the MCP server it manages<br />Use TOOLHIVE_DEBUG=true to enable debug logging in the proxy |  |  |
 
 
 #### RedisCacheConfig
@@ -1976,8 +1959,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `id` _string_ | ID is the unique identifier for this step |  | Required: \{\} <br /> |
-| `type` _string_ | Type is the step type (tool_call, elicitation, etc.) | tool_call | Enum: [tool_call elicitation] <br /> |
-| `tool` _string_ | Tool is the tool to call (format: "workload.tool_name")<br />Only used when Type is "tool_call" |  |  |
+| `type` _string_ | Type is the step type (tool, elicitation, etc.) | tool | Enum: [tool elicitation] <br /> |
+| `tool` _string_ | Tool is the tool to call (format: "workload.tool_name")<br />Only used when Type is "tool" |  |  |
 | `arguments` _object (keys:string, values:string)_ | Arguments is a map of argument templates<br />Supports Go template syntax with .params and .steps |  |  |
 | `message` _string_ | Message is the elicitation message<br />Only used when Type is "elicitation" |  |  |
 | `schema` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#rawextension-runtime-pkg)_ | Schema defines the expected response schema for elicitation |  | Type: object <br /> |
