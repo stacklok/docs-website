@@ -134,7 +134,7 @@ mcp-mkp-proxy   ClusterIP   10.96.106.88   <none>        8080/TCP   2m19s
 
 Note the service name and port number for the next step.
 
-## Step 3: Create an ngrok Gateway resource
+## Step 3: Create Gateway and HTTPRoute resources
 
 Now, create a Gateway and HTTPRoute resource to expose the MCP server securely
 via ngrok.
@@ -146,7 +146,7 @@ account, it will be in the format `<RANDOM_NAME>.ngrok-free.app`. Replace
 
 Create a file named `ngrok-mcp-gateway.yaml` with the following content:
 
-```yaml {12,29,35-37} title="ngrok-mcp-gateway.yaml"
+```yaml {12} title="ngrok-mcp-gateway.yaml"
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -162,7 +162,11 @@ spec:
       allowedRoutes:
         namespaces:
           from: All
----
+```
+
+Then create a file named `ngrok-mcp-httproute.yaml` with the following content:
+
+```yaml {13,20-22} title="ngrok-mcp-httproute.yaml"
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -186,10 +190,11 @@ spec:
           port: 8080 # Replace with your port number from Step 2
 ```
 
-Apply the configuration to your cluster:
+Apply the configurations to your cluster:
 
 ```bash
 kubectl apply -f ngrok-mcp-gateway.yaml
+kubectl apply -f ngrok-mcp-httproute.yaml
 ```
 
 ## Step 4: Access the MCP server
@@ -204,6 +209,7 @@ Use the ToolHive CLI to verify connectivity to the MCP server:
 thv mcp list tools --server https://<YOUR_NGROK_DOMAIN>/mcp
 ```
 
+The `/mcp` path is the default endpoint for the MCP Streamable HTTP transport.
 The output should display a list of tools managed by the MCP server, confirming
 that you have successfully set up secure ingress using ngrok. For the "MKP" MCP
 server, you should see output similar to this:
@@ -226,9 +232,11 @@ The MKP MCP server is now available to AI clients configured with
 
 ## Optional: Tunnel multiple MCP servers with URL rewrites
 
-If you have multiple MCP servers and want to expose them via the same ngrok
-Gateway, you can use URL rewrites in the `HTTPRoute` resource. This allows you
-to route requests to different MCP servers based on path prefixes.
+The previous steps exposed a single MCP server at the root path (`/`). If you
+have multiple MCP servers and want to expose them via the same ngrok Gateway,
+you can use path-based routing with URL rewrites in the HTTPRoute resource. This
+allows you to route requests to different MCP servers based on path prefixes
+like `/mkp` and `/fetch`.
 
 :::note
 
@@ -243,90 +251,15 @@ Run a second MCP server, for example:
 kubectl apply -f https://raw.githubusercontent.com/stacklok/toolhive/refs/heads/main/examples/operator/mcp-servers/mcpserver_fetch.yaml
 ```
 
-Then, update the `ngrok-mcp-gateway.yaml` file. Update the `rules` section of
-the existing `HTTPRoute` resource to give the MKP MCP server a path prefix of
+Then, update the `ngrok-mcp-httproute.yaml` file. Update the `rules` section of
+the existing HTTPRoute resource to give the MKP MCP server a path prefix of
 `/mkp` and add a `URLRewrite` filter.
 
-```yaml {8,12-17} title="ngrok-mcp-gateway.yaml"
-# ... existing HTTPRoute resource ...
-spec:
-  # ... existing spec ...
-  rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /mkp
-      backendRefs:
-        - name: mcp-mkp-proxy
-          port: 8080
-      filters:
-        - type: URLRewrite
-          urlRewrite:
-            path:
-              type: ReplacePrefixMatch
-              replacePrefixMatch: ''
-```
-
-Then, add a new rule for the Fetch MCP server with a path prefix of `/fetch`,
-again replacing `<YOUR_NGROK_DOMAIN>` with your actual domain:
-
-```yaml {14,19,21-22} title="ngrok-mcp-gateway.yaml"
----
+```yaml {18,22-27} showLineNumbers title="ngrok-mcp-httproute.yaml"
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: fetch-mcp-route
-  namespace: toolhive-system
-spec:
-  parentRefs:
-    - group: gateway.networking.k8s.io
-      kind: Gateway
-      name: ngrok-gateway
-      namespace: toolhive-system
-  hostnames:
-    - <YOUR_NGROK_DOMAIN>
-  rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /fetch
-      backendRefs:
-        - name: mcp-fetch-proxy
-          port: 8080
-      filters:
-        - type: URLRewrite
-          urlRewrite:
-            path:
-              type: ReplacePrefixMatch
-              replacePrefixMatch: ''
-```
-
-At this point, your `ngrok-mcp-gateway.yaml` file should contain one `Gateway`
-resource and two `HTTPRoute` resources.
-
-<details>
-<summary>Full example of updated <code>ngrok-mcp-gateway.yaml</code></summary>
-```yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: ngrok-gateway
-  namespace: toolhive-system
-spec:
-  gatewayClassName: ngrok
-  listeners:
-    - name: https
-      protocol: HTTPS
-      port: 443
-      hostname: <YOUR_NGROK_DOMAIN>
-      allowedRoutes:
-        namespaces:
-          from: All
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: mkp-mcp-route
+  name: mcp-servers-route
   namespace: toolhive-system
 spec:
   parentRefs:
@@ -349,22 +282,13 @@ spec:
           urlRewrite:
             path:
               type: ReplacePrefixMatch
-              replacePrefixMatch: ""
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: fetch-mcp-route
-  namespace: toolhive-system
-spec:
-  parentRefs:
-    - group: gateway.networking.k8s.io
-      kind: Gateway
-      name: ngrok-gateway
-      namespace: toolhive-system
-  hostnames:
-    - <YOUR_NGROK_DOMAIN>
-  rules:
+              replacePrefixMatch: '' # Normally this would be '/' but ngrok requires empty string
+```
+
+Add another rule for the Fetch MCP server with a path prefix of `/fetch`:
+
+{/* prettier-ignore */}
+```yaml showLineNumbers=28 title="ngrok-mcp-httproute.yaml"
     - matches:
         - path:
             type: PathPrefix
@@ -377,14 +301,13 @@ spec:
           urlRewrite:
             path:
               type: ReplacePrefixMatch
-              replacePrefixMatch: ""
+              replacePrefixMatch: ''
 ```
-</details>
 
 Apply the updated configuration to your cluster:
 
 ```bash
-kubectl apply -f ngrok-mcp-gateway.yaml
+kubectl apply -f ngrok-mcp-httproute.yaml
 ```
 
 You can now access both MCP servers using the same ngrok domain with different
@@ -408,7 +331,8 @@ To remove the ngrok resources from your cluster and ngrok account, run the
 following:
 
 ```bash
-# Delete the Gateway and HTTPRoute resources
+# Delete the HTTPRoute and Gateway resources
+kubectl delete -f ngrok-mcp-httproute.yaml
 kubectl delete -f ngrok-mcp-gateway.yaml
 
 # Delete the ngrok CRDs
@@ -430,3 +354,31 @@ next steps:
   server usage and performance.
 - Try other gateway solutions like Traefik or Istio if they're already part of
   your infrastructure.
+
+## Addendum: Combining with MCP server authentication
+
+When exposing MCP servers via ngrok or any other ingress solution, consider the
+security implications. While ngrok provides secure HTTPS tunnels, you should
+also implement authentication and authorization to control access. The ToolHive
+Operator supports
+[OAuth-based authentication methods](../guides-k8s/auth-k8s.mdx) that are out of
+scope for this tutorial but essential for production deployments.
+
+When OAuth is enabled on an MCP server, add additional rules to the HTTPRoute
+resource to expose the OAuth metadata endpoint for proper authentication flow
+through the gateway.
+
+Here's an example rule to add to the `mcp-servers-route` HTTPRoute in your
+`ngrok-mcp-httproute.yaml` file. Add this rule alongside the existing `/mkp`
+path rule:
+
+{/* prettier-ignore */}
+```yaml title="ngrok-mcp-httproute.yaml"
+    - matches:
+        - path:
+            type: Exact
+            value: /.well-known/oauth-protected-resource/mkp
+      backendRefs:
+        - name: mcp-mkp-proxy
+          port: 8080
+```
