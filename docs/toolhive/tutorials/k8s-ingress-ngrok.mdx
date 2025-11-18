@@ -341,7 +341,7 @@ spec:
           urlRewrite:
             path:
               type: ReplacePrefixMatch
-              replacePrefixMatch: ""
+              replacePrefixMatch: ''
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -369,7 +369,7 @@ spec:
           urlRewrite:
             path:
               type: ReplacePrefixMatch
-              replacePrefixMatch: ""
+              replacePrefixMatch: ''
 ```
 </details>
 
@@ -422,3 +422,51 @@ next steps:
   server usage and performance.
 - Try other gateway solutions like Traefik or Istio if they're already part of
   your infrastructure.
+
+## Addendum: Combining with MCP server authentication
+
+When exposing MCP servers via ngrok or any other ingress solution, consider the
+security implications. While ngrok provides secure HTTPS tunnels, you should
+also implement authentication and authorization to control access. The ToolHive
+Operator supports
+[OAuth-based authentication methods](../guides-k8s/auth-k8s.mdx) that are out of
+scope for this tutorial but essential for production deployments.
+
+When OAuth is enabled on an MCP server, add an `HTTPRoute` resource to expose
+the OAuth metadata endpoint for proper authentication flow through the gateway.
+
+Here's an example `HTTPRoute` for the MKP MCP server:
+
+```yaml
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mkp-wellknown-insertion-route
+  namespace: toolhive-system
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: ngrok-gateway
+      namespace: toolhive-system
+  hostnames:
+    - <YOUR_NGROK_DOMAIN>
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /.well-known/oauth-protected-resource/mkp
+      backendRefs:
+        - name: mcp-mkp-proxy
+          port: 8080
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /.well-known/oauth-protected-resource
+```
+
+Replace the hostname and backend references as appropriate for your MCP server
+configuration.
