@@ -1,0 +1,202 @@
+---
+title: Configure token exchange for backend authentication
+description:
+  How to set up token exchange so MCP servers can authenticate to backend
+  services using ToolHive.
+---
+
+This guide shows you how to configure token exchange, which allows MCP servers
+to authenticate to backend APIs using short-lived, properly scoped tokens
+instead of embedded secrets.
+
+For conceptual background on how token exchange works and its security benefits,
+see [Backend authentication](../concepts/backend-auth.mdx), which includes a
+[sequence diagram](../concepts/backend-auth.mdx#token-exchange-implementation)
+illustrating the complete flow.
+
+## Prerequisites
+
+Before you begin, make sure you have:
+
+- ToolHive installed and working
+- Basic familiarity with OAuth, OIDC, and JWT concepts
+- An identity provider that supports
+  [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) token exchange (such
+  as Okta, Auth0, or Keycloak)
+- A backend service configured to accept tokens from your identity provider
+- Familiarity with [Authentication and authorization](./auth.mdx) setup in
+  ToolHive
+
+From your identity provider, you'll need:
+
+- Audience value for the MCP server
+- Issuer URL
+- JWKS URL (for key verification)
+- Token exchange endpoint URL
+- Client credentials for the token exchange client
+
+## Configure your identity provider
+
+Token exchange requires your identity provider to issue tokens for the backend
+service when presented with a valid MCP server token. The exact configuration
+steps vary by provider, but generally include:
+
+### Register a token exchange client
+
+Create an OAuth application in your identity provider for ToolHive to use when
+performing token exchange:
+
+- Note the client ID and client secret
+- Grant the application permission to use the
+  `urn:ietf:params:oauth:grant-type:token-exchange` grant type
+
+Token exchange is an authenticated flow—ToolHive uses these credentials to prove
+its identity when requesting exchanged tokens from the identity provider.
+
+:::tip[Okta]
+
+Create an API Services application for ToolHive and enable the token exchange
+grant type in the application settings.
+
+:::
+
+### Define audience and scopes for the backend service
+
+Configure your identity provider to recognize the backend service:
+
+- Define the audience value that identifies your backend service (for example,
+  `backend-api`)
+- Specify the scopes the backend service accepts (for example, `api:read`,
+  `api:write`)
+
+:::tip[Okta]
+
+Create a custom authorization server for the backend service and define the
+scopes under **Security > API > Authorization Servers**.
+
+:::
+
+### Create an access policy
+
+Set up a policy that permits token exchange and controls what scopes are
+included in exchanged tokens:
+
+- Enable the token exchange grant type for the ToolHive client
+- Define which users or groups can obtain tokens for the backend service
+- Specify the scopes included in exchanged tokens
+
+:::tip[Okta]
+
+Add a trust relationship from the MCP authorization server to the backend
+authorization server, then create access policies on the backend server to
+permit token exchange.
+
+Consult the
+[Okta token exchange documentation](https://developer.okta.com/docs/guides/set-up-token-exchange/main/)
+for detailed steps.
+
+:::
+
+## MCP server requirements
+
+The MCP server that ToolHive fronts must accept a per-request authentication
+token. Specifically, the server should:
+
+- Read the access token from the `Authorization: Bearer` header (or a custom
+  header if you configure `--token-exchange-header-name`)
+- Use this token to authenticate to the backend service
+- Not rely on hardcoded secrets or environment variables for backend
+  authentication
+
+ToolHive injects the exchanged token into each request, so the MCP server
+receives a fresh, properly scoped token for every call.
+
+## Run an MCP server with token exchange
+
+Once your identity provider is configured, start your MCP server with token
+exchange enabled:
+
+```bash
+thv run \
+  --oidc-audience <MCP_AUDIENCE> \
+  --oidc-issuer <ISSUER_URL> \
+  --oidc-jwks-url <JWKS_URL> \
+  --token-exchange-url <TOKEN_EXCHANGE_ENDPOINT> \
+  --token-exchange-client-id <TOOLHIVE_CLIENT_ID> \
+  --token-exchange-client-secret <TOOLHIVE_CLIENT_SECRET> \
+  --token-exchange-audience <BACKEND_AUDIENCE> \
+  --token-exchange-scopes <BACKEND_SCOPES> \
+  <server-name>
+```
+
+### Parameter reference
+
+| Parameter                        | Description                                                               |
+| -------------------------------- | ------------------------------------------------------------------------- |
+| `--oidc-*`                       | Standard OIDC parameters for validating incoming client tokens            |
+| `--token-exchange-url`           | Your identity provider's token exchange endpoint                          |
+| `--token-exchange-client-id`     | Client ID for ToolHive to authenticate to the IdP                         |
+| `--token-exchange-client-secret` | Client secret for ToolHive (or use `--token-exchange-client-secret-file`) |
+| `--token-exchange-audience`      | Target audience for the exchanged token (your backend service)            |
+| `--token-exchange-scopes`        | Scopes to request for the backend service                                 |
+
+Optional parameters:
+
+- `--token-exchange-header-name`: Custom header name for injecting the exchanged
+  token (defaults to replacing the `Authorization` header)
+- `--token-exchange-subject-token-type`: Type of subject token to exchange; use
+  `id_token` for Google STS (defaults to `access_token`)
+
+## Verify the configuration
+
+To confirm token exchange is working:
+
+1. Connect to the MCP server with a client that supports authentication
+2. Make a tool call that requires backend access
+3. Check that the request succeeds and the backend receives a properly scoped
+   token
+
+You can also verify by examining your identity provider's logs for successful
+token exchange requests, or by checking audit logs on your backend service to
+confirm requests arrive with the correct user identity and scopes.
+
+## Example: Okta configuration
+
+This example shows a complete configuration for an MCP server that connects to a
+backend API, using Okta for token exchange:
+
+```bash
+thv run \
+  --oidc-audience mcp-server \
+  --oidc-issuer https://dev-123456.okta.com/oauth2/aus1234567890 \
+  --oidc-jwks-url https://dev-123456.okta.com/oauth2/aus1234567890/v1/keys \
+  --token-exchange-url https://dev-123456.okta.com/oauth2/aus9876543210/v1/token \
+  --token-exchange-client-id 0oa0987654321fedcba \
+  --token-exchange-client-secret-file /path/to/client-secret \
+  --token-exchange-audience backend-api \
+  --token-exchange-scopes "api:read,api:write" \
+  <server-name>
+```
+
+Key points in this example:
+
+- **Two authorization servers**: The `--oidc-issuer` URL (`aus1234567890`) is
+  the MCP authorization server that validates incoming client tokens. The
+  `--token-exchange-url` uses a different authorization server (`aus9876543210`)
+  that issues tokens for the backend API.
+- **Audience transformation**: Client tokens arrive with audience `mcp-server`.
+  ToolHive exchanges them for tokens with audience `backend-api`, which the
+  backend service expects.
+- **Scope transformation**: The original token has MCP-specific scopes (like
+  `mcp:tools:call`), while the exchanged token has backend-specific scopes
+  (`api:read`, `api:write`). The user's identity is preserved, but the
+  permissions are transformed for the target service.
+
+## Related information
+
+- [Backend authentication](../concepts/backend-auth.mdx) - conceptual overview
+  of token exchange and federation
+- [Authentication and authorization](./auth.mdx) - basic auth setup for MCP
+  servers
+- [CLI reference for `thv run`](../reference/cli/thv_run.md) - complete list of
+  flags
