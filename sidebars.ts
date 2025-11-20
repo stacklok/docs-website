@@ -153,6 +153,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/intro',
         'toolhive/guides-k8s/deploy-operator-helm',
         'toolhive/guides-k8s/run-mcp-k8s',
+        'toolhive/guides-k8s/connect-clients',
         'toolhive/guides-k8s/remote-mcp-proxy',
         'toolhive/guides-k8s/customize-tools',
         'toolhive/guides-k8s/telemetry-and-metrics',

@@ -1,0 +1,721 @@
+---
+title: Connect clients to MCP servers
+description:
+  Learn how to connect clients to your Kubernetes-hosted MCP servers in
+  ToolHive.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+## Overview
+
+After deploying MCP servers in your Kubernetes cluster, you need to connect
+clients to use them. This guide covers two main connection scenarios:
+
+1. **External clients** - Connecting from outside the cluster using Ingress or
+   Gateway API to expose MCP servers
+2. **Internal clients** - Connecting from applications running within the same
+   Kubernetes cluster
+
+```mermaid
+flowchart TB
+  subgraph External["External clients"]
+    UI["ToolHive UI"]
+    CLI["ToolHive CLI"]
+    Other["Other MCP clients"]
+  end
+
+  subgraph K8s["Kubernetes cluster"]
+    Ingress["Ingress/Gateway"]
+
+    subgraph NS["MCP Namespace"]
+      ProxyService["Service: MCP proxy"]
+      ProxyPod["Pod: ToolHive proxy"]
+      MCPPod["Pod: MCP server"]
+    end
+
+    subgraph AppNS["App namespace"]
+      App["Your application"]
+    end
+  end
+
+  UI -->|HTTPS| Ingress
+  CLI -->|HTTPS| Ingress
+  Other -->|HTTPS| Ingress
+  Ingress --> ProxyService
+  ProxyService --> ProxyPod
+  ProxyPod --> MCPPod
+
+  App -->|HTTP| ProxyService
+```
+
+## Prerequisites
+
+- A Kubernetes cluster with MCP servers deployed (see
+  [Run MCP servers in Kubernetes](./run-mcp-k8s.mdx))
+- An Ingress controller or Gateway API implementation installed in your cluster
+  (for external access)
+- [`kubectl`](https://kubernetes.io/docs/tasks/tools/) configured to communicate
+  with your cluster
+
+## Connect from outside the cluster
+
+To make your MCP servers accessible to external clients like the ToolHive UI,
+ToolHive CLI, or other MCP clients, you need to expose the proxy service using
+an Ingress resource or Gateway API.
+
+:::warning[Security requirements]
+
+When exposing MCP servers externally, you should:
+
+- Always use HTTPS with valid TLS certificates
+- Configure authentication to control access (see
+  [Authentication and authorization](./auth-k8s.mdx))
+- Consider network policies to restrict traffic
+
+Running MCP servers without authentication on public networks is a security
+risk.
+
+:::
+
+### Option 1: Using Ingress
+
+Ingress provides a stable API for exposing HTTP/HTTPS services. This example
+shows a generic Ingress configuration that works with popular Ingress
+controllers like Traefik, Contour, and HAProxy, as well as cloud provider
+implementations like AWS Load Balancer Controller, Google Cloud Load Balancer,
+and Azure Application Gateway.
+
+First, ensure you have an MCP server deployed. This example uses the `fetch`
+server:
+
+```yaml title="fetch-server.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: fetch
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/gofetch/server:latest
+  transport: streamable-http
+  mcpPort: 8080
+  proxyPort: 8080
+```
+
+Create an Ingress resource to expose the MCP server proxy:
+
+```yaml title="fetch-ingress.yaml"
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fetch-mcp-ingress
+  namespace: toolhive-system
+  annotations:
+    # Example: for cert-manager to provision certificates
+    cert-manager.io/cluster-issuer: 'letsencrypt-prod'
+    # Annotations vary by Ingress controller - check your controller's docs
+spec:
+  ingressClassName: traefik # Change to match your Ingress controller
+  tls:
+    - hosts:
+        - fetch-mcp.example.com # Change to your domain
+      secretName: fetch-mcp-tls
+  rules:
+    - host: fetch-mcp.example.com # Change to your domain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-fetch-proxy # Format: mcp-<mcpserver-name>-proxy
+                port:
+                  number: 8080 # This matches the proxyPort
+```
+
+:::info[Service naming convention]
+
+The ToolHive operator automatically creates a Kubernetes Service for each
+MCPServer following the naming pattern `mcp-<name>-proxy`. For example, an
+MCPServer named `fetch` gets a Service named `mcp-fetch-proxy`.
+
+:::
+
+Apply both resources:
+
+```bash
+kubectl apply -f fetch-server.yaml
+kubectl apply -f fetch-ingress.yaml
+```
+
+Verify the Ingress is configured:
+
+```bash
+kubectl get ingress -n toolhive-system
+```
+
+The Ingress should show your configured host and address. Once DNS is
+configured, your MCP server is accessible at `https://fetch-mcp.example.com`.
+
+### Option 2: Using Gateway API
+
+The [Gateway API](https://gateway-api.sigs.k8s.io/) is a more expressive way to
+expose services and is the successor to Ingress. This example works with Gateway
+API implementations like Cilium, Istio, Envoy Gateway, and Traefik, as well as
+cloud provider implementations like AWS Gateway API Controller, Google
+Kubernetes Engine (GKE) Gateway controller, and Azure Application Gateway for
+Containers. See the
+[full list of implementations](https://gateway-api.sigs.k8s.io/implementations/).
+
+:::tip
+
+For a complete working example using the ngrok Gateway API implementation, see
+the
+[Configure secure ingress for MCP servers on Kubernetes](../tutorials/k8s-ingress-ngrok.mdx)
+tutorial.
+
+:::
+
+**Check for an existing Gateway**
+
+Many Gateway API implementations create a Gateway resource automatically during
+installation. For example, Traefik's Helm chart creates a `traefik-gateway` in
+the default namespace when enabled. Check if a Gateway already exists:
+
+```bash
+kubectl get gateway --all-namespaces
+```
+
+If a Gateway exists, note its name and namespace to use in your HTTPRoute. If
+you need to create a new Gateway, use this example:
+
+```yaml title="mcp-gateway.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mcp-gateway
+  namespace: toolhive-system
+spec:
+  gatewayClassName: traefik # Change to match your Gateway implementation
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: mcp-gateway-cert
+      allowedRoutes:
+        namespaces:
+          from: Same
+```
+
+Create an HTTPRoute to expose your MCP server:
+
+```yaml title="fetch-route.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: fetch-mcp-route
+  namespace: toolhive-system
+spec:
+  parentRefs:
+    - name: mcp-gateway # Reference your Gateway name (e.g., traefik-gateway if using existing)
+      # namespace: default # Uncomment if Gateway is in a different namespace
+  hostnames:
+    - fetch-mcp.example.com # Change to your domain
+  rules:
+    - backendRefs:
+        - name: mcp-fetch-proxy # Format: mcp-<mcpserver-name>-proxy
+          port: 8080 # This matches the proxyPort
+```
+
+Apply the resources:
+
+```bash
+kubectl apply -f mcp-gateway.yaml
+kubectl apply -f fetch-route.yaml
+```
+
+Verify the route is configured:
+
+```bash
+kubectl get httproute -n toolhive-system
+```
+
+### TLS certificates
+
+For production deployments, use valid TLS certificates from a trusted
+certificate authority. The most common approaches are:
+
+<Tabs groupId='cert-method' queryString='cert-method'>
+<TabItem value='cert-manager' label='cert-manager' default>
+
+[cert-manager](https://cert-manager.io/) automates certificate management in
+Kubernetes. Install cert-manager and create a ClusterIssuer:
+
+```yaml title="letsencrypt-issuer.yaml"
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: your-email@example.com # Change to your email
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+      - http01:
+          ingress:
+            class: traefik # Change to match your Ingress controller
+```
+
+Apply it:
+
+```bash
+kubectl apply -f letsencrypt-issuer.yaml
+```
+
+The Ingress example above already includes the cert-manager annotation. Once
+cert-manager is installed, it will automatically provision and renew
+certificates.
+
+</TabItem>
+<TabItem value='manual' label='Manual certificates'>
+
+If you have existing certificates, create a Kubernetes Secret:
+
+```bash
+kubectl create secret tls fetch-mcp-tls \
+  --cert=path/to/tls.crt \
+  --key=path/to/tls.key \
+  -n toolhive-system
+```
+
+Reference this secret in your Ingress or Gateway configuration as shown in the
+examples above.
+
+</TabItem>
+</Tabs>
+
+### Connect with ToolHive UI or CLI
+
+Once your MCP server is exposed with HTTPS, you can connect to it as a remote
+MCP server from the ToolHive UI or CLI.
+
+<Tabs groupId='mode' queryString='mode'>
+<TabItem value='ui' label='ToolHive UI' default>
+
+In the ToolHive UI:
+
+1. Click **Add an MCP server** on the **MCP Servers** page
+2. Select **Add a remote MCP server**
+3. Enter the connection details:
+   - **Name**: A friendly name for the server
+   - **Server URL**: `https://fetch-mcp.example.com/mcp`
+   - **Transport**: Streamable HTTP (or SSE if your server uses SSE)
+4. If authentication is configured, select the method and enter the required
+   OAuth or OIDC details
+5. Click **Install server**
+
+The MCP server appears in your server list and you can use it with any connected
+MCP client.
+
+</TabItem>
+<TabItem value='cli' label='ToolHive CLI'>
+
+Use the `thv run` command to connect:
+
+```bash
+# Basic connection without authentication
+thv run --name fetch-k8s https://fetch-mcp.example.com/mcp
+```
+
+If authentication is configured, add the appropriate flags. See the
+[ToolHive CLI guide](../guides-cli/run-mcp-servers.mdx#authentication-setup) for
+details.
+
+The MCP server is now available to your configured MCP clients.
+
+</TabItem>
+</Tabs>
+
+For more details on using remote MCP servers, see:
+
+- [Run remote MCP servers (UI)](../guides-ui/run-mcp-servers.mdx?custom-type=custom_remote#install-a-custom-mcp-server)
+- [Run remote MCP servers (CLI)](../guides-cli/run-mcp-servers.mdx#run-a-remote-mcp-server)
+
+## Connect from within the cluster
+
+Applications running inside your Kubernetes cluster can connect directly to MCP
+server proxy services using Kubernetes service discovery. This is more efficient
+and secure than routing through an external Ingress.
+
+### Service DNS names
+
+Each MCPServer automatically gets a Kubernetes Service that other pods can use
+to connect. The service name follows the pattern `mcp-<name>-proxy`, and the
+full DNS name follows the standard Kubernetes pattern:
+
+```text
+mcp-<mcpserver-name>-proxy.<namespace>.svc.cluster.local:<proxyPort>
+```
+
+For example, if you have an MCPServer named `fetch` in the `toolhive-system`
+namespace with `proxyPort: 8080`, the full URL would be:
+
+```text
+http://mcp-fetch-proxy.toolhive-system.svc.cluster.local:8080
+```
+
+Within the same namespace, you can use the short form:
+
+```text
+http://mcp-fetch-proxy:8080
+```
+
+### Example: Configuring applications
+
+When deploying applications like AI agents in the same cluster, configure them
+to use the service DNS name. This example shows how to pass the connection URL
+as an environment variable:
+
+```yaml title="agent-app.yaml"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-agent-app
+  namespace: my-app
+spec:
+  # ... other deployment configuration ...
+  template:
+    spec:
+      containers:
+        - name: app
+          image: my-agent-app:latest
+          env:
+            - name: MCP_SERVER_URL
+              # Different namespace: use full DNS name
+              value: 'http://mcp-fetch-proxy.toolhive-system.svc.cluster.local:8080/mcp'
+              # Same namespace: use short name
+              # value: 'http://mcp-fetch-proxy:8080/mcp'
+```
+
+### Network policies for cross-namespace access
+
+If your cluster uses network policies, you may need to create a policy to allow
+traffic between namespaces:
+
+```yaml title="allow-cross-namespace.yaml"
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-to-mcp
+  namespace: toolhive-system
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: toolhive-proxy
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: my-app # Your app's namespace must have this label
+```
+
+## Authentication for external clients
+
+When exposing MCP servers externally, configure authentication to control
+access. ToolHive supports multiple authentication methods:
+
+- **OIDC authentication** - Use external identity providers like Google, GitHub,
+  Okta, or Microsoft Entra ID
+- **Kubernetes service accounts** - For service-to-service authentication within
+  the cluster
+
+See the [Authentication and authorization](./auth-k8s.mdx) guide for detailed
+setup instructions.
+
+## Check connection status
+
+### Test external connectivity
+
+If you have the ToolHive CLI installed, you can test connectivity to your MCP
+server:
+
+```bash
+thv mcp list tools --server https://fetch-mcp.example.com/mcp
+```
+
+Or use `curl` to send a JSON-RPC request:
+
+```bash
+curl -X POST https://fetch-mcp.example.com/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+```
+
+You should receive a JSON response with a list of available tools.
+
+:::tip
+
+If you've configured authentication on your MCP server, see the
+[Authentication and authorization](./auth-k8s.mdx) guide for how to test
+authenticated connections.
+
+:::
+
+### Test internal connectivity
+
+Test connectivity from within the cluster:
+
+```bash
+# Port-forward to test locally
+kubectl port-forward -n toolhive-system service/mcp-fetch-proxy 8080:8080
+
+# In another terminal, test the connection
+curl -X POST http://localhost:8080/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+```
+
+### Verify the connection path
+
+Check that the Ingress or Gateway is properly configured and the Service has
+running pods:
+
+```bash
+# For Ingress: verify it exists and has an address
+kubectl get ingress -n toolhive-system fetch-mcp-ingress
+
+# For Gateway API: check HTTPRoute status (look for "Accepted: True" in conditions)
+kubectl describe httproute -n toolhive-system fetch-mcp-route
+
+# Verify the Service exists
+kubectl get service -n toolhive-system mcp-fetch-proxy
+
+# Check that the proxy pod is running
+kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=fetch
+```
+
+If the Ingress shows an address or the HTTPRoute status shows "Accepted: True",
+and the pod is running, the connection path is properly configured.
+
+## Next steps
+
+Learn how to secure your MCP servers with
+[Authentication and authorization](./auth-k8s.mdx).
+
+Configure [Telemetry and metrics](./telemetry-and-metrics.mdx) to monitor your
+MCP server usage and performance.
+
+[Set up logging](./logging.mdx) to track requests and audit MCP server activity.
+
+## Related information
+
+- [Run MCP servers in Kubernetes](./run-mcp-k8s.mdx) - Deploy MCP servers in
+  your cluster
+- [Proxy remote MCP servers](./remote-mcp-proxy.mdx) - Create proxies for
+  external MCP servers
+- [Client compatibility](../reference/client-compatibility.mdx) - Supported MCP
+  clients and configuration
+- [Kubernetes CRD reference](../reference/crd-spec.mdx) - Full MCPServer
+  specification
+- [Configure secure ingress tutorial](../tutorials/k8s-ingress-ngrok.mdx) -
+  Complete tutorial using ngrok and Gateway API
+
+## Troubleshooting
+
+<details>
+<summary>Ingress returns 503 Service Unavailable</summary>
+
+If your Ingress returns a 503 error:
+
+```bash
+# Check if the service exists
+kubectl get service -n toolhive-system mcp-fetch-proxy
+
+# Check the proxy pod is running
+kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=fetch
+
+# Check pod logs for errors
+kubectl logs -n toolhive-system -l app.kubernetes.io/instance=fetch
+```
+
+Common causes:
+
+- **Proxy pod not running**: Ensure the MCPServer resource was created
+  successfully
+- **Wrong service name**: The Ingress backend service name must follow the
+  pattern `mcp-<mcpserver-name>-proxy`
+- **Wrong port**: The Ingress backend port must match the `proxyPort` in the
+  MCPServer spec
+- **Pod health check failing**: Check the proxy pod logs for errors
+
+</details>
+
+<details>
+<summary>TLS certificate issues</summary>
+
+If you see certificate errors when connecting:
+
+```bash
+# Check the certificate secret exists
+kubectl get secret -n toolhive-system fetch-mcp-tls
+
+# Describe the secret to verify it contains tls.crt and tls.key
+kubectl describe secret -n toolhive-system fetch-mcp-tls
+
+# If using cert-manager, check certificate status
+kubectl get certificate -n toolhive-system
+
+# Check cert-manager logs
+kubectl logs -n cert-manager -l app=cert-manager
+```
+
+Common causes:
+
+- **Certificate not ready**: Wait for cert-manager to provision the certificate
+  (can take a few minutes)
+- **DNS not configured**: Ensure your domain points to the Ingress load balancer
+- **Challenge validation failing**: Check cert-manager logs for ACME challenge
+  errors
+- **Wrong ClusterIssuer**: Verify the cert-manager annotation references an
+  existing ClusterIssuer
+
+</details>
+
+<details>
+<summary>DNS resolution fails</summary>
+
+If your domain does not resolve to your cluster:
+
+```bash
+# Check Ingress external IP
+kubectl get ingress -n toolhive-system fetch-mcp-ingress
+
+# Test DNS resolution
+nslookup fetch-mcp.example.com
+
+# Or using dig
+dig fetch-mcp.example.com
+```
+
+Solutions:
+
+- Configure your DNS provider to create an A record pointing to the Ingress
+  external IP
+- If using a cloud provider load balancer, create a CNAME record instead
+- Wait for DNS propagation (can take minutes to hours)
+
+</details>
+
+<details>
+<summary>Cannot connect from within cluster</summary>
+
+If pods cannot connect to the MCP server service:
+
+```bash
+# Verify service exists
+kubectl get service -n toolhive-system mcp-fetch-proxy
+
+# Check that pods are running
+kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=fetch
+
+# Test DNS resolution from a pod
+kubectl run test-dns -n toolhive-system --image=busybox --restart=Never -- \
+  nslookup mcp-fetch-proxy.toolhive-system.svc.cluster.local
+
+# Check the DNS test results
+kubectl logs -n toolhive-system test-dns
+
+# Clean up the test pod
+kubectl delete pod -n toolhive-system test-dns
+
+# Test connectivity from a pod
+kubectl run test-curl -n toolhive-system --image=curlimages/curl --restart=Never -- \
+  curl -X POST http://mcp-fetch-proxy:8080/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+
+# Check the connectivity test results
+kubectl logs -n toolhive-system test-curl
+
+# Clean up the test pod
+kubectl delete pod -n toolhive-system test-curl
+```
+
+Common causes:
+
+- **Network policies blocking traffic**: Check for network policies that might
+  prevent pod-to-pod communication
+- **Wrong namespace**: Ensure you're using the correct service DNS name for
+  cross-namespace access
+- **Service not created**: The operator automatically creates services, but
+  verify it exists
+- **Wrong port**: Ensure you're using the `proxyPort` value from the MCPServer
+  spec
+- **Wrong service name**: Remember the service name is `mcp-<name>-proxy`, not
+  just `<name>`
+
+</details>
+
+<details>
+<summary>Gateway API not working</summary>
+
+If using Gateway API and connections fail:
+
+```bash
+# Check Gateway status
+kubectl get gateway -n toolhive-system mcp-gateway
+
+# Check HTTPRoute status
+kubectl get httproute -n toolhive-system fetch-mcp-route
+
+# Describe the HTTPRoute for detailed status
+kubectl describe httproute -n toolhive-system fetch-mcp-route
+
+# Check Gateway implementation logs (example for Istio)
+kubectl logs -n istio-system -l app=istio-ingressgateway
+```
+
+Common causes:
+
+- **Gateway not ready**: Wait for the Gateway to be accepted and programmed by
+  the controller
+- **Wrong gateway class**: Ensure `gatewayClassName` matches your installed
+  Gateway API implementation
+- **Listener configuration issues**: Verify the Gateway listener configuration
+  matches the HTTPRoute requirements
+- **Certificate issues**: For HTTPS, ensure the certificate reference exists and
+  is valid
+
+</details>
+
+<details>
+<summary>Cross-namespace access denied</summary>
+
+If cross-namespace connections fail:
+
+```bash
+# Check network policies in the MCP server namespace
+kubectl get networkpolicy -n toolhive-system
+
+# Describe network policies to see rules
+kubectl describe networkpolicy -n toolhive-system
+
+# Check if the app namespace has the required labels
+kubectl get namespace my-app --show-labels
+```
+
+Solutions:
+
+- Create or update network policies to allow traffic from your app namespace
+- Add required labels to your application namespace
+- Test connectivity using a debug pod in the app namespace
+
+</details>
