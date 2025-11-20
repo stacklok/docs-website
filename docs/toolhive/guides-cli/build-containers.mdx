@@ -36,8 +36,8 @@ For example:
 # Build a Python MCP server using uvx
 thv build uvx://mcp-server-git
 
-# Build a Node.js MCP server using npx
-thv build npx://@modelcontextprotocol/server-filesystem
+# Build a Node.js MCP server using npx with a pinned version
+thv build npx://@upstash/context7-mcp@1.0.26
 
 # Build a Go MCP server
 thv build go://github.com/example/my-mcp-server@latest
@@ -73,7 +73,7 @@ This is particularly useful for:
 ### Tagging examples
 
 <Tabs groupId='tagging' queryString='tagging'>
-<TabItem value='registry' label='Container Registry' default>
+<TabItem value='registry' label='Container registry' default>
 
 Build and tag for pushing to a container registry:
 
@@ -96,14 +96,23 @@ Build images with predictable names for Kubernetes manifests:
 ```bash
 # Build with a consistent tag
 thv build --tag mcp-servers/git-server:stable uvx://mcp-server-git
+```
 
-# Use in Kubernetes manifest
-# spec:
-#   image: mcp-servers/git-server:stable
+Use the built image in your Kubernetes manifests:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: git-server
+  namespace: production
+spec:
+  image: mcp-servers/git-server:stable
+  # ... other spec fields ...
 ```
 
 </TabItem>
-<TabItem value='versioning' label='Version Management'>
+<TabItem value='versioning' label='Version management'>
 
 Build multiple versions of the same server:
 
@@ -158,6 +167,45 @@ thv build --tag grafana-mcp:latest go://github.com/grafana/mcp-grafana/cmd/mcp-g
 thv build --tag my-local-server:dev go://./cmd/my-mcp-server
 ```
 
+## Build-time arguments
+
+Some MCP servers require specific subcommands or arguments that must always be
+present. You can bake these required arguments directly into the container image
+at build time using the `--` separator at the end of the `thv build` command:
+
+```bash
+thv build <PROTOCOL_SCHEME> -- <BUILD_ARGS>
+```
+
+:::info[Build-time vs runtime arguments]
+
+- **Build-time arguments**: Baked into the container image and always present.
+  These are typically required subcommands or essential configuration flags.
+- **Runtime arguments**: Passed when running the container and appended after
+  build-time arguments. These are typically optional flags or dynamic
+  configuration.
+
+:::
+
+Build-time arguments are embedded in the container's ENTRYPOINT and always
+execute before any runtime arguments. For example, the LaunchDarkly MCP server
+requires a `start` subcommand:
+
+```bash
+# Bake "start" subcommand into container
+thv build --tag launchdarkly-mcp:latest npx://@launchdarkly/mcp-server -- start
+
+# Runtime args still append after baked-in args
+thv run launchdarkly-mcp:latest -- --verbose
+# Executes: npx @launchdarkly/mcp-server start --verbose
+```
+
+You can include multiple build-time arguments as needed:
+
+```bash
+thv build uvx://my-package -- --transport stdio --log-level info
+```
+
 ## Dockerfile generation
 
 Use the `--dry-run` flag to generate the Dockerfile without building the image:
@@ -196,7 +244,7 @@ ENTRYPOINT ["uv", "tool", "run", "mcp-server-git"]
 ## Kubernetes workflows
 
 The `thv build` command is especially useful for Kubernetes deployments where
-you want to pre-build containers before deploying them.
+you need to pre-build containers before deploying them.
 
 ### Pre-build workflow
 
@@ -265,7 +313,7 @@ jobs:
 
 For more advanced CI/CD patterns including multi-architecture builds, supply
 chain security, and change detection, see the
-[Advanced CI/CD with ToolHive](./advanced-cicd.mdx) guide.
+[Advanced CI/CD patterns](./advanced-cicd.mdx) guide.
 
 ## Advanced usage
 
