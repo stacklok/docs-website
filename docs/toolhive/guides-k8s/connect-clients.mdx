@@ -103,7 +103,14 @@ spec:
   proxyPort: 8080
 ```
 
-Create an Ingress resource to expose the MCP server proxy:
+Create an Ingress resource to expose the MCP server proxy. You can use either
+host-based routing (separate subdomain per server) or path-based routing (single
+domain with paths):
+
+<Tabs groupId='routing-method' queryString='routing-method'>
+<TabItem value='host-based' label='Host-based routing' default>
+
+Each MCP server gets its own subdomain:
 
 ```yaml title="fetch-ingress.yaml"
 apiVersion: networking.k8s.io/v1
@@ -112,27 +119,95 @@ metadata:
   name: fetch-mcp-ingress
   namespace: toolhive-system
   annotations:
-    # Example: for cert-manager to provision certificates
     cert-manager.io/cluster-issuer: 'letsencrypt-prod'
-    # Annotations vary by Ingress controller - check your controller's docs
 spec:
-  ingressClassName: traefik # Change to match your Ingress controller
+  ingressClassName: traefik
   tls:
     - hosts:
-        - fetch-mcp.example.com # Change to your domain
+        - fetch-mcp.example.com
       secretName: fetch-mcp-tls
   rules:
-    - host: fetch-mcp.example.com # Change to your domain
+    - host: fetch-mcp.example.com
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: mcp-fetch-proxy # Format: mcp-<mcpserver-name>-proxy
+                name: mcp-fetch-proxy
                 port:
-                  number: 8080 # This matches the proxyPort
+                  number: 8080
 ```
+
+The MCP server is accessible at `https://fetch-mcp.example.com/mcp`.
+
+</TabItem>
+<TabItem value='path-based' label='Path-based routing'>
+
+Multiple MCP servers share a single domain using path prefixes. This approach
+requires URL rewriting to strip the path prefix before forwarding to the backend
+service.
+
+:::note
+
+Path rewriting syntax varies by Ingress controller. Check your controller's
+documentation for the correct annotations or resources.
+
+:::
+
+```yaml title="mcp-ingress.yaml"
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcp-servers-ingress
+  namespace: toolhive-system
+  annotations:
+    cert-manager.io/cluster-issuer: 'letsencrypt-prod'
+    # Traefik example: strip path prefix
+    traefik.ingress.kubernetes.io/router.middlewares: toolhive-system-strip-mcp-prefix@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - mcp.example.com
+      secretName: mcp-tls
+  rules:
+    - host: mcp.example.com
+      http:
+        paths:
+          - path: /fetch
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-fetch-proxy
+                port:
+                  number: 8080
+          - path: /weather
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-weather-proxy
+                port:
+                  number: 8080
+---
+# Traefik Middleware to strip path prefixes
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-mcp-prefix
+  namespace: toolhive-system
+spec:
+  stripPrefix:
+    prefixes:
+      - /fetch
+      - /weather
+```
+
+The MCP servers are accessible at `https://mcp.example.com/fetch/mcp` and
+`https://mcp.example.com/weather/mcp`.
+
+</TabItem>
+</Tabs>
 
 :::info[Service naming convention]
 
@@ -142,11 +217,11 @@ MCPServer named `fetch` gets a Service named `mcp-fetch-proxy`.
 
 :::
 
-Apply both resources:
+Apply the resources:
 
 ```bash
 kubectl apply -f fetch-server.yaml
-kubectl apply -f fetch-ingress.yaml
+kubectl apply -f fetch-ingress.yaml  # or mcp-ingress.yaml for path-based
 ```
 
 Verify the Ingress is configured:
@@ -154,9 +229,6 @@ Verify the Ingress is configured:
 ```bash
 kubectl get ingress -n toolhive-system
 ```
-
-The Ingress should show your configured host and address. Once DNS is
-configured, your MCP server is accessible at `https://fetch-mcp.example.com`.
 
 ### Option 2: Using Gateway API
 
@@ -211,7 +283,14 @@ spec:
           from: Same
 ```
 
-Create an HTTPRoute to expose your MCP server:
+Create an HTTPRoute to expose your MCP server. You can use either host-based
+routing (separate subdomain per server) or path-based routing (single domain
+with paths):
+
+<Tabs groupId='routing-method' queryString='routing-method'>
+<TabItem value='host-based' label='Host-based routing' default>
+
+Each MCP server gets its own subdomain:
 
 ```yaml title="fetch-route.yaml"
 apiVersion: gateway.networking.k8s.io/v1
@@ -231,11 +310,71 @@ spec:
           port: 8080 # This matches the proxyPort
 ```
 
+The MCP server is accessible at `https://fetch-mcp.example.com/mcp`.
+
+</TabItem>
+<TabItem value='path-based' label='Path-based routing'>
+
+Multiple MCP servers share a single domain using path prefixes. This approach
+uses URL rewriting to strip the path prefix before forwarding to the backend
+service.
+
+```yaml title="mcp-routes.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mcp-servers-route
+  namespace: toolhive-system
+spec:
+  parentRefs:
+    - name: mcp-gateway # Reference your Gateway name (e.g., traefik-gateway if using existing)
+      # namespace: default # Uncomment if Gateway is in a different namespace
+  hostnames:
+    - mcp.example.com # Change to your domain
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /fetch
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: mcp-fetch-proxy # Format: mcp-<mcpserver-name>-proxy
+          port: 8080 # This matches the proxyPort
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /weather
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: mcp-weather-proxy
+          port: 8080
+```
+
+The MCP servers are accessible at `https://mcp.example.com/fetch/mcp` and
+`https://mcp.example.com/weather/mcp`.
+
+The `URLRewrite` filter removes the path prefix (e.g., `/fetch`) before
+forwarding requests to the backend service, so the MCP server receives requests
+at `/mcp` as expected.
+
+</TabItem>
+</Tabs>
+
 Apply the resources:
 
 ```bash
-kubectl apply -f mcp-gateway.yaml
-kubectl apply -f fetch-route.yaml
+kubectl apply -f mcp-gateway.yaml  # If creating a new Gateway
+kubectl apply -f fetch-route.yaml  # or mcp-routes.yaml for path-based
 ```
 
 Verify the route is configured:
@@ -249,7 +388,7 @@ kubectl get httproute -n toolhive-system
 For production deployments, use valid TLS certificates from a trusted
 certificate authority. The most common approaches are:
 
-<Tabs groupId='cert-method' queryString='cert-method'>
+<Tabs groupId='cert-method'>
 <TabItem value='cert-manager' label='cert-manager' default>
 
 [cert-manager](https://cert-manager.io/) automates certificate management in
@@ -314,7 +453,9 @@ In the ToolHive UI:
 2. Select **Add a remote MCP server**
 3. Enter the connection details:
    - **Name**: A friendly name for the server
-   - **Server URL**: `https://fetch-mcp.example.com/mcp`
+   - **Server URL**: Use the appropriate URL based on your routing approach:
+     - Host-based: `https://fetch-mcp.example.com/mcp`
+     - Path-based: `https://mcp.example.com/fetch/mcp`
    - **Transport**: Streamable HTTP (or SSE if your server uses SSE)
 4. If authentication is configured, select the method and enter the required
    OAuth or OIDC details
@@ -329,8 +470,11 @@ MCP client.
 Use the `thv run` command to connect:
 
 ```bash
-# Basic connection without authentication
+# Host-based routing: separate subdomain per server
 thv run --name fetch-k8s https://fetch-mcp.example.com/mcp
+
+# Path-based routing: single domain with paths
+thv run --name fetch-k8s https://mcp.example.com/fetch/mcp
 ```
 
 If authentication is configured, add the appropriate flags. See the
@@ -454,7 +598,13 @@ thv mcp list tools --server https://fetch-mcp.example.com/mcp
 Or use `curl` to send a JSON-RPC request:
 
 ```bash
+# Host-based routing
 curl -X POST https://fetch-mcp.example.com/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+
+# Path-based routing
+curl -X POST https://mcp.example.com/fetch/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
 ```
