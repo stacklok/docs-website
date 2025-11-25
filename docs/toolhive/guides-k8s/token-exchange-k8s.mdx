@@ -1,0 +1,263 @@
+---
+title: Configure token exchange for backend authentication
+description:
+  How to set up token exchange so MCP servers can authenticate to backend
+  services in Kubernetes using the ToolHive Operator.
+---
+
+This guide shows you how to configure token exchange in Kubernetes, which allows
+MCP servers to authenticate to backend APIs using short-lived, properly scoped
+tokens instead of embedded secrets.
+
+For conceptual background on how token exchange works, see
+[Backend authentication](../concepts/backend-auth.mdx). For CLI-based setup, see
+[Configure token exchange](../guides-cli/token-exchange.mdx).
+
+## Prerequisites
+
+Before you begin, make sure you have:
+
+- Kubernetes cluster with RBAC enabled
+- ToolHive Operator installed (see
+  [Deploy the ToolHive Operator with Helm](./deploy-operator-helm.mdx))
+- `kubectl` access to your cluster
+- An identity provider that supports
+  [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) token exchange (such
+  as Okta, Auth0, or Keycloak)
+- A backend service configured to accept tokens from your identity provider
+- Familiarity with
+  [Authentication and authorization in Kubernetes](./auth-k8s.mdx)
+
+## Configure your identity provider
+
+Token exchange requires your identity provider to issue tokens for the backend
+service when presented with a valid MCP server token. This involves:
+
+- Registering a token exchange client with credentials
+- Defining audience and scopes for the backend service
+- Creating access policies that permit token exchange
+
+For detailed IdP configuration steps, see
+[Configure your identity provider](../guides-cli/token-exchange.mdx#configure-your-identity-provider)
+in the CLI guide.
+
+## Create the token exchange configuration
+
+### Step 1: Create a Secret for client credentials
+
+Store the OAuth client secret that ToolHive uses to authenticate when performing
+token exchange:
+
+```yaml title="token-exchange-secret.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: token-exchange-secret
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  client-secret: '<YOUR_CLIENT_SECRET>'
+```
+
+```bash
+kubectl apply -f token-exchange-secret.yaml
+```
+
+### Step 2: Create the MCPExternalAuthConfig resource
+
+Create an `MCPExternalAuthConfig` resource that defines the token exchange
+parameters:
+
+```yaml title="token-exchange-config.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPExternalAuthConfig
+metadata:
+  name: backend-token-exchange
+  namespace: toolhive-system
+spec:
+  type: tokenExchange
+  tokenExchange:
+    tokenUrl: '<YOUR_TOKEN_EXCHANGE_URL>'
+    audience: '<YOUR_BACKEND_AUDIENCE>'
+    clientId: '<YOUR_CLIENT_ID>'
+    clientSecretRef:
+      name: token-exchange-secret
+      key: client-secret
+    scopes:
+      - '<YOUR_REQUIRED_SCOPES>'
+```
+
+```bash
+kubectl apply -f token-exchange-config.yaml
+```
+
+### Configuration reference
+
+| Field             | Description                                                    |
+| ----------------- | -------------------------------------------------------------- |
+| `tokenUrl`        | Your identity provider's token exchange endpoint               |
+| `audience`        | Target audience for the exchanged token (your backend service) |
+| `clientId`        | Client ID for ToolHive to authenticate to the IdP              |
+| `clientSecretRef` | Reference to the Secret containing the client secret           |
+| `scopes`          | Scopes to request for the backend service                      |
+
+## MCP server requirements
+
+The MCP server that ToolHive fronts must accept a per-request authentication
+token. Specifically, the server should:
+
+- Read the access token from the `Authorization: Bearer` header
+- Use this token to authenticate to the backend service
+- Not rely on hardcoded secrets or environment variables for backend
+  authentication
+
+ToolHive injects the exchanged token into each request, so the MCP server
+receives a fresh, properly scoped token for every call.
+
+## Deploy an MCP server with token exchange
+
+Create an `MCPServer` resource that references the token exchange configuration:
+
+```yaml title="mcpserver-token-exchange.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: my-mcp-server
+  namespace: toolhive-system
+spec:
+  image: <YOUR_MCP_SERVER_IMAGE>
+  transport: streamable-http
+  proxyPort: 8080
+  # Reference the token exchange configuration
+  externalAuthConfigRef:
+    name: backend-token-exchange
+  # OIDC configuration for validating incoming client tokens
+  oidcConfig:
+    type: inline
+    inline:
+      issuer: '<YOUR_OIDC_ISSUER>'
+      audience: '<YOUR_MCP_AUDIENCE>'
+      jwksUrl: '<YOUR_JWKS_URL>'
+```
+
+```bash
+kubectl apply -f mcpserver-token-exchange.yaml
+```
+
+The `externalAuthConfigRef` tells ToolHive to use the token exchange
+configuration you created earlier. The `oidcConfig` validates incoming client
+tokens before performing the exchange.
+
+## Verify the configuration
+
+To confirm token exchange is working:
+
+1. Check the MCPServer status:
+
+   ```bash
+   kubectl get mcpserver -n toolhive-system my-mcp-server
+   ```
+
+2. Optionally, expose the server outside the cluster using an Ingress or Gateway
+
+3. Connect to the MCP server with a client that supports authentication
+
+4. Make a tool call that requires backend access
+
+5. Check the proxy logs for successful token exchange:
+
+   ```bash
+   kubectl logs -n toolhive-system -l app.kubernetes.io/name=my-mcp-server
+   ```
+
+You can also verify by examining your identity provider's logs for successful
+token exchange requests, or by checking audit logs on your backend service to
+confirm requests arrive with the correct user identity and scopes.
+
+## Example: Okta configuration
+
+This example shows a complete configuration using Okta for token exchange.
+
+### Secret
+
+```yaml title="okta-secret.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: okta-token-exchange-secret
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  client-secret: 'your-okta-client-secret'
+```
+
+### MCPExternalAuthConfig
+
+```yaml title="okta-token-exchange.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPExternalAuthConfig
+metadata:
+  name: okta-backend-exchange
+  namespace: toolhive-system
+spec:
+  type: tokenExchange
+  tokenExchange:
+    tokenUrl: 'https://dev-123456.okta.com/oauth2/aus9876543210/v1/token'
+    audience: 'backend-api'
+    clientId: '0oa0987654321fedcba'
+    clientSecretRef:
+      name: okta-token-exchange-secret
+      key: client-secret
+    scopes:
+      - 'api:read'
+      - 'api:write'
+```
+
+### MCPServer
+
+```yaml title="mcpserver-okta.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: my-backend-server
+  namespace: toolhive-system
+spec:
+  image: your-mcp-server:latest
+  transport: streamable-http
+  proxyPort: 8080
+  externalAuthConfigRef:
+    name: okta-backend-exchange
+  oidcConfig:
+    type: inline
+    # Set resourceUrl to the external URL if exposing outside the cluster
+    resourceUrl: 'https://my-backend-server.example.com'
+    inline:
+      issuer: 'https://dev-123456.okta.com/oauth2/aus1234567890'
+      audience: 'mcp-server'
+      jwksUrl: 'https://dev-123456.okta.com/oauth2/aus1234567890/v1/keys'
+```
+
+Key points in this example:
+
+- **Two authorization servers**: The `issuer` in `oidcConfig` (`aus1234567890`)
+  validates incoming client tokens. The `tokenUrl` in `MCPExternalAuthConfig`
+  uses a different authorization server (`aus9876543210`) that issues tokens for
+  the backend API.
+- **Audience transformation**: Client tokens arrive with audience `mcp-server`.
+  ToolHive exchanges them for tokens with audience `backend-api`, which the
+  backend service expects.
+- **Scope transformation**: The original token has MCP-specific scopes, while
+  the exchanged token has backend-specific scopes (`api:read`, `api:write`). The
+  user's identity is preserved, but the permissions are transformed for the
+  target service.
+
+## Related information
+
+- [Backend authentication](../concepts/backend-auth.mdx) - conceptual overview
+  of token exchange and federation
+- [Configure token exchange (CLI)](../guides-cli/token-exchange.mdx) - CLI-based
+  setup
+- [Authentication and authorization](./auth-k8s.mdx) - basic auth setup for MCP
+  servers in Kubernetes
+- [CRD specification](../reference/crd-spec.mdx) - complete CRD reference
+  including MCPExternalAuthConfig
