@@ -59,7 +59,7 @@ Phase 2: Will add support for upstream MCP Registry API with pagination
 
 
 _Appears in:_
-- [MCPRegistrySource](#mcpregistrysource)
+- [MCPRegistryConfig](#mcpregistryconfig)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -370,7 +370,7 @@ GitSource defines Git repository source configuration
 
 
 _Appears in:_
-- [MCPRegistrySource](#mcpregistrysource)
+- [MCPRegistryConfig](#mcpregistryconfig)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -455,6 +455,7 @@ _Appears in:_
 | `thvCABundlePath` _string_ | ThvCABundlePath is the path to CA certificate bundle file for HTTPS requests<br />The file must be mounted into the pod (e.g., via ConfigMap or Secret volume) |  |  |
 | `jwksAuthTokenPath` _string_ | JWKSAuthTokenPath is the path to file containing bearer token for JWKS/OIDC requests<br />The file must be mounted into the pod (e.g., via Secret volume) |  |  |
 | `jwksAllowPrivateIP` _boolean_ | JWKSAllowPrivateIP allows JWKS/OIDC endpoints on private IP addresses<br />Use with caution - only enable for trusted internal IDPs | false |  |
+| `protectedResourceAllowPrivateIP` _boolean_ | ProtectedResourceAllowPrivateIP allows protected resource endpoint on private IP addresses<br />Use with caution - only enable for trusted internal IDPs or testing | false |  |
 | `insecureAllowHTTP` _boolean_ | InsecureAllowHTTP allows HTTP (non-HTTPS) OIDC issuers for development/testing<br />WARNING: This is insecure and should NEVER be used in production<br />Only enable for local development, testing, or trusted internal networks | false |  |
 
 
@@ -680,6 +681,28 @@ _Appears in:_
 | `status` _[MCPRegistryStatus](#mcpregistrystatus)_ |  |  |  |
 
 
+#### MCPRegistryConfig
+
+
+
+MCPRegistryConfig defines the configuration for a registry data source
+
+
+
+_Appears in:_
+- [MCPRegistrySpec](#mcpregistryspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name is a unique identifier for this registry configuration within the MCPRegistry |  | MinLength: 1 <br />Required: \{\} <br /> |
+| `format` _string_ | Format is the data format (toolhive, upstream) | toolhive | Enum: [toolhive upstream] <br /> |
+| `configMapRef` _[ConfigMapKeySelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#configmapkeyselector-v1-core)_ | ConfigMapRef defines the ConfigMap source configuration<br />Mutually exclusive with Git and API |  |  |
+| `git` _[GitSource](#gitsource)_ | Git defines the Git repository source configuration<br />Mutually exclusive with ConfigMapRef and API |  |  |
+| `api` _[APISource](#apisource)_ | API defines the API source configuration<br />Mutually exclusive with ConfigMapRef and Git |  |  |
+| `syncPolicy` _[SyncPolicy](#syncpolicy)_ | SyncPolicy defines the automatic synchronization behavior for this registry.<br />If specified, enables automatic synchronization at the given interval.<br />Manual synchronization is always supported via annotation-based triggers<br />regardless of this setting. |  |  |
+| `filter` _[RegistryFilter](#registryfilter)_ | Filter defines include/exclude patterns for registry content |  |  |
+
+
 #### MCPRegistryList
 
 
@@ -721,26 +744,6 @@ _Appears in:_
 | `Terminating` | MCPRegistryPhaseTerminating means the MCPRegistry is being deleted<br /> |
 
 
-#### MCPRegistrySource
-
-
-
-MCPRegistrySource defines the source configuration for registry data
-
-
-
-_Appears in:_
-- [MCPRegistrySpec](#mcpregistryspec)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `type` _string_ | Type is the type of source (configmap, git, api) | configmap | Enum: [configmap git api] <br /> |
-| `format` _string_ | Format is the data format (toolhive, upstream) | toolhive | Enum: [toolhive upstream] <br /> |
-| `configMapRef` _[ConfigMapKeySelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#configmapkeyselector-v1-core)_ | ConfigMapRef defines the ConfigMap source configuration<br />Only used when Type is "configmap" |  |  |
-| `git` _[GitSource](#gitsource)_ | Git defines the Git repository source configuration<br />Only used when Type is "git" |  |  |
-| `api` _[APISource](#apisource)_ | API defines the API source configuration<br />Only used when Type is "api" |  |  |
-
-
 #### MCPRegistrySpec
 
 
@@ -755,9 +758,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `displayName` _string_ | DisplayName is a human-readable name for the registry |  |  |
-| `source` _[MCPRegistrySource](#mcpregistrysource)_ | Source defines the configuration for the registry data source |  | Required: \{\} <br /> |
-| `syncPolicy` _[SyncPolicy](#syncpolicy)_ | SyncPolicy defines the automatic synchronization behavior for the registry.<br />If specified, enables automatic synchronization at the given interval.<br />Manual synchronization is always supported via annotation-based triggers<br />regardless of this setting. |  |  |
-| `filter` _[RegistryFilter](#registryfilter)_ | Filter defines include/exclude patterns for registry content |  |  |
+| `registries` _[MCPRegistryConfig](#mcpregistryconfig) array_ | Registries defines the configuration for the registry data sources |  | MinItems: 1 <br />Required: \{\} <br /> |
 | `enforceServers` _boolean_ | EnforceServers indicates whether MCPServers in this namespace must have their images<br />present in at least one registry in the namespace. When any registry in the namespace<br />has this field set to true, enforcement is enabled for the entire namespace.<br />MCPServers with images not found in any registry will be rejected.<br />When false (default), MCPServers can be deployed regardless of registry presence. | false |  |
 
 
@@ -1387,7 +1388,7 @@ RegistryFilter defines include/exclude patterns for registry content
 
 
 _Appears in:_
-- [MCPRegistrySpec](#mcpregistryspec)
+- [MCPRegistryConfig](#mcpregistryconfig)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -1571,7 +1572,7 @@ regardless of this policy setting.
 
 
 _Appears in:_
-- [MCPRegistrySpec](#mcpregistryspec)
+- [MCPRegistryConfig](#mcpregistryconfig)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
