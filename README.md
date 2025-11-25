@@ -21,7 +21,7 @@ formatting.
 
 ## Local development
 
-You'll need Node.js available (v22 recommended) or VS Code with the
+You'll need Node.js available (v24 recommended) or VS Code with the
 [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
 extension and Docker.
 
