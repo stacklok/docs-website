@@ -19,7 +19,7 @@ flowchart LR
 
     subgraph vMCP[Virtual MCP Server]
         Auth[Token Validation]
-        Exchange[Token Exchange]
+        Backend[Backend Auth]
     end
 
     subgraph Boundary2[" "]
@@ -29,17 +29,18 @@ flowchart LR
         Jira[Jira API]
     end
 
-    Client -->|"Token: aud=vmcp"| Auth
-    Auth --> Exchange
-    Exchange -->|"Token: aud=github-api"| GitHub
-    Exchange -->|"Token: aud=jira-api"| Jira
+    Client -->|"vMCP-scoped token"| Auth
+    Auth --> Backend
+    Backend -->|"Backend-scoped token"| GitHub
+    Backend -->|"Backend-scoped token"| Jira
 ```
 
-**Boundary 1 (Incoming):** Clients authenticate to Virtual MCP using a token
-with `aud=vmcp`. This is your organization's identity layer.
+**Boundary 1 (Incoming):** Clients authenticate to Virtual MCP using the
+mechanism defined in the MCP specification. This is your organization's identity
+layer.
 
-**Boundary 2 (Outgoing):** Virtual MCP exchanges the client token for
-backend-specific tokens. Each backend API receives a token scoped to its
+**Boundary 2 (Outgoing):** Virtual MCP obtains appropriate credentials for each
+backend. Each backend API receives a token or credential scoped to its
 requirements.
 
 ## Incoming authentication
@@ -70,32 +71,39 @@ Authenticate using Kubernetes service account tokens for in-cluster clients.
 
 ## Outgoing authentication
 
-Configure how Virtual MCP authenticates to backend APIs.
+Configure how Virtual MCP authenticates to backend MCP servers. Outgoing
+authentication is configured through `MCPExternalAuthConfig` resources.
 
 ### Discovery mode (recommended)
 
-Automatically discover authentication configuration from each backend's
-MCPServer resource:
+When using discovery mode, Virtual MCP checks each backend MCPServer's
+`externalAuthConfigRef` to determine how to authenticate. If a backend has no
+auth config, Virtual MCP uses the specified default.
 
 ```yaml
 spec:
   outgoingAuth:
     source: discovered
     default:
-      type: unauthenticated
+      type: discovered
 ```
 
-{/* TODO: Add MCPExternalAuthConfig reference example */}
+### Pass-through mode
 
-### Token exchange (RFC 8693)
+Forward the client's token unchanged to the backend:
 
-Exchange the client's token for a backend-specific token:
+```yaml
+spec:
+  outgoingAuth:
+    source: inline
+    backends:
+      internal-api:
+        type: pass_through
+```
 
-{/* TODO: Add token exchange configuration example */}
+### External auth config reference
 
-### Header injection (API keys)
-
-Inject a static header value (such as an API key or bearer token) into requests:
+Reference an `MCPExternalAuthConfig` resource for specific backends:
 
 ```yaml
 spec:
@@ -103,26 +111,18 @@ spec:
     source: inline
     backends:
       github:
-        type: header_injection
-        headerInjection:
-          headerName: 'Authorization'
-          headerValueRef:
-            name: github-api-secret
-            key: token
+        type: external_auth_config_ref
+        externalAuthConfigRef:
+          name: github-auth
 ```
 
-### Unauthenticated
+The `MCPExternalAuthConfig` resource defines the actual authentication strategy:
 
-For backends that require no authentication:
+- **Token exchange**: Exchange the client's token for a backend-specific token
+  using RFC 8693
+- **Header injection**: Inject a static header value (such as an API key)
 
-```yaml
-spec:
-  outgoingAuth:
-    source: inline
-    backends:
-      public-api:
-        type: unauthenticated
-```
+{/* TODO: Add MCPExternalAuthConfig examples */}
 
 ## Authorization with Cedar
 
