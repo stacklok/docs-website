@@ -165,6 +165,25 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
+      label: 'Guides: Virtual MCP Server',
+      description:
+        'How to aggregate multiple MCP servers into a unified endpoint',
+      link: {
+        type: 'doc',
+        id: 'toolhive/guides-vmcp/index',
+      },
+      items: [
+        'toolhive/guides-vmcp/intro',
+        'toolhive/guides-vmcp/quickstart',
+        'toolhive/guides-vmcp/configuration',
+        'toolhive/guides-vmcp/tool-aggregation',
+        'toolhive/guides-vmcp/authentication',
+        'toolhive/guides-vmcp/composite-tools',
+      ],
+    },
+
+    {
+      type: 'category',
       label: 'Concepts',
       description: 'Core concepts and architecture of ToolHive and MCP',
       link: {
@@ -180,6 +199,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/concepts/auth-framework',
         'toolhive/concepts/cedar-policies',
         'toolhive/concepts/backend-auth',
+        'toolhive/concepts/vmcp-architecture',
       ],
     },
 
@@ -199,6 +219,7 @@ const sidebars: SidebarsConfig = {
           href: '/toolhive/quickstart',
           label: 'Quickstart guides',
         },
+        'toolhive/tutorials/quickstart-vmcp',
         'toolhive/tutorials/mcp-optimizer',
         'toolhive/tutorials/custom-registry',
         'toolhive/tutorials/vault-integration',
