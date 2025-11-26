@@ -1,0 +1,190 @@
+---
+title: 'Quickstart: Virtual MCP Server'
+description:
+  Learn how to aggregate multiple MCP servers into a single endpoint using
+  Virtual MCP Server.
+---
+
+In this tutorial, you'll learn how to deploy Virtual MCP Server to aggregate
+multiple MCP servers into a single endpoint. By the end, you'll have a working
+deployment that combines tools from multiple backends.
+
+## What you'll learn
+
+- How to create an MCPGroup to organize backend servers
+- How to deploy multiple MCPServers in a group
+- How to create a VirtualMCPServer that aggregates them
+- How tool conflict resolution works
+- How to connect your AI client to the aggregated endpoint
+
+## Prerequisites
+
+Before starting this tutorial, make sure you have:
+
+- A Kubernetes cluster with the ToolHive operator installed (see
+  [Quickstart: Kubernetes Operator](./quickstart-k8s.mdx))
+- `kubectl` configured to communicate with your cluster
+- An MCP client (VS Code with Copilot is used in this tutorial)
+
+## Step 1: Create an MCPGroup
+
+First, create an MCPGroup to organize your backend MCP servers:
+
+{/* TODO: Add MCPGroup manifest */}
+
+Apply the resource:
+
+```bash
+kubectl apply -f mcpgroup.yaml
+```
+
+Verify the group was created:
+
+```bash
+kubectl get mcpgroups -n toolhive-system
+```
+
+## Step 2: Deploy backend MCPServers
+
+Deploy two MCP servers that will be aggregated. Both reference the group:
+
+{/* TODO: Add MCPServer manifests */}
+
+Apply the resources:
+
+```bash
+kubectl apply -f mcpservers.yaml
+```
+
+Wait for both servers to be running:
+
+```bash
+kubectl get mcpservers -n toolhive-system -w
+```
+
+You should see both servers with `Running` status before continuing.
+
+## Step 3: Create a VirtualMCPServer
+
+Create a VirtualMCPServer that aggregates both backends:
+
+{/* TODO: Add VirtualMCPServer manifest */}
+
+Apply the resource:
+
+```bash
+kubectl apply -f virtualmcpserver.yaml
+```
+
+Check the status:
+
+```bash
+kubectl get virtualmcpservers -n toolhive-system
+```
+
+You should see output similar to:
+
+```text
+NAME        STATUS   URL                                                              AGE
+demo-vmcp   Ready    http://vmcp-demo-vmcp.toolhive-system.svc.cluster.local:4483    30s
+```
+
+:::info[What's happening?]
+
+The operator discovered both MCPServers in the group and configured Virtual MCP
+to aggregate their tools. With the `prefix` conflict resolution strategy, all
+tools are prefixed with the backend name.
+
+:::
+
+## Step 4: Verify the aggregation
+
+Check the discovered backends:
+
+```bash
+kubectl describe virtualmcpserver demo-vmcp -n toolhive-system
+```
+
+Look for the `Discovered Backends` section in the status, which should show both
+backends.
+
+## Step 5: Connect your client
+
+Port-forward to access Virtual MCP locally:
+
+```bash
+kubectl port-forward service/vmcp-demo-vmcp -n toolhive-system 4483:4483
+```
+
+Test the health endpoint:
+
+```bash
+curl http://localhost:4483/health
+```
+
+You should see `{"status":"ok"}`.
+
+{/* TODO: Add VS Code configuration instructions */}
+
+## Step 6: Test the aggregated tools
+
+Try asking your AI assistant questions that use the aggregated tools. Both tools
+work through the same Virtual MCP endpoint!
+
+## Step 7: Clean up
+
+Delete the resources when you're done:
+
+```bash
+kubectl delete virtualmcpserver demo-vmcp -n toolhive-system
+kubectl delete mcpserver fetch osv -n toolhive-system
+kubectl delete mcpgroup demo-tools -n toolhive-system
+```
+
+## What's next?
+
+Congratulations! You've successfully deployed Virtual MCP Server and aggregated
+multiple backends into a single endpoint.
+
+Next steps:
+
+- [Configure authentication](../guides-vmcp/authentication.mdx) for production
+- [Customize tool aggregation](../guides-vmcp/tool-aggregation.mdx) with
+  filtering and overrides
+- [Learn about Virtual MCP architecture](../concepts/vmcp-architecture.mdx)
+
+## Troubleshooting
+
+<details>
+<summary>VirtualMCPServer stuck in Pending</summary>
+
+Check that the MCPGroup exists and backend MCPServers are running:
+
+```bash
+kubectl get mcpgroups,mcpservers -n toolhive-system
+```
+
+Check the operator logs:
+
+```bash
+kubectl logs -n toolhive-system -l app.kubernetes.io/name=toolhive-operator
+```
+
+</details>
+
+<details>
+<summary>Only some tools appearing</summary>
+
+Verify both backends are discovered:
+
+```bash
+kubectl get virtualmcpserver demo-vmcp -n toolhive-system -o jsonpath='{.status.discoveredBackends[*].name}'
+```
+
+Check backend health in the status:
+
+```bash
+kubectl describe virtualmcpserver demo-vmcp -n toolhive-system
+```
+
+</details>

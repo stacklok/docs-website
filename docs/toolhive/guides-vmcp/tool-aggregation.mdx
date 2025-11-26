@@ -1,0 +1,156 @@
+---
+title: Tool aggregation and conflict resolution
+description:
+  How Virtual MCP aggregates tools from multiple backends and resolves naming
+  conflicts.
+---
+
+When aggregating multiple MCP servers, tool name conflicts can occur when
+different backends expose tools with the same name. Virtual MCP provides
+strategies to resolve these conflicts automatically.
+
+## Overview
+
+Virtual MCP discovers tools from all backend MCPServers in the referenced group
+and presents them as a unified set to clients. When two backends have tools with
+the same name (for example, both GitHub and Jira have a `create_issue` tool), a
+conflict resolution strategy determines how to handle the collision.
+
+## Conflict resolution strategies
+
+### Prefix strategy (default)
+
+Prefixes all tool names with the workload identifier. This guarantees unique
+names and is the safest option for most deployments.
+
+```yaml
+spec:
+  aggregation:
+    conflictResolution: prefix
+    conflictResolutionConfig:
+      prefixFormat: '{workload}_'
+```
+
+**Prefix format options:**
+
+| Format        | Example result        |
+| ------------- | --------------------- |
+| `{workload}`  | `githubcreate_issue`  |
+| `{workload}_` | `github_create_issue` |
+| `{workload}.` | `github.create_issue` |
+
+**Example:**
+
+With backends `github` and `jira`, both exposing `create_issue`:
+
+- GitHub's tool becomes `github_create_issue`
+- Jira's tool becomes `jira_create_issue`
+
+### Priority strategy
+
+The first workload in the priority order wins. Conflicting tools from
+lower-priority backends are dropped.
+
+```yaml
+spec:
+  aggregation:
+    conflictResolution: priority
+    conflictResolutionConfig:
+      priorityOrder: ['github', 'jira', 'slack']
+```
+
+**When to use:** When you have a preferred backend for specific tools and want
+to hide duplicates.
+
+:::warning
+
+The priority strategy drops tools from lower-priority backends. Ensure this is
+the intended behavior before using in production.
+
+:::
+
+### Manual strategy
+
+Requires explicit overrides for all conflicting tools. Fails at startup if
+conflicts exist without overrides.
+
+```yaml
+spec:
+  aggregation:
+    conflictResolution: manual
+    tools:
+      - workload: github
+        overrides:
+          create_issue:
+            name: gh_create_issue
+      - workload: jira
+        overrides:
+          create_issue:
+            name: jira_ticket
+```
+
+**When to use:** Production deployments where you want explicit control over
+tool names.
+
+## Tool filtering
+
+Limit which tools are exposed from a specific backend:
+
+```yaml
+spec:
+  aggregation:
+    tools:
+      - workload: github
+        filter: ['create_issue', 'list_issues', 'get_issue']
+```
+
+Only the listed tools are included; all others from that backend are excluded.
+
+## Tool overrides
+
+Rename tools or update descriptions:
+
+```yaml
+spec:
+  aggregation:
+    tools:
+      - workload: github
+        overrides:
+          create_issue:
+            name: gh_new_issue
+            description: 'Create a new GitHub issue in the repository'
+```
+
+{/* TODO: Add MCPToolConfig reference example */}
+
+## Combining filter and overrides
+
+You can combine filtering and overrides for fine-grained control:
+
+```yaml
+spec:
+  aggregation:
+    conflictResolution: prefix
+    conflictResolutionConfig:
+      prefixFormat: '{workload}_'
+    tools:
+      - workload: github
+        filter: ['create_issue', 'list_issues']
+        overrides:
+          create_issue:
+            description: 'Create a GitHub issue (engineering team)'
+      - workload: jira
+        filter: ['create_issue', 'search_issues']
+```
+
+## Example: Multiple fetch servers
+
+A common pattern is running multiple instances of the same MCP server with
+different access levels:
+
+{/* TODO: Add complete example with MCPServers and VirtualMCPServer */}
+
+## Related information
+
+- [VirtualMCPServer configuration reference](./configuration.mdx)
+- [Customize tools for MCPServers](../guides-k8s/customize-tools.mdx)
