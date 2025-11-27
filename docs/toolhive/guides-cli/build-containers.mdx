@@ -261,6 +261,7 @@ you need to pre-build containers before deploying them.
    ```
 
 3. **Deploy to Kubernetes** using the pre-built image:
+
    ```yaml
    apiVersion: toolhive.stacklok.dev/v1alpha1
    kind: MCPServer
@@ -330,6 +331,46 @@ thv build uvx://internal-mcp-server
 thv build --ca-cert /path/to/special-ca.crt uvx://special-server
 ```
 
+### Custom package registries
+
+Enterprise environments often use private package registries or mirrors instead
+of public registries like npm or PyPI. ToolHive supports configuring build
+environment variables that are injected into the Dockerfile during builds,
+allowing you to use custom registries for all protocol scheme builds.
+
+#### Set build environment variables
+
+Use the `thv config set-build-env` command to configure environment variables
+that will be included in all builds:
+
+```bash
+thv config set-build-env <KEY> <VALUE>
+```
+
+Common environment variables for package registries:
+
+| Package manager | Environment variable  | Example value                          |
+| --------------- | --------------------- | -------------------------------------- |
+| npm             | `NPM_CONFIG_REGISTRY` | `https://npm.corp.example.com`         |
+| Go              | `GOPROXY`             | `https://goproxy.corp.example.com`     |
+| Go              | `GOPRIVATE`           | `github.com/mycompany/*`               |
+| pip/uv          | `PIP_INDEX_URL`       | `https://pypi.corp.example.com/simple` |
+| pip/uv          | `PIP_TRUSTED_HOST`    | `pypi.corp.example.com`                |
+
+Example configuration for an enterprise environment:
+
+```bash
+# Configure npm to use a corporate registry
+thv config set-build-env NPM_CONFIG_REGISTRY https://npm.corp.example.com
+
+# Configure Go proxy for private modules
+thv config set-build-env GOPROXY https://goproxy.corp.example.com
+thv config set-build-env GOPRIVATE "github.com/mycompany/*"
+
+# Configure Python/uv to use a corporate PyPI mirror
+thv config set-build-env PIP_INDEX_URL https://pypi.corp.example.com/simple
+```
+
 ### Build local Go projects
 
 Build MCP servers from local Go projects:
@@ -381,9 +422,11 @@ If builds fail with network connectivity issues:
 
 1. **Check internet connectivity** for downloading packages
 2. **Configure CA certificates** for corporate environments:
+
    ```bash
    thv config set-ca-cert /path/to/corporate-ca.crt
    ```
+
 3. **Use proxy settings** if required by your network
 4. **Verify package names** and versions exist in the respective registries
 
@@ -428,5 +471,31 @@ If the build fails because a package cannot be found:
    ```
 
 3. **For Go modules**, ensure the path includes the correct import path
+
+</details>
+
+<details>
+<summary>Custom registry not being used</summary>
+
+If your custom package registry configuration isn't being applied:
+
+1. **Verify your build environment configuration**:
+
+   ```bash
+   thv config get-build-env
+   ```
+
+2. **Check the environment variable names** match what your package manager
+   expects (for example, `NPM_CONFIG_REGISTRY` for npm, `GOPROXY` for Go)
+
+3. **Use `--dry-run` to inspect the generated Dockerfile** and verify your
+   environment variables are being injected:
+
+   ```bash
+   thv build --dry-run uvx://my-package
+   ```
+
+4. **Ensure network connectivity** to your custom registry from inside the
+   container build environment
 
 </details>
