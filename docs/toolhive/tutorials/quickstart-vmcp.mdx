@@ -30,7 +30,15 @@ Before starting this tutorial, make sure you have:
 
 First, create an MCPGroup to organize your backend MCP servers:
 
-{/* TODO: Add MCPGroup manifest */}
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPGroup
+metadata:
+  name: demo-tools
+  namespace: toolhive-system
+spec:
+  description: Demo group for Virtual MCP aggregation
+```
 
 Apply the resource:
 
@@ -48,7 +56,45 @@ kubectl get mcpgroups -n toolhive-system
 
 Deploy two MCP servers that will be aggregated. Both reference the group:
 
-{/* TODO: Add MCPServer manifests */}
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: fetch
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/gofetch/server
+  transport: streamable-http
+  proxyPort: 8080
+  mcpPort: 8080
+  groupRef: demo-tools
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+---
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: osv
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/osv-mcp/server
+  transport: streamable-http
+  proxyPort: 8080
+  mcpPort: 8080
+  groupRef: demo-tools
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+```
 
 Apply the resources:
 
@@ -68,7 +114,35 @@ You should see both servers with `Running` status before continuing.
 
 Create a VirtualMCPServer that aggregates both backends:
 
-{/* TODO: Add VirtualMCPServer manifest */}
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: demo-vmcp
+  namespace: toolhive-system
+spec:
+  # Reference the MCPGroup containing fetch and osv servers
+  groupRef:
+    name: demo-tools
+
+  # No incoming auth for development (anonymous access)
+  incomingAuth:
+    type: anonymous
+
+  # Auto-discover auth config from backend MCPServers
+  outgoingAuth:
+    source: inline
+    # No default specified will use anonymous
+
+  # Tool aggregation with prefix strategy to avoid naming conflicts
+  aggregation:
+    conflictResolution: prefix
+    conflictResolutionConfig:
+      prefixFormat: '{workload}_'
+
+  # Expose as ClusterIP (internal access only)
+  serviceType: ClusterIP
+```
 
 Apply the resource:
 
