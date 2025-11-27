@@ -121,7 +121,12 @@ spec:
             description: 'Create a new GitHub issue in the repository'
 ```
 
-{/* TODO: Add MCPToolConfig reference example */}
+:::info
+
+You can also reference an `MCPToolConfig` resource using `toolConfigRef` instead
+of inline filter and overrides. This feature is currently in development.
+
+:::
 
 ## Combining filter and overrides
 
@@ -143,12 +148,68 @@ spec:
         filter: ['create_issue', 'search_issues']
 ```
 
-## Example: Multiple fetch servers
+## Example: Aggregating multiple MCP servers
 
-A common pattern is running multiple instances of the same MCP server with
-different access levels:
+This example shows two MCP servers (fetch and osv) aggregated with prefix-based
+conflict resolution:
 
-{/* TODO: Add complete example with MCPServers and VirtualMCPServer */}
+```yaml
+# MCPGroup to organize backend servers
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPGroup
+metadata:
+  name: demo-tools
+  namespace: toolhive-system
+spec:
+  description: Demo group for tool aggregation
+---
+# First backend: fetch server
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: fetch
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/gofetch/server
+  transport: streamable-http
+  proxyPort: 8080
+  mcpPort: 8080
+  groupRef: demo-tools
+---
+# Second backend: osv server
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: osv
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/osv-mcp/server
+  transport: streamable-http
+  proxyPort: 8080
+  mcpPort: 8080
+  groupRef: demo-tools
+---
+# VirtualMCPServer aggregating both backends
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: demo-vmcp
+  namespace: toolhive-system
+spec:
+  groupRef:
+    name: demo-tools
+  incomingAuth:
+    type: anonymous
+  aggregation:
+    conflictResolution: prefix
+    conflictResolutionConfig:
+      prefixFormat: '{workload}_'
+```
+
+With this configuration, tools from each backend are prefixed:
+
+- `fetch_*` tools from the fetch server
+- `osv_*` tools from the osv server
 
 ## Related information
 
