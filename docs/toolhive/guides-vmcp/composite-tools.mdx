@@ -34,30 +34,137 @@ has not been extensively tested. Use with caution in production environments.
 
 Gather data from multiple monitoring systems in parallel:
 
-{/* TODO: Add incident investigation workflow example */}
+```yaml
+compositeTools:
+  - name: investigate_incident
+    description: Gather incident data from multiple sources in parallel
+    parameters:
+      type: object
+      properties:
+        incident_id:
+          type: string
+      required:
+        - incident_id
+    steps:
+      # These steps run in parallel (no dependencies)
+      - id: get_logs
+        tool: logging.search_logs
+        arguments:
+          query: 'incident_id={{.params.incident_id}}'
+          timerange: '1h'
+      - id: get_metrics
+        tool: monitoring.get_metrics
+        arguments:
+          filter: 'error_rate'
+          timerange: '1h'
+      - id: get_alerts
+        tool: pagerduty.list_alerts
+        arguments:
+          incident: '{{.params.incident_id}}'
+      # This step waits for all parallel steps to complete
+      - id: create_summary
+        tool: docs.create_document
+        arguments:
+          title: 'Incident {{.params.incident_id}} Summary'
+          content: 'Logs: {{.steps.get_logs.output.results}}'
+        dependsOn: [get_logs, get_metrics, get_alerts]
+```
 
 ### Deployment with approval
 
 Human-in-the-loop workflow for production deployments:
 
-{/* TODO: Add deployment approval workflow example */}
+```yaml
+compositeTools:
+  - name: deploy_with_approval
+    description: Deploy to production with human approval gate
+    parameters:
+      type: object
+      properties:
+        pr_number:
+          type: string
+        environment:
+          type: string
+          default: production
+      required:
+        - pr_number
+    steps:
+      - id: get_pr_details
+        tool: github.get_pull_request
+        arguments:
+          pr: '{{.params.pr_number}}'
+      - id: approval
+        type: elicitation
+        message: 'Deploy PR #{{.params.pr_number}} to {{.params.environment}}?'
+        schema:
+          type: object
+          properties:
+            approved:
+              type: boolean
+        timeout: '10m'
+        dependsOn: [get_pr_details]
+      - id: deploy
+        tool: deploy.trigger_deployment
+        arguments:
+          ref: '{{.steps.get_pr_details.output.head_sha}}'
+          environment: '{{.params.environment}}'
+        condition: '{{.steps.approval.content.approved}}'
+        dependsOn: [approval]
+```
 
 ### Cross-system data aggregation
 
 Collect and correlate data from multiple backends:
 
-{/* TODO: Add data aggregation workflow example */}
+```yaml
+compositeTools:
+  - name: security_scan_report
+    description: Run security scans and create consolidated report
+    parameters:
+      type: object
+      properties:
+        repo:
+          type: string
+      required:
+        - repo
+    steps:
+      - id: vulnerability_scan
+        tool: osv.scan_dependencies
+        arguments:
+          repository: '{{.params.repo}}'
+      - id: secret_scan
+        tool: gitleaks.scan_repo
+        arguments:
+          repository: '{{.params.repo}}'
+      - id: create_issue
+        tool: github.create_issue
+        arguments:
+          repo: '{{.params.repo}}'
+          title: 'Security Scan Results'
+          body:
+            'Found {{.steps.vulnerability_scan.output.count}} vulnerabilities'
+        dependsOn: [vulnerability_scan, secret_scan]
+        onError:
+          action: continue
+```
 
 ## Workflow definition
 
 ### Parameters
 
-Define input parameters with types and defaults:
+Define input parameters using JSON Schema format:
 
 ```yaml
 parameters:
-  required_param: { type: 'string' }
-  optional_param: { type: 'integer', default: 10 }
+  type: object
+  properties:
+    required_param:
+      type: string
+    optional_param:
+      type: integer
+      default: 10
+  required:
+    - required_param
 ```
 
 ### Steps
@@ -121,7 +228,49 @@ Access workflow context in arguments:
 
 ## Complete example
 
-{/* TODO: Add complete composite tool example with VirtualMCPServer manifest */}
+A VirtualMCPServer with an inline composite tool:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: workflow-vmcp
+  namespace: toolhive-system
+spec:
+  groupRef:
+    name: my-tools
+  incomingAuth:
+    type: anonymous
+  aggregation:
+    conflictResolution: prefix
+    conflictResolutionConfig:
+      prefixFormat: '{workload}_'
+  compositeTools:
+    - name: fetch_and_summarize
+      description: Fetch a URL and create a summary
+      parameters:
+        type: object
+        properties:
+          url:
+            type: string
+            description: URL to fetch
+        required:
+          - url
+      steps:
+        - id: fetch_content
+          tool: fetch.fetch_url
+          arguments:
+            url: '{{.params.url}}'
+        - id: summarize
+          tool: llm.summarize
+          arguments:
+            text: '{{.steps.fetch_content.output.content}}'
+          dependsOn: [fetch_content]
+      timeout: '5m'
+```
+
+For complex, reusable workflows, use `VirtualMCPCompositeToolDefinition`
+resources and reference them with `compositeToolRefs`.
 
 ## Related information
 
