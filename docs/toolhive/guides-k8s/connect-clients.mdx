@@ -150,8 +150,8 @@ service.
 
 :::note
 
-Path rewriting syntax varies by Ingress controller. Check your controller's
-documentation for the correct annotations or resources.
+Path rewriting support and syntax varies by Ingress controller. Check your
+controller's documentation for the correct annotations or resources.
 
 :::
 
@@ -175,6 +175,7 @@ spec:
     - host: mcp.example.com
       http:
         paths:
+          # Fetch MCP server
           - path: /fetch
             pathType: Prefix
             backend:
@@ -182,11 +183,12 @@ spec:
                 name: mcp-fetch-proxy
                 port:
                   number: 8080
-          - path: /weather
+          # Another MCP server
+          - path: /<SERVER_NAME>
             pathType: Prefix
             backend:
               service:
-                name: mcp-weather-proxy
+                name: mcp-<SERVER_NAME>-proxy
                 port:
                   number: 8080
 ---
@@ -200,11 +202,117 @@ spec:
   stripPrefix:
     prefixes:
       - /fetch
-      - /weather
+      - /<SERVER_NAME>
 ```
 
 The MCP servers are accessible at `https://mcp.example.com/fetch/mcp` and
-`https://mcp.example.com/weather/mcp`.
+`https://mcp.example.com/<SERVER_NAME>/mcp`.
+
+</TabItem>
+<TabItem value='path-based-auth' label='Path-based routing with OAuth'>
+
+This example is the same as the previous path-based routing example but includes
+additional rules in the Ingress to direct the `.well-known` path for each MCP
+server to the corresponding backend. This is necessary when using OAuth
+authentication since the OAuth flow requires access to the `.well-known`
+endpoint for discovery.
+
+First, in the MCPServer spec for each server, ensure the `resourceUrl` property
+is set to the full client-facing URL:
+
+```yaml title="fetch-server-oauth.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+# ...
+spec:
+  oidcConfig:
+    type: inline
+    resourceUrl: https://mcp.example.com/<SERVER_NAME>/mcp
+    inline:
+      # ... other OIDC config ...
+```
+
+The `inline.audience` value should match the audience expected by your identity
+provider, and is likely the same for all servers using the same authorization
+server. See [Authentication and authorization](./auth-k8s.mdx) for full OIDC
+setup instructions.
+
+Configure the Ingress with additional rules for the `.well-known` paths of each
+MCP server that has OAuth enabled:
+
+:::note
+
+Path rewriting support and syntax varies by Ingress controller. Check your
+controller's documentation for the correct annotations or resources.
+
+:::
+
+```yaml {28-34,43-49} title="mcp-ingress.yaml"
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcp-servers-ingress
+  namespace: toolhive-system
+  annotations:
+    cert-manager.io/cluster-issuer: 'letsencrypt-prod'
+    # Traefik example: strip path prefix
+    traefik.ingress.kubernetes.io/router.middlewares: toolhive-system-strip-mcp-prefix@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - mcp.example.com
+      secretName: mcp-tls
+  rules:
+    - host: mcp.example.com
+      http:
+        paths:
+          # Fetch MCP server
+          - path: /fetch
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-fetch-proxy
+                port:
+                  number: 8080
+          - path: /.well-known/oauth-protected-resource/fetch/mcp
+            pathType: Exact
+            backend:
+              service:
+                name: mcp-fetch-proxy
+                port:
+                  number: 8080
+          # Another MCP server
+          - path: /<SERVER_NAME>
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-<SERVER_NAME>-proxy
+                port:
+                  number: 8080
+          - path: /.well-known/oauth-protected-resource/<SERVER_NAME>/mcp
+            pathType: Exact
+            backend:
+              service:
+                name: mcp-<SERVER_NAME>-proxy
+                port:
+                  number: 8080
+---
+# Traefik Middleware to strip path prefixes
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-mcp-prefix
+  namespace: toolhive-system
+spec:
+  stripPrefix:
+    prefixes:
+      - /fetch
+      - /<SERVER_NAME>
+```
+
+The MCP servers are accessible at `https://mcp.example.com/fetch/mcp` and
+`https://mcp.example.com/<SERVER_NAME>/mcp`.
 
 </TabItem>
 </Tabs>
@@ -300,7 +408,7 @@ metadata:
   namespace: toolhive-system
 spec:
   parentRefs:
-    - name: mcp-gateway # Reference your Gateway name (e.g., traefik-gateway if using existing)
+    - name: mcp-gateway # Reference your Gateway name (e.g., traefik-gateway)
       # namespace: default # Uncomment if Gateway is in a different namespace
   hostnames:
     - fetch-mcp.example.com # Change to your domain
@@ -327,11 +435,94 @@ metadata:
   namespace: toolhive-system
 spec:
   parentRefs:
-    - name: mcp-gateway # Reference your Gateway name (e.g., traefik-gateway if using existing)
+    - name: mcp-gateway # Reference your Gateway name (e.g., traefik-gateway)
       # namespace: default # Uncomment if Gateway is in a different namespace
   hostnames:
     - mcp.example.com # Change to your domain
   rules:
+    # Fetch MCP server
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /fetch
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: mcp-fetch-proxy # Format: mcp-<mcpserver-name>-proxy
+          port: 8080 # This matches the proxyPort
+    # Another MCP server
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /<SERVER_NAME>
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: mcp-<SERVER_NAME>-proxy
+          port: 8080
+```
+
+The MCP servers are accessible at `https://mcp.example.com/fetch/mcp` and
+`https://mcp.example.com/<SERVER_NAME>/mcp`.
+
+The `URLRewrite` filter removes the path prefix (e.g., `/fetch`) before
+forwarding requests to the backend service, so the MCP server receives requests
+at `/mcp` as expected.
+
+</TabItem>
+<TabItem value='path-based-auth' label='Path-based routing with OAuth'>
+
+This example is the same as the previous path-based routing example but includes
+additional rules in the HTTPRoute to direct the `.well-known` path for each MCP
+server to the corresponding backend. This is necessary when using OAuth
+authentication since the OAuth flow requires access to the `.well-known`
+endpoint for discovery.
+
+First, in the MCPServer spec for each server, ensure the `resourceUrl` property
+is set to the full client-facing URL:
+
+```yaml title="fetch-server-oauth.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+# ...
+spec:
+  oidcConfig:
+    type: inline
+    resourceUrl: https://mcp.example.com/<SERVER_NAME>/mcp
+    inline:
+      # ... other OIDC config ...
+```
+
+The `inline.audience` value should match the audience expected by your identity
+provider, and is likely the same for all servers using the same authorization
+server. See [Authentication and authorization](./auth-k8s.mdx) for full OIDC
+setup instructions.
+
+Configure the HTTPRoute with additional rules for the `.well-known` paths of
+each MCP server that has OAuth enabled:
+
+```yaml {27-33,48-54} title="mcp-routes.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mcp-servers-route
+  namespace: toolhive-system
+spec:
+  parentRefs:
+    - name: mcp-gateway # Reference your Gateway name (e.g., traefik-gateway)
+      # namespace: default # Uncomment if Gateway is in a different namespace
+  hostnames:
+    - mcp.example.com # Change to your domain
+  rules:
+    # Fetch MCP server
     - matches:
         - path:
             type: PathPrefix
@@ -347,8 +538,16 @@ spec:
           port: 8080 # This matches the proxyPort
     - matches:
         - path:
+            type: Exact
+            value: /.well-known/oauth-protected-resource/fetch/mcp
+      backendRefs:
+        - name: mcp-fetch-proxy
+          port: 8080
+    # Another MCP server
+    - matches:
+        - path:
             type: PathPrefix
-            value: /weather
+            value: /<SERVER_NAME>
       filters:
         - type: URLRewrite
           urlRewrite:
@@ -356,12 +555,19 @@ spec:
               type: ReplacePrefixMatch
               replacePrefixMatch: /
       backendRefs:
-        - name: mcp-weather-proxy
+        - name: mcp-<SERVER_NAME>-proxy
+          port: 8080
+    - matches:
+        - path:
+            type: Exact
+            value: /.well-known/oauth-protected-resource/<SERVER_NAME>/mcp
+      backendRefs:
+        - name: mcp-<SERVER_NAME>-proxy
           port: 8080
 ```
 
 The MCP servers are accessible at `https://mcp.example.com/fetch/mcp` and
-`https://mcp.example.com/weather/mcp`.
+`https://mcp.example.com/<SERVER_NAME>/mcp`.
 
 The `URLRewrite` filter removes the path prefix (e.g., `/fetch`) before
 forwarding requests to the backend service, so the MCP server receives requests
@@ -740,27 +946,42 @@ Common causes:
 </details>
 
 <details>
-<summary>DNS resolution fails</summary>
+<summary>Authentication failures</summary>
 
-If your domain does not resolve to your cluster:
+If OAuth authentication is failing when connecting to your MCP server:
 
 ```bash
-# Check Ingress external IP
-kubectl get ingress -n toolhive-system fetch-mcp-ingress
+# Test if the OAuth metadata endpoint is accessible
+# For host-based routing
+curl https://fetch-mcp.example.com/.well-known/oauth-protected-resource
 
-# Test DNS resolution
-nslookup fetch-mcp.example.com
+# For path-based routing
+curl https://mcp.example.com/.well-known/oauth-protected-resource/fetch/mcp
 
-# Or using dig
-dig fetch-mcp.example.com
+# Check proxy logs for authentication errors
+kubectl logs -n toolhive-system -l app.kubernetes.io/instance=fetch
+
+# Verify the MCPServer OIDC configuration
+kubectl get mcpserver -n toolhive-system fetch -o yaml | grep -A15 oidcConfig
 ```
 
-Solutions:
+Common causes:
 
-- Configure your DNS provider to create an A record pointing to the Ingress
-  external IP
-- If using a cloud provider load balancer, create a CNAME record instead
-- Wait for DNS propagation (can take minutes to hours)
+- **`.well-known` endpoint not accessible**: When using path-based routing with
+  OAuth, you must configure your Ingress or HTTPRoute to forward the
+  `.well-known` path to the backend. See the "Path-based routing with OAuth" tab
+  in the Ingress or Gateway API sections above for configuration examples.
+- **Missing or incorrect `resourceUrl`**: Ensure the `resourceUrl` in your
+  MCPServer's `oidcConfig` matches the client-facing URL (e.g.,
+  `https://mcp.example.com/fetch/mcp` for path-based routing).
+- **Token validation failure**: The token's `aud` claim must match the
+  configured audience in your MCPServer's OIDC configuration.
+- **Issuer mismatch**: The token's `iss` claim must match the configured issuer.
+- **JWKS endpoint unreachable**: Check that the proxy can reach your identity
+  provider's JWKS endpoint to validate tokens.
+
+For detailed OAuth setup and troubleshooting, see the
+[Authentication and authorization](./auth-k8s.mdx) guide.
 
 </details>
 
