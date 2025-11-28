@@ -155,7 +155,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `type` _string_ | Type defines the authentication type |  | Enum: [discovered pass_through external_auth_config_ref] <br />Required: \{\} <br /> |
+| `type` _string_ | Type defines the authentication type |  | Enum: [discovered external_auth_config_ref] <br />Required: \{\} <br /> |
 | `externalAuthConfigRef` _[ExternalAuthConfigRef](#externalauthconfigref)_ | ExternalAuthConfigRef references an MCPExternalAuthConfig resource<br />Only used when Type is "external_auth_config_ref" |  |  |
 
 
@@ -209,7 +209,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `name` _string_ | Name is the name of the composite tool |  | Required: \{\} <br /> |
 | `description` _string_ | Description describes the composite tool |  | Required: \{\} <br /> |
-| `parameters` _object (keys:string, values:[ParameterSpec](#parameterspec))_ | Parameters defines the input parameters for the composite tool |  |  |
+| `parameters` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#rawextension-runtime-pkg)_ | Parameters defines the input parameter schema in JSON Schema format.<br />Should be a JSON Schema object with "type": "object" and "properties".<br />Per MCP specification, this should follow standard JSON Schema for tool inputSchema.<br />Example:<br />  \{<br />    "type": "object",<br />    "properties": \{<br />      "param1": \{"type": "string", "default": "value"\},<br />      "param2": \{"type": "integer"\}<br />    \},<br />    "required": ["param2"]<br />  \} |  | Type: object <br /> |
 | `steps` _[WorkflowStep](#workflowstep) array_ | Steps defines the workflow steps |  | MinItems: 1 <br />Required: \{\} <br /> |
 | `timeout` _string_ | Timeout is the maximum execution time for the composite tool | 30m |  |
 
@@ -321,6 +321,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `action` _string_ | Action defines the action to take on error | abort | Enum: [abort continue retry] <br /> |
 | `maxRetries` _integer_ | MaxRetries is the maximum number of retries<br />Only used when Action is "retry" |  |  |
+| `retryDelay` _string_ | RetryDelay is the delay between retry attempts<br />Only used when Action is "retry" |  | Pattern: `^([0-9]+(\.[0-9]+)?(ms\|s\|m))+$` <br /> |
 
 
 #### ExternalAuthConfigRef
@@ -446,7 +447,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `type` _string_ | Type defines the authentication type: anonymous, local, or oidc |  | Enum: [anonymous local oidc] <br /> |
+| `type` _string_ | Type defines the authentication type: anonymous or oidc |  | Enum: [anonymous oidc] <br /> |
 | `oidcConfig` _[OIDCConfigRef](#oidcconfigref)_ | OIDCConfig defines OIDC authentication configuration<br />Reuses MCPServer OIDC patterns |  |  |
 | `authzConfig` _[AuthzConfigRef](#authzconfigref)_ | AuthzConfig defines authorization policy configuration<br />Reuses MCPServer authz patterns |  |  |
 
@@ -797,6 +798,7 @@ _Appears in:_
 | `displayName` _string_ | DisplayName is a human-readable name for the registry |  |  |
 | `registries` _[MCPRegistryConfig](#mcpregistryconfig) array_ | Registries defines the configuration for the registry data sources |  | MinItems: 1 <br />Required: \{\} <br /> |
 | `enforceServers` _boolean_ | EnforceServers indicates whether MCPServers in this namespace must have their images<br />present in at least one registry in the namespace. When any registry in the namespace<br />has this field set to true, enforcement is enabled for the entire namespace.<br />MCPServers with images not found in any registry will be rejected.<br />When false (default), MCPServers can be deployed regardless of registry presence. | false |  |
+| `podTemplateSpec` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#rawextension-runtime-pkg)_ | PodTemplateSpec defines the pod template to use for the registry API server<br />This allows for customizing the pod configuration beyond what is provided by the other fields.<br />Note that to modify the specific container the registry API server runs in, you must specify<br />the `registry-api` container name in the PodTemplateSpec.<br />This field accepts a PodTemplateSpec object as JSON/YAML. |  | Type: object <br /> |
 
 
 #### MCPRegistryStatus
@@ -1321,26 +1323,6 @@ _Appears in:_
 | `backends` _object (keys:string, values:[BackendAuthConfig](#backendauthconfig))_ | Backends defines per-backend authentication overrides<br />Works in all modes (discovered, inline, mixed) |  |  |
 
 
-#### ParameterSpec
-
-
-
-ParameterSpec defines a parameter for a composite tool
-
-
-
-_Appears in:_
-- [CompositeToolSpec](#compositetoolspec)
-- [VirtualMCPCompositeToolDefinitionSpec](#virtualmcpcompositetooldefinitionspec)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `type` _string_ | Type is the parameter type (string, integer, boolean, etc.) |  | Required: \{\} <br /> |
-| `description` _string_ | Description describes the parameter |  |  |
-| `default` _string_ | Default is the default value for the parameter |  |  |
-| `required` _boolean_ | Required indicates if the parameter is required | false |  |
-
-
 #### PermissionProfileRef
 
 
@@ -1851,10 +1833,10 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `name` _string_ | Name is the workflow name exposed as a composite tool |  | MaxLength: 64 <br />MinLength: 1 <br />Pattern: `^[a-z0-9]([a-z0-9_-]*[a-z0-9])?$` <br />Required: \{\} <br /> |
 | `description` _string_ | Description is a human-readable description of the workflow |  | MinLength: 1 <br />Required: \{\} <br /> |
-| `parameters` _object (keys:string, values:[ParameterSpec](#parameterspec))_ | Parameters defines the input parameter schema for the workflow<br />Each key is a parameter name, each value is the parameter specification |  |  |
+| `parameters` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#rawextension-runtime-pkg)_ | Parameters defines the input parameter schema for the workflow in JSON Schema format.<br />Should be a JSON Schema object with "type": "object" and "properties".<br />Per MCP specification, this should follow standard JSON Schema for tool inputSchema.<br />Example:<br />  \{<br />    "type": "object",<br />    "properties": \{<br />      "param1": \{"type": "string", "default": "value"\},<br />      "param2": \{"type": "integer"\}<br />    \},<br />    "required": ["param2"]<br />  \} |  | Type: object <br /> |
 | `steps` _[WorkflowStep](#workflowstep) array_ | Steps defines the workflow step definitions<br />Steps are executed sequentially in Phase 1<br />Phase 2 will support DAG execution via dependsOn |  | MinItems: 1 <br />Required: \{\} <br /> |
 | `timeout` _string_ | Timeout is the overall workflow timeout<br />Defaults to 30m if not specified | 30m | Pattern: `^([0-9]+(\.[0-9]+)?(ms\|s\|m\|h))+$` <br /> |
-| `failureMode` _string_ | FailureMode defines the failure handling strategy<br />- abort: Stop execution on first failure (default)<br />- continue: Continue executing remaining steps<br />- best_effort: Try all steps, report partial success | abort | Enum: [abort continue best_effort] <br /> |
+| `failureMode` _string_ | FailureMode defines the failure handling strategy<br />- abort: Stop execution on first failure (default)<br />- continue: Continue executing remaining steps | abort | Enum: [abort continue] <br /> |
 
 
 #### VirtualMCPCompositeToolDefinitionStatus
