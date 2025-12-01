@@ -741,6 +741,31 @@ _Appears in:_
 | `filter` _[RegistryFilter](#registryfilter)_ | Filter defines include/exclude patterns for registry content |  |  |
 
 
+#### MCPRegistryDatabaseConfig
+
+
+
+MCPRegistryDatabaseConfig defines PostgreSQL database configuration for the registry API server.
+Uses a two-user security model: separate users for operations and migrations.
+
+
+
+_Appears in:_
+- [MCPRegistrySpec](#mcpregistryspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `host` _string_ | Host is the database server hostname | postgres |  |
+| `port` _integer_ | Port is the database server port | 5432 | Maximum: 65535 <br />Minimum: 1 <br /> |
+| `user` _string_ | User is the application user (limited privileges: SELECT, INSERT, UPDATE, DELETE)<br />Credentials should be provided via pgpass file or environment variables | db_app |  |
+| `migrationUser` _string_ | MigrationUser is the migration user (elevated privileges: CREATE, ALTER, DROP)<br />Used for running database schema migrations<br />Credentials should be provided via pgpass file or environment variables | db_migrator |  |
+| `database` _string_ | Database is the database name | registry |  |
+| `sslMode` _string_ | SSLMode is the SSL mode for the connection<br />Valid values: disable, allow, prefer, require, verify-ca, verify-full | prefer | Enum: [disable allow prefer require verify-ca verify-full] <br /> |
+| `maxOpenConns` _integer_ | MaxOpenConns is the maximum number of open connections to the database | 10 | Minimum: 1 <br /> |
+| `maxIdleConns` _integer_ | MaxIdleConns is the maximum number of idle connections in the pool | 2 | Minimum: 0 <br /> |
+| `connMaxLifetime` _string_ | ConnMaxLifetime is the maximum amount of time a connection may be reused (Go duration format)<br />Examples: "30m", "1h", "24h" | 30m | Pattern: `^([0-9]+(\.[0-9]+)?(ns\|us\|µs\|ms\|s\|m\|h))+$` <br /> |
+
+
 #### MCPRegistryList
 
 
@@ -799,6 +824,7 @@ _Appears in:_
 | `registries` _[MCPRegistryConfig](#mcpregistryconfig) array_ | Registries defines the configuration for the registry data sources |  | MinItems: 1 <br />Required: \{\} <br /> |
 | `enforceServers` _boolean_ | EnforceServers indicates whether MCPServers in this namespace must have their images<br />present in at least one registry in the namespace. When any registry in the namespace<br />has this field set to true, enforcement is enabled for the entire namespace.<br />MCPServers with images not found in any registry will be rejected.<br />When false (default), MCPServers can be deployed regardless of registry presence. | false |  |
 | `podTemplateSpec` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#rawextension-runtime-pkg)_ | PodTemplateSpec defines the pod template to use for the registry API server<br />This allows for customizing the pod configuration beyond what is provided by the other fields.<br />Note that to modify the specific container the registry API server runs in, you must specify<br />the `registry-api` container name in the PodTemplateSpec.<br />This field accepts a PodTemplateSpec object as JSON/YAML. |  | Type: object <br /> |
+| `databaseConfig` _[MCPRegistryDatabaseConfig](#mcpregistrydatabaseconfig)_ | DatabaseConfig defines the PostgreSQL database configuration for the registry API server.<br />If not specified, defaults will be used:<br />  - Host: "postgres"<br />  - Port: 5432<br />  - User: "db_app"<br />  - MigrationUser: "db_migrator"<br />  - Database: "registry"<br />  - SSLMode: "prefer"<br />  - MaxOpenConns: 10<br />  - MaxIdleConns: 2<br />  - ConnMaxLifetime: "30m" |  |  |
 
 
 #### MCPRegistryStatus
@@ -1142,23 +1168,6 @@ _Appears in:_
 | `referencingServers` _string array_ | ReferencingServers is a list of MCPServer resources that reference this MCPToolConfig<br />This helps track which servers need to be reconciled when this config changes |  |  |
 
 
-#### MemoryCacheConfig
-
-
-
-MemoryCacheConfig configures in-memory token caching
-
-
-
-_Appears in:_
-- [TokenCacheConfig](#tokencacheconfig)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `maxEntries` _integer_ | MaxEntries is the maximum number of cache entries | 1000 |  |
-| `ttlOffset` _string_ | TTLOffset is the duration before token expiry to refresh | 5m |  |
-
-
 #### NameFilter
 
 
@@ -1318,9 +1327,9 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `source` _string_ | Source defines how backend authentication configurations are determined<br />- discovered: Automatically discover from backend's MCPServer.spec.externalAuthConfigRef<br />- inline: Explicit per-backend configuration in VirtualMCPServer<br />- mixed: Discover most, override specific backends | discovered | Enum: [discovered inline mixed] <br /> |
+| `source` _string_ | Source defines how backend authentication configurations are determined<br />- discovered: Automatically discover from backend's MCPServer.spec.externalAuthConfigRef<br />- inline: Explicit per-backend configuration in VirtualMCPServer | discovered | Enum: [discovered inline] <br /> |
 | `default` _[BackendAuthConfig](#backendauthconfig)_ | Default defines default behavior for backends without explicit auth config |  |  |
-| `backends` _object (keys:string, values:[BackendAuthConfig](#backendauthconfig))_ | Backends defines per-backend authentication overrides<br />Works in all modes (discovered, inline, mixed) |  |  |
+| `backends` _object (keys:string, values:[BackendAuthConfig](#backendauthconfig))_ | Backends defines per-backend authentication overrides<br />Works in all modes (discovered, inline) |  |  |
 
 
 #### PermissionProfileRef
@@ -1376,26 +1385,6 @@ _Appears in:_
 | `labels` _object (keys:string, values:string)_ | Labels to add or override on the resource |  |  |
 | `podTemplateMetadataOverrides` _[ResourceMetadataOverrides](#resourcemetadataoverrides)_ |  |  |  |
 | `env` _[EnvVar](#envvar) array_ | Env are environment variables to set in the proxy container (thv run process)<br />These affect the toolhive proxy itself, not the MCP server it manages<br />Use TOOLHIVE_DEBUG=true to enable debug logging in the proxy |  |  |
-
-
-#### RedisCacheConfig
-
-
-
-RedisCacheConfig configures Redis token caching
-
-
-
-_Appears in:_
-- [TokenCacheConfig](#tokencacheconfig)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `address` _string_ | Address is the Redis server address |  | Required: \{\} <br /> |
-| `db` _integer_ | DB is the Redis database number | 0 |  |
-| `keyPrefix` _string_ | KeyPrefix is the prefix for cache keys | vmcp:tokens: |  |
-| `passwordRef` _[SecretKeyRef](#secretkeyref)_ | PasswordRef references a secret containing the Redis password |  |  |
-| `tls` _boolean_ | TLS enables TLS for Redis connections | false |  |
 
 
 #### RegistryFilter
@@ -1517,7 +1506,6 @@ SecretKeyRef is a reference to a key within a Secret
 _Appears in:_
 - [HeaderInjectionConfig](#headerinjectionconfig)
 - [InlineOIDCConfig](#inlineoidcconfig)
-- [RedisCacheConfig](#rediscacheconfig)
 - [TokenExchangeConfig](#tokenexchangeconfig)
 
 | Field | Description | Default | Validation |
@@ -1671,24 +1659,6 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `default` _string_ | Default is the default timeout for backend requests | 30s |  |
 | `perWorkload` _object (keys:string, values:string)_ | PerWorkload defines per-workload timeout overrides |  |  |
-
-
-#### TokenCacheConfig
-
-
-
-TokenCacheConfig configures token caching behavior
-
-
-
-_Appears in:_
-- [VirtualMCPServerSpec](#virtualmcpserverspec)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `provider` _string_ | Provider defines the cache provider type | memory | Enum: [memory redis] <br /> |
-| `memory` _[MemoryCacheConfig](#memorycacheconfig)_ | Memory configures in-memory token caching<br />Only used when Provider is "memory" |  |  |
-| `redis` _[RedisCacheConfig](#rediscacheconfig)_ | Redis configures Redis token caching<br />Only used when Provider is "redis" |  |  |
 
 
 #### TokenExchangeConfig
@@ -1941,7 +1911,6 @@ _Appears in:_
 | `aggregation` _[AggregationConfig](#aggregationconfig)_ | Aggregation defines tool aggregation and conflict resolution strategies |  |  |
 | `compositeTools` _[CompositeToolSpec](#compositetoolspec) array_ | CompositeTools defines inline composite tool definitions<br />For complex workflows, reference VirtualMCPCompositeToolDefinition resources instead |  |  |
 | `compositeToolRefs` _[CompositeToolDefinitionRef](#compositetooldefinitionref) array_ | CompositeToolRefs references VirtualMCPCompositeToolDefinition resources<br />for complex, reusable workflows |  |  |
-| `tokenCache` _[TokenCacheConfig](#tokencacheconfig)_ | TokenCache configures token caching behavior |  |  |
 | `operational` _[OperationalConfig](#operationalconfig)_ | Operational defines operational settings like timeouts and health checks |  |  |
 | `serviceType` _string_ | ServiceType specifies the Kubernetes service type for the Virtual MCP server | ClusterIP | Enum: [ClusterIP NodePort LoadBalancer] <br /> |
 | `podTemplateSpec` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#rawextension-runtime-pkg)_ | PodTemplateSpec defines the pod template to use for the Virtual MCP server<br />This allows for customizing the pod configuration beyond what is provided by the other fields.<br />Note that to modify the specific container the Virtual MCP server runs in, you must specify<br />the 'vmcp' container name in the PodTemplateSpec.<br />This field accepts a PodTemplateSpec object as JSON/YAML. |  | Type: object <br /> |
