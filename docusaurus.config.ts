@@ -86,7 +86,15 @@ const config: Config = {
           // Remove this to remove the "edit this page" links.
           editUrl: 'https://github.com/stacklok/docs-website/tree/main/',
         },
-        blog: false,
+        blog: {
+          blogTitle: 'ToolHive Updates & Announcements',
+          blogDescription:
+            'Stay up to date with the latest ToolHive news, project updates, and announcements.',
+          path: 'blog/toolhive-updates',
+          routeBasePath: 'toolhive/updates',
+          blogSidebarCount: 10,
+          showReadingTime: false,
+        },
         theme: {
           customCss: [require.resolve('./src/css/custom.css')],
         },
@@ -195,6 +203,11 @@ const config: Config = {
               to: 'toolhive/reference/crd-spec',
             },
           ],
+        },
+        {
+          to: '/toolhive/updates',
+          label: 'Updates',
+          position: 'left',
         },
         {
           href: 'https://github.com/stacklok',
