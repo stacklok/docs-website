@@ -1,16 +1,38 @@
 ---
-title: Configuring Virtual MCP Server
-description: How to configure VirtualMCPServer for common scenarios.
+title: Configure vMCP servers
+description: How to configure a Virtual MCP Server for common scenarios.
 ---
 
-This guide covers common configuration patterns for VirtualMCPServer. For a
-complete field reference, see the
+This guide covers common configuration patterns for vMCP using the
+VirtualMCPServer resource. For a complete field reference, see the
 [VirtualMCPServer CRD specification](../reference/crd-spec.mdx#virtualmcpserver).
 
-## Minimal configuration
+## Create an MCPGroup
 
-At minimum, a VirtualMCPServer requires a reference to an
-[MCPGroup](../tutorials/quickstart-vmcp.mdx#step-1-create-an-mcpgroup) and an
+Before creating a VirtualMCPServer, you need an
+[MCPGroup](../reference/crd-spec.mdx#mcpgroup) to organize the backend MCP
+servers. An MCPGroup is a logical container that groups related MCPServer
+resources together.
+
+Create a basic MCPGroup:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPGroup
+metadata:
+  name: my-group
+  namespace: toolhive-system
+spec:
+  description: Group of backend MCP servers for vMCP aggregation
+```
+
+The MCPGroup must exist in the same namespace as your VirtualMCPServer and be in
+a Ready state before the VirtualMCPServer can start. Backend MCPServers
+reference this group using the `groupRef` field in their spec.
+
+## Create a VirtualMCPServer
+
+At minimum, a VirtualMCPServer requires a reference to an MCPGroup and an
 authentication type:
 
 ```yaml
@@ -18,6 +40,7 @@ apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: VirtualMCPServer
 metadata:
   name: my-vmcp
+  namespace: toolhive-system
 spec:
   groupRef:
     name: my-group
@@ -28,84 +51,25 @@ spec:
 The MCPGroup must exist in the same namespace and be in a Ready state before the
 VirtualMCPServer can start.
 
-## Adding authentication
+## Configure authentication
 
-### Development (no authentication)
+vMCP uses a two-boundary authentication model: client-to-vMCP (incoming) and
+vMCP-to-backends (outgoing). See the
+[Authentication guide](./authentication.mdx) for complete configuration options
+including anonymous, OIDC, and Kubernetes service account authentication.
 
-For local development only:
-
-```yaml
-spec:
-  incomingAuth:
-    type: anonymous
-```
-
-:::warning
-
-Never use `anonymous` authentication in production environments.
-
-:::
-
-### OIDC authentication
-
-Validate tokens from an external identity provider:
-
-```yaml
-spec:
-  incomingAuth:
-    type: oidc
-    oidcConfig:
-      type: inline
-      inline:
-        issuer: https://your-idp.example.com
-        audience: vmcp
-        clientId: your-client-id
-        # For token introspection, add clientSecretRef referencing a Secret
-```
-
-### Kubernetes service account tokens
-
-For in-cluster clients using service account tokens:
-
-```yaml
-spec:
-  incomingAuth:
-    type: oidc
-    oidcConfig:
-      type: kubernetes
-      kubernetes:
-        audience: toolhive
-```
-
-See [Authentication](./authentication.mdx) for complete authentication options.
-
-## Configuring backend authentication
-
-Control how vMCP authenticates to backend MCP servers:
-
-```yaml
-spec:
-  outgoingAuth:
-    source: discovered
-```
-
-With discovery mode, vMCP checks each backend MCPServer's
-`externalAuthConfigRef` to determine how to authenticate. If a backend has no
-auth config, vMCP connects without authentication. Backends with
-`externalAuthConfigRef` configured use their specified authentication method.
-
-## Exposing the service
+## Expose the service
 
 Choose how to expose the vMCP endpoint:
 
-```yaml
+```yaml title="VirtualMCPServer resource"
 spec:
-  serviceType: ClusterIP # Default: internal access only
-  # serviceType: LoadBalancer # External access via cloud load balancer
-  # serviceType: NodePort     # External access via node ports
+  serviceType: ClusterIP # Default: cluster-internal (can be exposed via Ingress/Gateway)
+  # serviceType: LoadBalancer # Direct external access via cloud load balancer
+  # serviceType: NodePort     # Direct external access via node ports
 ```
 
-## Monitoring status
+## Monitor status
 
 Check the VirtualMCPServer status to verify it's ready:
 
