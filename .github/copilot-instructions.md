@@ -107,6 +107,7 @@ Common terms used in this project:
 - open source (not "open-source")
 - large language model (LLM)
 - Visual Studio Code ("VS Code" after first use)
+- Virtual MCP Server (vMCP) - a feature of ToolHive that aggregates multiple MCP servers into a single endpoint; use "Virtual MCP Server (vMCP)" on first use, "vMCP" thereafter
 
 Check this list for consistent use within the documentation. If you find inconsistencies, update the text to match the preferred term. If you find a term that is not listed here, consider adding it to the list for future reference.
 
