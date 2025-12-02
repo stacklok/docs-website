@@ -175,8 +175,8 @@ const sidebars: SidebarsConfig = {
       items: [
         'toolhive/guides-vmcp/intro',
         'toolhive/guides-vmcp/configuration',
-        'toolhive/guides-vmcp/tool-aggregation',
         'toolhive/guides-vmcp/authentication',
+        'toolhive/guides-vmcp/tool-aggregation',
         'toolhive/guides-vmcp/composite-tools',
       ],
     },
@@ -198,7 +198,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/concepts/auth-framework',
         'toolhive/concepts/cedar-policies',
         'toolhive/concepts/backend-auth',
-        'toolhive/concepts/vmcp-architecture',
+        'toolhive/concepts/vmcp',
       ],
     },
 
