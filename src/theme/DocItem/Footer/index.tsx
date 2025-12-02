@@ -80,7 +80,6 @@ function FeedbackWidget(): React.JSX.Element {
           custom-font='True'
           button-style='default'
           modal-position='center'
-          submit={true}
         >
           <button
             className={`feedback-button ${selected === '0' ? 'selected' : ''}`}
