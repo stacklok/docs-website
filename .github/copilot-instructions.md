@@ -23,9 +23,9 @@ This is the user-facing documentation for ToolHive, an open source tool that hel
 
 Code quality tools:
 
-- Prettier for code formatting - `npm run prettier` to check, `npm run prettier:fix` to auto-fix.
-- markdownlint for enforcing Markdown style conventions - `npm run markdownlint` to check, `npm run markdownlint:fix` to auto-fix.
-- ESLint for JavaScript/TypeScript linting - `npm run eslint` to check, `npm run eslint:fix` to auto-fix.
+- All files: Prettier for code formatting - `npm run prettier` to check, `npm run prettier:fix` to auto-fix.
+- markdownlint for enforcing Markdown style conventions - `npm run markdownlint` to check, `npm run markdownlint:fix` to auto-fix (`.md` files only).
+- ESLint for JavaScript/TypeScript and MDX linting - `npm run eslint` to check, `npm run eslint:fix` to auto-fix.
 
 ## Audience
 
