@@ -1,6 +1,6 @@
 ---
 title: Authentication
-description: Configure client and backend authentication for Virtual MCP Server.
+description: Configure client and backend authentication for vMCP.
 ---
 
 Virtual MCP Server (vMCP) implements a two-boundary authentication model that
@@ -14,25 +14,25 @@ flowchart LR
     subgraph Boundary1[" "]
         direction TB
         Client[MCP Client]
-        B1Label["**Boundary 1**<br>Client → Virtual MCP"]
+        B1Label["**Boundary 1**<br>Client → vMCP"]
     end
 
-    subgraph vMCP[Virtual MCP Server]
-        Auth[Token Validation]
-        Backend[Backend Auth]
+    subgraph vMCP["Virtual MCP Server (vMCP)"]
+        Auth[Token validation]
+        Backend[Backend auth]
     end
 
     subgraph Boundary2[" "]
         direction TB
-        B2Label["**Boundary 2**<br>Virtual MCP → Backend APIs"]
+        B2Label["**Boundary 2**<br>vMCP → Backend APIs"]
         GitHub[GitHub API]
         Jira[Jira API]
     end
 
-    Client -->|"vMCP-scoped token"| Auth
+    Client -->|"vMCP-scoped<br>token"| Auth
     Auth --> Backend
-    Backend -->|"Backend-scoped token"| GitHub
-    Backend -->|"Backend-scoped token"| Jira
+    Backend -->|"Backend-scoped<br>token"| GitHub
+    Backend -->|"Backend-scoped<br>token"| Jira
 ```
 
 **Boundary 1 (Incoming):** Clients authenticate to vMCP using the mechanism
@@ -48,9 +48,9 @@ Configure how clients authenticate to vMCP.
 
 ### Anonymous (development only)
 
-No authentication required. Use only for local development.
+No authentication required:
 
-```yaml
+```yaml title="VirtualMCPServer resource"
 spec:
   incomingAuth:
     type: anonymous
@@ -58,7 +58,9 @@ spec:
 
 :::warning
 
-Never use `anonymous` incoming authentication in production environments.
+Do not use `anonymous` authentication in production environments. This setting
+disables all access control, allowing anyone to use the vMCP without
+credentials.
 
 :::
 
@@ -66,7 +68,7 @@ Never use `anonymous` incoming authentication in production environments.
 
 Validate tokens from an external identity provider:
 
-```yaml
+```yaml title="VirtualMCPServer resource"
 spec:
   incomingAuth:
     type: oidc
@@ -74,14 +76,14 @@ spec:
       type: inline
       inline:
         issuer: https://auth.example.com
-        clientId: your-client-id
+        clientId: <YOUR_CLIENT_ID>
         audience: vmcp
 ```
 
 When using an identity provider that issues opaque OAuth tokens, add a
 `clientSecretRef` referencing a Kubernetes Secret to enable token introspection:
 
-```yaml
+```yaml title="VirtualMCPServer resource"
 spec:
   incomingAuth:
     type: oidc
@@ -89,7 +91,7 @@ spec:
       type: inline
       inline:
         issuer: https://auth.example.com
-        clientId: your-client-id
+        clientId: <YOUR_CLIENT_ID>
         audience: vmcp
         clientSecretRef:
           name: oidc-client-secret
@@ -106,14 +108,14 @@ metadata:
   namespace: toolhive-system
 type: Opaque
 stringData:
-  clientSecret: your-client-secret
+  clientSecret: <YOUR_CLIENT_SECRET>
 ```
 
 ### Kubernetes service account tokens
 
 Authenticate using Kubernetes service account tokens for in-cluster clients:
 
-```yaml
+```yaml title="VirtualMCPServer resource"
 spec:
   incomingAuth:
     type: oidc
@@ -139,7 +141,7 @@ When using discovery mode, vMCP checks each backend MCPServer's
 `externalAuthConfigRef` to determine how to authenticate. If a backend has no
 auth config, vMCP connects without authentication.
 
-```yaml
+```yaml title="VirtualMCPServer resource"
 spec:
   outgoingAuth:
     source: discovered
@@ -148,6 +150,10 @@ spec:
 This is the recommended approach for most deployments. Backends that don't
 require authentication work automatically, while backends with
 `externalAuthConfigRef` configured use their specified authentication method.
+
+See
+[Configure token exchange for backend authentication](../guides-k8s/token-exchange-k8s.mdx)
+for details on using service account token exchange for backend authentication.
 
 ## Related information
 
