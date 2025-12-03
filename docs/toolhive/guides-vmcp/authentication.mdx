@@ -1,10 +1,10 @@
 ---
 title: Authentication
-description: Configure client and backend authentication for Virtual MCP Server.
+description: Configure client and backend authentication for vMCP.
 ---
 
-Virtual MCP implements a two-boundary authentication model that separates client
-authentication from backend authentication, giving you centralized control over
+Virtual MCP Server (vMCP) implements a two-boundary authentication model that
+separates client and backend authentication, giving you centralized control over
 access while supporting diverse backend requirements.
 
 ## Two-boundary authentication model
@@ -14,44 +14,45 @@ flowchart LR
     subgraph Boundary1[" "]
         direction TB
         Client[MCP Client]
-        B1Label["**Boundary 1**<br>Client → Virtual MCP"]
+        B1Label["**Boundary 1**<br>Client → vMCP"]
     end
 
-    subgraph vMCP[Virtual MCP Server]
-        Auth[Token Validation]
-        Backend[Backend Auth]
+    subgraph vMCP["Virtual MCP Server (vMCP)"]
+        Auth[Token validation]
+        Backend[Backend auth]
     end
 
     subgraph Boundary2[" "]
         direction TB
-        B2Label["**Boundary 2**<br>Virtual MCP → Backend APIs"]
+        B2Label["**Boundary 2**<br>vMCP → Backend APIs"]
         GitHub[GitHub API]
         Jira[Jira API]
     end
 
-    Client -->|"vMCP-scoped token"| Auth
+    Client -->|"vMCP-scoped<br>token"| Auth
     Auth --> Backend
-    Backend -->|"Backend-scoped token"| GitHub
-    Backend -->|"Backend-scoped token"| Jira
+    Backend -->|"Backend-scoped<br>token"| GitHub
+    Backend -->|"Backend-scoped<br>token"| Jira
 ```
 
-**Boundary 1 (Incoming):** Clients authenticate to Virtual MCP using the
-mechanism defined in the MCP specification. This is your organization's identity
-layer.
+**Boundary 1 (Incoming):** Clients authenticate to vMCP using OAuth 2.1
+authorization as defined in the
+[MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
+This is your organization's identity layer.
 
-**Boundary 2 (Outgoing):** Virtual MCP obtains appropriate credentials for each
+**Boundary 2 (Outgoing):** vMCP obtains appropriate credentials for each
 backend. Each backend API receives a token or credential scoped to its
 requirements.
 
 ## Incoming authentication
 
-Configure how clients authenticate to Virtual MCP.
+Configure how clients authenticate to vMCP.
 
 ### Anonymous (development only)
 
-No authentication required. Use only for local development.
+No authentication required:
 
-```yaml
+```yaml title="VirtualMCPServer resource"
 spec:
   incomingAuth:
     type: anonymous
@@ -59,7 +60,9 @@ spec:
 
 :::warning
 
-Never use `anonymous` incoming authentication in production environments.
+Do not use `anonymous` authentication in production environments. This setting
+disables all access control, allowing anyone to use the vMCP without
+credentials.
 
 :::
 
@@ -67,7 +70,7 @@ Never use `anonymous` incoming authentication in production environments.
 
 Validate tokens from an external identity provider:
 
-```yaml
+```yaml title="VirtualMCPServer resource"
 spec:
   incomingAuth:
     type: oidc
@@ -75,14 +78,14 @@ spec:
       type: inline
       inline:
         issuer: https://auth.example.com
-        clientId: your-client-id
+        clientId: <YOUR_CLIENT_ID>
         audience: vmcp
 ```
 
 When using an identity provider that issues opaque OAuth tokens, add a
 `clientSecretRef` referencing a Kubernetes Secret to enable token introspection:
 
-```yaml
+```yaml title="VirtualMCPServer resource"
 spec:
   incomingAuth:
     type: oidc
@@ -90,7 +93,7 @@ spec:
       type: inline
       inline:
         issuer: https://auth.example.com
-        clientId: your-client-id
+        clientId: <YOUR_CLIENT_ID>
         audience: vmcp
         clientSecretRef:
           name: oidc-client-secret
@@ -107,14 +110,14 @@ metadata:
   namespace: toolhive-system
 type: Opaque
 stringData:
-  clientSecret: your-client-secret
+  clientSecret: <YOUR_CLIENT_SECRET>
 ```
 
 ### Kubernetes service account tokens
 
 Authenticate using Kubernetes service account tokens for in-cluster clients:
 
-```yaml
+```yaml title="VirtualMCPServer resource"
 spec:
   incomingAuth:
     type: oidc
@@ -132,15 +135,15 @@ validates service account tokens. The defaults work for most clusters:
 
 ## Outgoing authentication
 
-Configure how Virtual MCP authenticates to backend MCP servers.
+Configure how vMCP authenticates to backend MCP servers.
 
 ### Discovery mode
 
-When using discovery mode, Virtual MCP checks each backend MCPServer's
+When using discovery mode, vMCP checks each backend MCPServer's
 `externalAuthConfigRef` to determine how to authenticate. If a backend has no
-auth config, Virtual MCP connects without authentication.
+auth config, vMCP connects without authentication.
 
-```yaml
+```yaml title="VirtualMCPServer resource"
 spec:
   outgoingAuth:
     source: discovered
@@ -149,6 +152,10 @@ spec:
 This is the recommended approach for most deployments. Backends that don't
 require authentication work automatically, while backends with
 `externalAuthConfigRef` configured use their specified authentication method.
+
+See
+[Configure token exchange for backend authentication](../guides-k8s/token-exchange-k8s.mdx)
+for details on using service account token exchange for backend authentication.
 
 ## Related information
 

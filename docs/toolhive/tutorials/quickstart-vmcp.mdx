@@ -5,9 +5,9 @@ description:
   Virtual MCP Server.
 ---
 
-In this tutorial, you'll learn how to deploy Virtual MCP Server to aggregate
-multiple MCP servers into a single endpoint. By the end, you'll have a working
-deployment that combines tools from multiple backends.
+In this tutorial, you'll learn how to deploy Virtual MCP Server (vMCP) to
+aggregate multiple MCP servers into a single endpoint. By the end, you'll have a
+working deployment that combines tools from multiple backends.
 
 ## What you'll learn
 
@@ -30,14 +30,14 @@ Before starting this tutorial, make sure you have:
 
 First, create an MCPGroup to organize your backend MCP servers:
 
-```yaml
+```yaml title="mcpgroup.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPGroup
 metadata:
   name: demo-tools
   namespace: toolhive-system
 spec:
-  description: Demo group for Virtual MCP aggregation
+  description: Demo group for vMCP aggregation
 ```
 
 Apply the resource:
@@ -54,9 +54,10 @@ kubectl get mcpgroups -n toolhive-system
 
 ## Step 2: Deploy backend MCPServers
 
-Deploy two MCP servers that will be aggregated. Both reference the group:
+Deploy two MCP servers that will be aggregated. Both reference the `demo-tools`
+group in the `groupRef` field:
 
-```yaml
+```yaml {11,30} title="mcpservers.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
@@ -114,7 +115,7 @@ You should see both servers with `Running` status before continuing.
 
 Create a VirtualMCPServer that aggregates both backends:
 
-```yaml
+```yaml title="virtualmcpserver.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: VirtualMCPServer
 metadata:
@@ -140,7 +141,7 @@ spec:
     conflictResolutionConfig:
       prefixFormat: '{workload}_'
 
-  # Expose as ClusterIP (internal access only)
+  # Expose as ClusterIP (cluster-internal or exposed via Ingress/Gateway)
   serviceType: ClusterIP
 ```
 
@@ -156,18 +157,20 @@ Check the status:
 kubectl get virtualmcpservers -n toolhive-system
 ```
 
-You should see output similar to:
+After about 30 seconds, you should see output similar to:
 
 ```text
 NAME        PHASE   URL                                                            BACKENDS   AGE   READY
 demo-vmcp   Ready   http://vmcp-demo-vmcp.toolhive-system.svc.cluster.local:4483   2          30s   True
 ```
 
+Note the port number for step 5.
+
 :::info[What's happening?]
 
-The operator discovered both MCPServers in the group and configured Virtual MCP
-to aggregate their tools. With the `prefix` conflict resolution strategy, all
-tools are prefixed with the backend name.
+The operator discovered both MCPServers in the group and configured vMCP to
+aggregate their tools. With the `prefix` conflict resolution strategy, all tools
+are prefixed with the backend name.
 
 :::
 
@@ -184,7 +187,7 @@ backends.
 
 ## Step 5: Connect your client
 
-Port-forward to access Virtual MCP locally:
+In a separate terminal, port-forward the vMCP service to your local machine:
 
 ```bash
 kubectl port-forward service/vmcp-demo-vmcp -n toolhive-system 4483:4483
@@ -198,10 +201,10 @@ curl http://localhost:4483/health
 
 You should see `{"status":"ok"}`.
 
-Configure VS Code to connect to Virtual MCP. Add the following to your
-`mcp.json` file:
+Configure VS Code to connect to vMCP. Add the following to your `mcp.json` file:
 
 - **macOS**: `~/Library/Application Support/Code/User/mcp.json`
+- **Windows**: `%APPDATA%\Code\User\mcp.json`
 - **Linux**: `~/.config/Code/User/mcp.json`
 
 ```json
@@ -228,7 +231,7 @@ configuration file locations and formats.
 ## Step 6: Test the aggregated tools
 
 Try asking your AI assistant questions that use the aggregated tools. Both tools
-work through the same Virtual MCP endpoint!
+work through the same vMCP endpoint!
 
 ## Step 7: Clean up
 
@@ -242,15 +245,15 @@ kubectl delete mcpgroup demo-tools -n toolhive-system
 
 ## What's next?
 
-Congratulations! You've successfully deployed Virtual MCP Server and aggregated
-multiple backends into a single endpoint.
+Congratulations! You've successfully deployed vMCP and aggregated multiple
+backends into a single endpoint.
 
 Next steps:
 
 - [Configure authentication](../guides-vmcp/authentication.mdx) for production
 - [Customize tool aggregation](../guides-vmcp/tool-aggregation.mdx) with
   filtering and overrides
-- [Understanding Virtual MCP Server](../concepts/vmcp-architecture.mdx)
+- [Understanding Virtual MCP Server](../concepts/vmcp.mdx)
 
 ## Troubleshooting
 
