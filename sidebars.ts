@@ -224,6 +224,7 @@ const sidebars: SidebarsConfig = {
     },
 
     'toolhive/faq',
+    'toolhive/support',
     'toolhive/contributing',
   ],
 };
