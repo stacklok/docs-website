@@ -1,8 +1,6 @@
 ---
-title: Deployment
-description:
-  How to deploy the ToolHive Registry API server in Kubernetes, Docker, or
-  Docker Compose
+title: Deployment in Kubernetes
+description: How to deploy the ToolHive Registry API server in Kubernetes
 ---
 
 The Registry API server can be deployed in various environments, from local
@@ -10,10 +8,14 @@ development to production Kubernetes clusters.
 
 ## Kubernetes deployment
 
-The Registry API is designed to run as a sidecar container alongside the
-ToolHive Operator's MCPRegistry controller.
+The Registry API is designed to run as an independent deployment, possibly
+alongside the ToolHive Operator.
 
-### Basic deployment
+Although it is possible to run ToolHive Registry to use an in-memory store, it
+is unreliable to run multiple replicas as they would not share state, and we
+recommend running it with a proper Postgres database.
+
+### Deployment Example
 
 ```yaml title="deployment.yaml"
 apiVersion: apps/v1
@@ -32,16 +34,25 @@ spec:
     spec:
       containers:
         - name: registry-api
-          image: ghcr.io/stacklok/toolhive/thv-registry-api:latest
+          image: ghcr.io/stacklok/thv-registry-api:latest
           args:
             - serve
             - --config=/etc/registry/config.yaml
+          env:
+            - name: PGPASSFILE
+              value: /pgpass/.pgpass
           ports:
             - containerPort: 8080
               name: http
           volumeMounts:
             - name: config
-              mountPath: /etc/registry
+              mountPath: /etc/registry/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: pgpass
+              mountPath: /etc/registry/pgpass
+              subPath: pgpass
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /health
@@ -58,6 +69,15 @@ spec:
         - name: config
           configMap:
             name: registry-api-config
+            items:
+              - key: config.yaml
+                path: config.yaml
+        - name: pgpass
+          secret:
+            secretName: registry-api-pgpass
+            items:
+              - key: pgpass
+                path: pgpass
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -66,15 +86,34 @@ metadata:
 data:
   config.yaml: |
     registryName: my-registry
-    source:
-      type: git
+    registries:
+    - name: git-registry
       format: toolhive
       git:
         repository: https://github.com/stacklok/toolhive.git
         branch: main
         path: pkg/registry/data/registry.json
-    syncPolicy:
-      interval: "15m"
+      syncPolicy:
+        interval: "15m"
+    auth:
+      mode: anonymous
+    database:
+      host: db.example.com
+      port: 5432
+      user: db_app
+      migrationUser: db_migrator
+      database: registry
+      sslMode: verify-full
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-api-pgpass
+type: Opaque
+stringData:
+  pgpass: |
+    *:5432:registry:db_app:app_password
+    *:5432:registry:db_migrator:migrator_password
 ---
 apiVersion: v1
 kind: Service
@@ -95,214 +134,3 @@ Apply the deployment:
 ```bash
 kubectl apply -f deployment.yaml
 ```
-
-### With database
-
-If you're using a database, you'll need to configure database credentials. Use a
-Secret for sensitive information:
-
-```yaml title="deployment-with-db.yaml"
-apiVersion: v1
-kind: Secret
-metadata:
-  name: registry-api-db-secret
-type: Opaque
-stringData:
-  password: your-database-password
-  migration-password: your-migration-password
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: registry-api
-spec:
-  template:
-    spec:
-      containers:
-        - name: registry-api
-          image: ghcr.io/stacklok/toolhive/thv-registry-api:latest
-          args:
-            - serve
-            - --config=/etc/registry/config.yaml
-          env:
-            - name: THV_DATABASE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: registry-api-db-secret
-                  key: password
-            - name: THV_DATABASE_MIGRATION_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: registry-api-db-secret
-                  key: migration-password
-          volumeMounts:
-            - name: config
-              mountPath: /etc/registry
-      volumes:
-        - name: config
-          configMap:
-            name: registry-api-config
-```
-
-## Docker deployment
-
-### Build the image
-
-```bash
-task build-image
-```
-
-### Run with Git source
-
-```bash
-docker run -v $(pwd)/examples:/config \
-  ghcr.io/stacklok/toolhive/thv-registry-api:latest \
-  serve --config /config/config-git.yaml
-```
-
-### Run with file source
-
-Mount a local registry file:
-
-```bash
-docker run -v $(pwd)/examples:/config \
-  -v /path/to/registry.json:/data/registry.json \
-  ghcr.io/stacklok/toolhive/thv-registry-api:latest \
-  serve --config /config/config-file.yaml
-```
-
-### Run with database password from environment
-
-```bash
-docker run -v $(pwd)/examples:/config \
-  -e THV_DATABASE_PASSWORD=your-password \
-  ghcr.io/stacklok/toolhive/thv-registry-api:latest \
-  serve --config /config/config-database-dev.yaml
-```
-
-## Docker Compose deployment
-
-A complete Docker Compose setup is provided that includes PostgreSQL and the API
-server with automatic migrations.
-
-### Quick start
-
-Start all services (PostgreSQL + API with automatic migrations):
-
-```bash
-docker-compose up
-```
-
-Run in detached mode:
-
-```bash
-docker-compose up -d
-```
-
-View logs:
-
-```bash
-docker-compose logs -f registry-api
-```
-
-Stop all services:
-
-```bash
-docker-compose down
-```
-
-Stop and remove volumes (WARNING: deletes database data):
-
-```bash
-docker-compose down -v
-```
-
-### Architecture
-
-The docker-compose.yaml includes two services:
-
-1. **postgres** - PostgreSQL 18 database server
-2. **registry-api** - Main API server (runs migrations automatically on startup)
-
-**Service startup flow:**
-
-```
-postgres (healthy) → registry-api (runs migrations, then starts)
-```
-
-### Configuration
-
-- Config file: `examples/config-docker.yaml`
-- Sample data: `examples/registry-sample.json`
-- Database passwords: Set via environment variables in docker-compose.yaml
-  - `THV_DATABASE_PASSWORD`: Application user password
-  - `THV_DATABASE_MIGRATION_PASSWORD`: Migration user password
-
-The setup demonstrates:
-
-- Database-backed registry storage with separate users for migrations and
-  operations
-- Automatic schema migrations on startup using elevated privileges
-- Normal operations using limited database privileges (principle of least
-  privilege)
-- File-based data source (for demo purposes)
-- Proper service dependencies and health checks
-
-### Accessing the API
-
-Once running, the API is available at http://localhost:8080
-
-```bash
-# List all servers
-curl http://localhost:8080/registry/v0.1/servers
-
-# Get specific server version
-curl http://localhost:8080/registry/v0.1/servers/example%2Ffilesystem/versions/latest
-```
-
-### Customization
-
-To use your own registry data:
-
-1. Edit `examples/registry-sample.json` with your MCP servers
-2. Or change the source configuration in `examples/config-docker.yaml`
-3. Restart: `docker-compose restart registry-api`
-
-### Database access
-
-The Docker Compose setup creates three database users:
-
-- `registry`: Superuser (for administration)
-- `db_migrator`: Migration user with schema modification privileges
-- `db_app`: Application user with limited data access privileges
-
-To connect to the PostgreSQL database directly:
-
-```bash
-# As superuser (for administration)
-docker exec -it toolhive-registry-postgres psql -U registry -d registry
-
-# As application user
-docker exec -it toolhive-registry-postgres psql -U db_app -d registry
-
-# From host machine
-PGPASSWORD=registry_password psql -h localhost -U registry -d registry
-PGPASSWORD=app_password psql -h localhost -U db_app -d registry
-```
-
-## Health checks
-
-The server provides health check endpoints:
-
-- `GET /health` - Health check (returns 200 if server is running)
-- `GET /readiness` - Readiness check (returns 200 if server is ready to serve
-  requests)
-
-Use these endpoints for Kubernetes liveness and readiness probes, or for
-monitoring and load balancer health checks.
-
-## Next steps
-
-- [Configure the API endpoints](./api-reference.mdx) to understand available
-  operations
-- [Set up database storage](./database.mdx) for production deployments

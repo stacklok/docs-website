@@ -197,7 +197,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-registry/configuration',
         'toolhive/guides-registry/api-reference',
         'toolhive/guides-registry/database',
-        'toolhive/guides-registry/local-dev',
+        'toolhive/guides-registry/deployment',
       ],
     },
 
