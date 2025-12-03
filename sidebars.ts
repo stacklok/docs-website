@@ -185,6 +185,24 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
+      label: 'Guides: Registry Server',
+      description:
+        'How to deploy and use the ToolHive Registry server to discover and access MCP servers',
+      link: {
+        type: 'doc',
+        id: 'toolhive/guides-registry/index',
+      },
+      items: [
+        'toolhive/guides-registry/intro',
+        'toolhive/guides-registry/configuration',
+        'toolhive/guides-registry/api-reference',
+        'toolhive/guides-registry/database',
+        'toolhive/guides-registry/local-dev',
+      ],
+    },
+
+    {
+      type: 'category',
       label: 'Concepts',
       description: 'Core concepts and architecture of ToolHive and MCP',
       link: {
