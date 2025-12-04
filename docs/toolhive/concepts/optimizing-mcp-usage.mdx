@@ -1,0 +1,379 @@
+---
+title: Optimizing MCP usage
+description:
+  Understanding when and why to use groups, tool filtering, and overrides to
+  improve AI performance and reduce context pollution.
+---
+
+When you run MCP servers with ToolHive, you're giving AI clients access to
+powerful tools. But more isn't always better. As your collection of MCP servers
+and tools grows, you may notice that AI clients become slower at selecting the
+right tool, consume more tokens, or even choose the wrong tool for a task.
+
+This is where ToolHive's optimization features come in. Groups, tool filtering,
+and tool overrides give you fine-grained control over which tools are available
+to your AI clients and how they're presented. These features work together to
+help you create focused, efficient AI workflows.
+
+## The context pollution problem
+
+Modern AI clients work by analyzing all available tools and selecting the most
+appropriate one for each task. This selection process happens in the context of
+the AI model, which means every tool's name, description, and schema consumes
+tokens and processing time.
+
+Consider what happens when you connect an AI client to multiple MCP servers:
+
+- A GitHub server might expose 30+ tools for repositories, issues, pull
+  requests, and more
+- A filesystem server adds another 10+ tools for file operations
+- A database server contributes 20+ tools for queries and schema management
+- Additional servers for Slack, Jira, monitoring systems, and other integrations
+
+Before you know it, your AI client is evaluating 100+ tools for every request.
+This creates several problems:
+
+**Performance degradation**: More tools mean longer processing time as the AI
+model evaluates each option. Tool selection becomes a bottleneck, especially for
+complex queries.
+
+**Higher costs**: Every tool description consumes tokens. In token-based pricing
+models, exposing unnecessary tools directly increases your costs for every AI
+interaction.
+
+**Reduced accuracy**: When faced with many similar tools, AI models sometimes
+choose incorrectly. A client might use a production database tool when it should
+use a development one, or select a write operation when a read would suffice.
+
+**Cognitive overhead**: Even when the AI selects correctly, users reviewing the
+available tools face information overload. It becomes harder to understand what
+the AI can do and verify it's using the right capabilities.
+
+## How ToolHive's optimization features help
+
+ToolHive provides three complementary features to address these challenges:
+groups, tool filtering, and tool overrides. Each serves a different purpose, and
+they work together to give you complete control over your MCP tool landscape.
+
+### Groups: Organizing by context and access control
+
+Groups let you organize MCP servers into logical collections and control which
+AI clients can access each collection. Think of groups as workspaces for
+different contexts, projects, or environments.
+
+**When to use groups:**
+
+**Project isolation**: When working on multiple projects, each with its own set
+of tools and data sources. A web application project might need GitHub,
+database, and monitoring tools, while a mobile app project needs different
+servers entirely.
+
+**Environment separation**: When you need to maintain clear boundaries between
+development, staging, and production environments. You want your AI assistant to
+access development tools by default, but require explicit configuration to touch
+production systems.
+
+**Team organization**: When different teams or team members need access to
+different tool sets. Backend engineers might need database and API tools, while
+frontend engineers need npm, browser testing, and design system tools.
+
+**Client-specific configurations**: When you use multiple AI clients for
+different purposes. You might configure GitHub Copilot with coding tools, Claude
+Desktop with documentation and research tools, and Cursor with your full
+development stack.
+
+**What groups prevent:**
+
+- Accidental access to sensitive servers or environments
+- Context pollution from unrelated projects sharing the same tool space
+- Configuration confusion when multiple projects need the same MCP server with
+  different settings
+
+### Tool filtering: Removing unnecessary capabilities
+
+Tool filtering lets you disable specific tools from an MCP server while keeping
+others available. This is useful when an MCP server exposes many tools but you
+only need a subset for your workflow.
+
+**When to use tool filtering:**
+
+**Focusing workflows**: When you want your AI client to have access to only the
+tools relevant to a specific task. For example, enabling only pull request tools
+from the GitHub server when doing code review work, hiding all issue,
+repository, and branch management tools.
+
+**Reducing cognitive load**: When an MCP server exposes tools with overlapping
+functionality or tools you never use. Hiding irrelevant options makes it easier
+for both the AI and human users to understand available capabilities.
+
+**Improving tool selection accuracy**: When you notice the AI frequently
+choosing the wrong tool from a server with many options. Removing alternatives
+forces more accurate selection.
+
+**Security and safety**: When you want to limit potential actions the AI can
+take. You might enable read-only tools while disabling any tools that modify
+data, create resources, or perform destructive operations.
+
+**Compliance and governance**: When organizational policies restrict certain
+operations. You can enforce policy by only exposing approved tools, even if the
+underlying MCP server provides more capabilities.
+
+**What tool filtering prevents:**
+
+- AI clients spending tokens and time evaluating tools they'll never use
+- Confusion between similar tools with slightly different purposes
+- Accidental triggering of unwanted capabilities
+- Policy violations from unrestricted tool access
+
+### Tool overrides: Clarifying intent and preventing confusion
+
+Tool overrides let you rename tools and modify their descriptions. This is
+particularly valuable when running multiple instances of the same MCP server or
+when default tool names are unclear.
+
+**When to use tool overrides:**
+
+**Running multiple instances of the same server**: The most common use case.
+When you run the GitHub MCP server twice (once for your company's organization
+and once for open source contributions), the tools all have identical names.
+Renaming them to `github_company_create_pr` and `github_oss_create_pr` makes the
+distinction obvious to both the AI and human reviewers.
+
+**Scoping server access**: Similar to the multiple instance case but for
+different scopes within the same system. For example, running the filesystem
+server multiple times with different volume mounts, or the database server for
+different databases. Tool names like `read_file_frontend` and
+`read_file_backend` clarify which scope each tool operates in.
+
+**Improving unclear defaults**: When MCP server developers use technical or
+generic tool names that don't clearly communicate purpose. You can rename
+`list_commits_test` to `list_commits` or `fetch_data_v2` to
+`fetch_github_metrics` to improve clarity.
+
+**Adding context in descriptions**: When you want to provide additional guidance
+about when or how to use a tool. You might modify a description to include your
+team's conventions, warn about rate limits, or clarify specific use cases.
+
+**Environment-specific naming**: When the same tool behaves differently in
+different environments. Renaming `deploy` to `deploy_to_staging` versus
+`deploy_to_production` makes the destination explicit and reduces the chance of
+mistakes.
+
+**What tool overrides prevent:**
+
+- AI clients calling the wrong instance of a tool
+- Confusion about which server or scope a tool operates on
+- Unclear or misleading tool names causing incorrect selections
+- Lack of context about team-specific conventions or constraints
+
+## Combining the features effectively
+
+These features are most powerful when used together. Here are some real-world
+patterns:
+
+### Pattern: Environment-based separation
+
+**The scenario**: You maintain development, staging, and production
+environments, each with its own databases, APIs, and deployment tools.
+
+**The approach**:
+
+1. Create three groups: `development`, `staging`, and `production`
+2. Run the same MCP servers in each group but configured for different
+   environments
+3. Use tool overrides to clearly identify the environment in tool names (for
+   example, `db_dev_query`, `db_staging_query`, `db_prod_query`)
+4. In the production group, use tool filtering to disable any destructive
+   operations, exposing only read and monitoring tools
+5. Configure your primary AI client to access only the development group by
+   default
+
+**Why this works**: The group structure prevents accidental access to the wrong
+environment. Tool overrides make it obvious which environment you're interacting
+with when reviewing AI actions. Tool filtering adds an extra safety layer by
+making destructive production operations impossible even if explicitly
+requested.
+
+### Pattern: Task-focused tool sets
+
+**The scenario**: You use AI assistance for different types of work throughout
+the day: code review, feature development, incident response, and documentation.
+
+**The approach**:
+
+1. Create groups for each workflow: `code-review`, `feature-dev`,
+   `incident-response`, `docs`
+2. Copy relevant MCP servers to each group (GitHub appears in all, database only
+   in feature-dev and incident-response)
+3. Use tool filtering differently in each group based on the workflow:
+   - `code-review`: Only GitHub PR and review tools
+   - `feature-dev`: Full access to all servers and tools
+   - `incident-response`: Read-only database tools, full GitHub access,
+     monitoring tools
+   - `docs`: GitHub for fetching code examples, filesystem for documentation, no
+     database or deployment tools
+4. Configure different AI client profiles or use different clients for each
+   workflow
+
+**Why this works**: Each workflow gets exactly the tools it needs and nothing
+more. This dramatically reduces the tool count for each context, improving both
+performance and accuracy. The focused tool set also makes it easier to verify
+the AI is using appropriate capabilities for the task at hand.
+
+### Pattern: Multi-tenant server access
+
+**The scenario**: Your team manages infrastructure for multiple clients or
+organizations, each with its own GitHub organization, cloud account, and
+monitoring stack.
+
+**The approach**:
+
+1. Create groups by client: `client-acme`, `client-techcorp`, `client-startup`
+2. Run multiple instances of the same MCP servers in each group, configured with
+   client-specific credentials
+3. Use tool overrides to prefix all tool names with the client identifier (for
+   example, `acme_create_issue`, `techcorp_create_issue`)
+4. Use tool filtering to expose only the tools each client's contract allows
+
+**Why this works**: Tool name prefixes make it impossible to accidentally
+operate on the wrong client's infrastructure. Group isolation ensures
+credentials and access are properly scoped. Tool filtering lets you enforce
+contractual limitations, like providing read-only access to clients who only
+purchased monitoring.
+
+## Making the right optimization choices
+
+Not every situation requires all three features. Here's how to decide what you
+need:
+
+**Start with groups if:**
+
+- You work on multiple distinct projects or contexts
+- You need environment separation (dev/staging/prod)
+- Different team members or teams need different tool access
+- You want to prevent accidental access to certain systems
+
+**Add tool filtering if:**
+
+- An MCP server exposes many tools but you only use a few
+- You notice the AI frequently choosing wrong or inappropriate tools
+- You need to enforce read-only or restricted access
+- You want to improve AI performance by reducing tool count
+
+**Add tool overrides if:**
+
+- You run multiple instances of the same MCP server
+- Default tool names are unclear or generic
+- You need to distinguish between different scopes or environments in tool names
+- You want to add team-specific context to tool descriptions
+
+**Consider all three if:**
+
+- You manage complex, multi-environment infrastructure
+- You run multiple instances of servers across different groups
+- You need both access control and tool clarity
+- Performance and accuracy are critical to your workflow
+
+## Understanding the tradeoffs
+
+While these optimization features provide significant benefits, they also
+introduce complexity into your ToolHive configuration. Consider these tradeoffs:
+
+**Configuration overhead**: More groups, filters, and overrides mean more
+configuration to maintain. If servers change their available tools, you may need
+to update filters. If you add new projects, you need to create and configure new
+groups.
+
+**Maintenance burden**: Tool overrides need to stay synchronized with the
+underlying MCP server. If a server updates its tool names or descriptions, your
+overrides might become outdated or incorrect.
+
+**Flexibility vs. safety**: Aggressive filtering and strict group separation
+make it harder for AI clients to access tools they occasionally need. You might
+find yourself creating exceptions or temporarily reconfiguring access.
+
+**Discovery limitations**: When tools are filtered or spread across many groups,
+it can be harder to discover what capabilities are available. New team members
+might not realize certain tools exist because they're hidden in unfamiliar
+groups.
+
+These tradeoffs aren't reasons to avoid optimization features. They're
+considerations for finding the right balance for your situation. Start simple,
+measure the impact, and add complexity only where it provides clear value.
+
+## Measuring optimization impact
+
+How do you know if your optimization efforts are working? Look for these
+indicators:
+
+**Performance improvements**: If you're using ToolHive's observability features,
+watch for reduced request duration on `mcp.tools/list` and `mcp.tools/call`
+operations after implementing filtering. The AI should spend less time
+evaluating tool options.
+
+**Accuracy improvements**: Track how often the AI selects the correct tool on
+the first try versus requiring corrections or retries. This is subjective but
+noticeable in day-to-day use.
+
+**Reduced token consumption**: If your AI client provides usage statistics,
+compare token consumption for similar tasks before and after optimization. Fewer
+tools mean smaller tool descriptions in each request.
+
+**User confidence**: Pay attention to how comfortable you feel reviewing and
+approving AI actions. Clear tool names and focused tool sets make it easier to
+verify the AI is doing the right thing.
+
+**Fewer mistakes**: Track incidents where the AI accessed the wrong environment,
+used the wrong instance of a tool, or selected an inappropriate capability.
+These should decrease with proper optimization.
+
+## Related patterns and tools
+
+ToolHive's optimization features complement other capabilities:
+
+**MCP Optimizer**: The experimental MCP Optimizer provides intelligent tool
+routing and discovery. It works alongside groups and filtering but uses semantic
+similarity to help AI clients find the right tool without exposing all tools
+upfront. Consider the MCP Optimizer when you have many servers and tools but
+still want broad access rather than strict filtering.
+
+**Network isolation**: Groups work well with network isolation policies. You
+might create a `restricted` group where all servers have strict network
+isolation, preventing access to external resources. This adds another layer of
+safety beyond tool filtering.
+
+**Cedar policies**: ToolHive's Cedar-based authorization policies can enforce
+fine-grained access control at the authentication layer. This complements groups
+by adding runtime security checks, ensuring users can only access tools they're
+authorized to use even if they're in a group.
+
+## Next steps
+
+Now that you understand when and why to use these optimization features:
+
+1. **Assess your current setup**: Look at your existing MCP servers and tools.
+   Are you experiencing context pollution, performance issues, or accuracy
+   problems?
+
+2. **Identify your highest-impact use case**: Choose one of the patterns
+   described above that matches your situation. Start with the simplest solution
+   that addresses your primary concern.
+
+3. **Implement incrementally**: Begin with one group or a single filtered
+   server. Measure the impact before expanding to your entire ToolHive
+   configuration.
+
+4. **Learn the mechanics**: Review the how-to guides for your ToolHive
+   deployment method:
+   - [Groups in the ToolHive UI](../guides-ui/group-management.mdx)
+   - [Groups in the ToolHive CLI](../guides-cli/group-management.mdx)
+   - [Tool customization in the ToolHive UI](../guides-ui/customize-tools.mdx)
+   - [Tool customization in Kubernetes](../guides-k8s/customize-tools.mdx)
+
+5. **Monitor and iterate**: Use ToolHive's observability features to track the
+   impact of your changes. Adjust your configuration based on real-world
+   results.
+
+The goal isn't to create the most complex configuration possible. It's to find
+the simplest setup that gives your AI clients exactly what they need to work
+effectively and safely.
