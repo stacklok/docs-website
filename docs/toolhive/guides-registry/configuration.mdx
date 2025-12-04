@@ -14,33 +14,36 @@ pointing to a YAML configuration file.
 # Registry name/identifier (optional, defaults to "default")
 registryName: my-registry
 
-# Data source configuration (required)
-source:
-  # Source type: git, api, or file
-  type: git
+# Registries configuration (required, can have multiple registries)
+registries:
+  - name: toolhive
+    # Data format: toolhive (native) or upstream (MCP registry format)
+    format: toolhive
 
-  # Data format: toolhive (native) or upstream (MCP registry format)
-  format: toolhive
+    # Git repository configuration
+    git:
+      repository: https://github.com/stacklok/toolhive.git
+      branch: main
+      path: pkg/registry/data/registry.json
 
-  # Source-specific configuration
-  git:
-    repository: https://github.com/stacklok/toolhive.git
-    branch: main
-    path: pkg/registry/data/registry.json
+    # Per-registry automatic sync policy (required for synced registries)
+    syncPolicy:
+      # Sync interval (e.g., "30m", "1h", "24h")
+      interval: '30m'
 
-# Automatic sync policy (required)
-syncPolicy:
-  # Sync interval (e.g., "30m", "1h", "24h")
-  interval: '30m'
+    # Optional: Per-registry server filtering
+    filter:
+      names:
+        include: ['official/*']
+        exclude: ['*/deprecated']
+      tags:
+        include: ['production']
+        exclude: ['experimental']
 
-# Optional: Server filtering
-filter:
-  names:
-    include: ['official/*']
-    exclude: ['*/deprecated']
-  tags:
-    include: ['production']
-    exclude: ['experimental']
+# Authentication configuration (required)
+auth:
+  # Mode: anonymous or oauth (defaults to oauth if not specified)
+  mode: anonymous
 
 # Optional: Database configuration
 database:
@@ -63,21 +66,26 @@ database:
 
 ## Data sources
 
-The server supports three data source types, each with its own configuration
-options.
+The server supports five registry types, each with its own configuration
+options. You can configure multiple registries in a single server instance.
 
 ### Git repository source
 
 Clone and sync from Git repositories. Ideal for version-controlled registries.
 
 ```yaml title="config-git.yaml"
-source:
-  type: git
-  format: toolhive
-  git:
-    repository: https://github.com/stacklok/toolhive.git
-    branch: main
-    path: pkg/registry/data/registry.json
+registries:
+  - name: toolhive
+    format: toolhive
+    git:
+      repository: https://github.com/stacklok/toolhive.git
+      branch: main
+      path: pkg/registry/data/registry.json
+    syncPolicy:
+      interval: '30m'
+
+auth:
+  mode: anonymous
 ```
 
 **Configuration options:**
@@ -102,58 +110,168 @@ Sync from upstream MCP Registry APIs. Supports federation and aggregation
 scenarios.
 
 ```yaml title="config-api.yaml"
-source:
-  type: api
-  format: upstream
-  api:
-    endpoint: https://registry.example.com/registry/v0.1/servers
+registries:
+  - name: mcp-upstream
+    format: upstream
+    api:
+      endpoint: https://registry.modelcontextprotocol.io
+    syncPolicy:
+      interval: '1h'
+
+auth:
+  mode: anonymous
 ```
 
 **Configuration options:**
 
-- `endpoint` (required): URL of the upstream MCP Registry API endpoint
+- `endpoint` (required): Base URL of the upstream MCP Registry API (without
+  path)
+- `format` (required): Must be `upstream` for API sources
+
+:::note
+
+The server automatically appends the appropriate API paths (`/v0.1/servers`,
+etc.) to the endpoint URL.
+
+:::
 
 ### Local file source
 
 Read from filesystem. Ideal for local development and testing.
 
 ```yaml title="config-file.yaml"
-source:
-  type: file
-  format: toolhive
-  file:
-    path: /path/to/registry.json
+registries:
+  - name: local
+    format: toolhive
+    file:
+      path: /data/registry.json
+    syncPolicy:
+      interval: '15m'
+
+auth:
+  mode: anonymous
 ```
 
 **Configuration options:**
 
 - `path` (required): Path to the registry file on the filesystem
 
+### Managed registry
+
+API-managed registry for directly publishing and deleting MCP servers via the
+API. Does not sync from external sources.
+
+```yaml title="config-managed.yaml"
+registries:
+  - name: internal
+    format: toolhive
+    managed: {}
+
+auth:
+  mode: oauth
+  oauth:
+    resourceUrl: https://registry.example.com
+    providers:
+      - name: keycloak
+        issuerUrl: https://keycloak.example.com/realms/mcp
+        audience: registry-api
+```
+
+**Configuration options:**
+
+- `managed` (required): Empty object to indicate managed registry type
+- No sync policy required (managed registries are updated via API, not synced)
+
+**Supported operations:**
+
+- `POST /{registryName}/v0.1/publish` - Publish new server versions
+- `DELETE /{registryName}/v0.1/servers/{name}/versions/{version}` - Delete
+  versions
+- `GET` operations for listing and retrieving servers
+
+### Kubernetes registry
+
+Discovers MCP servers from running Kubernetes deployments. Automatically creates
+registry entries for deployed MCP servers in your cluster.
+
+```yaml title="config-kubernetes.yaml"
+registries:
+  - name: k8s-cluster
+    format: toolhive
+    kubernetes: {}
+
+auth:
+  mode: oauth
+  oauth:
+    resourceUrl: https://registry.example.com
+    providers:
+      - name: kubernetes
+        issuerUrl: https://kubernetes.default.svc.cluster.local
+        audience: https://kubernetes.default.svc.cluster.local
+        caCertPath: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+```
+
+**Configuration options:**
+
+- `kubernetes` (required): Empty object to indicate Kubernetes registry type
+- No sync policy required (Kubernetes registries query live deployments
+  on-demand)
+
+**Use cases:**
+
+- Discover MCP servers deployed via ToolHive Operator
+- Automatically expose running MCP servers to knowledge workers
+- Separate MCP server development from user consumption
+
 ## Sync policy
 
-Configure automatic synchronization of registry data.
+Configure automatic synchronization of registry data on a per-registry basis.
+Only applicable to synced registries (Git, API, File). Not required for managed
+or Kubernetes registries.
 
 ```yaml
-syncPolicy:
-  # Sync interval (e.g., "30m", "1h", "24h")
-  interval: '30m'
+registries:
+  - name: toolhive
+    git:
+      repository: https://github.com/stacklok/toolhive.git
+      branch: main
+      path: pkg/registry/data/registry.json
+    syncPolicy:
+      # Sync interval (e.g., "30m", "1h", "24h")
+      interval: '30m'
 ```
 
 The `interval` field specifies how often the server should fetch updates from
 the data source. Use Go duration format (e.g., `"30m"`, `"1h"`, `"24h"`).
 
+:::note
+
+Sync policy is per-registry and must be specified within each registry
+configuration. Managed and Kubernetes registries do not require sync policies.
+
+:::
+
 ## Server filtering
 
-Optionally filter which servers are exposed through the API.
+Optionally filter which servers are exposed through the API on a per-registry
+basis. Only applicable to synced registries (Git, API, File).
 
 ```yaml
-filter:
-  names:
-    include: ['official/*']
-    exclude: ['*/deprecated']
-  tags:
-    include: ['production']
-    exclude: ['experimental']
+registries:
+  - name: toolhive
+    git:
+      repository: https://github.com/stacklok/toolhive.git
+      branch: main
+      path: pkg/registry/data/registry.json
+    syncPolicy:
+      interval: '30m'
+    filter:
+      names:
+        include: ['official/*']
+        exclude: ['*/deprecated']
+      tags:
+        include: ['production']
+        exclude: ['experimental']
 ```
 
 **Filter options:**
@@ -162,6 +280,12 @@ filter:
 - `names.exclude`: List of name patterns to exclude (supports wildcards)
 - `tags.include`: List of tags that servers must have
 - `tags.exclude`: List of tags that servers must not have
+
+:::note
+
+Filters are per-registry and specified within each registry configuration.
+
+:::
 
 ## Database configuration
 
