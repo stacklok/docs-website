@@ -171,6 +171,10 @@ const config: Config = {
               label: 'Kubernetes Operator',
               to: 'toolhive/guides-k8s',
             },
+            {
+              label: 'Virtual MCP Server',
+              to: 'toolhive/guides-vmcp',
+            },
           ],
         },
         {
