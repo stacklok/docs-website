@@ -18,10 +18,12 @@ recommend running it with a proper Postgres database.
 ### Deployment Example
 
 Below is an example Kubernetes Deployment configuring ToolHive Registry server
-to expose a single static registry based on a Git repository. This example
-assumes that a Postgres database is available at `db.example.com` and the
-necessary users for migration and application execution are configured and able
-to connect to a `registry` database.
+to expose a single static registry based on a Git repository.
+
+This example assumes that a Postgres database is available at `db.example.com`
+and the necessary users for migration and application execution are configured
+and able to connect to a `registry` database. It also assumes that you have a
+keycloak instance configured to act as identity provider.
 
 For further details about user grants read the
 [Migration user privileges](./database.mdx#migration-user-privileges) and
@@ -43,26 +45,38 @@ spec:
       labels:
         app: registry-api
     spec:
+      initContainers:
+        - name: pgpass-fixer
+          image: alpine:3
+          command:
+            - /bin/sh
+            - -c
+            - cp /cfg/* /etc/ && chmod 0600 /etc/pgpass && chown 65532:65532
+              /etc/pgpass
+          volumeMounts:
+            - name: etc
+              mountPath: /etc
+            - name: config
+              mountPath: /cfg/config.yaml
+              subPath: config.yaml
+            - name: pgpass
+              mountPath: /cfg/pgpass
+              subPath: pgpass
       containers:
         - name: registry-api
-          image: ghcr.io/stacklok/thv-registry-api:latest
+          image: ghcr.io/stacklok/toolhive-registry-server/thv-registry-api:latest
           args:
             - serve
-            - --config=/etc/registry/config.yaml
+            - --config=/etc/config.yaml
           env:
             - name: PGPASSFILE
-              value: /etc/secrets/pgpassfile
+              value: /etc/pgpass
           ports:
             - containerPort: 8080
               name: http
           volumeMounts:
-            - name: config
-              mountPath: /etc/registry/config.yaml
-              subPath: config.yaml
-              readOnly: true
-            - name: pgpass
-              mountPath: /etc/secrets/pgpassfile
-              subPath: pgpassfile
+            - name: etc
+              mountPath: /etc
               readOnly: true
           livenessProbe:
             httpGet:
@@ -77,6 +91,8 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
+        - name: etc
+          emptyDir: {}
         - name: config
           configMap:
             name: registry-api-config
@@ -87,9 +103,8 @@ spec:
           secret:
             secretName: registry-api-pgpass
             items:
-              - key: pgpassfile
-                path: pgpassfile
-            defaultMode: 0600
+              - key: pgpass
+                path: pgpass
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -108,7 +123,13 @@ data:
       syncPolicy:
         interval: "15m"
     auth:
-      mode: anonymous
+      mode: oauth
+      oauth:
+        resourceUrl: https://registry.example.com
+        providers:
+          - name: keycloak
+            issuerUrl: https://keycloak.example.com/realms/mcp
+            audience: registry-api
     database:
       host: db.example.com
       port: 5432
@@ -123,9 +144,9 @@ metadata:
   name: registry-api-pgpass
 type: Opaque
 stringData:
-  pgpassfile: |
-    postgres:5432:registry:db_app:app_password
-    postgres:5432:registry:db_migrator:migrator_password
+  pgpass: |
+    db.example.com:5432:registry:db_app:app_password
+    db.example.com:5432:registry:db_migrator:migrator_password
 ---
 apiVersion: v1
 kind: Service
