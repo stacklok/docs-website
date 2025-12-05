@@ -167,3 +167,98 @@ Apply the deployment:
 ```bash
 kubectl apply -f deployment.yaml
 ```
+
+## Workload Discovery
+
+Kubernetes workload discovery works by looking for annotations in a specific set
+of workloads. The types being watched are
+[`MCPServer`](../guides-k8s/run-mcp-k8s.mdx),
+[`MCPRemoteProxy`](../guides-k8s/remote-mcp-proxy.mdx), and
+[`VirtualMCPServer`](../guides-vmcp/configuration.mdx).
+
+This feature requires the Registry Server to be granted access to those
+resources via a Service Account like the following
+
+```yaml title="registry-service-account.yaml"
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: example-registry
+  name: example-registry-registry-api
+  namespace: toolhive-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: example-registry
+  name: example-registry-registry-api
+  namespace: toolhive-system
+rules:
+  - apiGroups:
+      - toolhive.stacklok.dev
+    resources:
+      - mcpservers
+      - mcpremoteproxies
+      - virtualmcpservers
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ''
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: example-registry
+  name: example-registry-registry-api
+  namespace: toolhive-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: example-registry-registry-api
+subjects:
+  - kind: ServiceAccount
+    name: example-registry-registry-api
+    namespace: toolhive-system
+```

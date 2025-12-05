@@ -82,9 +82,6 @@ registries:
       path: pkg/registry/data/registry.json
     syncPolicy:
       interval: '30m'
-
-auth:
-  mode: anonymous
 ```
 
 **Configuration options:**
@@ -116,9 +113,6 @@ registries:
       endpoint: https://registry.modelcontextprotocol.io
     syncPolicy:
       interval: '1h'
-
-auth:
-  mode: anonymous
 ```
 
 **Configuration options:**
@@ -134,7 +128,7 @@ etc.) to the endpoint URL.
 
 :::
 
-### Local file source
+### File source
 
 Read from filesystem. Ideal for local development and testing.
 
@@ -146,14 +140,31 @@ registries:
       path: /data/registry.json
     syncPolicy:
       interval: '15m'
-
-auth:
-  mode: anonymous
 ```
+
+Alternatively, the source can be a custom URL.
+
+```yaml title="config-file.yaml"
+registries:
+  - name: remote
+    format: upstream
+    file:
+      url: https://www.example.com/registry.json
+      timeout: 5s
+    syncPolicy:
+      interval: '15m'
+```
+
+The fields `file` and `url` are mutually exclusive.
 
 **Configuration options:**
 
-- `path` (required): Path to the registry file on the filesystem
+- `path` (required): Path to the registry file on the filesystem. Mutually
+  exclusive with `url`
+- `url` (required): URL is the HTTP/HTTPS URL to fetch the registry file from.
+  Mutually exclusive with `file`
+- `timeout` (optional): The timeout for HTTP requests when using URL, defaults
+  to 30s, ignored when `file` is specified
 
 ### Managed registry
 
@@ -165,10 +176,6 @@ registries:
   - name: internal
     format: upstream
     managed: {}
-
-auth:
-  mode: oauth
-  # See authentication.mdx for OAuth configuration details
 ```
 
 **Configuration options:**
@@ -193,10 +200,6 @@ registries:
   - name: k8s-cluster
     format: toolhive
     kubernetes: {}
-
-auth:
-  mode: oauth
-  # See authentication.mdx for Kubernetes OAuth configuration details
 ```
 
 **Configuration options:**
@@ -204,6 +207,44 @@ auth:
 - `kubernetes` (required): Empty object to indicate Kubernetes registry type
 - No sync policy required (Kubernetes registries query live deployments
   on-demand)
+
+:::info[How does it work?]
+
+Kubernetes workload discovery works by looking for annotations in a specific set
+of workloads. The types being watched are
+[`MCPServer`](../guides-k8s/run-mcp-k8s.mdx),
+[`MCPRemoteProxy`](../guides-k8s/remote-mcp-proxy.mdx), and
+[`VirtualMCPServer`](../guides-vmcp/configuration.mdx).
+
+The Registry Server will receive events when a resource among those listed above
+is annotated with the following annotations
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: my-mcp-server
+  namespace: production
+  annotations:
+    toolhive.stacklok.dev/registry-export: 'true'
+    toolhive.stacklok.dev/registry-url: 'https://mcp.example.com/servers/my-mcp-server'
+    toolhive.stacklok.dev/registry-description: |
+      Production MCP server for code analysis
+spec:
+  # ... MCP server spec
+```
+
+| Annotation                                   | Required | Description                               |
+| -------------------------------------------- | -------- | ----------------------------------------- |
+| `toolhive.stacklok.dev/registry-export`      | Yes      | Must be `"true"` to include in registry   |
+| `toolhive.stacklok.dev/registry-url`         | Yes      | The external endpoint URL for this server |
+| `toolhive.stacklok.dev/registry-description` | Yes      | Override the description in registry      |
+
+This feature requires the Registry Server to be granted access to those
+resources via a Service Account, check the details in the
+[deployment section](./deployment.mdx#workload-discovery).
+
+:::
 
 **Use cases:**
 
