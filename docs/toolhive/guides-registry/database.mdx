@@ -1,0 +1,271 @@
+---
+title: Database configuration
+description:
+  How to configure PostgreSQL database storage and migrations for the ToolHive
+  Registry server
+---
+
+The Registry server optionally supports PostgreSQL database connectivity for
+storing registry state and metadata. This enables persistence across restarts
+and provides a foundation for advanced features.
+
+## Configuration
+
+### Basic database configuration
+
+```yaml title="config.yaml"
+database:
+  host: localhost
+  port: 5432
+  user: registry
+  database: registry
+  sslMode: require
+  maxOpenConns: 25
+  maxIdleConns: 5
+  connMaxLifetime: '5m'
+```
+
+### Configuration fields
+
+| Field             | Type   | Required | Default   | Description                                                                |
+| ----------------- | ------ | -------- | --------- | -------------------------------------------------------------------------- |
+| `host`            | string | Yes      | -         | Database server hostname or IP address                                     |
+| `port`            | int    | Yes      | -         | Database server port                                                       |
+| `user`            | string | Yes      | -         | Database username for normal operations                                    |
+| `migrationUser`   | string | No       | `user`    | Database username for running migrations (should have elevated privileges) |
+| `database`        | string | Yes      | -         | Database name                                                              |
+| `sslMode`         | string | No       | `require` | SSL mode (`disable`, `require`, `verify-ca`, `verify-full`)                |
+| `maxOpenConns`    | int    | No       | `25`      | Maximum number of open connections to the database                         |
+| `maxIdleConns`    | int    | No       | `5`       | Maximum number of idle connections in the pool                             |
+| `connMaxLifetime` | string | No       | `5m`      | Maximum lifetime of a connection (e.g., "1h", "30m")                       |
+
+\* Password configuration is required but has multiple sources (see Password
+Security below)
+
+## Password security
+
+The server supports secure password management with separate credentials for
+migrations and normal operations. This follows the principle of least privilege
+by using elevated privileges only when necessary.
+
+Password configuration is done using a
+[Postgres Password File](https://www.postgresql.org/docs/current/libpq-pgpass.html)
+and exporting the `PGPASSFILE` environment variable.
+
+### Recommended setup
+
+For production deployments, use separate database users:
+
+1. **Application user** (`user`): Limited privileges for normal operations
+   - SELECT, INSERT, UPDATE, DELETE on application tables
+   - No schema modification privileges
+
+2. **Migration user** (`migrationUser`): Elevated privileges for migrations
+   - CREATE, ALTER, DROP on schemas and tables
+   - Used only during migration operations
+
+### Example configuration with separate users
+
+```yaml title="config-production.yaml"
+database:
+  host: db.example.com
+  port: 5432
+  user: db_app
+  migrationUser: db_migrator
+  database: registry
+  sslMode: verify-full
+```
+
+Store passwords in a pgpass file with restricted permissions:
+
+```bash
+# Create pgpass file (recommended location: /etc/secrets/pgpassfile)
+echo "db.example.com:5432:registry:db_app:app_password" > /etc/secrets/pgpassfile
+echo "db.example.com:5432:registry:db_migrator:migrator_password" >> /etc/secrets/pgpassfile
+
+# Mandatory: restrict permissions to 0600, will be ignored otherwise
+chmod 600 /etc/secrets/pgpassfile
+```
+
+**Using the pgpass file:**
+
+Set the `PGPASSFILE` environment variable when running the server:
+
+```bash
+# For standalone server
+export PGPASSFILE=/etc/secrets/pgpassfile
+thv-registry-api serve --config config.yaml
+
+# For Docker/Kubernetes
+# Set the PGPASSFILE environment variable in your deployment configuration
+# See deployment.mdx for examples
+```
+
+:::tip
+
+The pgpass file format is: `hostname:port:database:username:password`
+
+You can use wildcards (`*`) for any field except password. For example:
+
+- `*:5432:*:db_app:app_password` - matches any host or database
+- `localhost:*:registry:db_app:app_password` - matches any port
+
+See the
+[PostgreSQL documentation](https://www.postgresql.org/docs/current/libpq-pgpass.html)
+for more details.
+
+:::
+
+You can find more details about user creation and initial configuration in this
+[test file](https://github.com/stacklok/toolhive-registry-server/blob/301ccf4e3ad13daad28be7b669d8e5fca337ec14/cmd/thv-registry-api/app/serve_test.go#L56-L103).
+
+## Database migrations
+
+The server uses database migrations to manage schema changes. Migrations run
+automatically on startup, but you can also run them manually.
+
+### Automatic migrations
+
+By default, the server runs migrations automatically when it starts:
+
+1. Connects to the database using the migration user credentials
+2. Checks the current migration version
+3. Applies any pending migrations
+4. Switches to the application user for normal operations
+
+This ensures the database schema is always up to date.
+
+### Manual migrations
+
+You can run migrations manually using the CLI:
+
+#### Run migrations
+
+```bash
+thv-registry-api migrate up --config config.yaml [--yes]
+```
+
+The `--yes` flag skips the confirmation prompt.
+
+#### Rollback migrations
+
+```bash
+thv-registry-api migrate down --config config.yaml --num-steps N [--yes]
+```
+
+The `--num-steps` parameter specifies how many migration steps to roll back.
+
+### Migration user privileges
+
+The migration user needs the following privileges:
+
+- CREATE, ALTER, DROP on the target database
+- Ability to create and modify tables, indexes, and other schema objects
+- SELECT, INSERT, UPDATE, DELETE on the migration tracking table
+
+Example SQL to create a migration user:
+
+```sql
+DO $$
+DECLARE
+    migrator_user TEXT := 'db_migrator';
+    migrator_password TEXT := 'migrator_password';
+    db_name TEXT := 'registry';
+BEGIN
+    EXECUTE format('CREATE USER %I WITH PASSWORD %L', migrator_user, migrator_password);
+    EXECUTE format('GRANT CONNECT ON DATABASE %I TO %I', db_name, migrator_user);
+    EXECUTE format('GRANT CREATE ON SCHEMA public TO %I', migrator_user);
+    EXECUTE format('GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO %I', migrator_user);
+END
+$$;
+```
+
+### Application user privileges
+
+The application user needs limited privileges for normal operations:
+
+- SELECT, INSERT, UPDATE, DELETE on application tables
+- No schema modification privileges
+
+Example SQL to create an application user:
+
+```sql
+DO $$
+DECLARE
+    app_user TEXT := 'db_app';
+    app_password TEXT := 'app_password';
+    db_name TEXT := 'registry';
+BEGIN
+    CREATE ROLE toolhive_registry_server;
+    EXECUTE format('CREATE USER %I WITH PASSWORD %L', app_user, app_password);
+    EXECUTE format('GRANT toolhive_registry_server TO %I', app_user);
+    EXECUTE format('GRANT CONNECT ON DATABASE %I TO %I', db_name, app_user);
+END
+$$;
+```
+
+## SSL/TLS configuration
+
+Configure SSL/TLS for secure database connections:
+
+- `disable`: No SSL (not recommended for production)
+- `require`: Require SSL (default)
+- `verify-ca`: Require SSL and verify CA certificate
+- `verify-full`: Require SSL and verify both CA and server hostname
+
+For production, use `verify-full`:
+
+```yaml
+database:
+  sslMode: verify-full
+```
+
+## Connection pooling
+
+Tune connection pool settings for your workload:
+
+```yaml
+database:
+  maxOpenConns: 25 # Maximum open connections
+  maxIdleConns: 5 # Maximum idle connections
+  connMaxLifetime: '5m' # Maximum connection lifetime
+```
+
+**Guidelines:**
+
+- `maxOpenConns`: Set based on your database server's connection limits
+- `maxIdleConns`: Typically 20-25% of `maxOpenConns`
+- `connMaxLifetime`: Set to less than your database server's connection timeout
+
+## Troubleshooting
+
+### Connection errors
+
+If you encounter connection errors:
+
+1. Verify database credentials are correct
+2. Check network connectivity to the database server
+3. Ensure the database server allows connections from your host
+4. Verify SSL/TLS configuration matches your database server settings
+
+### Migration errors
+
+If migrations fail:
+
+1. Check that the migration user has sufficient privileges
+2. Verify the database exists and is accessible
+3. Check migration logs for specific error messages
+4. Ensure no other processes are modifying the schema concurrently
+
+### Permission errors
+
+If you see permission errors during normal operations:
+
+1. Verify the application user has the required privileges
+2. Check that migrations completed successfully
+3. Ensure the application user can access all required tables
+
+## Next steps
+
+- [Deploy the server](./deployment.mdx) with database configuration
+- [Configure data sources](./configuration.mdx) to populate the registry

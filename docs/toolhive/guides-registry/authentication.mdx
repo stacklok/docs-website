@@ -1,0 +1,463 @@
+---
+title: Authentication configuration
+description:
+  How to configure authentication for the ToolHive Registry server with
+  anonymous and OAuth modes
+---
+
+The Registry server provides secure-by-default authentication, defaulting to
+OAuth mode to protect your registry. You can configure authentication to fit
+different deployment scenarios, from development environments to production
+deployments with enterprise identity providers.
+
+## Authentication modes
+
+The server supports two authentication modes configured via the required `auth`
+section in your configuration file:
+
+- **OAuth** (default): Secure authentication using JWT tokens from identity
+  providers
+- **Anonymous**: No authentication (development/testing only)
+
+:::info[Secure by default]
+
+The server defaults to **OAuth mode** when no explicit auth configuration is
+provided. This secure-by-default posture ensures your registry is protected
+unless you explicitly choose anonymous mode for development scenarios.
+
+:::
+
+## OAuth authentication
+
+OAuth mode (the default) validates JWT tokens from identity providers. This
+enables enterprise authentication with providers like Keycloak, Auth0, Okta,
+Azure AD, Kubernetes service accounts, or any OIDC-compliant service.
+
+### Basic OAuth configuration
+
+```yaml title="config-oauth.yaml"
+auth:
+  mode: oauth
+  oauth:
+    resourceUrl: https://registry.example.com
+    providers:
+      - name: keycloak
+        issuerUrl: https://keycloak.example.com/realms/mcp
+        audience: registry-api
+```
+
+### OAuth configuration fields
+
+| Field             | Type     | Required | Default                                   | Description                                        |
+| ----------------- | -------- | -------- | ----------------------------------------- | -------------------------------------------------- |
+| `mode`            | string   | Yes      | `oauth`                                   | Authentication mode (`oauth` or `anonymous`)       |
+| `resourceUrl`     | string   | Yes      | -                                         | The URL of the registry resource being protected   |
+| `realm`           | string   | No       | `mcp-registry`                            | OAuth realm identifier                             |
+| `scopesSupported` | []string | No       | `[mcp-registry:read, mcp-registry:write]` | Supported OAuth scopes                             |
+| `publicPaths`     | []string | No       | `[]`                                      | Additional paths accessible without authentication |
+| `providers`       | array    | Yes      | -                                         | List of OAuth/OIDC identity providers              |
+
+### Provider configuration fields
+
+| Field              | Type   | Required | Description                                                             |
+| ------------------ | ------ | -------- | ----------------------------------------------------------------------- |
+| `name`             | string | Yes      | Provider identifier for logging and monitoring                          |
+| `issuerUrl`        | string | Yes      | OAuth/OIDC issuer URL (e.g., `https://keycloak.example.com/realms/mcp`) |
+| `audience`         | string | Yes      | Expected audience claim in the JWT token                                |
+| `clientId`         | string | No       | OAuth client ID (for token introspection)                               |
+| `clientSecretFile` | string | No       | Path to file containing client secret (for token introspection)         |
+| `caCertPath`       | string | No       | Path to CA certificate for TLS verification                             |
+
+### Complete OAuth configuration example
+
+```yaml title="config-oauth-complete.yaml"
+auth:
+  mode: oauth
+  oauth:
+    resourceUrl: https://registry.example.com
+    realm: mcp-registry
+    scopesSupported:
+      - mcp-registry:read
+      - mcp-registry:write
+    publicPaths:
+      - /custom-health
+      - /metrics
+    providers:
+      - name: keycloak-prod
+        issuerUrl: https://keycloak.example.com/realms/production
+        audience: registry-api
+        clientId: registry-client
+        clientSecretFile: /etc/secrets/keycloak-secret
+        caCertPath: /etc/ssl/certs/keycloak-ca.crt
+      - name: keycloak-staging
+        issuerUrl: https://keycloak.example.com/realms/staging
+        audience: registry-api-staging
+```
+
+## Kubernetes authentication
+
+For Kubernetes deployments, you can configure OAuth to validate service account
+tokens. This provides automatic, zero-config authentication for workloads
+running in the cluster.
+
+### Kubernetes provider configuration
+
+```yaml title="config-k8s-auth.yaml"
+auth:
+  mode: oauth
+  oauth:
+    resourceUrl: https://registry.example.com
+    providers:
+      - name: kubernetes
+        issuerUrl: https://kubernetes.default.svc
+        audience: https://kubernetes.default.svc
+        caCertPath: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+```
+
+:::tip[In-cluster service DNS]
+
+The correct Kubernetes API server URL for in-cluster access is
+`https://kubernetes.default.svc` (not
+`https://kubernetes.default.svc.cluster.local`).
+
+:::
+
+### How Kubernetes authentication works
+
+1. Workloads in the cluster mount service account tokens automatically at
+   `/var/run/secrets/kubernetes.io/serviceaccount/token`
+2. Clients send these tokens in the `Authorization: Bearer <TOKEN>` header
+3. The server validates tokens using the Kubernetes API server's public keys
+4. Access is granted based on the service account's identity and token claims
+
+### Kubernetes deployment example
+
+When deploying in Kubernetes, the service account CA certificate is
+automatically mounted:
+
+```yaml title="deployment-k8s-auth.yaml"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registry-api
+  template:
+    metadata:
+      labels:
+        app: registry-api
+    spec:
+      serviceAccountName: registry-api
+      containers:
+        - name: registry-api
+          image: ghcr.io/stacklok/thv-registry-api:latest
+          args:
+            - serve
+            - --config=/etc/registry/config.yaml
+          volumeMounts:
+            - name: config
+              mountPath: /etc/registry/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            # Service account token and CA cert are mounted automatically by Kubernetes
+      volumes:
+        - name: config
+          configMap:
+            name: registry-api-config
+```
+
+The service account token and CA certificate are automatically mounted at:
+
+- Token: `/var/run/secrets/kubernetes.io/serviceaccount/token`
+- CA cert: `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`
+
+## Provider-specific examples
+
+### Keycloak
+
+```yaml
+auth:
+  mode: oauth
+  oauth:
+    resourceUrl: https://registry.example.com
+    providers:
+      - name: keycloak
+        issuerUrl: https://keycloak.example.com/realms/YOUR_REALM
+        audience: registry-api
+```
+
+The `issuerUrl` should point to your Keycloak realm. The realm name is part of
+the URL path.
+
+### Auth0
+
+```yaml
+auth:
+  mode: oauth
+  oauth:
+    resourceUrl: https://registry.example.com
+    providers:
+      - name: auth0
+        issuerUrl: https://YOUR_DOMAIN.auth0.com/
+        audience: https://registry.example.com
+```
+
+For Auth0, the `issuerUrl` is your Auth0 domain. The `audience` should match the
+API identifier configured in your Auth0 dashboard.
+
+### Azure AD
+
+```yaml
+auth:
+  mode: oauth
+  oauth:
+    resourceUrl: https://registry.example.com
+    providers:
+      - name: azure-ad
+        issuerUrl: https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0
+        audience: api://YOUR_CLIENT_ID
+```
+
+For Azure AD, the `issuerUrl` includes your tenant ID, and the `audience`
+typically uses the `api://` scheme with your application's client ID.
+
+### Okta
+
+```yaml
+auth:
+  mode: oauth
+  oauth:
+    resourceUrl: https://registry.example.com
+    providers:
+      - name: okta
+        issuerUrl: https://YOUR_DOMAIN.okta.com/oauth2/default
+        audience: api://default
+```
+
+For Okta, the `issuerUrl` points to your Okta authorization server. Use
+`/oauth2/default` for the default authorization server or
+`/oauth2/YOUR_AUTH_SERVER_ID` for custom servers.
+
+## Anonymous authentication
+
+Anonymous mode disables authentication entirely, allowing unrestricted access to
+all registry endpoints. This is only suitable for development, testing, or
+internal deployments where authentication is handled at a different layer (e.g.,
+network policies, VPN, or reverse proxy).
+
+### Anonymous configuration
+
+```yaml title="config-anonymous.yaml"
+auth:
+  mode: anonymous
+```
+
+:::danger[No access control]
+
+Anonymous mode provides **no access control**. Only use it in trusted
+environments or when other security measures are in place. **Do not use
+anonymous mode in production.**
+
+:::
+
+### Anonymous use cases
+
+- Local development and testing
+- Internal deployments behind corporate firewalls
+- Read-only public registries
+- Environments with external authentication (reverse proxy, API gateway)
+
+## Default public paths
+
+The following endpoints are **always accessible without authentication**,
+regardless of the auth mode:
+
+- `/health` - Health check endpoint
+- `/readiness` - Readiness probe endpoint
+- `/version` - Version information
+- `/.well-known/*` - OAuth discovery endpoints (RFC 9728)
+
+You can configure additional public paths using the `publicPaths` field in your
+OAuth configuration.
+
+## RFC 9728 OAuth discovery
+
+The server implements [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728.html)
+for OAuth Protected Resource Metadata, enabling clients to automatically
+discover authentication requirements.
+
+### Discovery endpoint
+
+Clients can discover the server's OAuth configuration at:
+
+```text
+GET /.well-known/oauth-protected-resource
+```
+
+### Example discovery response
+
+```json
+{
+  "resource": "https://registry.example.com",
+  "authorization_servers": [
+    "https://keycloak.example.com/realms/production",
+    "https://keycloak.example.com/realms/staging"
+  ],
+  "scopes_supported": ["mcp-registry:read", "mcp-registry:write"],
+  "bearer_methods_supported": ["header"],
+  "resource_documentation": "https://docs.example.com/registry"
+}
+```
+
+This allows OAuth clients to automatically configure themselves without manual
+setup, improving interoperability and reducing configuration errors.
+
+## Testing authentication
+
+### Using curl with a bearer token
+
+```bash
+TOKEN="your-jwt-token-here"
+
+curl -H "Authorization: Bearer $TOKEN" \
+  https://registry.example.com/default/v0.1/servers
+```
+
+### Using kubectl with Kubernetes service accounts
+
+```bash
+# Get the service account token
+TOKEN=$(kubectl get secret <service-account-token-name> \
+  -n <namespace> \
+  -o jsonpath='{.data.token}' | base64 -d)
+
+# Make authenticated request
+curl -H "Authorization: Bearer $TOKEN" \
+  https://registry.example.com/default/v0.1/servers
+```
+
+### Testing token validation
+
+To verify your token is valid:
+
+1. Decode the JWT at [jwt.io](https://jwt.io/) (don't paste production tokens!)
+2. Check the `iss` (issuer) matches your configured `issuerUrl`
+3. Check the `aud` (audience) matches your configured `audience`
+4. Check the `exp` (expiration) is in the future
+
+## Choosing an authentication mode
+
+| Mode      | Security | Complexity | Best for                                        |
+| --------- | -------- | ---------- | ----------------------------------------------- |
+| OAuth     | High     | Medium     | Production deployments, enterprise environments |
+| Anonymous | None     | None       | Development, testing, internal trusted networks |
+
+**Recommendations:**
+
+- **Production deployments**: Always use OAuth mode with your organization's
+  identity provider
+- **Kubernetes deployments**: Use OAuth with Kubernetes provider for automatic
+  authentication
+- **Development/testing**: Use anonymous mode for local development only
+- **Public read-only registries**: Use OAuth mode with rate limiting; avoid
+  anonymous in production
+
+## Security considerations
+
+### Token validation
+
+All OAuth providers validate:
+
+- Token signature using the provider's public keys (fetched from issuer's JWKS
+  endpoint)
+- Token expiration (`exp` claim)
+- Audience claim (`aud`) matches configuration
+- Issuer (`iss`) matches the configured provider
+
+### HTTPS requirements
+
+Always use HTTPS in production to protect tokens in transit:
+
+```yaml
+auth:
+  mode: oauth
+  oauth:
+    resourceUrl: https://registry.example.com # Use HTTPS
+    providers:
+      - issuerUrl: https://keycloak.example.com/realms/mcp # Use HTTPS
+```
+
+### Token storage
+
+- Never log or persist JWT tokens in plaintext
+- Use short-lived tokens when possible (e.g., 1 hour)
+- Implement token refresh flows for long-running clients
+- Rotate client secrets regularly if using `clientSecretFile`
+
+### Custom CA certificates
+
+If your identity provider uses a custom CA certificate, specify the `caCertPath`
+in your provider configuration:
+
+```yaml
+providers:
+  - name: internal-keycloak
+    issuerUrl: https://keycloak.internal.example.com/realms/mcp
+    audience: registry-api
+    caCertPath: /etc/ssl/certs/internal-ca.crt
+```
+
+## Troubleshooting
+
+### 401 Unauthorized errors
+
+If you receive 401 Unauthorized responses:
+
+1. **Verify the token is valid**: Check expiration, issuer, and audience claims
+2. **Check the Authorization header**: Must be `Authorization: Bearer <TOKEN>`
+3. **Verify issuer URL**: Must exactly match the `iss` claim in your token
+4. **Check audience**: The `aud` claim must match your configured `audience`
+5. **Review server logs**: Look for specific validation error messages
+
+### Token validation errors
+
+If you see authentication failures in server logs:
+
+1. **Issuer URL accessibility**: Verify the server can reach the issuer's JWKS
+   endpoint (typically `${issuerUrl}/.well-known/openid-configuration`)
+2. **Network connectivity**: Check DNS resolution and firewall rules
+3. **CA certificates**: If using custom CAs, ensure `caCertPath` is correct
+4. **Token expiration**: Ensure your token hasn't expired (check `exp` claim)
+
+### Provider connectivity issues
+
+If the server cannot connect to the OAuth provider:
+
+1. Verify network connectivity to the issuer URL from the server
+2. Check DNS resolution for the provider's domain
+3. Ensure firewall rules allow outbound HTTPS (port 443) to the provider
+4. For Kubernetes providers, verify the API server is reachable at
+   `https://kubernetes.default.svc`
+5. Check CA certificate configuration if using self-signed certificates
+
+### Multiple providers not working
+
+If tokens from some providers work but others don't:
+
+1. Verify each provider's configuration independently using curl
+2. Check that audience claims differ between providers if needed (or are
+   intentionally the same)
+3. Ensure issuer URLs are correct and include the full path (including realm for
+   Keycloak)
+4. Review server logs to identify which specific provider validation is failing
+5. Test each provider's JWKS endpoint accessibility:
+   `curl ${issuerUrl}/.well-known/openid-configuration`
+
+## Next steps
+
+- [Configure database storage](./database.mdx) for production deployments
+- [Deploy the server](./deployment.mdx) with authentication enabled
+- [Configure registry sources](./configuration.mdx) for your environment
