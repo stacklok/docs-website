@@ -87,7 +87,7 @@ const config: Config = {
           editUrl: 'https://github.com/stacklok/docs-website/tree/main/',
         },
         blog: {
-          blogTitle: 'ToolHive Updates & Announcements',
+          blogTitle: 'ToolHive Updates and Announcements',
           blogDescription:
             'Stay up to date with the latest ToolHive news, project updates, and announcements.',
           path: 'blog/toolhive-updates',
