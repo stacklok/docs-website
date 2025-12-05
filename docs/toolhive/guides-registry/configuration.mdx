@@ -1,0 +1,344 @@
+---
+title: Configuration
+description:
+  How to configure the ToolHive Registry Server with registry and sync policies
+---
+
+All configuration is done via YAML files. The server requires a `--config` flag
+pointing to a YAML configuration file.
+
+## Configuration file structure
+
+```yaml title="config.yaml"
+# Registry name/identifier (optional, defaults to "default")
+registryName: my-registry
+
+# Registries configuration (required, can have multiple registries)
+registries:
+  - name: toolhive
+    # Data format: upstream (MCP registry format) or toolhive (legacy)
+    format: upstream
+
+    # Git repository configuration
+    git:
+      repository: https://github.com/stacklok/toolhive.git
+      branch: main
+      path: pkg/registry/data/registry.json
+
+    # Per-registry automatic sync policy (required for synced registries)
+    syncPolicy:
+      # Sync interval (e.g., "30m", "1h", "24h")
+      interval: '30m'
+
+    # Optional: Per-registry server filtering
+    filter:
+      names:
+        include: ['official/*']
+        exclude: ['*/deprecated']
+      tags:
+        include: ['production']
+        exclude: ['experimental']
+
+# Authentication configuration (required)
+# See authentication.mdx for detailed configuration options
+auth:
+  mode: anonymous
+
+# Optional: Database configuration
+database:
+  host: localhost
+  port: 5432
+  user: registry
+  database: registry
+  sslMode: require
+  maxOpenConns: 25
+  maxIdleConns: 5
+  connMaxLifetime: '5m'
+```
+
+## Command-line flags
+
+| Flag        | Description                     | Required | Default |
+| ----------- | ------------------------------- | -------- | ------- |
+| `--config`  | Path to YAML configuration file | Yes      | -       |
+| `--address` | Server listen address           | No       | `:8080` |
+
+## Registries
+
+The server supports five registry types, each with its own configuration
+options. You can configure multiple registries in a single server instance.
+
+### Git repository source
+
+Clone and sync from Git repositories. Ideal for version-controlled registries.
+
+```yaml title="config-git.yaml"
+registries:
+  - name: toolhive
+    format: toolhive
+    git:
+      repository: https://github.com/stacklok/toolhive.git
+      branch: main
+      path: pkg/registry/data/registry.json
+    syncPolicy:
+      interval: '30m'
+```
+
+**Configuration options:**
+
+- `repository` (required): Git repository URL
+- `branch` (optional): Branch name to use (defaults to `main`)
+- `tag` (optional): Tag name to pin to a specific version
+- `commit` (optional): Commit SHA to pin to a specific commit
+- `path` (required): Path to the registry file within the repository
+
+:::tip
+
+You can use `branch`, `tag`, or `commit` to pin to a specific version. If
+multiple are specified, `commit` takes precedence over `tag`, which takes
+precedence over `branch`.
+
+:::
+
+### API endpoint source
+
+Sync from upstream MCP Registry APIs. Supports federation and aggregation
+scenarios.
+
+```yaml title="config-api.yaml"
+registries:
+  - name: mcp-upstream
+    format: upstream
+    api:
+      endpoint: https://registry.modelcontextprotocol.io
+    syncPolicy:
+      interval: '1h'
+```
+
+**Configuration options:**
+
+- `endpoint` (required): Base URL of the upstream MCP Registry API (without
+  path)
+- `format` (required): Must be `upstream` for API sources
+
+:::note
+
+The server automatically appends the appropriate API paths (`/v0.1/servers`,
+etc.) to the endpoint URL.
+
+:::
+
+### File source
+
+Read from filesystem. Ideal for local development and testing.
+
+```yaml title="config-file.yaml"
+registries:
+  - name: local
+    format: upstream
+    file:
+      path: /data/registry.json
+    syncPolicy:
+      interval: '15m'
+```
+
+Alternatively, the source can be a custom URL.
+
+```yaml title="config-file.yaml"
+registries:
+  - name: remote
+    format: upstream
+    file:
+      url: https://www.example.com/registry.json
+      timeout: 5s
+    syncPolicy:
+      interval: '15m'
+```
+
+The fields `file` and `url` are mutually exclusive.
+
+**Configuration options:**
+
+- `path` (required): Path to the registry file on the filesystem. Mutually
+  exclusive with `url`
+- `url` (required): URL is the HTTP/HTTPS URL to fetch the registry file from.
+  Mutually exclusive with `file`
+- `timeout` (optional): The timeout for HTTP requests when using URL, defaults
+  to 30s, ignored when `file` is specified
+
+### Managed registry
+
+API-managed registry for directly publishing and deleting MCP servers via the
+API. Does not sync from external sources.
+
+```yaml title="config-managed.yaml"
+registries:
+  - name: internal
+    format: upstream
+    managed: {}
+```
+
+**Configuration options:**
+
+- `managed` (required): Empty object to indicate managed registry type
+- No sync policy required (managed registries are updated via API, not synced)
+
+**Supported operations:**
+
+- `POST /{registryName}/v0.1/publish` - Publish new server versions
+- `DELETE /{registryName}/v0.1/servers/{name}/versions/{version}` - Delete
+  versions
+- `GET` operations for listing and retrieving servers
+
+### Kubernetes registry
+
+Discovers MCP servers from running Kubernetes deployments. Automatically creates
+registry entries for deployed MCP servers in your cluster.
+
+```yaml title="config-kubernetes.yaml"
+registries:
+  - name: k8s-cluster
+    format: toolhive
+    kubernetes: {}
+```
+
+**Configuration options:**
+
+- `kubernetes` (required): Empty object to indicate Kubernetes registry type
+- No sync policy required (Kubernetes registries query live deployments
+  on-demand)
+
+:::info[How does it work?]
+
+Kubernetes workload discovery works by looking for annotations in a specific set
+of workloads. The types being watched are
+[`MCPServer`](../guides-k8s/run-mcp-k8s.mdx),
+[`MCPRemoteProxy`](../guides-k8s/remote-mcp-proxy.mdx), and
+[`VirtualMCPServer`](../guides-vmcp/configuration.mdx).
+
+The Registry Server will receive events when a resource among those listed above
+is annotated with the following annotations
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: my-mcp-server
+  namespace: production
+  annotations:
+    toolhive.stacklok.dev/registry-export: 'true'
+    toolhive.stacklok.dev/registry-url: 'https://mcp.example.com/servers/my-mcp-server'
+    toolhive.stacklok.dev/registry-description: |
+      Production MCP server for code analysis
+spec:
+  # ... MCP server spec
+```
+
+| Annotation                                   | Required | Description                               |
+| -------------------------------------------- | -------- | ----------------------------------------- |
+| `toolhive.stacklok.dev/registry-export`      | Yes      | Must be `"true"` to include in registry   |
+| `toolhive.stacklok.dev/registry-url`         | Yes      | The external endpoint URL for this server |
+| `toolhive.stacklok.dev/registry-description` | Yes      | Override the description in registry      |
+
+This feature requires the Registry Server to be granted access to those
+resources via a Service Account, check the details in the
+[deployment section](./deployment.mdx#workload-discovery).
+
+:::
+
+**Use cases:**
+
+- Discover MCP servers deployed via ToolHive Operator
+- Automatically expose running MCP servers to knowledge workers
+- Separate MCP server development from user consumption
+
+## Sync policy
+
+Configure automatic synchronization of registry data on a per-registry basis.
+Only applicable to synced registries (Git, API, File). Not required for managed
+or Kubernetes registries.
+
+```yaml
+registries:
+  - name: toolhive
+    git:
+      repository: https://github.com/stacklok/toolhive.git
+      branch: main
+      path: pkg/registry/data/registry.json
+    syncPolicy:
+      # Sync interval (e.g., "30m", "1h", "24h")
+      interval: '30m'
+```
+
+The `interval` field specifies how often the server should fetch updates from
+the registry. Use Go duration format (e.g., `"30m"`, `"1h"`, `"24h"`).
+
+:::note
+
+Sync policy is per-registry and must be specified within each registry
+configuration. Managed and Kubernetes registries do not require sync policies.
+
+:::
+
+## Server filtering
+
+Optionally filter which servers are exposed through the API on a per-registry
+basis. Only applicable to synced registries (Git, API, File).
+
+```yaml
+registries:
+  - name: toolhive
+    git:
+      repository: https://github.com/stacklok/toolhive.git
+      branch: main
+      path: pkg/registry/data/registry.json
+    syncPolicy:
+      interval: '30m'
+    filter:
+      names:
+        include: ['official/*']
+        exclude: ['*/deprecated']
+      tags:
+        include: ['production']
+        exclude: ['experimental']
+```
+
+**Filter options:**
+
+- `names.include`: List of name patterns to include (supports wildcards)
+- `names.exclude`: List of name patterns to exclude (supports wildcards)
+- `tags.include`: List of tags that servers must have
+- `tags.exclude`: List of tags that servers must not have
+
+:::note
+
+Filters are per-registry and specified within each registry configuration.
+
+:::
+
+## Authentication configuration
+
+The server supports multiple authentication modes to fit different deployment
+scenarios. All authentication configuration is done via the `auth` section in
+your configuration file.
+
+Available modes:
+
+- **Anonymous**: No authentication (development/testing)
+- **OAuth with Kubernetes**: Service account token validation
+- **OAuth with generic providers**: Integration with Keycloak, Auth0, Okta, etc.
+
+See the [Authentication configuration](./authentication.mdx) guide for detailed
+information on configuring each mode.
+
+## Database configuration
+
+The server optionally supports PostgreSQL database connectivity for storing
+registry state and metadata. See the [Database configuration](./database.mdx)
+guide for detailed information.
+
+## Next steps
+
+- [Configure authentication](./authentication.mdx) for secure access
+- [Deploy the server](./deployment.mdx) with your configuration
+- [Configure database storage](./database.mdx) for production use

@@ -1,0 +1,365 @@
+---
+title: Composite tools and workflows
+description: Create multi-step workflows that span multiple backend MCP servers.
+---
+
+Composite tools let you define multi-step workflows that execute across multiple
+backend MCP servers with parallel execution, conditional logic, approval gates,
+and error handling.
+
+## Overview
+
+A composite tool combines multiple backend tool calls into a single workflow.
+When a client calls a composite tool, vMCP orchestrates the execution across
+backend MCP servers, handling dependencies and collecting results.
+
+## Key capabilities
+
+- **Parallel execution**: Independent steps run concurrently; dependent steps
+  wait for their prerequisites
+- **Template expansion**: Dynamic arguments using step outputs
+- **Elicitation**: Request user input mid-workflow (approval gates, choices)
+- **Error handling**: Configurable abort, continue, or retry behavior
+- **Timeouts**: Workflow and per-step timeout configuration
+
+:::info
+
+Elicitation (user prompts during workflow execution) is defined in the CRD but
+has not been extensively tested. Test thoroughly in non-production environments
+first.
+
+:::
+
+## Configuration location
+
+Composite tools are defined in the VirtualMCPServer resource under the
+`spec.compositeTools` array:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: my-vmcp
+spec:
+  groupRef:
+    name: my-tools
+  # ... other configuration ...
+  compositeTools:
+    - name: my_workflow
+      description: A multi-step workflow
+      parameters:
+        # Input parameters (JSON Schema)
+      steps:
+        # Workflow steps
+```
+
+See the [CompositeToolSpec](../reference/crd-spec.mdx#compositetoolspec)
+definition in the CRD for all available fields.
+
+## Simple example
+
+Here's a basic composite tool that fetches a URL and then summarizes it:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  compositeTools:
+    - name: fetch_and_summarize
+      description: Fetch a URL and create a summary
+      parameters:
+        type: object
+        properties:
+          url:
+            type: string
+        required:
+          - url
+      steps:
+        - id: fetch
+          tool: fetch.fetch
+          arguments:
+            url: '{{.params.url}}'
+        - id: summarize
+          tool: llm.summarize
+          arguments:
+            text: '{{.steps.fetch.output.content}}'
+          dependsOn: [fetch]
+```
+
+**What's happening:**
+
+1. **Parameters**: Define the workflow inputs (just `url` in this case)
+2. **Step 1 (fetch)**: Calls the `fetch.fetch` tool with the URL from parameters
+   using template syntax `{{.params.url}}`
+3. **Step 2 (summarize)**: Waits for the fetch step (`dependsOn: [fetch]`), then
+   calls `llm.summarize` with the fetched content using
+   `{{.steps.fetch.output.content}}`
+
+When a client calls this composite tool, vMCP executes both steps in sequence
+and returns the final summary.
+
+## Use cases
+
+### Incident investigation
+
+Gather data from multiple monitoring systems in parallel:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  compositeTools:
+    - name: investigate_incident
+      description: Gather incident data from multiple sources in parallel
+      parameters:
+        type: object
+        properties:
+          incident_id:
+            type: string
+        required:
+          - incident_id
+      steps:
+        # These steps run in parallel (no dependencies)
+        - id: get_logs
+          tool: logging.search_logs
+          arguments:
+            query: 'incident_id={{.params.incident_id}}'
+            timerange: '1h'
+        - id: get_metrics
+          tool: monitoring.get_metrics
+          arguments:
+            filter: 'error_rate'
+            timerange: '1h'
+        - id: get_alerts
+          tool: pagerduty.list_alerts
+          arguments:
+            incident: '{{.params.incident_id}}'
+        # This step waits for all parallel steps to complete
+        - id: create_summary
+          tool: docs.create_document
+          arguments:
+            title: 'Incident {{.params.incident_id}} Summary'
+            content: 'Logs: {{.steps.get_logs.output.results}}'
+          dependsOn: [get_logs, get_metrics, get_alerts]
+```
+
+### Deployment with approval
+
+Human-in-the-loop workflow for production deployments:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  compositeTools:
+    - name: deploy_with_approval
+      description: Deploy to production with human approval gate
+      parameters:
+        type: object
+        properties:
+          pr_number:
+            type: string
+          environment:
+            type: string
+            default: production
+        required:
+          - pr_number
+      steps:
+        - id: get_pr_details
+          tool: github.get_pull_request
+          arguments:
+            pr: '{{.params.pr_number}}'
+        - id: approval
+          type: elicitation
+          message:
+            'Deploy PR #{{.params.pr_number}} to {{.params.environment}}?'
+          schema:
+            type: object
+            properties:
+              approved:
+                type: boolean
+          timeout: '10m'
+          dependsOn: [get_pr_details]
+        - id: deploy
+          tool: deploy.trigger_deployment
+          arguments:
+            ref: '{{.steps.get_pr_details.output.head_sha}}'
+            environment: '{{.params.environment}}'
+          condition: '{{.steps.approval.content.approved}}'
+          dependsOn: [approval]
+```
+
+### Cross-system data aggregation
+
+Collect and correlate data from multiple backend MCP servers:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  compositeTools:
+    - name: security_scan_report
+      description: Run security scans and create consolidated report
+      parameters:
+        type: object
+        properties:
+          repo:
+            type: string
+        required:
+          - repo
+      steps:
+        - id: vulnerability_scan
+          tool: osv.scan_dependencies
+          arguments:
+            repository: '{{.params.repo}}'
+        - id: secret_scan
+          tool: gitleaks.scan_repo
+          arguments:
+            repository: '{{.params.repo}}'
+        - id: create_issue
+          tool: github.create_issue
+          arguments:
+            repo: '{{.params.repo}}'
+            title: 'Security Scan Results'
+            body:
+              'Found {{.steps.vulnerability_scan.output.count}} vulnerabilities'
+          dependsOn: [vulnerability_scan, secret_scan]
+          onError:
+            action: continue
+```
+
+## Workflow definition
+
+### Parameters
+
+Define input parameters using JSON Schema format:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  compositeTools:
+    - name: <TOOL_NAME>
+      parameters:
+        type: object
+        properties:
+          required_param:
+            type: string
+          optional_param:
+            type: integer
+            default: 10
+        required:
+          - required_param
+```
+
+### Steps
+
+Each step can be a tool call or an elicitation:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  compositeTools:
+    - name: <TOOL_NAME>
+      steps:
+        - id: step_name # Unique identifier
+          tool: backend.tool # Tool to call
+          arguments: # Arguments with template expansion
+            arg1: '{{.params.input}}'
+          dependsOn: [other_step] # Dependencies (this step waits for other_step)
+          condition: '{{.steps.check.output.approved}}' # Optional condition
+          timeout: '30s' # Step timeout
+          onError:
+            action: abort # abort | continue | retry
+```
+
+### Elicitation (user prompts)
+
+Request input from users during workflow execution:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  compositeTools:
+    - name: <TOOL_NAME>
+      steps:
+        - id: approval
+          type: elicitation
+          message: 'Proceed with deployment?'
+          schema:
+            type: object
+            properties:
+              confirm: { type: boolean }
+          timeout: '5m'
+```
+
+### Error handling
+
+Configure behavior when steps fail:
+
+| Action     | Description                     |
+| ---------- | ------------------------------- |
+| `abort`    | Stop workflow immediately       |
+| `continue` | Log error, proceed to next step |
+| `retry`    | Retry with exponential backoff  |
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  compositeTools:
+    - name: <TOOL_NAME>
+      steps:
+        - id: <STEP_ID>
+          # ... other step config (tool, arguments, etc.)
+          onError:
+            action: retry
+            maxRetries: 3
+```
+
+## Template syntax
+
+Access workflow context in arguments:
+
+| Template                | Description                                |
+| ----------------------- | ------------------------------------------ |
+| `{{.params.name}}`      | Input parameter                            |
+| `{{.steps.id.output}}`  | Step output                                |
+| `{{.steps.id.content}}` | Elicitation response content               |
+| `{{.steps.id.action}}`  | Elicitation action (accept/decline/cancel) |
+
+## Complete example
+
+A VirtualMCPServer with an inline composite tool:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: workflow-vmcp
+  namespace: toolhive-system
+spec:
+  groupRef:
+    name: my-tools
+  incomingAuth:
+    type: anonymous
+  aggregation:
+    conflictResolution: prefix
+    conflictResolutionConfig:
+      prefixFormat: '{workload}_'
+  compositeTools:
+    - name: fetch_and_summarize
+      description: Fetch a URL and create a summary
+      parameters:
+        type: object
+        properties:
+          url:
+            type: string
+            description: URL to fetch
+        required:
+          - url
+      steps:
+        - id: fetch_content
+          tool: fetch.fetch
+          arguments:
+            url: '{{.params.url}}'
+        - id: summarize
+          tool: llm.summarize # Hypothetical backend - replace with your actual LLM server
+          arguments:
+            text: '{{.steps.fetch_content.output.content}}'
+          dependsOn: [fetch_content]
+      timeout: '5m'
+```
+
+For complex, reusable workflows, use `VirtualMCPCompositeToolDefinition`
+resources and reference them with `compositeToolRefs`.
+
+## Related information
+
+- [Configure vMCP servers](./configuration.mdx)

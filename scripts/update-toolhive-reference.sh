@@ -17,8 +17,8 @@ CLI_DOCS_DST="${DOCS_DIR}/toolhive/reference/cli"
 API_SPEC_SRC="${IMPORT_DIR}/toolhive/docs/server/swagger.yaml"
 API_SPEC_DST="${STATIC_DIR}/api-specs/toolhive-api.yaml"
 
-REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive/pkg/registry/data/schema.json"
-REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/toolhive-registry-schema.json"
+REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive/pkg/registry/data/toolhive-legacy-registry.schema.json"
+REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/toolhive-legacy-registry.schema.json"
 
 CRD_API_SRC="${IMPORT_DIR}/toolhive/docs/operator/crd-api.md"
 CRD_API_DST="${STATIC_DIR}/api-specs/toolhive-crd-api.md"

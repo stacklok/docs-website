@@ -171,6 +171,14 @@ const config: Config = {
               label: 'Kubernetes Operator',
               to: 'toolhive/guides-k8s',
             },
+            {
+              label: 'Virtual MCP Server',
+              to: 'toolhive/guides-vmcp',
+            },
+            {
+              label: 'ToolHive Registry',
+              to: 'toolhive/guides-registry',
+            },
           ],
         },
         {
@@ -187,7 +195,7 @@ const config: Config = {
               to: 'toolhive/reference/api',
             },
             {
-              label: 'ToolHive registry schema',
+              label: 'ToolHive Registry schema',
               to: 'toolhive/reference/registry-schema',
             },
             {

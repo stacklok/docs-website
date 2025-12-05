@@ -1,0 +1,264 @@
+---
+title: Deployment in Kubernetes
+description: How to deploy the ToolHive Registry server in Kubernetes
+---
+
+The Registry server can be deployed in various environments, from local
+development to production Kubernetes clusters.
+
+## Kubernetes deployment
+
+The Registry server is designed to run as an independent deployment, possibly
+alongside the ToolHive Operator.
+
+Although it is possible to run ToolHive Registry to use an in-memory store, it
+is unreliable to run multiple replicas as they would not share state, and we
+recommend running it with a proper Postgres database.
+
+### Deployment Example
+
+Below is an example Kubernetes Deployment configuring ToolHive Registry server
+to expose a single static registry based on a Git repository.
+
+This example assumes that a Postgres database is available at `db.example.com`
+and the necessary users for migration and application execution are configured
+and able to connect to a `registry` database. It also assumes that you have a
+keycloak instance configured to act as identity provider.
+
+For further details about user grants read the
+[Migration user privileges](./database.mdx#migration-user-privileges) and
+[Application user privileges](./database.mdx#application-user-privileges)
+sections.
+
+```yaml title="deployment.yaml"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registry-api
+  template:
+    metadata:
+      labels:
+        app: registry-api
+    spec:
+      initContainers:
+        - name: pgpass-fixer
+          image: alpine:3
+          command:
+            - /bin/sh
+            - -c
+            - cp /cfg/* /etc/ && chmod 0600 /etc/pgpass && chown 65532:65532
+              /etc/pgpass
+          volumeMounts:
+            - name: etc
+              mountPath: /etc
+            - name: config
+              mountPath: /cfg/config.yaml
+              subPath: config.yaml
+            - name: pgpass
+              mountPath: /cfg/pgpass
+              subPath: pgpass
+      containers:
+        - name: registry-api
+          image: ghcr.io/stacklok/toolhive-registry-server/thv-registry-api:latest
+          args:
+            - serve
+            - --config=/etc/config.yaml
+          env:
+            - name: PGPASSFILE
+              value: /etc/pgpass
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: etc
+              mountPath: /etc
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: etc
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: registry-api-config
+            items:
+              - key: config.yaml
+                path: config.yaml
+        - name: pgpass
+          secret:
+            secretName: registry-api-pgpass
+            items:
+              - key: pgpass
+                path: pgpass
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: registry-api-config
+data:
+  config.yaml: |
+    registryName: my-registry
+    registries:
+    - name: git-registry
+      format: toolhive
+      git:
+        repository: https://github.com/stacklok/toolhive.git
+        branch: main
+        path: pkg/registry/data/registry.json
+      syncPolicy:
+        interval: "15m"
+    auth:
+      mode: oauth
+      oauth:
+        resourceUrl: https://registry.example.com
+        providers:
+          - name: keycloak
+            issuerUrl: https://keycloak.example.com/realms/mcp
+            audience: registry-api
+    database:
+      host: db.example.com
+      port: 5432
+      user: db_app
+      migrationUser: db_migrator
+      database: registry
+      sslMode: verify-full
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-api-pgpass
+type: Opaque
+stringData:
+  pgpass: |
+    db.example.com:5432:registry:db_app:app_password
+    db.example.com:5432:registry:db_migrator:migrator_password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry-api
+spec:
+  selector:
+    app: registry-api
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+```
+
+Apply the deployment:
+
+```bash
+kubectl apply -f deployment.yaml
+```
+
+## Workload Discovery
+
+Kubernetes workload discovery works by looking for annotations in a specific set
+of workloads. The types being watched are
+[`MCPServer`](../guides-k8s/run-mcp-k8s.mdx),
+[`MCPRemoteProxy`](../guides-k8s/remote-mcp-proxy.mdx), and
+[`VirtualMCPServer`](../guides-vmcp/configuration.mdx).
+
+This feature requires the Registry Server to be granted access to those
+resources via a Service Account like the following
+
+```yaml title="registry-service-account.yaml"
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: example-registry
+  name: example-registry-registry-api
+  namespace: toolhive-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: example-registry
+  name: example-registry-registry-api
+  namespace: toolhive-system
+rules:
+  - apiGroups:
+      - toolhive.stacklok.dev
+    resources:
+      - mcpservers
+      - mcpremoteproxies
+      - virtualmcpservers
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ''
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: example-registry
+  name: example-registry-registry-api
+  namespace: toolhive-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: example-registry-registry-api
+subjects:
+  - kind: ServiceAccount
+    name: example-registry-registry-api
+    namespace: toolhive-system
+```

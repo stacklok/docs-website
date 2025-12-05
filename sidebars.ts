@@ -154,6 +154,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/intro',
         'toolhive/guides-k8s/deploy-operator-helm',
         'toolhive/guides-k8s/run-mcp-k8s',
+        'toolhive/guides-k8s/connect-clients',
         'toolhive/guides-k8s/remote-mcp-proxy',
         'toolhive/guides-k8s/customize-tools',
         'toolhive/guides-k8s/telemetry-and-metrics',
@@ -161,6 +162,42 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/auth-k8s',
         'toolhive/guides-k8s/token-exchange-k8s',
         'toolhive/reference/crd-spec',
+      ],
+    },
+
+    {
+      type: 'category',
+      label: 'Guides: Virtual MCP Server',
+      description:
+        'How to aggregate multiple MCP servers into a unified endpoint',
+      link: {
+        type: 'doc',
+        id: 'toolhive/guides-vmcp/index',
+      },
+      items: [
+        'toolhive/guides-vmcp/intro',
+        'toolhive/guides-vmcp/configuration',
+        'toolhive/guides-vmcp/authentication',
+        'toolhive/guides-vmcp/tool-aggregation',
+        'toolhive/guides-vmcp/composite-tools',
+      ],
+    },
+
+    {
+      type: 'category',
+      label: 'Guides: Registry Server',
+      description:
+        'How to deploy and use the ToolHive Registry server to discover and access MCP servers',
+      link: {
+        type: 'doc',
+        id: 'toolhive/guides-registry/index',
+      },
+      items: [
+        'toolhive/guides-registry/intro',
+        'toolhive/guides-registry/configuration',
+        'toolhive/guides-registry/authentication',
+        'toolhive/guides-registry/database',
+        'toolhive/guides-registry/deployment',
       ],
     },
 
@@ -176,11 +213,13 @@ const sidebars: SidebarsConfig = {
       },
       items: [
         'toolhive/concepts/mcp-primer',
+        'toolhive/concepts/groups',
         'toolhive/concepts/registry-criteria',
         'toolhive/concepts/observability',
         'toolhive/concepts/auth-framework',
         'toolhive/concepts/cedar-policies',
         'toolhive/concepts/backend-auth',
+        'toolhive/concepts/vmcp',
       ],
     },
 
@@ -200,6 +239,7 @@ const sidebars: SidebarsConfig = {
           href: '/toolhive/quickstart',
           label: 'Quickstart guides',
         },
+        'toolhive/tutorials/quickstart-vmcp',
         'toolhive/tutorials/mcp-optimizer',
         'toolhive/tutorials/custom-registry',
         'toolhive/tutorials/vault-integration',
@@ -224,6 +264,7 @@ const sidebars: SidebarsConfig = {
     },
 
     'toolhive/faq',
+    'toolhive/support',
     'toolhive/contributing',
   ],
 };

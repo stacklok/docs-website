@@ -263,6 +263,11 @@ all caps. Written out, it is lower-cased.
 applications provide context to LLMs. MCP is an abbreviation, so it's written in
 all caps. Written out, it is proper-cased.
 
+**vMCP**: Virtual MCP Server, a feature of ToolHive that aggregates multiple MCP
+servers into a single endpoint. It's written with a lowercase "v" followed by
+"MC" in all caps and a capital "P" (not "VMCP" or "Vmcp"). Use "Virtual MCP
+Server (vMCP)" on first use, "vMCP" thereafter.
+
 **npm**: the registry for JavaScript packages (the "npm registry"), and the
 default package manager for JavaScript. Since it's both the registry _and_ the
 package manager, it may be useful to disambiguate "the npm registry". It's not

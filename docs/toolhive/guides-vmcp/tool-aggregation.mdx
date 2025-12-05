@@ -1,0 +1,229 @@
+---
+title: Tool aggregation and conflict resolution
+description:
+  How vMCP aggregates tools from multiple backend MCP servers and resolves
+  naming conflicts.
+---
+
+When aggregating multiple MCP servers, tool name conflicts can occur when
+different backend servers expose tools with the same name. Virtual MCP Server
+(vMCP) provides strategies to resolve these conflicts automatically.
+
+## Overview
+
+vMCP discovers tools from all backend MCPServers in the referenced group and
+presents them as a unified set to clients. When two backend MCP servers have
+tools with the same name (for example, both GitHub and Jira have a
+`create_issue` tool), a conflict resolution strategy determines how to handle
+the collision.
+
+## Conflict resolution strategies
+
+### Prefix strategy (default)
+
+By default, vMCP prefixes all tool names with the workload identifier (the
+`metadata.name` of each MCPServer resource). This guarantees unique names and is
+the safest option for most deployments.
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  aggregation:
+    conflictResolution: prefix
+    conflictResolutionConfig:
+      prefixFormat: '{workload}_'
+```
+
+**Prefix format options:**
+
+| Format        | Example result        |
+| ------------- | --------------------- |
+| `{workload}`  | `githubcreate_issue`  |
+| `{workload}_` | `github_create_issue` |
+| `{workload}.` | `github.create_issue` |
+
+**Example:**
+
+With backend servers `github` and `jira`, both exposing `create_issue`:
+
+- GitHub's tool becomes `github_create_issue`
+- Jira's tool becomes `jira_create_issue`
+
+### Priority strategy
+
+When multiple backend MCP servers offer tools with the same name, the `priority`
+strategy keeps the tool from the first backend in the priority order and drops
+the duplicate tools from lower-priority backend servers.
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  aggregation:
+    conflictResolution: priority
+    conflictResolutionConfig:
+      priorityOrder: ['github', 'jira', 'slack']
+```
+
+In this example, if both GitHub and Jira provide a `create_issue` tool, only
+GitHub's version is exposed. Jira's duplicate is dropped.
+
+**When to use:** When you have a preferred backend MCP server for specific tools
+and want to hide duplicates.
+
+:::warning
+
+The priority strategy drops tools from lower-priority backend servers. Ensure
+this is the intended behavior before using in production.
+
+:::
+
+### Manual strategy
+
+The `manual` strategy gives you explicit control over tool naming when conflicts
+occur. You must provide overrides for all conflicting tools, or the vMCP will
+fail to start.
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  aggregation:
+    conflictResolution: manual
+    tools:
+      - workload: github
+        overrides:
+          create_issue:
+            name: gh_create_issue
+      - workload: jira
+        overrides:
+          create_issue:
+            name: jira_ticket
+```
+
+**When to use:** Production deployments where you want explicit control over
+tool names.
+
+## Tool filtering
+
+Use filters to expose only specific tools from a backend MCP server, excluding
+all others. This is useful for reducing the tool surface area presented to LLM
+clients or removing unnecessary tools:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  aggregation:
+    tools:
+      - workload: github
+        filter: ['create_issue', 'list_issues', 'get_issue']
+```
+
+Only the listed tools are included; all others from that backend MCP server are
+excluded.
+
+## Tool overrides
+
+Use overrides to customize tool names and descriptions without modifying backend
+MCP server configurations. This is useful for disambiguating similarly-named
+tools or providing more context to LLM clients:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  aggregation:
+    tools:
+      - workload: github
+        overrides:
+          create_issue:
+            name: gh_new_issue
+            description: 'Create a new GitHub issue in the repository'
+```
+
+:::info
+
+You can also reference an `MCPToolConfig` resource using `toolConfigRef` instead
+of inline filter and overrides. This feature is currently in development.
+
+:::
+
+## Combine filters and overrides
+
+You can combine filtering and overrides for fine-grained control:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  aggregation:
+    conflictResolution: prefix
+    conflictResolutionConfig:
+      prefixFormat: '{workload}_'
+    tools:
+      - workload: github
+        filter: ['create_issue', 'list_issues']
+        overrides:
+          create_issue:
+            description: 'Create a GitHub issue (engineering team)'
+      - workload: jira
+        filter: ['create_issue', 'search_issues']
+```
+
+## Example: Aggregating multiple MCP servers
+
+This example shows two MCP servers (fetch and osv) aggregated with prefix-based
+conflict resolution:
+
+```yaml
+# MCPGroup to organize backend servers
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPGroup
+metadata:
+  name: demo-tools
+  namespace: toolhive-system
+spec:
+  description: Demo group for tool aggregation
+---
+# First backend: fetch server
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: fetch
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/gofetch/server
+  transport: streamable-http
+  proxyPort: 8080
+  mcpPort: 8080
+  groupRef: demo-tools
+---
+# Second backend: osv server
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: osv
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/osv-mcp/server
+  transport: streamable-http
+  proxyPort: 8080
+  mcpPort: 8080
+  groupRef: demo-tools
+---
+# VirtualMCPServer aggregating both backends
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: demo-vmcp
+  namespace: toolhive-system
+spec:
+  groupRef:
+    name: demo-tools
+  incomingAuth:
+    type: anonymous
+  aggregation:
+    conflictResolution: prefix
+    conflictResolutionConfig:
+      prefixFormat: '{workload}_'
+```
+
+With this configuration, tools from each backend are prefixed:
+
+- `fetch_*` tools from the fetch server
+- `osv_*` tools from the osv server
+
+## Related information
+
+- [VirtualMCPServer configuration reference](./configuration.mdx)
+- [Customize MCP server tools](../guides-k8s/customize-tools.mdx)

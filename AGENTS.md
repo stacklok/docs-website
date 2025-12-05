@@ -23,9 +23,9 @@ This is the user-facing documentation for ToolHive, an open source tool that hel
 
 Code quality tools:
 
-- Prettier for code formatting - `npm run prettier` to check, `npm run prettier:fix` to auto-fix.
-- markdownlint for enforcing Markdown style conventions - `npm run markdownlint` to check, `npm run markdownlint:fix` to auto-fix.
-- ESLint for JavaScript/TypeScript linting - `npm run eslint` to check, `npm run eslint:fix` to auto-fix.
+- All files: Prettier for code formatting - `npm run prettier` to check, `npm run prettier:fix` to auto-fix.
+- markdownlint for enforcing Markdown style conventions - `npm run markdownlint` to check, `npm run markdownlint:fix` to auto-fix (`.md` files only).
+- ESLint for JavaScript/TypeScript and MDX linting - `npm run eslint` to check, `npm run eslint:fix` to auto-fix.
 
 ## Audience
 
@@ -107,6 +107,7 @@ Common terms used in this project:
 - open source (not "open-source")
 - large language model (LLM)
 - Visual Studio Code ("VS Code" after first use)
+- Virtual MCP Server (vMCP) - a feature of ToolHive that aggregates multiple MCP servers into a single endpoint; use "Virtual MCP Server (vMCP)" on first use, "vMCP" thereafter
 
 Check this list for consistent use within the documentation. If you find inconsistencies, update the text to match the preferred term. If you find a term that is not listed here, consider adding it to the list for future reference.
 
