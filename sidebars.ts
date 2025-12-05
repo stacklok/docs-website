@@ -195,6 +195,7 @@ const sidebars: SidebarsConfig = {
       },
       items: [
         'toolhive/concepts/mcp-primer',
+        'toolhive/concepts/groups',
         'toolhive/concepts/registry-criteria',
         'toolhive/concepts/observability',
         'toolhive/concepts/auth-framework',
