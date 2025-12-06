@@ -5,6 +5,7 @@ This is the user-facing documentation for ToolHive, an open source tool that hel
 ## Folder structure
 
 - `/docs`: contains the main documentation files. Each file corresponds to a page in the documentation.
+- `/blog/toolhive-updates`: contains weekly update posts from the ToolHive team. These posts follow a slightly different voice (see "Tone and voice" section).
 - `/static`: contains static assets like images, icons, and other files that are served directly.
 - `/src`: contains the source code for the website, including components, styles, and customizations.
 
@@ -55,6 +56,7 @@ The project's official language is US English.
 - Use clear, straightforward language and avoid overly complex jargon to make content accessible to a wide audience.
 - Use active voice instead of passive voice.
 - Address the reader using the second person ("you", "your"). Avoid the first person ("we", "our") and third person ("the user", "a developer").
+  - Exception: In `/blog/toolhive-updates` posts, use first person ("we", "our") to communicate updates from the ToolHive team. This creates a direct connection between the team and the community.
 
 ### Capitalization
 
