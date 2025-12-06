@@ -1,0 +1,392 @@
+---
+title: Optimizing LLM context with tool filtering and overrides
+sidebar_label: Optimizing LLM context
+description:
+  Understanding when and why to use tool filtering and overrides to reduce
+  context pollution and improve AI performance.
+---
+
+When AI assistants interact with MCP servers, they receive information about
+every available tool. While having many tools provides flexibility, it can also
+create problems. This guide explains how tool filtering and overrides help you
+optimize your AI's context window for better performance and more focused
+results.
+
+## The context pollution problem
+
+Modern AI clients work by analyzing all available tools and selecting the most
+appropriate one for each task. This selection process happens in the AI model's
+context, which means every tool's name, description, and schema consumes tokens
+and processing time.
+
+Consider what happens when you connect an AI client to multiple MCP servers:
+
+- A GitHub server might expose 30+ tools for repositories, issues, pull
+  requests, and more
+- A filesystem server adds another 10+ tools for file operations
+- A database server contributes 20+ tools for queries and schema management
+- Additional servers for Slack, Jira, monitoring systems, and other integrations
+
+Before you know it, your AI client is evaluating 100+ tools for every request.
+
+### Why this matters
+
+When your AI receives too many tools, several problems emerge:
+
+**Performance degradation**: More tools mean longer processing time as the AI
+model evaluates each option. Tool selection becomes a bottleneck, especially for
+complex queries.
+
+**Higher costs**: Every tool description consumes tokens. In token-based pricing
+models, exposing unnecessary tools directly increases your costs for every AI
+interaction.
+
+**Reduced accuracy**: When faced with many similar tools, AI models sometimes
+choose incorrectly. A client might use a production database tool when it should
+use a development one, or select a write operation when a read would suffice.
+
+**Cognitive overhead**: Even when the AI selects correctly, users reviewing the
+available tools face information overload. It becomes harder to understand what
+the AI can do and verify it's using the right capabilities.
+
+The solution is selective tool exposure - showing your AI only the tools it
+actually needs.
+
+## Tool filtering
+
+Tool filtering restricts which tools from an MCP server are available to
+clients. Think of it as creating a curated subset of functionality for specific
+use cases.
+
+### How filtering works
+
+ToolHive uses an allow-list approach. When you specify a filter, only the tools
+you explicitly list become available. The filtering happens at the HTTP proxy
+level, so:
+
+- The AI only sees allowed tools in its tool list
+- Attempts to call filtered tools result in errors
+- The backend MCP server remains unchanged
+
+An empty filter means all tools are available. Once you add any tool to the
+filter, only listed tools are exposed.
+
+### When to use filtering
+
+Filtering makes sense in several scenarios:
+
+#### Focusing workflows on specific tasks
+
+When you want your AI client to have access to only the tools relevant to a
+specific task. For example, enable only pull request tools from the GitHub
+server when doing code review work, hiding all issue, repository, and branch
+management tools. This helps the AI make more confident tool selections.
+
+#### Limiting access to safe operations
+
+An MCP server for database access might include both read and write operations.
+During development or analysis, you might want to expose only read operations
+like `query` and `list_tables`, while filtering out `insert`, `update`, and
+`delete`. You might enable read-only tools while disabling any tools that modify
+data, create resources, or perform destructive operations.
+
+#### Reducing cognitive load
+
+When an MCP server exposes tools with overlapping functionality or tools you
+never use, hiding irrelevant options makes it easier for both the AI and human
+users to understand available capabilities. A file system MCP server could
+provide dozens of operations, but your documentation assistant might only need
+`read_file` and `list_directory`.
+
+#### Improving tool selection accuracy
+
+When you notice the AI frequently choosing the wrong tool from a server with
+many options, removing alternatives forces more accurate selection.
+
+#### Creating role-specific tool sets
+
+Different team members need different capabilities. Junior developers might get
+filtered access to safe operations, while senior developers see the full tool
+set. Security-sensitive tools like deployment commands might be filtered for
+most users but available to DevOps engineers.
+
+#### Compliance and governance
+
+When organizational policies restrict certain operations, you can enforce policy
+by only exposing approved tools, even if the underlying MCP server provides more
+capabilities.
+
+#### Optimizing multi-server setups
+
+When running multiple MCP servers, each contributes tools to your AI's context.
+Filtering helps you keep only essential tools from each server, preventing
+context overload.
+
+## Tool overrides
+
+Tool overrides let you rename tools and update their descriptions without
+modifying the backend MCP server. This is particularly valuable when tool names
+are unclear or when combining multiple servers.
+
+### How overrides work
+
+Overrides maintain a bidirectional mapping between original and user-facing
+names. When your AI sees the tool list, it receives the overridden names and
+descriptions. When it calls a tool, ToolHive translates the user-facing name
+back to the original name for the backend server.
+
+You can override either the name, the description, or both for each tool.
+
+### When to use overrides
+
+Overrides solve several common problems:
+
+#### Clarifying technical names
+
+MCP servers often use developer-oriented names that aren't intuitive. Renaming
+`exec_raw_sql` to `run_database_query` makes the purpose clearer. Updating
+`fs_read` to `read_file` removes technical jargon.
+
+#### Preventing name conflicts
+
+When combining multiple MCP servers through Virtual MCP Server or running
+similar servers for different purposes, naming conflicts are common. Both GitHub
+and Jira might have a `create_issue` tool. Overriding these to
+`github_create_issue` and `jira_create_issue` eliminates ambiguity.
+
+When you run the same MCP server multiple times with different configurations,
+tool names become identical. For example, running the GitHub server twice (once
+for your company's organization and once for open source contributions) requires
+renaming tools to `github_company_create_pr` and `github_oss_create_pr` to make
+the distinction clear.
+
+#### Matching organizational conventions
+
+Your team might have specific naming patterns or terminology. Overrides let you
+align tool names with your established conventions without asking MCP server
+maintainers to change their implementations.
+
+#### Improving descriptions for specific contexts
+
+Generic MCP servers provide general-purpose descriptions. You might want to
+tailor these for your environment. A `deploy` tool's description could be
+updated from "Deploy application" to "Deploy to staging environment -
+auto-rollback enabled."
+
+#### Adding environment-specific context
+
+When the same tool behaves differently in different environments, renaming makes
+the destination explicit. Renaming `deploy` to `deploy_to_staging` versus
+`deploy_to_production` reduces the chance of mistakes. Similarly, you might use
+`read_file_frontend` and `read_file_backend` when running filesystem servers
+with different volume mounts.
+
+## Combining filters and overrides
+
+Filtering and overrides work together, but understanding their interaction is
+important: **filters apply to user-facing names after overrides**.
+
+This means when you override a tool name, you must use the new name in your
+filter list, not the original name.
+
+### Pattern: Secure subset with clear names
+
+Start by overriding technical names to be more intuitive, then filter to only
+safe operations.
+
+```json
+{
+  "toolsOverride": {
+    "exec_raw_sql": {
+      "name": "run_database_query",
+      "description": "Execute read-only SQL queries against the staging database"
+    },
+    "write_table": {
+      "name": "update_database",
+      "description": "Modify staging database tables (use with caution)"
+    }
+  }
+}
+```
+
+Then filter using the new names:
+
+```bash
+thv run --tools-override overrides.json --tools run_database_query my-db-server
+```
+
+**Why this works**: The combination gives you both clarity and safety. The AI
+sees `run_database_query` with a helpful description that makes the purpose
+obvious, and write operations aren't available at all. This pattern is excellent
+for development and staging environments where you want to prevent accidental
+data modifications.
+
+### Pattern: Environment-specific configurations
+
+Different environments need different tool access. In development, you might
+expose many tools for flexibility. In production, filter to essential tools
+only.
+
+Your development configuration could expose all tools with friendly names
+through overrides. Your production configuration uses the same overrides for
+consistency but adds strict filtering to expose only read and monitoring tools,
+blocking any write or deployment operations.
+
+**Why this works**: The same override configuration ensures consistent tool
+names across environments, making it easier to write documentation and train
+team members. The filtering layer adds environment-appropriate safety without
+requiring different tool naming schemes. This prevents production accidents
+while maintaining development flexibility.
+
+### Pattern: Multi-server aggregation
+
+When using Virtual MCP Server to combine multiple MCP servers, overrides prevent
+conflicts and improve clarity:
+
+```json
+{
+  "toolsOverride": {
+    "search": {
+      "name": "github_search",
+      "description": "Search GitHub repositories and code"
+    }
+  }
+}
+```
+
+You can override the `search` tool from different servers to `github_search`,
+`jira_search`, and `confluence_search`. Then filter each server to its relevant
+tools, creating a clean, conflict-free tool set.
+
+**Why this works**: Tool name prefixes make it impossible to accidentally call
+the wrong server's version of a tool. Filtering ensures you're only exposing the
+most relevant tools from each server, preventing context overload even when
+aggregating many services. The AI can confidently select tools knowing the
+prefix indicates the target system.
+
+## Making decisions about filtering and overrides
+
+When setting up an MCP server, consider these questions:
+
+### Do you need filtering?
+
+Ask yourself:
+
+- Does this MCP server expose tools I won't use for this task?
+- Are there security concerns with certain operations?
+- Am I running multiple MCP servers that together provide too many tools?
+- Could reducing tool options help the AI make better choices?
+
+If you answered yes to any of these, filtering will likely help.
+
+### Do you need overrides?
+
+Consider:
+
+- Are any tool names unclear or technical?
+- Do tool names conflict with others in my setup?
+- Could better descriptions help the AI understand when to use each tool?
+- Do I need to align names with team conventions?
+
+If these situations apply, overrides will improve your experience.
+
+### Trade-offs to consider
+
+While these optimization features provide significant benefits, they also
+introduce complexity. Consider these trade-offs:
+
+**Configuration overhead**: More filters and overrides mean more configuration
+to maintain. If MCP servers change their available tools, you may need to update
+filters. If you add new projects or environments, you need to create and
+configure new tool sets. This configuration is another thing that can go out of
+sync with your actual needs.
+
+**Maintenance burden**: Tool overrides need to stay synchronized with the
+underlying MCP server. If a server updates its tool names or descriptions, your
+overrides might become outdated or incorrect. You'll need to monitor server
+updates and adjust your overrides accordingly.
+
+**Flexibility vs. safety**: Aggressive filtering and strict configurations make
+it harder for AI clients to access tools they occasionally need. You might find
+yourself creating exceptions or temporarily reconfiguring access when you need
+something outside your normal tool set. The more you optimize, the less flexible
+your system becomes.
+
+**Discovery limitations**: When tools are filtered, it can be harder to discover
+what capabilities are available. New team members might not realize certain
+tools exist because they're hidden by filters. Documentation becomes more
+important when your visible tools don't match what the MCP server actually
+provides.
+
+**Combined use requires careful coordination**: When using both features,
+remember that filters apply to overridden names. Document your configuration so
+others understand the mapping between original and overridden names, and which
+tools are filtered in each environment.
+
+These trade-offs aren't reasons to avoid optimization features - they're
+considerations for finding the right balance for your situation. Start simple,
+measure the impact, and add complexity only where it provides clear value.
+
+## Measuring optimization impact
+
+How do you know if your optimization efforts are working? Look for these
+indicators:
+
+**Performance improvements**: If you're using ToolHive's observability features,
+watch for reduced request duration after implementing filtering. The AI should
+spend less time evaluating tool options, leading to faster responses.
+
+**Accuracy improvements**: Track how often the AI selects the correct tool on
+the first try versus requiring corrections or retries. This is subjective but
+noticeable in day-to-day use. You should see fewer instances of the AI choosing
+the wrong tool or needing clarification.
+
+**Reduced token consumption**: If your AI client provides usage statistics,
+compare token consumption for similar tasks before and after optimization. Fewer
+tools mean smaller tool descriptions in each request, which directly reduces
+token usage.
+
+**User confidence**: Pay attention to how comfortable you feel reviewing and
+approving AI actions. Clear tool names and focused tool sets make it easier to
+verify the AI is doing the right thing. You should feel more confident about
+what the AI will do before it does it.
+
+**Fewer mistakes**: Track incidents where the AI accessed the wrong environment,
+used the wrong instance of a tool, or selected an inappropriate capability.
+These should decrease with proper optimization, especially for
+environment-specific configurations.
+
+## Best practices
+
+Based on common usage patterns, these practices help you use filtering and
+overrides effectively:
+
+**Start minimal and expand**: Begin with a small, focused tool set. Add tools as
+you discover needs rather than starting with everything and removing tools
+later.
+
+**Use descriptive override names**: Choose names that clearly indicate what the
+tool does. Avoid abbreviations or internal jargon that might confuse users.
+
+**Document your configurations**: Tool overrides and filters create an
+abstraction layer. Document which original tools map to which user-facing names
+and why certain tools are filtered.
+
+**Test after changes**: When you apply overrides, verify that tool calls still
+work correctly. Try calling overridden tools to confirm the name mapping
+functions properly.
+
+**Consider your AI's perspective**: When choosing names and descriptions, think
+about what information helps the AI select the right tool. Be specific about
+purpose and context.
+
+## Related information
+
+Now that you understand when and why to use tool filtering and overrides, learn
+how to configure them:
+
+- [Customize tools (CLI)](../guides-cli/run-mcp-servers.mdx)
+- [Customize tools (UI)](../guides-ui/customize-tools.mdx)
+- [Customize tools (Kubernetes)](../guides-k8s/customize-tools.mdx)
+- [MCPToolConfig CRD reference](../reference/crd-spec.mdx)
+- [Virtual MCP Server tool aggregation](../guides-vmcp/tool-aggregation.mdx)
