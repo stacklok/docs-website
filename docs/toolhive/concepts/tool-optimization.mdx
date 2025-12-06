@@ -45,10 +45,6 @@ interaction.
 choose incorrectly. A client might use a production database tool when it should
 use a development one, or select a write operation when a read would suffice.
 
-**Cognitive overhead**: Even when the AI selects correctly, users reviewing the
-available tools face information overload. It becomes harder to understand what
-the AI can do and verify it's using the right capabilities.
-
 The solution is selective tool exposure - showing your AI only the tools it
 actually needs.
 
@@ -75,12 +71,14 @@ filter, only listed tools are exposed.
 
 Filtering makes sense in several scenarios:
 
-#### Focusing workflows on specific tasks
+#### Improving AI tool selection
 
-When you want your AI client to have access to only the tools relevant to a
-specific task. For example, enable only pull request tools from the GitHub
-server when doing code review work, hiding all issue, repository, and branch
-management tools. This helps the AI make more confident tool selections.
+When an MCP server exposes many tools but you only need a subset, filtering
+improves the AI's ability to choose correctly. For example, enable only pull
+request tools from the GitHub server when doing code review, or limit a file
+system server to just `read_file` and `list_directory` for a documentation
+assistant. Removing irrelevant options helps the AI make more confident
+selections.
 
 #### Limiting access to safe operations
 
@@ -89,19 +87,6 @@ During development or analysis, you might want to expose only read operations
 like `query` and `list_tables`, while filtering out write operations like
 `insert`, `update`, and `delete` that modify data or perform destructive
 operations.
-
-#### Reducing cognitive load
-
-When an MCP server exposes tools with overlapping functionality or tools you
-never use, hiding irrelevant options makes it easier for both the AI and human
-users to understand available capabilities. A file system MCP server could
-provide dozens of operations, but your documentation assistant might only need
-`read_file` and `list_directory`.
-
-#### Improving tool selection accuracy
-
-When you notice the AI frequently choosing the wrong tool from a server with
-many options, removing alternatives forces more accurate selection.
 
 #### Creating role-specific tool sets
 
@@ -115,12 +100,6 @@ most users but available to DevOps engineers.
 When organizational policies restrict certain operations, you can enforce policy
 by only exposing approved tools, even if the underlying MCP server provides more
 capabilities.
-
-#### Optimizing multi-server setups
-
-When running multiple MCP servers, each contributes tools to your AI's context.
-Filtering helps you keep only essential tools from each server, preventing
-context overload.
 
 ## Tool overrides
 
@@ -141,12 +120,6 @@ You can override either the name, the description, or both for each tool.
 
 Overrides solve several common problems:
 
-#### Clarifying technical names
-
-MCP servers often use developer-oriented names that aren't intuitive. Renaming
-`exec_raw_sql` to `run_database_query` makes the purpose clearer. Updating
-`fs_read` to `read_file` removes technical jargon.
-
 #### Preventing name conflicts
 
 When combining multiple MCP servers through Virtual MCP Server or running
@@ -160,26 +133,14 @@ for your company's organization and once for open source contributions) requires
 renaming tools to `github_company_create_pr` and `github_oss_create_pr` to make
 the distinction clear.
 
-#### Matching organizational conventions
+#### Adding context and clarity
 
-Your team might have specific naming patterns or terminology. Overrides let you
-align tool names with your established conventions without asking MCP server
-maintainers to change their implementations.
-
-#### Improving descriptions for specific contexts
-
-Generic MCP servers provide general-purpose descriptions. You might want to
-tailor these for your environment. A `deploy` tool's description could be
-updated from "Deploy application" to "Deploy to staging environment -
+Tool names and descriptions can be improved to provide environment-specific or
+use-case-specific information. Renaming `deploy` to `deploy_to_staging` versus
+`deploy_to_production` makes the destination explicit and reduces mistakes.
+Similarly, you can update descriptions from generic text like "Deploy
+application" to specific guidance like "Deploy to staging environment -
 auto-rollback enabled."
-
-#### Adding environment-specific context
-
-When the same tool behaves differently in different environments, renaming makes
-the destination explicit. Renaming `deploy` to `deploy_to_staging` versus
-`deploy_to_production` reduces the chance of mistakes. Similarly, you might use
-`read_file_frontend` and `read_file_backend` when running filesystem servers
-with different volume mounts.
 
 ## Combining filters and overrides
 
@@ -215,11 +176,8 @@ Then filter using the new names:
 thv run --tools-override overrides.json --tools run_database_query my-db-server
 ```
 
-**Why this works**: The combination gives you both clarity and safety. The AI
-sees `run_database_query` with a helpful description that makes the purpose
-obvious, and write operations aren't available at all. This pattern is excellent
-for development and staging environments where you want to prevent accidental
-data modifications.
+**Why this works**: Clear names guide the AI while filtering enforces safety by
+making destructive operations unavailable.
 
 ### Pattern: Environment-specific configurations
 
@@ -232,16 +190,13 @@ through overrides. Your production configuration uses the same overrides for
 consistency but adds strict filtering to expose only read and monitoring tools,
 blocking any write or deployment operations.
 
-**Why this works**: The same override configuration ensures consistent tool
-names across environments, making it easier to write documentation and train
-team members. The filtering layer adds environment-appropriate safety without
-requiring different tool naming schemes. This prevents production accidents
-while maintaining development flexibility.
+**Why this works**: Consistent naming across environments with
+environment-specific filtering prevents accidents while maintaining flexibility.
 
 ### Pattern: Multi-server aggregation
 
-When using Virtual MCP Server to combine multiple MCP servers, overrides prevent
-conflicts and improve clarity:
+When using [Virtual MCP Server](vmcp.mdx) to combine multiple MCP servers,
+overrides prevent conflicts and improve clarity:
 
 ```json
 {
@@ -258,127 +213,39 @@ You can override the `search` tool from different servers to `github_search`,
 `jira_search`, and `confluence_search`. Then filter each server to its relevant
 tools, creating a clean, conflict-free tool set.
 
-**Why this works**: Tool name prefixes make it impossible to accidentally call
-the wrong server's version of a tool. Filtering ensures you're only exposing the
-most relevant tools from each server, preventing context overload even when
-aggregating many services. The AI can confidently select tools knowing the
-prefix indicates the target system.
+**Why this works**: Prefixes eliminate ambiguity about which server a tool
+targets, while filtering prevents context overload from aggregating many
+services.
 
-## Making decisions about filtering and overrides
-
-When setting up an MCP server, consider these questions:
-
-### Do you need filtering?
-
-Ask yourself:
-
-- Does this MCP server expose tools I won't use for this task?
-- Are there security concerns with certain operations?
-- Am I running multiple MCP servers that together provide too many tools?
-- Could reducing tool options help the AI make better choices?
-
-If you answered yes to any of these, filtering will likely help.
-
-### Do you need overrides?
-
-Consider:
-
-- Are any tool names unclear or technical?
-- Do tool names conflict with others in my setup?
-- Could better descriptions help the AI understand when to use each tool?
-- Do I need to align names with team conventions?
-
-If these situations apply, overrides will improve your experience.
-
-### Trade-offs to consider
+## Trade-offs to consider
 
 While these optimization features provide significant benefits, they also
-introduce complexity. Consider these trade-offs:
+introduce complexity:
 
-**Configuration overhead**: More filters and overrides mean more configuration
-to maintain. If MCP servers change their available tools, you may need to update
-filters. If you add new projects or environments, you need to create and
-configure new tool sets. This configuration is another thing that can go out of
-sync with your actual needs.
+**Configuration and maintenance overhead**: Filters and overrides require
+ongoing maintenance. When MCP servers update their tools, you'll need to adjust
+your configurations. When using both features together, remember that filters
+apply to overridden names, not original names.
 
-**Maintenance burden**: Tool overrides need to stay synchronized with the
-underlying MCP server. If a server updates its tool names or descriptions, your
-overrides might become outdated or incorrect. You'll need to monitor server
-updates and adjust your overrides accordingly.
+**Flexibility vs. safety**: Aggressive filtering makes it harder to access tools
+you occasionally need. You may find yourself creating exceptions or
+reconfiguring access. The more you optimize, the less flexible your system
+becomes.
 
-**Flexibility vs. safety**: Aggressive filtering and strict configurations make
-it harder for AI clients to access tools they occasionally need. You might find
-yourself creating exceptions or temporarily reconfiguring access when you need
-something outside your normal tool set. The more you optimize, the less flexible
-your system becomes.
-
-**Discovery limitations**: When tools are filtered, it can be harder to discover
-what capabilities are available. New team members might not realize certain
-tools exist because they're hidden by filters. Documentation becomes more
-important when your visible tools don't match what the MCP server actually
+**Discovery and documentation**: When tools are filtered or renamed, team
+members may not realize what capabilities exist. Clear documentation becomes
+essential when your visible tools don't match what the MCP server actually
 provides.
 
-**Combined use requires careful coordination**: When using both features,
-remember that filters apply to overridden names. Document your configuration so
-others understand the mapping between original and overridden names, and which
-tools are filtered in each environment.
-
-These trade-offs aren't reasons to avoid optimization features - they're
-considerations for finding the right balance for your situation. Start simple,
-measure the impact, and add complexity only where it provides clear value.
-
-## Measuring optimization impact
-
-How do you know if your optimization efforts are working? Look for these
-indicators:
-
-**Performance improvements**: If you're using ToolHive's observability features,
-watch for reduced request duration after implementing filtering. The AI should
-spend less time evaluating tool options, leading to faster responses.
-
-**Accuracy improvements**: Track how often the AI selects the correct tool on
-the first try versus requiring corrections or retries. This is subjective but
-noticeable in day-to-day use. You should see fewer instances of the AI choosing
-the wrong tool or needing clarification.
-
-**Reduced token consumption**: If your AI client provides usage statistics,
-compare token consumption for similar tasks before and after optimization. Fewer
-tools mean smaller tool descriptions in each request, which directly reduces
-token usage.
-
-**User confidence**: Pay attention to how comfortable you feel reviewing and
-approving AI actions. Clear tool names and focused tool sets make it easier to
-verify the AI is doing the right thing. You should feel more confident about
-what the AI will do before it does it.
-
-**Fewer mistakes**: Track incidents where the AI accessed the wrong environment,
-used the wrong instance of a tool, or selected an inappropriate capability.
-These should decrease with proper optimization, especially for
-environment-specific configurations.
+Start simple and add complexity only where it provides clear value.
 
 ## Best practices
 
-Based on common usage patterns, these practices help you use filtering and
-overrides effectively:
+**Start minimal**: Begin with a focused tool set and expand as you discover
+needs, rather than filtering down from everything.
 
-**Start minimal and expand**: Begin with a small, focused tool set. Add tools as
-you discover needs rather than starting with everything and removing tools
-later.
-
-**Use descriptive override names**: Choose names that clearly indicate what the
-tool does. Avoid abbreviations or internal jargon that might confuse users.
-
-**Document your configurations**: Tool overrides and filters create an
-abstraction layer. Document which original tools map to which user-facing names
-and why certain tools are filtered.
-
-**Test after changes**: When you apply overrides, verify that tool calls still
-work correctly. Try calling overridden tools to confirm the name mapping
-functions properly.
-
-**Consider your AI's perspective**: When choosing names and descriptions, think
-about what information helps the AI select the right tool. Be specific about
-purpose and context.
+**Be specific**: When overriding names and descriptions, provide clear,
+context-specific information that helps the AI understand when to use each tool.
 
 ## Related information
 
