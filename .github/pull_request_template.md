@@ -2,12 +2,11 @@
 <!-- Explain what has changed and why -->
 
 ### Type of change
-<!-- Note these are not "real" checkboxes so they don't show up as tasks -->
 
-- { } New documentation
-- { } Documentation update
-- { } Bug fix (typo, broken link, etc.)
-- { } Navigation/structure change
+* [ ] New documentation
+* [ ] Documentation update
+* [ ] Bug fix (typo, broken link, etc.)
+* [ ] Navigation/structure change
 
 ### Related issues/PRs
 <!-- Reference related issues the PR is related to or will resolve -->
