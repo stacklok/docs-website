@@ -19,6 +19,16 @@ We welcome contributions to the Stacklok documentation - if you find something m
 Please review the [style guide](./STYLE-GUIDE.md) for help with voice, tone, and
 formatting.
 
+### Reporting issues
+
+Found a problem with the documentation? We have issue templates to help you report it:
+
+- **[Documentation error](https://github.com/stacklok/docs-website/issues/new?template=01-doc-error.yml)** - Report incorrect, outdated, or unclear content
+- **[Documentation gap](https://github.com/stacklok/docs-website/issues/new?template=02-doc-gap.yml)** - Request documentation for features that aren't covered
+- **[Documentation enhancement](https://github.com/stacklok/docs-website/issues/new?template=03-doc-enhancement.yml)** - Suggest improvements to existing content
+
+For general questions, please visit [Stacklok's community Discord](https://discord.gg/stacklok).
+
 ## Local development
 
 You'll need Node.js available (v24 recommended) or VS Code with the
