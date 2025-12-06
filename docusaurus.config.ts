@@ -114,6 +114,12 @@ const config: Config = {
             normalizeUrl: false,
             config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
           },
+          {
+            id: 'toolhive-registry-api',
+            spec: 'https://raw.githubusercontent.com/stacklok/toolhive-registry-server/refs/heads/main/docs/thv-registry-api/swagger.yaml',
+            normalizeUrl: false,
+            config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
+          },
         ],
         theme: {
           primaryColor: '#2809a5',
@@ -203,12 +209,16 @@ const config: Config = {
               to: 'toolhive/reference/api',
             },
             {
+              label: 'ToolHive Operator CRD',
+              to: 'toolhive/reference/crd-spec',
+            },
+            {
               label: 'ToolHive Registry schema',
               to: 'toolhive/reference/registry-schema',
             },
             {
-              label: 'ToolHive Operator CRD',
-              to: 'toolhive/reference/crd-spec',
+              label: 'ToolHive Registry API',
+              to: 'toolhive/reference/registry-api',
             },
           ],
         },
