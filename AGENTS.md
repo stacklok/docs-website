@@ -1,6 +1,13 @@
 # Project overview
 
-This is the user-facing documentation for ToolHive, an open source tool that helps you run and manage Model Context Protocol (MCP) servers easily and securely. The site is built using Docusaurus and deployed with Vercel.
+This is the user-facing documentation for ToolHive, an open source tool that helps you run and manage Model Context Protocol (MCP) servers easily and securely.
+
+## Tech stack
+
+- Docusaurus 3, based on React 19 and TypeScript
+- Node.js 24 (exact version required - see `package.json` engines field)
+- npm for package management
+- Vercel for deployment and hosting
 
 ## Folder structure
 
@@ -15,24 +22,75 @@ This is the user-facing documentation for ToolHive, an open source tool that hel
 - `/sidebars.ts`: defines the structure of the documentation sidebar, including which pages appear in the sidebar and their order.
 - `/vercel.json`: configuration file for Vercel deployment, specifying build settings and redirects.
 
-## Libraries and tools
+## Commands
 
-- Docusaurus for the documentation site framework.
-- React and TypeScript for building custom components and pages.
-- npm for package management.
-- Vercel for deployment and hosting.
+Development commands:
 
-Code quality tools:
+- `npm run start`: starts a local development server with hot reloading.
+- `npm run build`: runs a production build of the site to verify there are no build errors. Run this before creating a PR to ensure the site builds successfully.
 
-- All files: Prettier for code formatting - `npm run prettier` to check, `npm run prettier:fix` to auto-fix.
-- markdownlint for enforcing Markdown style conventions - `npm run markdownlint` to check, `npm run markdownlint:fix` to auto-fix (`.md` files only).
-- ESLint for JavaScript/TypeScript and MDX linting - `npm run eslint` to check, `npm run eslint:fix` to auto-fix.
+Code quality commands (note: pre-commit hooks run these automatically on staged files):
+
+- `npm run prettier` and `npm run prettier:fix`: check and fix code formatting issues (all file types).
+- `npm run eslint` and `npm run eslint:fix`: check and fix code quality issues (`.js`, `.jsx`, `.ts`, `.tsx`, `.mdx` files only).
+- `npm run markdownlint` and `npm run markdownlint:fix`: check and fix Markdown style issues (`.md` files only - DO NOT use with `.mdx` files).
+
+## Contribution guidelines
+
+- Use the GitHub flow for contributions: create a branch, make changes, open a pull request (PR).
+- Use the pull request template (`/.github/pull_request_template.md`) when opening a PR on behalf of the user.
+- Ensure all changes pass linting and formatting checks before submitting a PR.
+- Write concise commit messages, limited to 50 characters for the subject line, with a detailed body only if necessary.
+- Do NOT use conventional commits style; use imperative mood in the subject line (e.g., "Add", "Fix", "Update").
+
+## Automated quality checks
+
+The project uses automated tooling to enforce code quality and formatting standards:
+
+- **Pre-commit hooks**: lint-staged runs automatically on `git commit`, applying prettier and appropriate linters to staged files.
+- **GitHub Actions**: All PRs trigger automated checks (ESLint, markdownlint, Prettier).
+- **No manual formatting needed**: The pre-commit hook handles formatting automatically - you do not need to run formatters manually.
+
+File type to linter mapping (handled automatically by pre-commit hooks):
+
+- `.md` files: Prettier + markdownlint
+- `.mdx` files: Prettier + ESLint (NOT markdownlint)
+- `.js`, `.jsx`, `.ts`, `.tsx` files: Prettier + ESLint
+- `.css`, `.json`, `.jsonc`, `.yaml`, `.yml` files: Prettier only
+
+## Git workflow
+
+- **Main branch**: `main` - all feature branches should be created from and merged into main
+- **Branch naming**: Use descriptive names (e.g., `fix-broken-link`, `add-vmcp-docs`)
+- **Pre-commit hooks**: Automatically format and lint staged files on commit
+- **Before pushing**: Run `npm run build` to verify the site builds successfully
+- **Default branch for PRs**: Target `main` unless working on a specific release branch
 
 ## Audience
 
 The primary audience is developers and DevOps professionals who want to run and manage Model Context Protocol (MCP) servers using ToolHive. They may be new to MCP servers or have some experience with them.
 
 The documentation should be accessible to a wide range of technical users, including those who may not be familiar with the specific technologies used in ToolHive.
+
+## Information architecture
+
+This project follows the [Diataxis framework](https://diataxis.fr/) for documentation organization. Diataxis divides documentation into four types based on user needs:
+
+1. **Tutorials** (`/docs/toolhive/tutorials/`) - Learning-oriented, step-by-step lessons that guide users through completing a project or learning a concept.
+2. **How-to guides** (`/docs/toolhive/guides-*/`) - Task-oriented, practical guides that show how to solve specific problems or accomplish specific tasks.
+3. **Reference** (`/docs/toolhive/reference/`) - Information-oriented, technical descriptions of the machinery and how to operate it (API docs, CLI commands, configuration options).
+4. **Explanation/Concepts** (`/docs/toolhive/concepts/`) - Understanding-oriented, explanations that clarify and illuminate topics, provide background and context.
+
+### When to create new pages
+
+Create a new documentation page when:
+
+- The content addresses a distinct task, concept, or reference topic that doesn't fit within existing pages.
+- An existing page would become too long or cover too many disparate topics.
+- The information architecture requires it (e.g., a new MCP server guide, a new tutorial).
+- The content belongs to a different Diataxis category than existing content.
+
+Always consider where the new page fits in the Diataxis framework and place it in the appropriate directory. Update `/sidebars.ts` to include the new page in the navigation.
 
 ## Review process
 
@@ -100,7 +158,7 @@ The project's official language is US English.
 
 ### Word list
 
-Common terms used in this project:
+ALWAYS use these exact terms and capitalizations. When editing documentation, replace any variations with the preferred terms listed here:
 
 - ToolHive - this project, an open source tool that helps you run and manage MCP servers easily and securely
 - Stacklok - the company behind ToolHive
@@ -111,7 +169,7 @@ Common terms used in this project:
 - Visual Studio Code ("VS Code" after first use)
 - Virtual MCP Server (vMCP) - a feature of ToolHive that aggregates multiple MCP servers into a single endpoint; use "Virtual MCP Server (vMCP)" on first use, "vMCP" thereafter
 
-Check this list for consistent use within the documentation. If you find inconsistencies, update the text to match the preferred term. If you find a term that is not listed here, consider adding it to the list for future reference.
+If you encounter a term not listed here that appears frequently in the documentation, consider adding it to this list for consistency.
 
 ## Markdown style
 
@@ -127,7 +185,7 @@ Prettier and markdownlint are used to enforce the following Markdown style conve
 - Code blocks: use fenced code blocks (` ``` ` to begin/end) and always declare the language. If the language is unknown or plain text like log output, use `text` as the language.
 - Add blank lines around headings, lists, and code blocks.
 - No trailing whitespace on lines.
-  - Use the `\` character at the end of a line for a single-line break, not the two-space syntax which is easy to miss. Exception:
+  - Use the `\` character at the end of a line for a single-line break, not the two-space syntax which is easy to miss.
 - Line limit: wrap lines at 80 characters; exceptions for links, tables, headings, and code blocks
 
 ### Docusaurus specifics

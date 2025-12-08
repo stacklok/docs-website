@@ -2,11 +2,12 @@
 <!-- Explain what has changed and why -->
 
 ### Type of change
+<!-- Keep the one that applies and delete the others -->
 
-* [ ] New documentation
-* [ ] Documentation update
-* [ ] Bug fix (typo, broken link, etc.)
-* [ ] Navigation/structure change
+- New documentation
+- Documentation update
+- Bug fix (typo, broken link, etc.)
+- Navigation/structure change
 
 ### Related issues/PRs
 <!-- Reference related issues the PR is related to or will resolve -->
