@@ -116,14 +116,17 @@ const config: Config = {
           },
           {
             id: 'toolhive-registry-api',
-            spec: 'https://raw.githubusercontent.com/stacklok/toolhive-registry-server/refs/heads/main/docs/thv-registry-api/swagger.yaml',
-            normalizeUrl: false,
+            spec: 'https://cdn.jsdelivr.net/gh/stacklok/toolhive-registry-server@latest/docs/thv-registry-api/swagger.yaml',
             config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
           },
         ],
         theme: {
           primaryColor: '#2809a5',
           primaryColorDark: '#7ab7ff',
+          options: {
+            sortTagsAlphabetically: true,
+            sortOperationsAlphabetically: true,
+          },
         },
       },
     ],
