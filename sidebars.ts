@@ -161,6 +161,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/logging',
         'toolhive/guides-k8s/auth-k8s',
         'toolhive/guides-k8s/token-exchange-k8s',
+        'toolhive/guides-k8s/deploy-registry',
         'toolhive/reference/crd-spec',
       ],
     },
@@ -193,7 +194,6 @@ const sidebars: SidebarsConfig = {
         id: 'toolhive/guides-registry/index',
       },
       items: [
-        'toolhive/guides-registry/intro',
         'toolhive/guides-registry/configuration',
         'toolhive/guides-registry/authentication',
         'toolhive/guides-registry/database',
