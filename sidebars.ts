@@ -1,6 +1,8 @@
 import type { SidebarsConfig } from '@docusaurus/plugin-content-docs';
 import { buildCliReferenceSidebar } from './src/utils/buildHierarchicalSidebar';
 
+import ToolHiveAPISidebar from './docs/toolhive/reference/api/sidebar';
+
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
 /**
@@ -137,7 +139,20 @@ const sidebars: SidebarsConfig = {
             type: 'doc',
             id: 'toolhive/guides-cli/api-server',
           },
-          items: ['toolhive/reference/api'],
+          items: [
+            {
+              type: 'category',
+              label: 'API reference',
+              description: 'Complete reference for the ToolHive API',
+              collapsed: true,
+              link: {
+                type: 'generated-index',
+                slug: 'toolhive/reference/api',
+                title: 'ToolHive API Reference',
+              },
+              items: ToolHiveAPISidebar,
+            },
+          ],
         },
       ],
     },
@@ -198,7 +213,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-registry/authentication',
         'toolhive/guides-registry/database',
         'toolhive/guides-registry/deployment',
-        'toolhive/reference/registry-api',
+        //'toolhive/reference/registry-api',
       ],
     },
 
