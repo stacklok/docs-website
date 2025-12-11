@@ -29,9 +29,17 @@ unless you explicitly choose anonymous mode for development scenarios.
 
 ## OAuth authentication
 
-OAuth mode (the default) validates JWT tokens from identity providers. This
-enables enterprise authentication with providers like Keycloak, Auth0, Okta,
-Azure AD, Kubernetes service accounts, or any OIDC-compliant service.
+OAuth mode (the default) validates access tokens from identity providers. The
+server supports two token formats:
+
+- **JWT tokens**: Validated locally using the provider's public keys (JWKS
+  endpoint). This is the most common format for modern identity providers.
+- **Opaque tokens**: Validated via token introspection (RFC 7662) by querying
+  the provider's introspection endpoint. Use this when your provider issues
+  non-JWT tokens.
+
+This enables enterprise authentication with providers like Keycloak, Auth0,
+Okta, Azure AD, Kubernetes service accounts, or any OAuth-compliant service.
 
 ### Basic OAuth configuration
 
@@ -63,9 +71,10 @@ auth:
 | ------------------ | ------ | -------- | ----------------------------------------------------------------------- |
 | `name`             | string | Yes      | Provider identifier for logging and monitoring                          |
 | `issuerUrl`        | string | Yes      | OAuth/OIDC issuer URL (e.g., `https://keycloak.example.com/realms/mcp`) |
-| `audience`         | string | Yes      | Expected audience claim in the JWT token                                |
-| `clientId`         | string | No       | OAuth client ID (for token introspection)                               |
-| `clientSecretFile` | string | No       | Path to file containing client secret (for token introspection)         |
+| `audience`         | string | Yes      | Expected audience claim in the access token                             |
+| `introspectionUrl` | string | No       | Token introspection endpoint URL for opaque token validation            |
+| `clientId`         | string | No       | OAuth client ID (for authenticated introspection requests)              |
+| `clientSecretFile` | string | No       | Path to file containing client secret (for authenticated introspection) |
 | `caCertPath`       | string | No       | Path to CA certificate for TLS verification                             |
 
 ### Complete OAuth configuration example
@@ -93,6 +102,27 @@ auth:
         issuerUrl: https://keycloak.example.com/realms/staging
         audience: registry-api-staging
 ```
+
+### Opaque token configuration
+
+When your identity provider issues opaque (non-JWT) tokens, configure the
+`introspectionUrl` field to enable token introspection:
+
+```yaml title="config-opaque-tokens.yaml"
+auth:
+  mode: oauth
+  oauth:
+    resourceUrl: https://registry.example.com
+    providers:
+      - name: google
+        issuerUrl: https://accounts.google.com
+        introspectionUrl: https://oauth2.googleapis.com/tokeninfo
+        audience: 407408718192.apps.googleusercontent.com
+```
+
+The server automatically detects the token format and uses the appropriate
+validation method—attempting JWT validation first and falling back to token
+introspection if needed.
 
 ## Kubernetes authentication
 
