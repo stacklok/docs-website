@@ -18,8 +18,9 @@ description:
 ## Overview
 
 The ToolHive operator deploys the Registry server in Kubernetes by creating
-`MCPRegistry` resources. This is the recommended method for deploying the
-ToolHive Registry Server in Kubernetes environments.
+`MCPRegistry` resources. Alternatively, you can deploy the Registry Server
+manually by following the
+[manual deployment instructions](../guides-registry/deployment.mdx#manual-deployment).
 
 ### High-level architecture
 
@@ -53,11 +54,8 @@ flowchart LR
 
 ## Create a registry
 
-You can create `MCPRegistry` resources in namespaces based on how the operator
-was deployed.
-
-- **Cluster mode (default)**: Create MCPRegistry resources in any namespace
-- **Namespace mode**: Create MCPRegistry resources only in allowed namespaces
+You can create `MCPRegistry` resources in the namespaces where the ToolHive
+Operator is deployed.
 
 See [Deploy the operator](./deploy-operator-helm.mdx#operator-deployment-modes)
 to learn about the different deployment modes.
@@ -74,6 +72,8 @@ metadata:
   namespace: my-namespace # Update with your namespace
 spec:
   displayName: My MCP Registry
+  auth:
+    mode: anonymous
   registries:
     - name: toolhive
       format: toolhive
@@ -115,12 +115,14 @@ registry configuration.
 
 Clone and sync from Git repositories. Ideal for version-controlled registries.
 
-```yaml {7-12} title="registry-git.yaml"
+```yaml {9-14} title="registry-git.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPRegistry
 metadata:
   name: git-registry
 spec:
+  auth:
+    mode: anonymous
   registries:
     - name: toolhive
       format: toolhive
@@ -161,6 +163,8 @@ kind: MCPRegistry
 metadata:
   name: configmap-registry
 spec:
+  auth:
+    mode: anonymous
   registries:
     - name: local
       format: upstream
@@ -184,6 +188,8 @@ kind: MCPRegistry
 metadata:
   name: pvc-registry
 spec:
+  auth:
+    mode: anonymous
   registries:
     - name: shared
       format: upstream
@@ -214,6 +220,8 @@ kind: MCPRegistry
 metadata:
   name: api-registry
 spec:
+  auth:
+    mode: anonymous
   registries:
     - name: upstream
       format: upstream
@@ -247,6 +255,8 @@ kind: MCPRegistry
 metadata:
   name: filtered-registry
 spec:
+  auth:
+    mode: anonymous
   registries:
     - name: toolhive
       format: toolhive
@@ -274,17 +284,34 @@ spec:
 For production deployments, configure PostgreSQL database storage for
 persistence across restarts.
 
-```yaml {6-15} title="registry-with-database.yaml"
+```yaml {17-32} title="registry-with-database.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-api-db-passwords
+type: Opaque
+stringData:
+  db-password: app_password
+  migration-password: migrator_password
+---
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPRegistry
 metadata:
   name: production-registry
 spec:
+  auth:
+    mode: anonymous
   databaseConfig:
     host: postgres.database.svc.cluster.local
     port: 5432
     user: db_app
     migrationUser: db_migrator
+    dbAppUserPasswordSecretRef:
+      name: registry-api-db-passwords
+      key: db-password
+    dbMigrationUserPasswordSecretRef:
+      name: registry-api-db-passwords
+      key: migration-password
     database: registry
     sslMode: verify-full
     maxOpenConns: 25
@@ -303,25 +330,200 @@ spec:
 
 **Database configuration fields:**
 
-| Field             | Default       | Description                                       |
-| ----------------- | ------------- | ------------------------------------------------- |
-| `host`            | `postgres`    | Database server hostname                          |
-| `port`            | `5432`        | Database server port                              |
-| `user`            | `db_app`      | Application user (SELECT, INSERT, UPDATE, DELETE) |
-| `migrationUser`   | `db_migrator` | Migration user (CREATE, ALTER, DROP)              |
-| `database`        | `registry`    | Database name                                     |
-| `sslMode`         | `prefer`      | SSL mode (disable, prefer, require, verify-full)  |
-| `maxOpenConns`    | `10`          | Maximum open connections                          |
-| `maxIdleConns`    | `2`           | Maximum idle connections                          |
-| `connMaxLifetime` | `30m`         | Maximum connection lifetime                       |
+| Field                              | Default       | Description                                       |
+| ---------------------------------- | ------------- | ------------------------------------------------- |
+| `host`                             | `postgres`    | Database server hostname                          |
+| `port`                             | `5432`        | Database server port                              |
+| `user`                             | `db_app`      | Application user (SELECT, INSERT, UPDATE, DELETE) |
+| `migrationUser`                    | `db_migrator` | Migration user (CREATE, ALTER, DROP)              |
+| `dbAppUserPasswordSecretRef`       | ``            | Password of application user                      |
+| `dbMigrationUserPasswordSecretRef` | ``            | Password of migration user                        |
+| `database`                         | `registry`    | Database name                                     |
+| `sslMode`                          | `prefer`      | SSL mode (disable, prefer, require, verify-full)  |
+| `maxOpenConns`                     | `10`          | Maximum open connections                          |
+| `maxIdleConns`                     | `2`           | Maximum idle connections                          |
+| `connMaxLifetime`                  | `30m`         | Maximum connection lifetime                       |
 
 :::tip
 
-Provide database passwords using a pgpass file mounted as a secret. See the
-[Database configuration](../guides-registry/database.mdx) guide for details on
-setting up password security.
+Credentials are internally configured using a pgpass file mounted as a secret.
 
 :::
+
+## Configure authentication
+
+You can configure authentication using the `authConfig` field in your
+`MCPRegistry` resource.
+
+### Authentication modes
+
+| Mode        | Description                                     | Use case                     |
+| ----------- | ----------------------------------------------- | ---------------------------- |
+| `oauth`     | Validates access tokens from identity providers | Production deployments       |
+| `anonymous` | No authentication required                      | Development and testing only |
+
+:::info[Secure by default]
+
+Configuring an authentication mode is mandatory, if you're not interested you
+can set it to `anonymous`.
+
+:::
+
+### OAuth authentication
+
+OAuth mode validates JWT tokens from one or more identity providers. Configure
+providers in the `authConfig.oauth.providers` array.
+
+```yaml title="registry-oauth.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPRegistry
+metadata:
+  name: registry
+  namespace: toolhive-system
+spec:
+  displayName: 'Authenticated MCP Server Registry'
+  authConfig:
+    mode: oauth
+    oauth:
+      providers:
+        - name: kubernetes
+          issuerUrl: https://kubernetes.default.svc.cluster.local
+          jwksUrl: https://kubernetes.default.svc/openid/v1/jwks
+          audience: registry-server
+          caCertPath: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          authTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+          allowPrivateIP: true
+  registries:
+    - name: toolhive
+      format: toolhive
+      git:
+        repository: https://github.com/stacklok/toolhive.git
+        branch: main
+        path: pkg/registry/data/registry.json
+```
+
+### OAuth configuration fields
+
+| Field             | Required | Default                                   | Description                                        |
+| ----------------- | -------- | ----------------------------------------- | -------------------------------------------------- |
+| `mode`            | No       | `oauth`                                   | Authentication mode (`oauth` or `anonymous`)       |
+| `resourceUrl`     | No       | -                                         | URL identifying this protected resource (RFC 9728) |
+| `realm`           | No       | `mcp-registry`                            | Protection space identifier for WWW-Authenticate   |
+| `scopesSupported` | No       | `[mcp-registry:read, mcp-registry:write]` | OAuth scopes supported by this resource            |
+
+### Provider configuration fields
+
+| Field              | Required | Description                                                             |
+| ------------------ | -------- | ----------------------------------------------------------------------- |
+| `name`             | Yes      | Unique identifier for this provider (for logging and monitoring)        |
+| `issuerUrl`        | Yes      | OIDC issuer URL (e.g., `https://accounts.google.com`)                   |
+| `audience`         | Yes      | Expected audience claim in the access token                             |
+| `jwksUrl`          | No       | JWKS endpoint URL (skips OIDC discovery if specified)                   |
+| `clientId`         | No       | OAuth client ID for token introspection                                 |
+| `clientSecretFile` | No       | Path to file containing the client secret                               |
+| `caCertPath`       | No       | Path to CA certificate for TLS verification                             |
+| `authTokenFile`    | No       | Path to token file for authenticating to OIDC/JWKS endpoints            |
+| `introspectionUrl` | No       | Token introspection endpoint URL for opaque token validation (RFC 7662) |
+| `allowPrivateIP`   | No       | Allow connections to private IP addresses (required for in-cluster)     |
+
+### Kubernetes service account authentication
+
+For in-cluster deployments, you can configure OAuth to validate Kubernetes
+service account tokens:
+
+```yaml title="registry-k8s-auth.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPRegistry
+metadata:
+  name: registry
+spec:
+  authConfig:
+    mode: oauth
+    oauth:
+      providers:
+        - name: kubernetes
+          issuerUrl: https://kubernetes.default.svc.cluster.local
+          jwksUrl: https://kubernetes.default.svc/openid/v1/jwks
+          audience: registry-server
+          caCertPath: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          authTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+          allowPrivateIP: true
+```
+
+:::tip[Kubernetes provider settings]
+
+- **issuerUrl**: for most Kubernetes distributions,
+  `https://kubernetes.default.svc.cluster.local` is the correct value to match
+  the `iss` claim in Kubernetes service account tokens.
+- **jwksUrl**: Specify directly to skip OIDC discovery (the Kubernetes API
+  server doesn't support standard discovery).
+- **allowPrivateIP**: Required for in-cluster communication with the API server.
+
+:::
+
+### Multiple providers
+
+You can configure multiple OAuth providers to accept tokens from different
+identity sources:
+
+```yaml title="registry-multi-provider.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPRegistry
+metadata:
+  name: registry
+spec:
+  authConfig:
+    mode: oauth
+    oauth:
+      providers:
+        # Kubernetes service accounts (in-cluster workloads)
+        - name: kubernetes
+          issuerUrl: https://kubernetes.default.svc.cluster.local
+          jwksUrl: https://kubernetes.default.svc/openid/v1/jwks
+          audience: registry-server
+          caCertPath: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          authTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+          allowPrivateIP: true
+        # External identity provider
+        - name: okta
+          issuerUrl: https://YOUR_DOMAIN.okta.com/oauth2/default
+          audience: registry
+```
+
+The server validates tokens against each provider in order until one succeeds.
+
+### Anonymous authentication
+
+For development and testing, you can disable authentication entirely:
+
+```yaml title="registry-anonymous.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPRegistry
+metadata:
+  name: registry
+spec:
+  authConfig:
+    mode: anonymous
+  registries:
+    - name: toolhive
+      format: toolhive
+      git:
+        repository: https://github.com/stacklok/toolhive.git
+        branch: main
+        path: pkg/registry/data/registry.json
+```
+
+:::danger[No access control]
+
+Anonymous mode provides **no access control**. Only use it in trusted
+environments or when other security measures are in place. **Do not use
+anonymous mode in production.**
+
+:::
+
+For detailed information about authentication configuration, including
+provider-specific examples for Keycloak, Auth0, Azure AD, and Okta, see the
+[Authentication configuration](../guides-registry/authentication.mdx) guide.
 
 ## Customize the Registry server pod
 
@@ -345,6 +547,8 @@ spec:
             requests:
               cpu: '100m'
               memory: '128Mi'
+  auth:
+    mode: anonymous
   registries:
     - name: toolhive
       format: toolhive
@@ -360,7 +564,10 @@ spec:
 
 When customizing containers in `podTemplateSpec`, you must use
 `name: registry-api` for the main container to ensure the operator can properly
-manage the Registry server.
+manage the Registry server. The container name is hardcoded to avoid conflict
+issues with user provided containers. Mandating a container name on the Operator
+side explicitly tells the Operator it is the main registry server container and
+any other containers provided by the use are sidecars/init containers.
 
 :::
 
