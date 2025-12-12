@@ -72,10 +72,13 @@ auth:
 | `name`             | string | Yes      | Provider identifier for logging and monitoring                          |
 | `issuerUrl`        | string | Yes      | OAuth/OIDC issuer URL (e.g., `https://keycloak.example.com/realms/mcp`) |
 | `audience`         | string | Yes      | Expected audience claim in the access token                             |
+| `jwksUrl`          | string | No       | JWKS endpoint URL (skips OIDC discovery if specified)                   |
 | `introspectionUrl` | string | No       | Token introspection endpoint URL for opaque token validation            |
 | `clientId`         | string | No       | OAuth client ID (for authenticated introspection requests)              |
 | `clientSecretFile` | string | No       | Path to file containing client secret (for authenticated introspection) |
 | `caCertPath`       | string | No       | Path to CA certificate for TLS verification                             |
+| `authTokenFile`    | string | No       | Path to token file for authenticating JWKS/introspection requests       |
+| `allowPrivateIP`   | bool   | No       | Allow connections to private IP addresses (for in-cluster use)          |
 
 ### Complete OAuth configuration example
 
@@ -139,26 +142,31 @@ auth:
     resourceUrl: https://registry.example.com
     providers:
       - name: kubernetes
-        issuerUrl: https://kubernetes.default.svc
-        audience: https://kubernetes.default.svc
+        issuerUrl: https://kubernetes.default.svc.cluster.local
+        jwksUrl: https://kubernetes.default.svc/openid/v1/jwks
+        audience: registry-server
         caCertPath: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        authTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+        allowPrivateIP: true
 ```
 
-:::tip[In-cluster service DNS]
+:::info[Kubernetes-specific configuration]
 
-The correct Kubernetes API server URL for in-cluster access is
-`https://kubernetes.default.svc` (not
-`https://kubernetes.default.svc.cluster.local`).
+- **issuerUrl**: Use `https://kubernetes.default.svc.cluster.local` to match the
+  `iss` claim in Kubernetes service account tokens.
+- **jwksUrl**: Specify the JWKS endpoint directly to skip OIDC discovery.
+- **authTokenFile**: The server uses this token to authenticate when fetching
+  the JWKS from the Kubernetes API server.
+- **allowPrivateIP**: Required for in-cluster communication with the API server.
 
 :::
 
 ### How Kubernetes authentication works
 
-1. Workloads in the cluster mount service account tokens automatically at
-   `/var/run/secrets/kubernetes.io/serviceaccount/token`
+1. Workloads mount projected service account tokens with a specific audience
 2. Clients send these tokens in the `Authorization: Bearer <TOKEN>` header
 3. The server validates tokens using the Kubernetes API server's public keys
-4. Access is granted based on the service account's identity and token claims
+4. Only tokens with the correct audience (e.g., `registry-server`) are accepted
 
 ### Kubernetes deployment example
 
@@ -203,6 +211,39 @@ The service account token and CA certificate are automatically mounted at:
 
 - Token: `/var/run/secrets/kubernetes.io/serviceaccount/token`
 - CA cert: `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`
+
+### Client workload example
+
+Clients that need to authenticate with the registry should mount a projected
+service account token with the correct audience:
+
+```yaml title="client-workload.yaml"
+apiVersion: v1
+kind: Pod
+metadata:
+  name: registry-client
+spec:
+  serviceAccountName: my-client-sa
+  containers:
+    - name: client
+      image: my-client-image
+      volumeMounts:
+        - name: registry-token
+          mountPath: /var/run/secrets/registry
+          readOnly: true
+  volumes:
+    - name: registry-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              audience: registry-server
+              expirationSeconds: 3600
+              path: token
+```
+
+The client reads the token from `/var/run/secrets/registry/token` and includes
+it in the `Authorization: Bearer <TOKEN>` header when making requests to the
+registry.
 
 ## Provider-specific examples
 
@@ -360,16 +401,26 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ### Using kubectl with Kubernetes service accounts
 
+Use `kubectl create token` to generate a token with the correct audience:
+
 ```bash
-# Get the service account token
-TOKEN=$(kubectl get secret <service-account-token-name> \
+# Create a token with the registry-server audience
+TOKEN=$(kubectl create token <service-account-name> \
   -n <namespace> \
-  -o jsonpath='{.data.token}' | base64 -d)
+  --audience=registry-server)
 
 # Make authenticated request
 curl -H "Authorization: Bearer $TOKEN" \
-  https://registry.example.com/default/v0.1/servers
+  https://registry.example.com/registry/v0.1/servers
 ```
+
+:::tip[Projected tokens vs kubectl create token]
+
+For automated workloads, use projected service account tokens (see
+[Client workload example](#client-workload-example)). The `kubectl create token`
+command is useful for manual testing and debugging.
+
+:::
 
 ### Testing token validation
 
