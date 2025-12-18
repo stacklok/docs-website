@@ -11,8 +11,8 @@ VirtualMCPServer resource. For a complete field reference, see the
 
 Before creating a VirtualMCPServer, you need an
 [MCPGroup](../reference/crd-spec.mdx#mcpgroup) to organize the backend MCP
-servers. An MCPGroup is a logical container that groups related MCPServer
-resources together.
+servers. An MCPGroup is a logical container that groups related MCPServer and
+MCPRemoteProxy resources together.
 
 Create a basic MCPGroup:
 
@@ -27,8 +27,56 @@ spec:
 ```
 
 The MCPGroup must exist in the same namespace as your VirtualMCPServer and be in
-a Ready state before the VirtualMCPServer can start. Backend MCPServers
-reference this group using the `groupRef` field in their spec.
+a Ready state before the VirtualMCPServer can start. Backend resources reference
+this group using the `groupRef` field in their spec.
+
+## Add backends to a group
+
+vMCP supports two types of backends that can be added to an MCPGroup:
+
+### MCPServer (local containers)
+
+MCPServer resources run container-based MCP servers in your cluster:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: fetch
+  namespace: toolhive-system
+spec:
+  groupRef: my-group # Reference to the MCPGroup
+  image: ghcr.io/stackloklabs/gofetch/server
+  transport: streamable-http
+```
+
+### MCPRemoteProxy (remote servers)
+
+MCPRemoteProxy resources proxy external remote MCP servers, allowing you to
+include SaaS MCP endpoints in your vMCP aggregation:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPRemoteProxy
+metadata:
+  name: analytics-proxy
+  namespace: toolhive-system
+spec:
+  groupRef: my-group # Reference to the MCPGroup
+  remoteURL: https://mcp.analytics.example.com
+  transport: streamable-http
+  port: 8080
+
+  # OIDC authentication for incoming requests
+  oidcConfig:
+    type: inline
+    inline:
+      issuer: https://auth.company.com/realms/production
+      audience: analytics-proxy
+```
+
+For complete MCPRemoteProxy configuration options, see
+[Proxy remote MCP servers](../guides-k8s/remote-mcp-proxy.mdx).
 
 ## Create a VirtualMCPServer
 
@@ -49,7 +97,8 @@ spec:
 ```
 
 The MCPGroup must exist in the same namespace and be in a Ready state before the
-VirtualMCPServer can start.
+VirtualMCPServer can start. The VirtualMCPServer automatically discovers and
+aggregates all MCPServer and MCPRemoteProxy resources in the group.
 
 ## Configure authentication
 
@@ -110,3 +159,4 @@ feature in the ToolHive Registry Server.
 - [Introduction to vMCP](./intro.mdx)
 - [Tool aggregation](./tool-aggregation.mdx)
 - [Authentication](./authentication.mdx)
+- [Proxy remote MCP servers](../guides-k8s/remote-mcp-proxy.mdx)

@@ -11,9 +11,16 @@ single unified interface. Instead of configuring clients to connect to each MCP
 server individually, you connect once to vMCP and access all backend tools
 through a single endpoint.
 
+vMCP supports two types of backends:
+
+- **MCPServer**: Container-based MCP servers running in your cluster
+- **MCPRemoteProxy**: Proxies to external remote MCP servers (such as Notion,
+  analytics platforms, or other SaaS MCP endpoints)
+
 ## Core capabilities
 
-- **Multi-server aggregation**: Connect to one endpoint instead of many
+- **Multi-server aggregation**: Connect to one endpoint instead of many,
+  including both local container-based servers and remote MCP proxies
 - **Tool conflict resolution**: Automatic namespacing when backend MCP servers
   have overlapping tool names
 - **Centralized authentication**: Single sign-on with per-backend token exchange
@@ -24,10 +31,11 @@ through a single endpoint.
 
 ### Good fit
 
-- You manage 5+ MCP servers
+- You manage 5+ MCP servers (local or remote)
 - You need cross-system workflows requiring coordination
 - You have centralized authentication and authorization requirements
 - You need reusable workflow definitions
+- You want to aggregate external SaaS MCP servers with internal tools
 
 ### Not needed
 
@@ -37,32 +45,39 @@ through a single endpoint.
 
 ## Architecture overview
 
-```mermaid
-flowchart TB
-    Client[MCP Client] --> vMCP[Virtual MCP Server]
+\`\`\`mermaid flowchart TB Client[MCP Client] --> vMCP[Virtual MCP Server]
 
-    subgraph Backends[Backend MCP Servers]
+    subgraph LocalBackends[Local MCP Servers]
         GitHub[GitHub MCP]
-        Jira[Jira MCP]
         Fetch[Fetch MCP]
     end
 
-    vMCP --> GitHub
-    vMCP --> Jira
-    vMCP --> Fetch
-```
+    subgraph RemoteBackends[Remote MCP Proxies]
+        Notion[Notion MCP]
+        Github-Remote[Github Remote MCP]
+    end
+
+    vMCP --> LocalBackends
+    vMCP --> RemoteBackends
+
+    RemoteBackends -->|proxied| ExternalServices[External Services]
+
+\`\`\`
 
 ## How it works
 
 1. You define an MCPGroup (a resource that organizes related MCP servers)
-   containing your backend MCPServer resources
-2. You create a VirtualMCPServer that references the group
-3. The operator discovers all backend MCP servers in the group and aggregates
-   their capabilities
-4. Clients connect to the VirtualMCPServer endpoint and see a unified view of
-   all tools
+2. Backend resources reference the group using \`groupRef\`:
+   - **MCPServer** resources for container-based MCP servers
+   - **MCPRemoteProxy** resources for external remote MCP servers
+3. You create a VirtualMCPServer that references the group
+4. The operator discovers all MCPServer and MCPRemoteProxy backends in the group
+   and aggregates their capabilities
+5. Clients connect to the VirtualMCPServer endpoint and see a unified view of
+   all tools from both local and remote backends
 
 ## Related information
 
 - [Understanding Virtual MCP Server](../concepts/vmcp.mdx)
 - [Quickstart: Virtual MCP Server](../tutorials/quickstart-vmcp.mdx)
+- [Proxy remote MCP servers](../guides-k8s/remote-mcp-proxy.mdx)
