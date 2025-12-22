@@ -48,7 +48,7 @@ Every feature should answer: **"What can I now do that I couldn't before, and wh
 
 When you receive a draft update post:
 
-1. **Read the entire draft** in `blog/toolhive-updates/[filename].md`
+1. **Read the entire draft** in `blog/toolhive-updates/[filename].mdx`
 2. **Check existing posts** in `blog/toolhive-updates/` for voice consistency
 3. **Reference STYLE-GUIDE.md** for writing conventions
 4. **Apply review checklist** (see below)
