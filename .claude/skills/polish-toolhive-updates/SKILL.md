@@ -7,6 +7,8 @@ description: Polish weekly ToolHive update posts (release notes) for publication
 
 Polish weekly ToolHive update posts to ensure they're benefit-focused, accessible to both open source and commercial audiences, and follow Stacklok documentation standards.
 
+Stacklok is the company behind ToolHive, an open source platform for running and managing Model Context Protocol (MCP) servers easily and securely.
+
 ## Context
 
 - **Published weekly** at https://docs.stacklok.com/toolhive/updates
@@ -98,7 +100,7 @@ For each major feature/component:
 
 ### Required Closing Section
 
-- [ ] **Always present**: Standard "Getting started" section with repo links
+- [ ] **Always present**: Standard "Getting started" section with repo links (see [Standard Closing Section](#standard-closing-section) below)
 - [ ] **Never modified**: This section is standardized across all updates
 
 ### Technical Accuracy
@@ -163,32 +165,6 @@ You can find all ToolHive documentation on the
 ```
 
 **Do not modify this section.** It's standardized across all update posts for consistency.
-
-## Workflow
-
-When polishing an update post:
-
-1. **Read the draft** and assess overall tone
-2. **Identify issues** using the checklist and common issues guide
-3. **Make edits** directly to the file in `blog/toolhive-updates/`
-4. **Add closing section** if missing
-5. **Run linting and formatting**:
-
-   ```bash
-   npm run prettier:fix
-   npm run eslint:fix
-   ```
-
-6. **Test build**:
-
-   ```bash
-   npm run build
-   ```
-
-7. **Summarize changes** with rationale:
-   - What was changed and why
-   - Key improvements made
-   - Any concerns or questions
 
 ## Example Output Format
 
