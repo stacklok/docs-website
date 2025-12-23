@@ -9,6 +9,7 @@ import Layout from '@theme/Layout';
 import ProductGrid from '@site/src/components/ProductGrid';
 import ProductCard from '@site/src/components/ProductCard';
 import Heading from '@theme/Heading';
+import ThemedImage from '@theme/ThemedImage';
 
 import styles from './index.module.css';
 
@@ -39,15 +40,19 @@ export default function Home(): ReactNode {
           <ProductCard
             contentType='logo'
             href='/toolhive'
-            logo='/img/toolhive-wordmark-black.svg'
-            logoDark='/img/toolhive-wordmark-white.svg'
+            logo='/img/logos/toolhive-default-black.svg'
+            logoDark='/img/logos/toolhive-default-white.svg'
+            invertLogoOnHover={false}
             logoAlt='ToolHive logo'
             logoTitle='ToolHive logo'
             linkText='Read documentation'
           >
-            <img
-              src='/img/toolhive-icon-honey.svg'
-              alt='ToolHive mascot'
+            <ThemedImage
+              sources={{
+                light: '/img/logos/toolhive-symbol-dark-green.svg',
+                dark: '/img/logos/toolhive-symbol-light-green.svg',
+              }}
+              alt='ToolHive symbol'
               style={{
                 width: '150px',
                 height: 'auto',
