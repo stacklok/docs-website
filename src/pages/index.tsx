@@ -49,8 +49,8 @@ export default function Home(): ReactNode {
           >
             <ThemedImage
               sources={{
-                light: '/img/logos/toolhive-symbol-dark-green.svg',
-                dark: '/img/logos/toolhive-symbol-light-green.svg',
+                light: '/img/logos/toolhive-symbol-black.svg',
+                dark: '/img/logos/toolhive-symbol-white.svg',
               }}
               alt='ToolHive symbol'
               style={{

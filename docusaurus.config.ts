@@ -155,11 +155,9 @@ const config: Config = {
       isCloseable: true,
     },
     navbar: {
-      // title: 'Stacklok Docs',
       logo: {
         alt: 'Stacklok logo',
-        src: 'img/logos/stacklok-default-white.svg',
-        //srcDark: 'img/logos/stacklok-default-white.svg',
+        src: 'img/logos/stacklok-default-light-green.svg',
         href: '/',
       },
       items: [
@@ -255,7 +253,7 @@ const config: Config = {
         {
           items: [
             {
-              html: `<a href="https://stacklok.com/"><img src="/img/logos/stacklok-default-white.svg" alt="Stacklok Logo" width="150px" /></a>`,
+              html: `<a href="https://stacklok.com/"><img src="/img/logos/stacklok-default-light-green.svg" alt="Stacklok Logo" width="150px" /></a>`,
             },
           ],
         },
