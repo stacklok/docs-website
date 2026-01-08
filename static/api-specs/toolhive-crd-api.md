@@ -1,4 +1,3 @@
-# API Reference
 
 ## Packages
 - [toolhive.stacklok.dev/v1alpha1](#toolhivestacklokdevv1alpha1)
