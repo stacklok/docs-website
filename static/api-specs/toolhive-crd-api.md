@@ -2066,7 +2066,7 @@ _Appears in:_
 | `serviceType` _string_ | ServiceType specifies the Kubernetes service type for the Virtual MCP server | ClusterIP | Enum: [ClusterIP NodePort LoadBalancer] <br /> |
 | `podTemplateSpec` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#rawextension-runtime-pkg)_ | PodTemplateSpec defines the pod template to use for the Virtual MCP server<br />This allows for customizing the pod configuration beyond what is provided by the other fields.<br />Note that to modify the specific container the Virtual MCP server runs in, you must specify<br />the 'vmcp' container name in the PodTemplateSpec.<br />This field accepts a PodTemplateSpec object as JSON/YAML. |  | Type: object <br /> |
 | `audit` _[AuditConfig](#auditconfig)_ | Audit configures audit logging for the Virtual MCP server<br />When enabled, audit logs include MCP protocol operations |  |  |
-| `config` | Config is the Virtual MCP server configuration. <br /> <br /> The only field currently required within config is `config.groupRef`. GroupRef references an existing MCPGRoup that defines backend workloads. The referenced MCPGroup must exist in the same namespace. <br /> <br /> NOTE: All other `config` fields will be ignored in favor of their inline versions above. |  |  |
+| `config` __object__ | Config is the Virtual MCP server configuration. <br /> <br /> The only field currently required within config is `config.groupRef`. GroupRef references an existing MCPGroup that defines backend workloads. The referenced MCPGroup must exist in the same namespace. <br /> <br /> NOTE: All other `config` fields will be ignored in favor of their inline versions above. |  |  |
 
 
 #### VirtualMCPServerStatus
