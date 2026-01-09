@@ -1,6 +1,6 @@
 ---
 title: Deployment in Kubernetes
-description: How to deploy the ToolHive Registry server in Kubernetes
+description: How to deploy the ToolHive Registry Server in Kubernetes
 ---
 
 The Registry server can be deployed in various environments, from local
@@ -12,18 +12,27 @@ The Registry server is designed to run as an independent deployment, possibly
 alongside the ToolHive Operator.
 
 Although it is possible to run ToolHive Registry to use an in-memory store, it
-is unreliable to run multiple replicas as they would not share state, and we
-recommend running it with a proper Postgres database.
+is unreliable to run multiple replicas as they would not share state, and you
+should run it with a proper Postgres database.
 
-### Deployment Example
+### ToolHive Operator
 
-Below is an example Kubernetes Deployment configuring ToolHive Registry server
-to expose a single static registry based on a Git repository.
+ToolHive Operator supports deploying the Registry server. See
+[Deploy the Registry server in Kubernetes](../guides-k8s/deploy-registry.mdx)
+for a complete guide.
+
+### Manual Deployment
+
+Below is an example Kubernetes Deployment configuring the ToolHive Registry
+Server to expose a single static registry based on a Git repository.
 
 This example assumes that a Postgres database is available at `db.example.com`
 and the necessary users for migration and application execution are configured
 and able to connect to a `registry` database. It also assumes that you have a
 keycloak instance configured to act as identity provider.
+
+All resources are created in the `toolhive-system` namespace. This namespace
+must exist before applying the deployment.
 
 For further details about user grants read the
 [Migration user privileges](./database.mdx#migration-user-privileges) and
@@ -36,6 +45,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: registry-api
+  namespace: toolhive-system
 spec:
   replicas: 1
   selector:
@@ -64,7 +74,7 @@ spec:
               subPath: pgpass
       containers:
         - name: registry-api
-          image: ghcr.io/stacklok/toolhive-registry-server/thv-registry-api:latest
+          image: ghcr.io/stacklok/thv-registry-api:latest
           args:
             - serve
             - --config=/thv/config.yaml
@@ -110,6 +120,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: registry-api-config
+  namespace: toolhive-system
 data:
   config.yaml: |
     registryName: my-registry
@@ -142,6 +153,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: registry-api-pgpass
+  namespace: toolhive-system
 type: Opaque
 stringData:
   pgpass: |
@@ -152,6 +164,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: registry-api
+  namespace: toolhive-system
 spec:
   selector:
     app: registry-api
@@ -176,24 +189,31 @@ of workloads. The types being watched are
 [`MCPRemoteProxy`](../guides-k8s/remote-mcp-proxy.mdx), and
 [`VirtualMCPServer`](../guides-vmcp/configuration.mdx).
 
-This feature requires the Registry Server to be granted access to those
-resources via a Service Account like the following
+:::note
+
+Currently, only resources in the same namespace as the Registry server are
+discovered.
+
+:::
+
+This feature requires the Registry server to be granted access to those
+resources.
 
 ```yaml title="registry-service-account.yaml"
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   labels:
-    toolhive.stacklok.io/registry-name: example-registry
-  name: example-registry-registry-api
+    toolhive.stacklok.io/registry-name: registry-api
+  name: registry-api
   namespace: toolhive-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   labels:
-    toolhive.stacklok.io/registry-name: example-registry
-  name: example-registry-registry-api
+    toolhive.stacklok.io/registry-name: registry-api
+  name: registry-api
   namespace: toolhive-system
 rules:
   - apiGroups:
@@ -250,15 +270,25 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   labels:
-    toolhive.stacklok.io/registry-name: example-registry
-  name: example-registry-registry-api
+    toolhive.stacklok.io/registry-name: registry-api
+  name: registry-api
   namespace: toolhive-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: example-registry-registry-api
+  name: registry-api
 subjects:
   - kind: ServiceAccount
-    name: example-registry-registry-api
+    name: registry-api
     namespace: toolhive-system
+```
+
+Apply the service account to the registry server deployment in the
+`spec.template.spec` section:
+
+```yaml
+spec:
+  template:
+    spec:
+      serviceAccountName: registry-api
 ```

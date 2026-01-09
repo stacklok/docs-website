@@ -12,7 +12,7 @@ const baseTheme = themes.vsDark;
 export default {
   plain: {
     color: '#D4D4D4',
-    backgroundColor: '#212121',
+    backgroundColor: '#1a1a1a',
   },
   styles: [
     ...baseTheme.styles,
