@@ -43,14 +43,14 @@ style goals, or if you need more details about any of these points, refer to the
 
 The project's official language is **US English**.
 
+Avoid slang and colloquial expressions. Use clear, straightforward language and
+avoid overly complex jargon to make content accessible to a wide audience.
+
 ### Tone and voice
 
 Strive for a casual and conversational tone without becoming overly informal. We
 aim to be friendly and relatable while retaining credibility and professionalism
 – approachable yet polished.
-
-Avoid slang and colloquial expressions. Use clear, straightforward language and
-avoid overly complex jargon to make content accessible to a wide audience.
 
 #### Active voice
 
@@ -59,10 +59,12 @@ subject performing the action, making the writing more direct and engaging.
 Passive voice focuses on the recipient of the action rather than the actor,
 often resulting in unclear sentences and misinterpretation of responsibility.
 
-:white_check_mark: Yes: Replace `docker` with `podman` in all commands if you
-use Podman.\
-:x: No: `docker` should be replaced with `podman` in all commands if Podman is
-used.
+:white_check_mark: Yes: Click **Install** to install the MCP server.\
+:x: No: MCP server is installed when the "Install" button is clicked.
+
+:white_check_mark: Yes: Set the `debug` flag to `true` to enable verbose
+logging.\
+:x: No: Verbose logging is enabled when the `debug` flag is set to `true`.
 
 #### Speak to the reader
 
@@ -76,13 +78,13 @@ Capitalize **proper nouns** like names, companies, and products. Generally,
 the norms of the third-party project/company (ex: npm is stylized in lowercase,
 even when it begins a sentence).
 
-:white_check_mark: Yes: ToolHive includes a built-in registry of MCPs...\
-:x: No: ToolHive includes a built-in Registry of MCPs...
+:white_check_mark: Yes: Organize MCP servers into groups\
+:x: No: Organize MCP Servers into Groups
 
 Use **sentence case** in titles and headings.
 
-:white_check_mark: Yes: Alternative run commands\
-:x: No: Alternative Run Commands
+:white_check_mark: Yes: Configuration file structure\
+:x: No: Configuration File Structure
 
 Use `ALL_CAPS` to indicate placeholder text/parameters, where the reader is
 expected to change a value.
@@ -110,9 +112,8 @@ Use descriptive link text. Besides providing clear context to the reader, this
 improves accessibility for screen readers.
 
 :white_check_mark: Yes: For more information, see
-[Purpose and scope](?tab=t.0#heading=h.qaqvuha5efk).\
-:x: No: For more information, see
-[this section](?tab=t.0#heading=h.qaqvuha5efk).
+[Tone and voice](#tone-and-voice).\
+:x: No: For more information, see [this section](#tone-and-voice).
 
 Note on capitalization: when referencing other docs/headings by title, use
 sentence case so the reference matches the corresponding title or heading.
@@ -120,11 +121,11 @@ sentence case so the reference matches the corresponding title or heading.
 ### Formatting
 
 **Bold**: use when referring to UI elements; prefer bold over quotes. For
-example: Click **Add Rule** and select the rule you want to add to the profile.
+example: Click **Install server** to start the installation process.
 
 **Italics**: emphasize particular words or phrases, such as when
-introducing/defining a term. For example: A _profile_ defines which security
-policies apply to your software supply chain.
+introducing/defining a term. For example: Custom permissions are defined using
+_permission profiles_.
 
 **Underscore**: do not use; reserved for links.
 
@@ -151,8 +152,8 @@ Considerations for screenshots and other images:
   been used in Stacklok docs to date) and zoom level (ex: zoom twice in VS Code,
   125% in browsers).
 - Crop screenshots to the relevant portion of the interface.
-- Use the primary brand color (`#5058ff`) for annotations like callouts and
-  highlight boxes.
+- Use the primary brand colors (`#2E6E3E` on light backgrounds, `#B2E4BC` on
+  dark backgrounds) for annotations like callouts and highlight boxes.
 
 ## Markdown style
 
@@ -188,16 +189,32 @@ Specific guidelines for Docusaurus:
 
 - Heading 1 is reserved for the page title, typically defined in the Markdown
   front matter section. Sections within a page begin with Heading 2 (`##`).
-  [Reference](https://docusaurus.io/docs/markdown-features/toc)
+  [[Reference](https://docusaurus.io/docs/markdown-features/toc)]
 - Use relative file links (with .md/.mdx extensions) when referring to other
-  pages. [Reference](https://docusaurus.io/docs/markdown-features/links)
-- Use the .mdx extension for pages containing JSX includes. Docusaurus v3
-  currently runs all .md and .mdx files through an MDX parser but this will
-  change in a future version.
-  [Reference](https://docusaurus.io/docs/migration/v3#using-the-mdx-extension)
+  pages. [[Reference](https://docusaurus.io/docs/markdown-features/links)]
+- For consistency and simplicity, use the `.mdx` extension for all pages. This
+  also ensures forward compatibility with Docusaurus v4.
+  [[Reference](https://docusaurus.io/docs/migration/v3#using-the-mdx-extension)]
 - Use the front matter section on all pages. At a minimum, set the `title` (this
   is rendered into the page as an H1) and a short `description`.
-  [Reference](https://docusaurus.io/docs/api/plugins/@docusaurus/plugin-content-docs#markdown-front-matter)
+  [[Reference](https://docusaurus.io/docs/api/plugins/@docusaurus/plugin-content-docs#markdown-front-matter)]
+- Use titles and line highlights in code blocks to provide context and improve
+  readability.
+  [[Reference](https://docusaurus.io/docs/markdown-features/code-blocks)]
+  - Titles are added using the `title="..."` attribute in the opening code
+    fence.
+  - Line highlights are added using comma-separated `{number}` or `{start-end}`
+    ranges in the opening code fence, or `highlight-next-line`,
+    `highlight-start`, and `highlight-end` comments within the code block.
+- Use admonitions for notes, tips, warnings, and other annotations. This
+  provides a consistent look and feel across the site.
+  [[Reference](https://docusaurus.io/docs/markdown-features/admonitions)]
+  - Use square brackets to add a custom title, e.g. `:::info[My title]`.
+  - Add empty lines around the start and end directives to avoid formatting
+    issues with Prettier.
+  - Don't overuse admonitions; they are best for callouts that add value beyond
+    the main content. Too many admonitions can become visually overwhelming and
+    interrupt the flow of documentation.
 - Place images in `static/img` using WebP, PNG, or SVG format.
 - Use the
   [`ThemedImage` component](https://docusaurus.io/docs/markdown-features/assets#themed-images)
@@ -208,49 +225,65 @@ Specific guidelines for Docusaurus:
 
 These are the projects we work on, and a short description of each one.
 
-**ToolHive**: [ToolHive](https://github.com/stacklok/toolhive) is a lightweight
-utility designed to simplify the deployment and management of MCP (Model Context
-Protocol) servers, ensuring ease of use, consistency, and security. It's the
-simplest and safest way to use MCP (Model Context Protocol). Start from a set of
-curated MCP images and run MCP clients in lightweight, locked-down containers
-that give you control of permissions (cause you don’t want those MCP clients
-digging around anywhere they don’t belong). It's written bi-capitalized as one
-word (not "Toolhive" or "Tool Hive").
+**Stacklok MCP Platform**: Stacklok’s commercial offering for enterprises. It
+consists of the ToolHive platform, commercial support terms, services hours from
+the Stacklok Applied AI engineering team, and access to a collection of hardened
+MCP server images.
+
+**ToolHive**: A collection of open source projects that form the foundation of
+the Stacklok Enterprise MCP Platform. ToolHive includes everything you need to
+use MCP servers in production. It’s made up of four key components: the Runtime,
+Registry Server, Gateway, and Portal. It's written bi-capitalized as one word
+(not "Toolhive" or "Tool Hive").
+
+**ToolHive Runtime**: The core ToolHive CLI, desktop UI app, and Kubernetes
+Operator. ToolHive manages containerized MCP servers on your local machine, in
+centralized Kubernetes environments, and securely proxies remote MCP servers.
+
+**ToolHive Registry Server**: An implementation of the official MCP Registry API
+specification. Curate a catalog of trusted servers your teams can quickly
+discover and deploy. It's capitalized when used as part of the full product
+name. When referring to a registry or registry server generically, use
+lowercase.
+
+**ToolHive Gateway**: A secure proxy for MCP server connectivity, aggregation,
+and orchestration. It's capitalized when used as part of the full product name.
+When referring to a gateway generically, use lowercase.
+
+**Virtual MCP Server (vMCP)**: A feature of ToolHive; it is the implementation
+of the ToolHive Gateway. Use the full name on first reference, and "vMCP"
+thereafter.
+
+**ToolHive Portal**: A web-based frontend to the ToolHive Registry Server.
 
 ## Word list & glossary
 
 Common terms used in Stacklok content:
 
-**open source**: we prefer using two words over the hyphenated form (not
+**open source**: We prefer using two words over the hyphenated form (not
 "open-source"). It's not a proper noun, so don't capitalize unless it starts a
 sentence.
 
-**OSS**: abbreviation for "open source software".
+**OSS**: Abbreviation for "open source software".
 
-**Stacklok**: our company! It's written as one word with a single capital (not
-"StackLok" or "Stacklock").
+**Stacklok**: The company behind ToolHive and the Stacklok Enterprise MCP
+Platform. It's written as one word with a single capital (not "StackLok" or
+"Stacklock").
 
 ### Products/brands
-
-**aider** - an open source AI pair programmer in your terminal. It's written
-lowercase unless it starts a sentence.
-
-**Continue** - an open source AI coding assistant for IDEs that connects to many
-model providers. It's written as just "Continue" (not "Continue.dev", which is
-their website).
 
 **Copilot** - GitHub's AI coding assistant. It's written with only a leading
 capital (not "CoPilot").
 
-**Git**: the most popular distributed version control system. It underpins most
+**Git**: The most popular distributed version control system. It underpins most
 commercial VCS offerings like GitHub, Bitbucket, and GitLab. Unless specifically
-referring to the `git` command line tool, it's a proper noun and should be
+referring to the `git` command-line tool, it's a proper noun and should be
 capitalized.
 
-**GitHub**: the most popular source code hosting provider, especially for open
+**GitHub**: The most popular source code hosting provider, especially for open
 source. It's written bi-capitalized as one word (not "Git Hub" or "Github").
 
-**JetBrains**: a company that makes IDEs for many languages, including IntelliJ
+**JetBrains**: A company that makes IDEs for many languages, including IntelliJ
 IDEA, PyCharm, GoLand, and more. It's written bi-capitalized as one word (not
 "Jet Brains" or "Jetbrains"). It's proper to reference a specific JetBrains IDE
 when needed, or simply refer to "all JetBrains IDEs".
@@ -268,17 +301,17 @@ servers into a single endpoint. It's written with a lowercase "v" followed by
 "MC" in all caps and a capital "P" (not "VMCP" or "Vmcp"). Use "Virtual MCP
 Server (vMCP)" on first use, "vMCP" thereafter.
 
-**npm**: the registry for JavaScript packages (the "npm registry"), and the
+**npm**: The registry for JavaScript packages (the "npm registry"), and the
 default package manager for JavaScript. Since it's both the registry _and_ the
 package manager, it may be useful to disambiguate "the npm registry". It's not
 an abbreviation, so it's not capitalized; it's written all lowercase (not
 "NPM").
 
-**OpenAI**: the company behind the GPT models and ChatGPT. It's written
+**OpenAI**: The company behind the GPT models and ChatGPT. It's written
 bi-capitalized as one word (not "Open AI" or "Openai").
 
-**Visual Studio Code**: a very popular free integrated development environment
-(IDE) from Microsoft. Per Microsoft's
+**Visual Studio Code**: A popular free integrated development environment (IDE)
+from Microsoft. Per Microsoft's
 [brand guidelines](https://code.visualstudio.com/brand#brand-name), use the full
 "Visual Studio Code" name the first time you reference it. "VS Code" is an
 acceptable short form after the first reference. It's written as two words and
