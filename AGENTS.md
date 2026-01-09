@@ -22,6 +22,13 @@ This is the user-facing documentation for ToolHive, an open source tool that hel
 - `/sidebars.ts`: defines the structure of the documentation sidebar, including which pages appear in the sidebar and their order.
 - `/vercel.json`: configuration file for Vercel deployment, specifying build settings and redirects.
 
+## Auto-generated content
+
+Do not edit these files directly; they are generated automatically by upstream processes.
+
+- `/docs/toolhive/reference/cli/*.md`: auto-generated CLI reference documentation from the ToolHive CLI source code.
+- `/static/api-specs/*`: auto-generated API, CRD, and JSON schema specifications.
+
 ## Commands
 
 Development commands:
@@ -114,13 +121,13 @@ The project's official language is US English.
 - Use clear, straightforward language and avoid overly complex jargon to make content accessible to a wide audience.
 - Use active voice instead of passive voice.
 - Address the reader using the second person ("you", "your"). Avoid the first person ("we", "our") and third person ("the user", "a developer").
-  - Exception: In `/blog/toolhive-updates` posts, use first person ("we", "our") to communicate updates from the ToolHive team. This creates a direct connection between the team and the community.
+  - Exception: In `/blog/toolhive-updates` posts, it's acceptable to use the first person ("we", "our") to communicate updates from the ToolHive team.
 
 ### Capitalization
 
 - Capitalize proper nouns like names, companies, and products. Generally, don't capitalize features or generic terms.
 - Use sentence case in titles and headings.
-- Use `ALL_CAPS` to indicate placeholder text/parameters, where the reader is expected to change a value.
+- Use `<ALL_CAPS>` to indicate placeholder text/parameters, where the reader is expected to change a value.
 - Expand acronyms on first use, then use the acronym in subsequent references.
   - Exception: MCP is used ubiquitously in this project, so it does not need to be expanded on first use.
 
@@ -160,7 +167,7 @@ The project's official language is US English.
 
 ALWAYS use these exact terms and capitalizations. When editing documentation, replace any variations with the preferred terms listed here:
 
-- ToolHive - this project, an open source tool that helps you run and manage MCP servers easily and securely
+- ToolHive - this project, a collection of open source tools that help you run and manage MCP servers easily and securely
 - Stacklok - the company behind ToolHive
 - GitHub Copilot
 - Model Context Protocol (MCP)
@@ -194,10 +201,13 @@ This website is built using Docusaurus, which has some specific requirements and
 
 - Heading 1 is reserved for the page title, typically defined in the Markdown front matter section. Sections within a page begin with Heading 2 (`##`).
 - Use relative file links (with .md/.mdx extensions) when referring to other pages.
-- Use the .mdx extension for pages containing JSX includes.
+- Use the `.mdx` file extension for pages (exception for auto-generated content).
 - Use the front matter section on all pages. At a minimum, set the `title` (this is rendered into the page as an H1) and a short `description`.
-- Use the `admonition` component for notes, tips, warnings, and other annotations. This provides a consistent look and feel across the site.
-  - Use the `:::type` syntax to define the admonition type, such as `note`, `tip`, `info`, `warning`, or `danger`. Use square brackets to add a title, e.g. `:::info[Title]`. Add empty lines around the start and end directives.
+- Use titles and line highlights in code blocks to provide context and improve readability.
+  - Titles are added using the `title="..."` attribute in the opening code fence.
+  - Line highlights are added using comma-separated `{number}` or `{start-end}` ranges in the opening code fence, or `highlight-next-line`, `highlight-start`, and `highlight-end` comments within the code block.
+- Use admonitions for notes, tips, warnings, and other annotations. This provides a consistent look and feel across the site.
+  - Use the `:::type` syntax to define the admonition type: `note`, `tip`, `info`, `warning`, or `danger`. Use square brackets to add a custom title, e.g. `:::info[Title]`. Add empty lines around the start and end directives.
 - Place images in `static/img` using WebP, PNG, or SVG format.
-- Use the `ThemedImage` component to provide both light and dark mode screenshots for apps/UIs that support both.
-- Use the `Tabs` and `TabItem` components to create tabbed content sections.
+- Use the `ThemedImage` component to provide both light and dark mode screenshots for apps/UIs that support both. Typically used with the `useBaseUrl` hook to construct the image paths. Both require import statements.
+- Use the `Tabs` and `TabItem` components to create tabbed content sections. These are in the global scope and do not require imports.
