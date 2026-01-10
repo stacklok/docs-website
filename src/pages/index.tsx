@@ -54,15 +54,15 @@ export default function Home(): ReactNode {
               }}
               alt='ToolHive symbol'
               style={{
-                width: '150px',
+                width: '120px',
                 height: 'auto',
                 float: 'right',
                 marginLeft: '1.5rem',
                 display: 'block',
                 maxWidth: '40%',
-                borderRadius: '25px',
               }}
             />
+            {/* TODO: update description */}
             ToolHive simplifies the deployment and management of Model Context
             Protocol (MCP) servers, ensuring ease of use, consistency, and
             security. It&apos;s available as a standalone tool or as a
@@ -70,12 +70,37 @@ export default function Home(): ReactNode {
           </ProductCard>
         </ProductGrid>
 
-        <h1 className='text--center'>Our MCP Servers</h1>
+        <h1 className='text--center'>Open source MCP servers</h1>
 
         <ProductGrid layout='fixed-3' spacing='spacious'>
           <ProductCard
             contentType='text'
-            href='http://github.com/StacklokLabs/gofetch'
+            href='/toolhive/support#toolhive-documentation-mcp-server'
+            title='Stacklok Documentation Search'
+            linkText='Read the docs'
+          >
+            <ThemedImage
+              sources={{
+                light: '/img/logos/stacklok-symbol-dark-green.svg',
+                dark: '/img/logos/stacklok-symbol-light-green.svg',
+              }}
+              alt='Stacklok symbol'
+              style={{
+                width: '60px',
+                height: 'auto',
+                float: 'right',
+                marginLeft: '0.5rem',
+                display: 'block',
+                maxWidth: '40%',
+              }}
+            />
+            Access the ToolHive user and contributor documentation directly from
+            your LLM-powered applications. Available as a local or remote MCP
+            server.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='https://github.com/StacklokLabs/gofetch'
             title='GoFetch MCP server'
             linkText='Go to project'
           >
@@ -92,13 +117,13 @@ export default function Home(): ReactNode {
               }}
             />
             A Go implementation of the Fetch MCP server that retrieves web
-            content and converts it to markdown for easier consumption by LLMs.
+            content and converts it to Markdown for easier consumption by LLMs.
           </ProductCard>
           <ProductCard
             contentType='text'
-            href='http://github.com/StacklokLabs/mkp'
+            href='/toolhive/guides-mcp/k8s'
             title='MKP - Model Kontext Protocol'
-            linkText='Go to project'
+            linkText='Read the guide'
           >
             <img
               src='/img/mcp-servers/mkp-logo.webp'
@@ -117,7 +142,7 @@ export default function Home(): ReactNode {
           </ProductCard>
           <ProductCard
             contentType='text'
-            href='http://github.com/StacklokLabs/osv-mcp'
+            href='https://github.com/StacklokLabs/osv-mcp'
             title='OSV MCP server'
             linkText='Go to project'
           >
@@ -126,7 +151,7 @@ export default function Home(): ReactNode {
           </ProductCard>
           <ProductCard
             contentType='text'
-            href='http://github.com/StacklokLabs/ocireg-mcp'
+            href='https://github.com/StacklokLabs/ocireg-mcp'
             title='OCI Registry MCP server'
             linkText='Go to project'
           >
@@ -135,7 +160,7 @@ export default function Home(): ReactNode {
           </ProductCard>
           <ProductCard
             contentType='text'
-            href='http://github.com/StacklokLabs/plotting-mcp'
+            href='https://github.com/StacklokLabs/plotting-mcp'
             title='Plotting MCP server'
             linkText='Go to project'
           >
@@ -144,7 +169,7 @@ export default function Home(): ReactNode {
           </ProductCard>
           <ProductCard
             contentType='text'
-            href='http://github.com/StacklokLabs/sqlite-mcp'
+            href='https://github.com/StacklokLabs/sqlite-mcp'
             title='SQLite MCP server'
             linkText='Go to project'
           >
@@ -155,18 +180,22 @@ export default function Home(): ReactNode {
 
         <h1 className='text--center'>Other MCP Projects</h1>
 
-        <ProductGrid layout='fixed-3' spacing='spacious'>
+        <ProductGrid layout='fixed-2' spacing='spacious'>
           <ProductCard
             contentType='text'
-            href='http://github.com/StacklokLabs/toolhive-buildkite-plugin'
-            title='ToolHive Buildkite Plugin'
-            linkText='Go to project'
+            href='/toolhive/tutorials/mcp-optimizer'
+            title='MCP Optimizer'
+            linkText='Read the docs'
           >
-            <img
-              src='/img/mcp-servers/buildkite-logo.svg'
-              alt='Buildkite logo'
+            <ThemedImage
+              sources={{
+                light:
+                  '/img/mcp-servers/stacklok-website-icons-efficiency-dark-green.svg',
+                dark: '/img/mcp-servers/stacklok-website-icons-efficiency-light-green.svg',
+              }}
+              alt='Stacklok efficiency icon'
               style={{
-                width: '60px',
+                width: '80px',
                 height: 'auto',
                 float: 'right',
                 marginLeft: '0.5rem',
@@ -174,12 +203,35 @@ export default function Home(): ReactNode {
                 maxWidth: '40%',
               }}
             />
-            A Buildkite plugin to run MCP servers in your CI/CD pipelines using
-            ToolHive.
+            MCP Optimizer discovers the tools from your MCP servers in ToolHive
+            and optimizes token usage by intelligently filtering based on the
+            task at hand.
           </ProductCard>
           <ProductCard
             contentType='text'
-            href='http://github.com/StacklokLabs/toolhive-actions'
+            href='https://github.com/StacklokLabs/yardstick'
+            title='Yardstick'
+            linkText='Go to project'
+          >
+            <img
+              src='/img/mcp-servers/yardstick-logo.webp'
+              alt='Yardstick logo'
+              style={{
+                width: '60px',
+                height: 'auto',
+                float: 'right',
+                marginLeft: '0.5rem',
+                marginBottom: '0.5rem',
+                display: 'block',
+                maxWidth: '40%',
+              }}
+            />
+            Yardstick is an MCP server and client reference implementation for
+            deterministic testing.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='https://github.com/StacklokLabs/toolhive-actions'
             title='ToolHive GitHub Actions'
             linkText='Go to project'
           >
@@ -200,25 +252,24 @@ export default function Home(): ReactNode {
           </ProductCard>
           <ProductCard
             contentType='text'
-            href='http://github.com/StacklokLabs/yardstick'
-            title='Yardstick'
+            href='https://github.com/StacklokLabs/toolhive-buildkite-plugin'
+            title='ToolHive Buildkite Plugin'
             linkText='Go to project'
           >
             <img
-              src='/img/mcp-servers/yardstick-logo.webp'
-              alt='Yardstick logo'
+              src='/img/mcp-servers/buildkite-logo.svg'
+              alt='Buildkite logo'
               style={{
                 width: '60px',
                 height: 'auto',
                 float: 'right',
                 marginLeft: '0.5rem',
-                marginBottom: '0.5rem',
                 display: 'block',
                 maxWidth: '40%',
               }}
             />
-            Yardstick is an MCP server and client reference implementation for
-            deterministic testing.
+            A Buildkite plugin to run MCP servers in your CI/CD pipelines using
+            ToolHive.
           </ProductCard>
         </ProductGrid>
       </main>
