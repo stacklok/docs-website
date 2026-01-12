@@ -1,11 +1,16 @@
 ---
 title: Deploy the operator
 description:
-  How to deploy the ToolHive operator in a Kubernetes cluster using Helm
+  How to deploy the ToolHive operator in a Kubernetes cluster using Helm or
+  kubectl
 ---
 
-Helm is the officially supported method to install the ToolHive operator in a
-Kubernetes cluster.
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+This guide covers how to install the ToolHive operator in a Kubernetes cluster.
+You can install using either Helm (recommended) or kubectl with static
+manifests.
 
 ## Prerequisites
 
@@ -14,31 +19,30 @@ Kubernetes cluster.
 - [`kubectl`](https://kubernetes.io/docs/tasks/tools/) configured to communicate
   with your cluster
 - [Helm](https://helm.sh/docs/intro/install/) (v3.10 minimum, v3.14+
-  recommended)
+  recommended) - only required for Helm installation method
 
-## Install the CRDs
+## Installation methods
 
 ![Latest CRD Helm chart release](https://img.shields.io/github/v/release/stacklok/toolhive?filter=toolhive-operator-crds-*&style=for-the-badge&logo=helm&label=Latest%20CRD%20chart&color=b2e4bc)
 
-The ToolHive operator requires Custom Resource Definitions (CRDs) to manage
-MCPServer resources. The CRDs define the structure and behavior of MCPServers in
-your cluster.
+Choose an installation method based on your needs:
 
-```bash
-helm upgrade --install toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds
-```
+- **Helm** (recommended): Provides customization options and manages the full
+  lifecycle of the operator. CRDs are installed and upgraded automatically as
+  part of the Helm chart.
+- **kubectl**: Uses static manifests for a simple installation. Useful for
+  environments where Helm isn't available or for GitOps workflows.
 
-This command installs the latest version of the ToolHive operator CRDs Helm
-chart. To install a specific version, append `--version <VERSION>` to the
-command, for example:
+<Tabs>
+<TabItem value="helm" label="Helm" default>
 
-```bash
-helm upgrade --install toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds --version 0.0.73
-```
-
-## Install the operator
+## Install with Helm
 
 ![Latest Operator Helm chart release](https://img.shields.io/github/v/release/stacklok/toolhive?filter=toolhive-operator-0*&style=for-the-badge&logo=helm&label=Latest%20Operator%20chart&color=b2e4bc)
+
+The ToolHive operator Helm chart includes the Custom Resource Definitions (CRDs)
+required to manage MCP server resources. CRDs are installed automatically when
+you install the chart and upgraded automatically when you upgrade the chart.
 
 To install the ToolHive operator using default settings, run the following
 command:
@@ -47,15 +51,47 @@ command:
 helm upgrade --install toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --create-namespace
 ```
 
-This command installs the latest version of the ToolHive operator CRDs Helm
-chart. To install a specific version, append `--version <VERSION>` to the
-command, for example:
+This command installs the latest version of the ToolHive operator Helm chart. To
+install a specific version, append `--version <VERSION>` to the command, for
+example:
 
 ```bash
-helm upgrade --install toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --create-namespace --version 0.5.6
+helm upgrade --install toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --create-namespace --version 0.6.0
 ```
 
-Verify the installation:
+### CRD configuration options
+
+The Helm chart provides fine-grained control over which CRDs are installed. By
+default, all CRDs are installed. You can selectively enable or disable CRD
+groups using these values:
+
+| Value                     | Description                                           | Default |
+| ------------------------- | ----------------------------------------------------- | ------- |
+| `crds.install.server`     | Install server CRDs (MCPServer, MCPRemoteProxy, etc.) | `true`  |
+| `crds.install.registry`   | Install registry CRDs (MCPRegistry)                   | `true`  |
+| `crds.install.virtualMcp` | Install vMCP CRDs (VirtualMCPServer, etc.)            | `true`  |
+| `crds.keep`               | Preserve CRDs when uninstalling the chart             | `true`  |
+
+For example, to install only server-related CRDs without vMCP support:
+
+```bash
+helm upgrade --install toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator \
+  -n toolhive-system --create-namespace \
+  --set crds.install.virtualMcp=false
+```
+
+:::note
+
+The `crds.keep` option adds the `helm.sh/resource-policy: keep` annotation to
+CRDs, which prevents Helm from deleting them during `helm uninstall`. This
+protects your custom resources from accidental deletion. If you want to remove
+CRDs during uninstall, set `crds.keep=false`.
+
+:::
+
+### Verify the installation
+
+Check that the operator pod is running:
 
 ```bash
 kubectl get pods -n toolhive-system
@@ -63,10 +99,16 @@ kubectl get pods -n toolhive-system
 
 After about 30 seconds, you should see the `toolhive-operator` pod running.
 
+Verify that the CRDs are installed:
+
+```bash
+kubectl get crd | grep toolhive
+```
+
 Check the logs of the operator pod:
 
 ```bash
-kubectl logs -f -n toolhive-system <TOOLHIVE_OPERATOR_POD_NAME>
+kubectl logs -f -n toolhive-system -l app.kubernetes.io/name=toolhive-operator
 ```
 
 This shows you the logs of the operator pod, which can help you debug any
@@ -223,14 +265,9 @@ kubectl logs -n toolhive-system <TOOLHIVE_OPERATOR_POD_NAME>
 
 ## Upgrade the operator
 
-To upgrade the ToolHive operator to a new version, you need to upgrade both the
-CRDs and the operator installation.
-
-### Upgrade the CRDs
-
-To upgrade the ToolHive operator to a new version, upgrade the CRDs first. Helm
-does not upgrade CRDs automatically, so you need to upgrade the CRD Helm chart
-and then apply the CRDs using `kubectl`.
+The ToolHive operator Helm chart manages CRDs as part of the chart templates.
+This means both the operator and CRDs are upgraded together when you run
+`helm upgrade`.
 
 ![Latest CRD Helm chart release](https://img.shields.io/github/v/release/stacklok/toolhive?filter=toolhive-operator-crds-*&style=for-the-badge&logo=helm&label=Latest%20CRD%20chart&color=b2e4bc)
 
@@ -240,17 +277,10 @@ First, upgrade the CRD Helm chart to match your target operator version:
 helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds --version 0.0.73
 ```
 
-Then apply the CRDs from the same version tag:
+To upgrade to the latest version:
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/stacklok/toolhive/refs/tags/toolhive-operator-crds-0.0.73/deploy/charts/operator-crds/crds/toolhive.stacklok.dev_mcpexternalauthconfigs.yaml
-kubectl apply -f https://raw.githubusercontent.com/stacklok/toolhive/refs/tags/toolhive-operator-crds-0.0.73/deploy/charts/operator-crds/crds/toolhive.stacklok.dev_mcptoolconfigs.yaml
-kubectl apply -f https://raw.githubusercontent.com/stacklok/toolhive/refs/tags/toolhive-operator-crds-0.0.73/deploy/charts/operator-crds/crds/toolhive.stacklok.dev_mcpremoteproxies.yaml
-kubectl apply -f https://raw.githubusercontent.com/stacklok/toolhive/refs/tags/toolhive-operator-crds-0.0.73/deploy/charts/operator-crds/crds/toolhive.stacklok.dev_mcpservers.yaml
-kubectl apply -f https://raw.githubusercontent.com/stacklok/toolhive/refs/tags/toolhive-operator-crds-0.0.73/deploy/charts/operator-crds/crds/toolhive.stacklok.dev_mcpgroups.yaml
-kubectl apply -f https://raw.githubusercontent.com/stacklok/toolhive/refs/tags/toolhive-operator-crds-0.0.73/deploy/charts/operator-crds/crds/toolhive.stacklok.dev_mcpregistries.yaml
-kubectl apply -f https://raw.githubusercontent.com/stacklok/toolhive/refs/tags/toolhive-operator-crds-0.0.73/deploy/charts/operator-crds/crds/toolhive.stacklok.dev_virtualmcpcompositetooldefinitions.yaml
-kubectl apply -f https://raw.githubusercontent.com/stacklok/toolhive/refs/tags/toolhive-operator-crds-0.0.73/deploy/charts/operator-crds/crds/toolhive.stacklok.dev_virtualmcpservers.yaml
+helm upgrade toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --reuse-values
 ```
 
 Replace `0.0.73` in both commands with your target CRD version.
@@ -262,34 +292,36 @@ Then, upgrade the operator installation using Helm.
 ![Latest Operator Helm chart release](https://img.shields.io/github/v/release/stacklok/toolhive?filter=toolhive-operator-0*&style=for-the-badge&logo=helm&label=Latest%20Operator%20chart&color=b2e4bc)
 
 ```bash
-helm upgrade -i toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --reuse-values
-```
-
-This upgrades the operator to the latest version available in the OCI registry.
-To upgrade to a specific version, add the `--version` flag:
-
-```bash
-helm upgrade -i toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --reuse-values --version 0.5.6
+helm upgrade toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --reuse-values --version 0.6.0
 ```
 
 If you have a custom `values.yaml` file, include it with the `-f` flag:
 
 ```bash
-helm upgrade -i toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --reuse-values -f values.yaml
+helm upgrade toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --reuse-values -f values.yaml
+```
+
+After upgrading, verify the new version is running:
+
+```bash
+kubectl get pods -n toolhive-system
+kubectl get crd | grep toolhive
 ```
 
 ## Uninstall the operator
 
-To uninstall the operator and CRDs:
-
-First, uninstall the operator:
+To uninstall the ToolHive operator:
 
 ```bash
 helm uninstall toolhive-operator -n toolhive-system
 ```
 
-Then, if you want to completely remove ToolHive including all CRDs and related
-resources, delete the CRDs manually.
+By default, CRDs are preserved when you uninstall the chart (due to the
+`crds.keep=true` setting). This prevents accidental deletion of your MCPServer
+resources.
+
+If you want to completely remove ToolHive including all CRDs and related
+resources, delete the CRDs manually:
 
 :::warning
 
@@ -299,19 +331,13 @@ This will delete all MCPServer and related resources in your cluster!
 
 ```bash
 kubectl delete crd mcpexternalauthconfigs.toolhive.stacklok.dev
-kubectl delete crd mcptoolconfigs.toolhive.stacklok.dev
-kubectl delete crd mcpremoteproxies.toolhive.stacklok.dev
-kubectl delete crd mcpservers.toolhive.stacklok.dev
 kubectl delete crd mcpgroups.toolhive.stacklok.dev
 kubectl delete crd mcpregistries.toolhive.stacklok.dev
+kubectl delete crd mcpremoteproxies.toolhive.stacklok.dev
+kubectl delete crd mcpservers.toolhive.stacklok.dev
+kubectl delete crd mcptoolconfigs.toolhive.stacklok.dev
 kubectl delete crd virtualmcpcompositetooldefinitions.toolhive.stacklok.dev
 kubectl delete crd virtualmcpservers.toolhive.stacklok.dev
-```
-
-Finally, uninstall the CRD Helm chart metadata:
-
-```bash
-helm uninstall toolhive-operator-crds
 ```
 
 If you created the `toolhive-system` namespace with Helm's `--create-namespace`
@@ -320,6 +346,92 @@ flag, delete it manually:
 ```bash
 kubectl delete namespace toolhive-system
 ```
+
+</TabItem>
+<TabItem value="kubectl" label="kubectl">
+
+## Install with kubectl
+
+You can install the ToolHive operator using static manifests with kubectl. This
+method is useful for environments where Helm isn't available or for GitOps
+workflows that prefer plain Kubernetes manifests.
+
+### Install the CRDs
+
+First, install the Custom Resource Definitions (CRDs):
+
+```bash
+kubectl apply -f https://github.com/stacklok/toolhive/releases/latest/download/toolhive-operator-crds.yaml
+```
+
+To install a specific version, replace `latest` with the version tag:
+
+```bash
+kubectl apply -f https://github.com/stacklok/toolhive/releases/download/v0.6.12/toolhive-operator-crds.yaml
+```
+
+### Install the operator
+
+Install the operator deployment and associated resources:
+
+```bash
+kubectl apply -f https://github.com/stacklok/toolhive/releases/latest/download/toolhive-operator.yaml
+```
+
+To install a specific version:
+
+```bash
+kubectl apply -f https://github.com/stacklok/toolhive/releases/download/v0.6.12/toolhive-operator.yaml
+```
+
+### Verify the installation
+
+Check that the operator pod is running:
+
+```bash
+kubectl get pods -n toolhive-system
+```
+
+Verify that the CRDs are installed:
+
+```bash
+kubectl get crd | grep toolhive
+```
+
+## Upgrade with kubectl
+
+To upgrade the operator, apply the new version of the manifests. Upgrade the
+CRDs first, then the operator:
+
+```bash
+kubectl apply -f https://github.com/stacklok/toolhive/releases/download/VERSION/toolhive-operator-crds.yaml
+kubectl apply -f https://github.com/stacklok/toolhive/releases/download/VERSION/toolhive-operator.yaml
+```
+
+Replace `VERSION` with your target version (for example, `v0.6.12`).
+
+## Uninstall with kubectl
+
+To uninstall the operator:
+
+```bash
+kubectl delete -f https://github.com/stacklok/toolhive/releases/latest/download/toolhive-operator.yaml
+```
+
+To also remove the CRDs (this deletes all MCPServer resources):
+
+:::warning
+
+This will delete all MCPServer and related resources in your cluster!
+
+:::
+
+```bash
+kubectl delete -f https://github.com/stacklok/toolhive/releases/latest/download/toolhive-operator-crds.yaml
+```
+
+</TabItem>
+</Tabs>
 
 ## Next steps
 
@@ -395,11 +507,11 @@ kubectl get crd | grep toolhive
 kubectl delete crd <CRD_NAME>
 ```
 
-To reinstall the CRDs:
+To reinstall the CRDs with Helm, uninstall the operator and reinstall it:
 
 ```bash
-helm uninstall toolhive-operator-crds
-helm upgrade -i toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds
+helm uninstall toolhive-operator -n toolhive-system
+helm upgrade --install toolhive-operator oci://ghcr.io/stacklok/toolhive/toolhive-operator -n toolhive-system --create-namespace
 ```
 
 </details>
