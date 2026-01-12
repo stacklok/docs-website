@@ -135,7 +135,7 @@ export default function ProductCard(props: ProductCardProps) {
         logoDark,
         logoAlt = '',
         logoTitle = '',
-        invertLogoOnHover = true,
+        invertLogoOnHover = false,
         description,
       } = props;
 

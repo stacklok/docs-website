@@ -42,7 +42,6 @@ export default function Home(): ReactNode {
             href='/toolhive'
             logo='/img/logos/toolhive-default-black.svg'
             logoDark='/img/logos/toolhive-default-white.svg'
-            invertLogoOnHover={false}
             logoAlt='ToolHive logo'
             logoTitle='ToolHive logo'
             linkText='Read documentation'
