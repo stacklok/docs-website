@@ -6,6 +6,7 @@ This repository contains the public-facing docs for Stacklok's projects, hosted
 at [https://docs.stacklok.com](https://docs.stacklok.com).
 
 - [Contributing to docs](#contributing-to-docs)
+  - [Reporting issues](#reporting-issues)
 - [Local development](#local-development)
 - [Formatting](#formatting)
 - [Building the site](#building-the-site)
@@ -14,20 +15,26 @@ at [https://docs.stacklok.com](https://docs.stacklok.com).
 
 ## Contributing to docs
 
-We welcome contributions to the Stacklok documentation - if you find something missing, wrong, or unclear, please let us know via an issue or open a PR!
+We welcome contributions to the Stacklok documentation - if you find something
+missing, wrong, or unclear, please let us know via an issue or open a PR!
 
 Please review the [style guide](./STYLE-GUIDE.md) for help with voice, tone, and
 formatting.
 
 ### Reporting issues
 
-Found a problem with the documentation? We have issue templates to help you report it:
+Found a problem with the documentation? We have issue templates to help you
+report it:
 
-- **[Documentation error](https://github.com/stacklok/docs-website/issues/new?template=01-doc-error.yml)** - Report incorrect, outdated, or unclear content
-- **[Documentation gap](https://github.com/stacklok/docs-website/issues/new?template=02-doc-gap.yml)** - Request documentation for features that aren't covered
-- **[Documentation enhancement](https://github.com/stacklok/docs-website/issues/new?template=03-doc-enhancement.yml)** - Suggest improvements to existing content
+- **[Documentation error](https://github.com/stacklok/docs-website/issues/new?template=01-doc-error.yml)** -
+  Report incorrect, outdated, or unclear content
+- **[Documentation gap](https://github.com/stacklok/docs-website/issues/new?template=02-doc-gap.yml)** -
+  Request documentation for features that aren't covered
+- **[Documentation enhancement](https://github.com/stacklok/docs-website/issues/new?template=03-doc-enhancement.yml)** -
+  Suggest improvements to existing content
 
-For general questions, please visit [Stacklok's community Discord](https://discord.gg/stacklok).
+For general questions, please visit
+[Stacklok's community Discord](https://discord.gg/stacklok).
 
 ## Local development
 
@@ -92,7 +99,10 @@ This site is built with [Docusaurus](https://docusaurus.io/).
 
 <!-- badge links -->
 
-[deployment-img]: https://img.shields.io/github/deployments/stacklok/docs-website/Production?logo=vercel&label=Vercel%20deployment
+[deployment-img]:
+  https://img.shields.io/github/deployments/stacklok/docs-website/Production?logo=vercel&label=Vercel%20deployment
 [deployment]: https://github.com/stacklok/docs-website/deployments/Production
-[devcontainer-img]: https://img.shields.io/static/v1?label=Dev%20Containers&message=Open&color=blue
-[devcontainer]: https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/stacklok/docs-website
+[devcontainer-img]:
+  https://img.shields.io/static/v1?label=Dev%20Containers&message=Open&color=blue
+[devcontainer]:
+  https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/stacklok/docs-website
