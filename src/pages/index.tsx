@@ -88,7 +88,8 @@ export default function Home(): ReactNode {
                 width: '60px',
                 height: 'auto',
                 float: 'right',
-                marginLeft: '0.5rem',
+                marginLeft: '1rem',
+                marginBottom: '0.5rem',
                 display: 'block',
                 maxWidth: '40%',
               }}
@@ -110,13 +111,13 @@ export default function Home(): ReactNode {
                 width: '80px',
                 height: 'auto',
                 float: 'right',
-                marginLeft: '0.5rem',
+                marginLeft: '1rem',
                 display: 'block',
                 maxWidth: '40%',
               }}
             />
             A Go implementation of the Fetch MCP server that retrieves web
-            content and converts it to Markdown for easier consumption by LLMs.
+            content for easier consumption by LLMs.
           </ProductCard>
           <ProductCard
             contentType='text'
@@ -131,7 +132,7 @@ export default function Home(): ReactNode {
                 width: '60px',
                 height: 'auto',
                 float: 'right',
-                marginLeft: '0.5rem',
+                marginLeft: '1rem',
                 display: 'block',
                 maxWidth: '40%',
               }}
@@ -197,7 +198,7 @@ export default function Home(): ReactNode {
                 width: '80px',
                 height: 'auto',
                 float: 'right',
-                marginLeft: '0.5rem',
+                marginLeft: '1.5rem',
                 display: 'block',
                 maxWidth: '40%',
               }}
@@ -205,6 +206,28 @@ export default function Home(): ReactNode {
             MCP Optimizer discovers the tools from your MCP servers in ToolHive
             and optimizes token usage by intelligently filtering based on the
             task at hand.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='https://stacklok.com/blog/governing-mcp-servers-in-cursor-with-stacklok/'
+            title='Cursor Hooks'
+            linkText='Read the blog post'
+          >
+            <img
+              src='/img/mcp-servers/cursor-logo.svg'
+              alt='Cursor logo'
+              style={{
+                width: '60px',
+                height: 'auto',
+                float: 'right',
+                marginLeft: '1.5rem',
+                display: 'block',
+                maxWidth: '40%',
+              }}
+            />
+            Enforce governance policies on MCP server usage at execution time in
+            Cursor. The Cursor Hook restricts MCP tool calls to servers that are
+            managed by ToolHive.
           </ProductCard>
           <ProductCard
             contentType='text'
@@ -219,7 +242,7 @@ export default function Home(): ReactNode {
                 width: '60px',
                 height: 'auto',
                 float: 'right',
-                marginLeft: '0.5rem',
+                marginLeft: '1.5rem',
                 marginBottom: '0.5rem',
                 display: 'block',
                 maxWidth: '40%',
@@ -241,7 +264,7 @@ export default function Home(): ReactNode {
                 width: '60px',
                 height: 'auto',
                 float: 'right',
-                marginLeft: '0.5rem',
+                marginLeft: '1.5rem',
                 display: 'block',
                 maxWidth: '40%',
               }}
