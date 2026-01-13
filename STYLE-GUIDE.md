@@ -86,7 +86,7 @@ Use **sentence case** in titles and headings.
 :white_check_mark: Yes: Configuration file structure\
 :x: No: Configuration File Structure
 
-Use `ALL_CAPS` to indicate placeholder text/parameters, where the reader is
+Use `<ALL_CAPS>` to indicate placeholder text/parameters, where the reader is
 expected to change a value.
 
 ### Punctuation
