@@ -231,8 +231,8 @@ the Stacklok Applied AI engineering team, and access to a collection of hardened
 MCP server images.
 
 **ToolHive**: A collection of open source projects that form the foundation of
-the Stacklok Enterprise MCP Platform. ToolHive includes everything you need to
-use MCP servers in production. It’s made up of four key components: the Runtime,
+the Stacklok MCP Platform. ToolHive includes everything you need to use MCP
+servers in production. It’s made up of four key components: the Runtime,
 Registry Server, Gateway, and Portal. It's written bi-capitalized as one word
 (not "Toolhive" or "Tool Hive").
 
