@@ -61,7 +61,6 @@ export default function Home(): ReactNode {
                 maxWidth: '40%',
               }}
             />
-            {/* TODO: update description */}
             ToolHive simplifies the deployment and management of Model Context
             Protocol (MCP) servers, ensuring ease of use, consistency, and
             security. It&apos;s available as a standalone tool or as a
