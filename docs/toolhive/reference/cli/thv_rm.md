@@ -15,19 +15,7 @@ Remove one or more MCP servers
 
 ### Synopsis
 
-Remove one or more MCP servers managed by ToolHive. 
-Examples:
-  # Remove a single MCP server
-  thv rm filesystem
-
-  # Remove multiple MCP servers
-  thv rm filesystem github slack
-
-  # Remove all workloads
-  thv rm --all
-
-  # Remove all workloads in a group
-  thv rm --group production
+Remove one or more MCP servers managed by ToolHive.
 
 ```
 thv rm [workload-name...] [flags]
