@@ -7,6 +7,9 @@ on:
         description: 'ToolHive version to update reference docs for'
         required: true
         default: 'latest'
+      assign_to:
+        description: 'GitHub username to assign the PR to (optional)'
+        required: false
   repository_dispatch:
     types: [published-release]
 
@@ -40,6 +43,20 @@ jobs:
           else
             echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           fi
+
+      - name: Determine assignee
+        id: get-assignee
+        run: |
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            ASSIGNEE="${{ github.event.client_payload.assign_to }}"
+          else
+            ASSIGNEE="${{ github.event.inputs.assign_to }}"
+          fi
+          # Filter out github-actions bot (can't be assigned to PRs)
+          if [[ "$ASSIGNEE" =~ ^github-actions ]]; then
+            ASSIGNEE=""
+          fi
+          echo "assign_to=$ASSIGNEE" >> $GITHUB_OUTPUT
 
       - name: Run update script
         id: imports
@@ -75,5 +92,6 @@ jobs:
             Update ToolHive reference docs for ${{ steps.imports.outputs.version }}
           labels: |
             autogen-docs
+          assignees: ${{ steps.get-assignee.outputs.assign_to }}
           delete-branch: true
           sign-commits: true
