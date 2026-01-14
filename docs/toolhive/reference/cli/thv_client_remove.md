@@ -23,22 +23,18 @@ Valid clients:
   - amp-vscode: Sourcegraph Amp extension for VS Code
   - amp-vscode-insider: Sourcegraph Amp extension for VS Code Insiders
   - amp-windsurf: Sourcegraph Amp extension for Windsurf
-  - antigravity: Google Antigravity IDE
   - claude-code: Claude Code CLI
   - cline: Cline extension for VS Code
   - continue: Continue.dev extensions for VS Code and JetBrains
   - cursor: Cursor editor
   - goose: Goose AI agent
-  - kiro: Kiro AI IDE
   - lm-studio: LM Studio application
-  - opencode: OpenCode editor
   - roo-code: Roo Code extension for VS Code
   - trae: Trae IDE
-  - vscode: Visual Studio Code (GitHub Copilot)
+  - vscode: Visual Studio Code
   - vscode-insider: Visual Studio Code Insiders edition
   - windsurf: Windsurf IDE
   - windsurf-jetbrains: Windsurf for JetBrains IDEs
-  - zed: Zed editor
 
 ```
 thv client remove [client] [flags]
