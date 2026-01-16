@@ -643,14 +643,27 @@ See [Telemetry and metrics](./telemetry-and-metrics.mdx) for more information.
 
 ## Use with Virtual MCP Server
 
-MCPRemoteProxy resources can be added to an MCPGroup and aggregated by a
+MCPRemoteProxy resources can be added to an MCPGroup and discovered by a
 VirtualMCPServer, enabling you to combine remote MCP servers with local
 container-based MCPServer resources into a single unified endpoint.
 
+:::caution Current limitation
+
+vMCP can discover MCPRemoteProxy backends in a group, but authentication between
+vMCP and MCPRemoteProxy is not yet fully implemented. Since MCPRemoteProxy
+requires `oidcConfig` to validate incoming requests, and vMCP does not currently
+forward authentication tokens to backends, vMCP cannot communicate with
+MCPRemoteProxy backends that require authentication.
+
+This limitation will be addressed in a future release. For now, MCPRemoteProxy
+works best when accessed directly by clients rather than through vMCP aggregation.
+
+:::
+
 ### Add remote proxy to a group
 
-To include a remote proxy in vMCP aggregation, add the `groupRef` field to your
-MCPRemoteProxy spec:
+To include a remote proxy in an MCPGroup for future vMCP aggregation, add the
+`groupRef` field to your MCPRemoteProxy spec:
 
 ```yaml
 apiVersion: toolhive.stacklok.dev/v1alpha1
@@ -664,12 +677,16 @@ spec:
   transport: streamable-http
   port: 8080
   oidcConfig:
-    type: kubernetes # Use Kubernetes service account for in-cluster auth
+    type: inline
+    inline:
+      issuer: https://auth.company.com
+      audience: context7-proxy
 ```
 
-### Benefits of vMCP aggregation
+### Planned benefits of vMCP aggregation
 
-When remote proxies are part of a vMCP group:
+When vMCP authentication to MCPRemoteProxy is implemented, the following
+benefits will be available:
 
 - **Unified endpoint**: Clients connect to one vMCP URL instead of multiple
   proxy endpoints
@@ -679,119 +696,6 @@ When remote proxies are part of a vMCP group:
   avoid conflicts with local MCP servers
 - **Unified toolset**: Combine tools from container-based servers and external
   SaaS MCP services
-
-### Authenticate to upstream remote servers
-
-When the upstream remote MCP server requires authentication (such as an API key
-or bearer token), use `externalAuthConfigRef` with header injection to provide
-credentials:
-
-```yaml
-# Secret containing the API token
-apiVersion: v1
-kind: Secret
-metadata:
-  name: context7-api-token
-  namespace: toolhive-system
-type: Opaque
-stringData:
-  token: "Bearer your-api-token-here"
----
-# MCPExternalAuthConfig for header injection
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: MCPExternalAuthConfig
-metadata:
-  name: context7-auth
-  namespace: toolhive-system
-spec:
-  type: headerInjection
-  headerInjection:
-    headerName: Authorization
-    valueSecretRef:
-      name: context7-api-token
-      key: token
----
-# MCPRemoteProxy with upstream authentication
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: MCPRemoteProxy
-metadata:
-  name: context7-proxy
-  namespace: toolhive-system
-spec:
-  groupRef: dev-tools
-  remoteURL: https://mcp.context7.com/mcp
-  transport: streamable-http
-  port: 8080
-  oidcConfig:
-    type: kubernetes
-  externalAuthConfigRef:
-    name: context7-auth # Injects the token when calling the upstream server
-```
-
-The `externalAuthConfigRef` configures how the proxy authenticates to the
-upstream remote server. The `oidcConfig` configures how the proxy validates
-incoming requests from clients (including vMCP).
-
-### Complete example
-
-This example creates a vMCP that aggregates a local Fetch server with a remote
-MCP proxy:
-
-```yaml
-# 1. Create the group
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: MCPGroup
-metadata:
-  name: dev-tools
-  namespace: toolhive-system
-spec:
-  description: Development tools group
----
-# 2. Local MCP Server
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: MCPServer
-metadata:
-  name: fetch
-  namespace: toolhive-system
-spec:
-  groupRef: dev-tools
-  image: ghcr.io/stackloklabs/gofetch/server
-  transport: streamable-http
----
-# 3. Remote MCP Proxy
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: MCPRemoteProxy
-metadata:
-  name: context7-proxy
-  namespace: toolhive-system
-spec:
-  groupRef: dev-tools
-  remoteURL: https://mcp.context7.com/mcp
-  transport: streamable-http
-  port: 8080
-  oidcConfig:
-    type: kubernetes # Validates requests using Kubernetes service accounts
----
-# 4. Virtual MCP Server
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: VirtualMCPServer
-metadata:
-  name: dev-vmcp
-  namespace: toolhive-system
-spec:
-  groupRef:
-    name: dev-tools
-  incomingAuth:
-    type: oidc
-    oidcConfig:
-      type: inline
-      inline:
-        issuer: https://auth.company.com
-        audience: dev-vmcp
-```
-
-Clients connect to the VirtualMCPServer endpoint and see tools from both the
-local Fetch server and the remote Context7 proxy.
 
 See [Configure vMCP servers](../guides-vmcp/configuration.mdx) for more vMCP
 configuration options.
