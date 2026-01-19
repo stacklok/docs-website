@@ -10,8 +10,8 @@ import PrismDark from './src/utils/prismDark';
 
 const config: Config = {
   title: 'Stacklok Docs',
-  tagline: 'Simple and secure AI tools',
-  favicon: 'img/favicon.ico',
+  tagline: 'Put MCP into production',
+  favicon: 'img/stacklok-favicon.svg',
   plugins: [
     [
       'vercel-analytics',
@@ -121,8 +121,8 @@ const config: Config = {
           },
         ],
         theme: {
-          primaryColor: '#2809a5',
-          primaryColorDark: '#7ab7ff',
+          primaryColor: '#2e6e3e',
+          primaryColorDark: '#b2e4bc',
           options: {
             sortTagsAlphabetically: true,
             sortOperationsAlphabetically: true,
@@ -150,16 +150,14 @@ const config: Config = {
       id: 'optimizer',
       content:
         'NEW: Improve performance and cut token costs with the ToolHive MCP Optimizer! <a href="/toolhive/tutorials/mcp-optimizer">Try it →</a>',
-      backgroundColor: '#2809a5',
-      textColor: '#ffffff',
+      backgroundColor: '#816D9D',
+      textColor: '#fafefa',
       isCloseable: true,
     },
     navbar: {
-      // title: 'Stacklok Docs',
       logo: {
         alt: 'Stacklok logo',
-        src: 'img/stacklok-wordmark-black.svg',
-        srcDark: 'img/stacklok-wordmark-white.svg',
+        src: 'img/logos/stacklok-default-light-green.svg',
         href: '/',
       },
       items: [
@@ -255,7 +253,7 @@ const config: Config = {
         {
           items: [
             {
-              html: `<a href="https://stacklok.com/"><img src="/img/stacklok-wordmark-gradient.svg" alt="Stacklok Logo" width="150px" /></a>`,
+              html: `<a href="https://stacklok.com/"><img src="/img/logos/stacklok-default-light-green.svg" alt="Stacklok Logo" width="150px" /></a>`,
             },
           ],
         },
@@ -263,11 +261,11 @@ const config: Config = {
           items: [
             {
               html: `<div style="display: flex;">
-                       <a href="https://github.com/stacklok" target="_blank" class="footer__icon--custom navbar__link" aria-label="Stacklok on GitHub"><i class="fa-brands fa-github fa-xl"></i></a>
-                       <a href="https://discord.gg/stacklok" target="_blank" class="footer__icon--custom navbar__link" aria-label="Join Stacklok on Discord"><i class="fa-brands fa-discord fa-xl"></i></a>
-                       <a href="https://youtube.com/@stacklok" target="_blank" class="footer__icon--custom navbar__link" aria-label="Stacklok on YouTube"><i class="fa-brands fa-youtube fa-xl"></i></a>
-                       <a href="https://linkedin.com/company/stacklok" target="_blank" class="footer__icon--custom navbar__link" aria-label="Stacklok on LinkedIn"><i class="fa-brands fa-linkedin fa-xl"></i></a>
-                       <a href="https://x.com/stacklokHQ" target="_blank" class="footer__icon--custom navbar__link" aria-label="Stacklok on X (Twitter)"><i class="fa-brands fa-x-twitter fa-xl"></i></a>
+                       <a href="https://github.com/stacklok" target="_blank" class="footer__icon--custom" aria-label="Stacklok on GitHub"><i class="fa-brands fa-github fa-xl"></i></a>
+                       <a href="https://discord.gg/stacklok" target="_blank" class="footer__icon--custom" aria-label="Join Stacklok on Discord"><i class="fa-brands fa-discord fa-xl"></i></a>
+                       <a href="https://youtube.com/@stacklok" target="_blank" class="footer__icon--custom" aria-label="Stacklok on YouTube"><i class="fa-brands fa-youtube fa-xl"></i></a>
+                       <a href="https://linkedin.com/company/stacklok" target="_blank" class="footer__icon--custom" aria-label="Stacklok on LinkedIn"><i class="fa-brands fa-linkedin fa-xl"></i></a>
+                       <a href="https://x.com/stacklokHQ" target="_blank" class="footer__icon--custom" aria-label="Stacklok on X (Twitter)"><i class="fa-brands fa-x-twitter fa-xl"></i></a>
                      </div>`,
             },
           ],
@@ -285,28 +283,28 @@ const config: Config = {
       options: {
         themeVariables: {
           fontFamily: 'Figtree, system-ui, sans-serif',
-          primaryColor: '#5750FF',
-          primaryBorderColor: '#5750FF',
-          primaryTextColor: '#FFFFFF',
-          lineColor: '#5750FF',
-          secondaryColor: '#F3E6EE',
+          primaryColor: '#2e6e3e',
+          primaryBorderColor: '#2e6e3e',
+          primaryTextColor: '#fafefa',
+          lineColor: '#2e6e3e',
+          secondaryColor: '#f3e6ee',
 
           // Base styling
-          mainBkg: '#5750FF',
+          mainBkg: '#2e6e3e',
           noteBkgColor: '#444444',
-          noteTextColor: '#FFFFFF',
+          noteTextColor: '#fafefa',
 
           // BEGIN flowchart styles
-          nodeTextColor: '#FFFFFF',
+          nodeTextColor: '#fafefa',
 
           // BEGIN sequenceDiagram styles
-          actorBorder: '#5750FF',
-          actorLineColor: '#5750FF',
-          actorTextColor: '#FFFFFF',
-          activationBkgColor: '#5750FF',
-          activationBorderColor: '#5750FF',
+          actorBorder: '#2e6e3e',
+          actorLineColor: '#2e6e3e',
+          actorTextColor: '#fafefa',
+          activationBkgColor: '#2e6e3e',
+          activationBorderColor: '#2e6e3e',
           labelBoxBkgColor: '#444444',
-          labelTextColor: '#FFFFFF',
+          labelTextColor: '#fafefa',
         },
       },
     },

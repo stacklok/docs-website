@@ -7,6 +7,9 @@ on:
         description: 'ToolHive version to update reference docs for'
         required: true
         default: 'latest'
+      assign_to:
+        description: 'GitHub username to request PR review from (optional)'
+        required: false
   repository_dispatch:
     types: [published-release]
 
@@ -40,6 +43,20 @@ jobs:
           else
             echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           fi
+
+      - name: Determine reviewer
+        id: get-reviewer
+        run: |
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            REVIEWER="${{ github.event.client_payload.assign_to }}"
+          else
+            REVIEWER="${{ github.event.inputs.assign_to }}"
+          fi
+          # Filter out github-actions bot (can't be requested as reviewer)
+          if [[ "$REVIEWER" =~ ^github-actions ]]; then
+            REVIEWER=""
+          fi
+          echo "assign_to=$REVIEWER" >> $GITHUB_OUTPUT
 
       - name: Run update script
         id: imports
@@ -75,5 +92,6 @@ jobs:
             Update ToolHive reference docs for ${{ steps.imports.outputs.version }}
           labels: |
             autogen-docs
+          reviewers: ${{ steps.get-reviewer.outputs.assign_to }}
           delete-branch: true
           sign-commits: true
