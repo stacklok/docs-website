@@ -81,20 +81,16 @@ async function main() {
       mcpServerUrl
     );
     writeFileSync(REGISTRY_SCHEMA, JSON.stringify(simplifiedSchema, null, 2));
-    echo('Upstream registry schema processed successfully');
+    console.log('Upstream registry schema processed successfully');
 
     // Fetch and dereference the MCP server schema
     const mcpServerSchema = await $RefParser.dereference(mcpServerUrl);
     writeFileSync(MCP_SERVER_SCHEMA, JSON.stringify(mcpServerSchema, null, 2));
-    echo('MCP server schema fetched successfully');
+    console.log('MCP server schema fetched successfully');
   } catch (error) {
     console.error('Failed to process schemas:', error.message);
     process.exit(1);
   }
-}
-
-function echo(msg) {
-  console.log(msg);
 }
 
 main();
