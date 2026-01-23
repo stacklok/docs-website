@@ -205,7 +205,11 @@ const config: Config = {
             },
             {
               label: 'ToolHive Registry schema',
-              to: 'toolhive/reference/registry-schema',
+              to: 'toolhive/reference/registry-schema-toolhive',
+            },
+            {
+              label: 'Upstream Registry schema',
+              to: 'toolhive/reference/registry-schema-upstream',
             },
             {
               label: 'ToolHive Registry API',
