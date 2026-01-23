@@ -19,6 +19,9 @@ API_SPEC_DST="${STATIC_DIR}/api-specs/toolhive-api.yaml"
 
 REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive/pkg/registry/data/toolhive-legacy-registry.schema.json"
 REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/toolhive-legacy-registry.schema.json"
+UPSTREAM_REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive/pkg/registry/data/upstream-registry.schema.json"
+UPSTREAM_REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/upstream-registry.schema.json"
+
 
 CRD_API_SRC="${IMPORT_DIR}/toolhive/docs/operator/crd-api.md"
 CRD_API_DST="${STATIC_DIR}/api-specs/toolhive-crd-api.md"
@@ -112,7 +115,7 @@ if [[ "$RELEASE_VERSION" =~ ^v.* ]]; then
         echo "Warning: API specification not found at ${API_SPEC_SRC}"
     fi
     
-    ## Registry schema
+    ## Registry schemas
     echo "Updating ToolHive registry JSON schema at ${REGISTRY_SCHEMA_DST}"
     
     if [ -f "${REGISTRY_SCHEMA_SRC}" ]; then
@@ -120,6 +123,19 @@ if [[ "$RELEASE_VERSION" =~ ^v.* ]]; then
         echo "Registry JSON schema updated successfully"
     else
         echo "Warning: Registry schema not found at ${REGISTRY_SCHEMA_SRC}"
+    fi
+
+    echo "Updating upstream registry JSON schema at ${UPSTREAM_REGISTRY_SCHEMA_DST}"
+
+    if [ -f "${UPSTREAM_REGISTRY_SCHEMA_SRC}" ]; then
+        cp ${UPSTREAM_REGISTRY_SCHEMA_SRC} ${UPSTREAM_REGISTRY_SCHEMA_DST}
+        echo "Upstream registry JSON schema updated successfully"
+
+        # Bundle the upstream schema to resolve remote $ref references
+        echo "Bundling upstream registry schema (resolving remote references)..."
+        node "${REPO_ROOT}/scripts/bundle-upstream-schema.mjs"
+    else
+        echo "Warning: Registry schema not found at ${UPSTREAM_REGISTRY_SCHEMA_SRC}"
     fi
 
 elif [[ "$RELEASE_VERSION" =~ ^toolhive-operator-crds-.* ]]; then
