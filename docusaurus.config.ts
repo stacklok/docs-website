@@ -27,6 +27,51 @@ const config: Config = {
           process.env.NODE_ENV === 'production' || process.env.CI === 'true',
       },
     ],
+    [
+      '@signalwire/docusaurus-plugin-llms-txt',
+      {
+        depth: 2,
+        content: {
+          includeBlog: false,
+          includePages: true,
+          includeDocs: true,
+          includeGeneratedIndex: false,
+          enableLlmsFullTxt: false,
+          enableMarkdownFiles: true,
+          excludeRoutes: [
+            '/search',
+            '/theme-preview',
+            '/toolhive/reference/*api',
+            '/toolhive/reference/registry-schema-*',
+          ],
+          routeRules: [
+            {
+              route: '/toolhive/*',
+              depth: 1,
+            },
+          ],
+        },
+        includeOrder: [
+          '/toolhive/tutorials/**',
+          '/toolhive/concepts/**',
+          '/toolhive/reference/client-compatibility',
+          '/toolhive/guides-*',
+          '/toolhive/reference/**',
+        ],
+        optionalLinks: [
+          {
+            title: 'Stacklok website',
+            url: 'https://stacklok.com',
+            description:
+              'Official website of Stacklok, the creators of ToolHive.',
+          },
+          {
+            title: 'Community Discord',
+            url: 'https://discord.gg/stacklok',
+          },
+        ],
+      },
+    ],
   ],
 
   // Set the production url of your site here
