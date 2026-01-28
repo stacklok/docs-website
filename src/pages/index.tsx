@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import clsx from 'clsx';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
+import Head from '@docusaurus/Head';
 import ProductGrid from '@site/src/components/ProductGrid';
 import ProductCard from '@site/src/components/ProductCard';
 import Heading from '@theme/Heading';
@@ -34,6 +35,55 @@ export default function Home(): ReactNode {
       title={`${siteConfig.title}`}
       description='Stacklok project documentation and resources'
     >
+      <Head>
+        <script type='application/ld+json' id='organization-schema'>
+          {JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'Organization',
+            '@id': 'https://stacklok.com/#organization',
+            name: 'Stacklok',
+            url: 'https://stacklok.com',
+            logo: 'https://stacklok.com/wp-content/uploads/2025/12/logo-dark.svg',
+            description:
+              'Stacklok builds open-source, enterprise-grade MCP infrastructure that helps organizations securely deploy, govern and scale AI workflows in their own environments.',
+            sameAs: [
+              'https://github.com/stacklok',
+              'https://x.com/stacklokhq',
+              'https://www.linkedin.com/company/stacklok/',
+              'https://discord.gg/stacklok',
+              'https://www.youtube.com/@Stacklok',
+            ],
+            contactPoint: [
+              {
+                '@type': 'ContactPoint',
+                email: 'hello@stacklok.com',
+                contactType: 'sales',
+                availableLanguage: ['en'],
+              },
+            ],
+          })}
+        </script>
+        <script type='application/ld+json' id='collectionpage-schema'>
+          {JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'CollectionPage',
+            '@id': 'https://docs.stacklok.com/#collection',
+            url: 'https://docs.stacklok.com/',
+            name: 'Stacklok Documentation',
+            description:
+              'Entry point to Stacklok documentation, including MCP concepts, ToolHive setup guides, configuration references and tutorials for secure, scalable AI workflows.',
+            inLanguage: 'en',
+            isPartOf: {
+              '@type': 'WebSite',
+              '@id': 'https://stacklok.com/#website',
+            },
+            publisher: {
+              '@type': 'Organization',
+              '@id': 'https://stacklok.com/#organization',
+            },
+          })}
+        </script>
+      </Head>
       <HomepageHeader />
       <main className='container'>
         <ProductGrid>
