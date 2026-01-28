@@ -61,44 +61,73 @@ For complex, reusable workflows, you can also reference external
 
 ## Simple example
 
-Here's a basic composite tool that fetches a URL and then summarizes it:
+Here's a composite tool that searches arXiv for papers on a topic and reads the
+top result:
 
 ```yaml title="VirtualMCPServer resource"
 spec:
   config:
     compositeTools:
-      - name: fetch_and_summarize
-        description: Fetch a URL and create a summary
+      - name: research_topic
+        description: Search arXiv for papers and read the top result
         parameters:
           type: object
           properties:
-            url:
+            query:
               type: string
+              description: Research topic to search for
           required:
-            - url
+            - query
         steps:
-          - id: fetch
-            tool: fetch.fetch
+          # Step 1: Search arXiv for papers matching the query
+          - id: search
+            tool: arxiv.search_papers
             arguments:
-              url: '{{.params.url}}'
-          - id: summarize
-            tool: llm.summarize
+              query: '{{.params.query}}'
+              max_results: 1
+          # Step 2: Download the paper (required before reading)
+          # Note: fromJson is needed when the MCP server returns JSON as text
+          # rather than structured content. This is common for servers that
+          # don't fully support MCP's structuredContent field.
+          - id: download
+            tool: arxiv.download_paper
             arguments:
-              text: '{{.steps.fetch.output.content}}'
-            dependsOn: [fetch]
+              paper_id:
+                '{{(index (fromJson .steps.search.output.text).papers 0).id}}'
+            dependsOn: [search]
+          # Step 3: Read the downloaded paper content
+          - id: read
+            tool: arxiv.read_paper
+            arguments:
+              paper_id:
+                '{{(index (fromJson .steps.search.output.text).papers 0).id}}'
+            dependsOn: [download]
 ```
 
 **What's happening:**
 
-1. **Parameters**: Define the workflow inputs (just `url` in this case)
-2. **Step 1 (fetch)**: Calls the `fetch.fetch` tool with the URL from parameters
-   using template syntax `{{.params.url}}`
-3. **Step 2 (summarize)**: Waits for the fetch step (`dependsOn: [fetch]`), then
-   calls `llm.summarize` with the fetched content using
-   `{{.steps.fetch.output.content}}`
+1. **Parameters**: Define the workflow inputs (`query` for the research topic)
+2. **Step 1 (search)**: Calls `arxiv.search_papers` with the query from
+   parameters using template syntax `{{.params.query}}`
+3. **Step 2 (download)**: Waits for search (`dependsOn: [search]`), then
+   downloads the paper. The `fromJson` function parses the JSON text returned by
+   the server, and `index` accesses the first paper's ID.
+4. **Step 3 (read)**: Waits for download, then reads the paper content.
 
-When a client calls this composite tool, vMCP executes both steps in sequence
-and returns the final summary.
+When a client calls this composite tool, vMCP executes all three steps in
+sequence and returns the paper content.
+
+**Structured content vs JSON text**
+
+MCP servers can return data in two ways:
+
+- **Structured content**: Data is in `structuredContent` and can be accessed
+  directly: `{{.steps.stepid.output.field}}`
+- **JSON text**: Data is returned as a JSON string in the `text` field and
+  requires parsing: `{{(fromJson .steps.stepid.output.text).field}}`
+
+The arxiv-mcp-server in this example uses JSON text, so we use `fromJson`. Check
+your backend's response format to determine which approach to use.
 
 ## Use cases
 
@@ -318,53 +347,110 @@ spec:
 
 Access workflow context in arguments:
 
-| Template                | Description                                |
-| ----------------------- | ------------------------------------------ |
-| `{{.params.name}}`      | Input parameter                            |
-| `{{.steps.id.output}}`  | Step output                                |
-| `{{.steps.id.content}}` | Elicitation response content               |
-| `{{.steps.id.action}}`  | Elicitation action (accept/decline/cancel) |
+| Template                    | Description                                |
+| --------------------------- | ------------------------------------------ |
+| `{{.params.name}}`          | Input parameter                            |
+| `{{.steps.id.output}}`      | Step output (map)                          |
+| `{{.steps.id.output.text}}` | Text content from step output              |
+| `{{.steps.id.content}}`     | Elicitation response content               |
+| `{{.steps.id.action}}`      | Elicitation action (accept/decline/cancel) |
+
+### Template functions
+
+The following functions are available for use in templates:
+
+| Function   | Description                      | Example                                      |
+| ---------- | -------------------------------- | -------------------------------------------- |
+| `fromJson` | Parse a JSON string into a value | `{{(fromJson .steps.s1.output.text).field}}` |
+| `json`     | Encode a value as a JSON string  | `{{json .steps.s1.output}}`                  |
+| `quote`    | Quote a string value             | `{{quote .params.name}}`                     |
+| `index`    | Access array elements by index   | `{{index .steps.s1.output.items 0}}`         |
+
+### Accessing step outputs
+
+When an MCP server returns structured content, you can access output fields
+directly:
+
+```yaml
+# Direct access when server supports structuredContent
+result: '{{.steps.fetch.output.data}}'
+items: '{{index .steps.search.output.results 0}}'
+```
+
+This is the simplest approach and works when the backend MCP server populates
+the `structuredContent` field in its response.
+
+### Working with JSON text responses
+
+Some MCP servers return structured data as JSON text rather than using MCP's
+`structuredContent` field. When this happens, use `fromJson` to parse it:
+
+```yaml
+# Parse JSON text and access a nested field
+paper_id: '{{(index (fromJson .steps.search.output.text).papers 0).id}}'
+```
+
+This pattern:
+
+1. Gets the text output: `.steps.search.output.text`
+2. Parses it as JSON: `fromJson ...`
+3. Accesses the `papers` array and gets the first element: `index ... 0`
+4. Gets the `id` field: `.id`
+
+**How to tell which approach to use:** Call the backend tool directly and
+inspect the response. If `structuredContent` contains your data fields, use
+direct access. If `structuredContent` only has a `text` field containing JSON,
+use `fromJson`.
 
 ## Complete example
 
-A VirtualMCPServer with an inline composite tool:
+A VirtualMCPServer with an inline composite tool using the
+[arxiv-mcp-server](https://github.com/blazickjp/arxiv-mcp-server):
 
 ```yaml
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: VirtualMCPServer
 metadata:
-  name: workflow-vmcp
+  name: research-vmcp
   namespace: toolhive-system
 spec:
   incomingAuth:
     type: anonymous
   config:
-    groupRef: my-tools
+    groupRef: research-tools
     aggregation:
       conflictResolution: prefix
       conflictResolutionConfig:
         prefixFormat: '{workload}_'
     compositeTools:
-      - name: fetch_and_summarize
-        description: Fetch a URL and create a summary
+      - name: research_topic
+        description: Search arXiv for papers and read the top result
         parameters:
           type: object
           properties:
-            url:
+            query:
               type: string
-              description: URL to fetch
+              description: Research topic to search for
           required:
-            - url
+            - query
         steps:
-          - id: fetch_content
-            tool: fetch.fetch
+          - id: search
+            tool: arxiv.search_papers
             arguments:
-              url: '{{.params.url}}'
-          - id: summarize
-            tool: llm.summarize # Hypothetical backend - replace with your actual LLM server
+              query: '{{.params.query}}'
+              max_results: 1
+          - id: download
+            tool: arxiv.download_paper
             arguments:
-              text: '{{.steps.fetch_content.output.content}}'
-            dependsOn: [fetch_content]
+              paper_id:
+                '{{(index (fromJson .steps.search.output.text).papers 0).id}}'
+            dependsOn: [search]
+          - id: read
+            tool: arxiv.read_paper
+            arguments:
+              paper_id:
+                '{{(index (fromJson .steps.search.output.text).papers 0).id}}'
+            dependsOn: [download]
         timeout: '5m'
 ```
 
