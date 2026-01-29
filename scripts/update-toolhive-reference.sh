@@ -22,7 +22,6 @@ REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/toolhive-legacy-registry.schema.jso
 UPSTREAM_REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive/pkg/registry/data/upstream-registry.schema.json"
 UPSTREAM_REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/upstream-registry.schema.json"
 
-
 CRD_API_SRC="${IMPORT_DIR}/toolhive/docs/operator/crd-api.md"
 CRD_API_DST="${STATIC_DIR}/api-specs/toolhive-crd-api.md"
 
@@ -86,84 +85,64 @@ echo "Importing to: $IMPORT_DIR"
 # Download and extract the release tarball
 curl -sfL "$RELEASE_TARBALL" | tar xz --strip-components=1 -C ./imports/toolhive
 
-# Determine release type and process accordingly
-if [[ "$RELEASE_VERSION" =~ ^v.* ]]; then
-    echo "Processing main CLI release: $RELEASE_VERSION"
-    
-    ## CLI reference
-    echo "Updating ToolHive CLI reference documentation in ${CLI_DOCS_DST}"
-    
+## CLI reference
+echo "Updating ToolHive CLI reference documentation in ${CLI_DOCS_DST}"
+
+# Copy CLI documentation
+if [ -d "${CLI_DOCS_SRC}" ]; then
     # Remove existing CLI reference documentation files in case we remove any commands
     rm -f ${CLI_DOCS_DST}/thv_*.md
-    
-    # Copy CLI documentation
-    if [ -d "${CLI_DOCS_SRC}" ]; then
-        cp -r ${CLI_DOCS_SRC}/* ${CLI_DOCS_DST}
-        echo "CLI reference documentation updated successfully"
-    else
-        echo "Warning: CLI documentation not found in ${CLI_DOCS_SRC}"
-    fi
-    
-    ## API reference
-    echo "Updating ToolHive API reference at ${API_SPEC_DST}"
-    
-    # Copy API specification
-    if [ -f "${API_SPEC_SRC}" ]; then
-        cp ${API_SPEC_SRC} ${API_SPEC_DST}
-        echo "API reference updated successfully"
-    else
-        echo "Warning: API specification not found at ${API_SPEC_SRC}"
-    fi
-    
-    ## Registry schemas
-    echo "Updating ToolHive registry JSON schema at ${REGISTRY_SCHEMA_DST}"
-    
-    if [ -f "${REGISTRY_SCHEMA_SRC}" ]; then
-        cp ${REGISTRY_SCHEMA_SRC} ${REGISTRY_SCHEMA_DST}
-        echo "Registry JSON schema updated successfully"
-    else
-        echo "Warning: Registry schema not found at ${REGISTRY_SCHEMA_SRC}"
-    fi
 
-    echo "Updating upstream registry JSON schema at ${UPSTREAM_REGISTRY_SCHEMA_DST}"
-
-    if [ -f "${UPSTREAM_REGISTRY_SCHEMA_SRC}" ]; then
-        cp ${UPSTREAM_REGISTRY_SCHEMA_SRC} ${UPSTREAM_REGISTRY_SCHEMA_DST}
-        echo "Upstream registry JSON schema updated successfully"
-
-        # Bundle the upstream schema to resolve remote $ref references
-        echo "Bundling upstream registry schema (resolving remote references)..."
-        node "${REPO_ROOT}/scripts/bundle-upstream-schema.mjs"
-    else
-        echo "Warning: Registry schema not found at ${UPSTREAM_REGISTRY_SCHEMA_SRC}"
-    fi
-
-elif [[ "$RELEASE_VERSION" =~ ^toolhive-operator-crds-.* ]]; then
-    echo "Processing operator CRD release: $RELEASE_VERSION"
-    
-    ## CRD API reference
-    echo "Updating ToolHive CRD API reference in ${STATIC_DIR}/api-specs"
-    
-    # Copy CRD API documentation
-    if [ -f "${CRD_API_SRC}" ]; then
-        # Remove h1 title from the CRD API documentation, Docusaurus will use the title from the front matter
-        sed '1{/^# /d;}' ${CRD_API_SRC} > ${CRD_API_DST}
-        echo "CRD API reference updated successfully"
-    else
-        echo "Warning: CRD API documentation not found at ${CRD_API_SRC}"
-    fi
-    
-    elif [[ "$RELEASE_VERSION" =~ ^toolhive-operator- ]]; then
-    echo "Processing main operator release: $RELEASE_VERSION"
-    echo "Placeholder: No specific processing implemented for this release type yet"
-
+    cp -r ${CLI_DOCS_SRC}/* ${CLI_DOCS_DST}
+    echo "CLI reference documentation updated successfully"
 else
-    echo "Unknown release type for tag: $RELEASE_VERSION"
-    echo "Supported release types:"
-    echo "  - v* (main CLI releases)"
-    echo "  - toolhive-operator-crds-* (CRD releases)"
-    echo "  - toolhive-operator-* (other operator releases)"
-    exit 1
+    echo "Warning: CLI documentation not found in ${CLI_DOCS_SRC}"
+fi
+
+## API reference
+echo "Updating ToolHive API reference at ${API_SPEC_DST}"
+
+# Copy API specification
+if [ -f "${API_SPEC_SRC}" ]; then
+    cp ${API_SPEC_SRC} ${API_SPEC_DST}
+    echo "API reference updated successfully"
+else
+    echo "Warning: API specification not found at ${API_SPEC_SRC}"
+fi
+
+## Registry schemas
+echo "Updating ToolHive registry JSON schema at ${REGISTRY_SCHEMA_DST}"
+
+if [ -f "${REGISTRY_SCHEMA_SRC}" ]; then
+    cp ${REGISTRY_SCHEMA_SRC} ${REGISTRY_SCHEMA_DST}
+    echo "Registry JSON schema updated successfully"
+else
+    echo "Warning: Registry schema not found at ${REGISTRY_SCHEMA_SRC}"
+fi
+
+echo "Updating upstream registry JSON schema at ${UPSTREAM_REGISTRY_SCHEMA_DST}"
+
+if [ -f "${UPSTREAM_REGISTRY_SCHEMA_SRC}" ]; then
+    cp ${UPSTREAM_REGISTRY_SCHEMA_SRC} ${UPSTREAM_REGISTRY_SCHEMA_DST}
+    echo "Upstream registry JSON schema updated successfully"
+    
+    # Bundle the upstream schema to resolve remote $ref references
+    echo "Bundling upstream registry schema (resolving remote references)..."
+    node "${REPO_ROOT}/scripts/bundle-upstream-schema.mjs"
+else
+    echo "Warning: Registry schema not found at ${UPSTREAM_REGISTRY_SCHEMA_SRC}"
+fi
+
+## CRD API reference
+echo "Updating ToolHive CRD API reference in ${STATIC_DIR}/api-specs"
+
+# Copy CRD API documentation
+if [ -f "${CRD_API_SRC}" ]; then
+    # Remove h1 title from the CRD API documentation, Docusaurus will use the title from the front matter
+    sed '1{/^# /d;}' ${CRD_API_SRC} > ${CRD_API_DST}
+    echo "CRD API reference updated successfully"
+else
+    echo "Warning: CRD API documentation not found at ${CRD_API_SRC}"
 fi
 
 echo "Release processing completed for: $RELEASE_VERSION"
