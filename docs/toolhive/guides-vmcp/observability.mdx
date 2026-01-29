@@ -36,7 +36,7 @@ spec:
     groupRef: my-group
     # highlight-start
     telemetry:
-      endpoint: 'otel-collector:4317'
+      endpoint: 'otel-collector:4318'
       serviceName: 'my-vmcp'
       insecure: true
       tracingEnabled: true
@@ -67,29 +67,36 @@ spec:
 Deploy an OpenTelemetry Collector configured to export to Jaeger:
 
 ```yaml title="otel-collector-config.yaml"
-config:
-  receivers:
-    otlp:
-      protocols:
-        grpc:
-          endpoint: 0.0.0.0:4317
-        http:
-          endpoint: 0.0.0.0:4318
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
 
-  exporters:
-    otlp/jaeger:
-      endpoint: http://jaeger-collector:4317
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
 
-  service:
-    pipelines:
-      traces:
-        receivers: [otlp]
-        processors: [batch]
-        exporters: [otlp/jaeger]
-      metrics:
-        receivers: [otlp]
-        processors: [batch]
-        exporters: [prometheus]
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
 ```
 
 Then configure vMCP to send telemetry to the collector:
@@ -98,7 +105,7 @@ Then configure vMCP to send telemetry to the collector:
 spec:
   config:
     telemetry:
-      endpoint: 'otel-collector:4317'
+      endpoint: 'otel-collector:4318'
       serviceName: 'production-vmcp'
       tracingEnabled: true
       metricsEnabled: true
