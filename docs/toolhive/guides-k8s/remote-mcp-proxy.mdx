@@ -452,7 +452,7 @@ spec:
 ```
 
 For sensitive values like API keys, reference Kubernetes Secrets using
-`addHeadersFromSecret`:
+`addHeadersFromSecret`. First, create a Secret containing the header value:
 
 ```yaml title="api-key-secret.yaml"
 apiVersion: v1
@@ -463,7 +463,11 @@ metadata:
 type: Opaque
 stringData:
   api-key: 'your-api-key-value'
----
+```
+
+Then reference the Secret in your MCPRemoteProxy:
+
+```yaml title="analytics-proxy.yaml" {12-17}
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPRemoteProxy
 metadata:
@@ -473,14 +477,12 @@ spec:
   remoteURL: https://mcp.analytics.example.com
   # ... other config ...
 
-  # highlight-start
   headerForward:
     addHeadersFromSecret:
       - headerName: 'X-API-Key'
         valueSecretRef:
           name: api-key-secret
           key: api-key
-  # highlight-end
 ```
 
 You can combine plaintext and secret-backed headers:
@@ -503,11 +505,12 @@ spec:
 
 :::warning[Security considerations]
 
-- Plaintext header values are visible via `kubectl get` and `kubectl describe`
-  commands. For sensitive values (API keys, tokens), always use
-  `addHeadersFromSecret`.
-- Secret-backed header values are resolved at runtime from Kubernetes Secrets
-  and are never stored in ConfigMaps.
+- Plaintext header values are visible when you inspect the full resource (e.g.,
+  `kubectl get ... -o yaml` or `kubectl describe`). For sensitive values (API
+  keys, tokens), always use `addHeadersFromSecret`.
+- Secret-backed header values are stored in Kubernetes Secrets and resolved at
+  runtime. Only secret references (not actual values) appear in ConfigMaps used
+  internally by ToolHive.
 - Certain headers cannot be configured for security reasons, including `Host`,
   `Connection`, `Transfer-Encoding`, and proxy-related headers like
   `X-Forwarded-For`.
