@@ -156,8 +156,8 @@ const config: Config = {
           },
         ],
         theme: {
-          primaryColor: '#2e6e3e',
-          primaryColorDark: '#b2e4bc',
+          primaryColor: '#2d684b',
+          primaryColorDark: '#bddfc2',
           options: {
             sortTagsAlphabetically: true,
             sortOperationsAlphabetically: true,
@@ -185,8 +185,8 @@ const config: Config = {
       id: 'optimizer',
       content:
         'NEW: Improve performance and cut token costs with the ToolHive MCP Optimizer! <a href="/toolhive/tutorials/mcp-optimizer">Try it →</a>',
-      backgroundColor: '#816D9D',
-      textColor: '#fafefa',
+      backgroundColor: '#6e6080',
+      textColor: '#f9faf9',
       isCloseable: true,
     },
     navbar: {
@@ -322,28 +322,28 @@ const config: Config = {
       options: {
         themeVariables: {
           fontFamily: 'Figtree, system-ui, sans-serif',
-          primaryColor: '#2e6e3e',
-          primaryBorderColor: '#2e6e3e',
-          primaryTextColor: '#fafefa',
-          lineColor: '#2e6e3e',
+          primaryColor: '#2d684b',
+          primaryBorderColor: '#2d684b',
+          primaryTextColor: '#f9faf9',
+          lineColor: '#2d684b',
           secondaryColor: '#f3e6ee',
 
           // Base styling
-          mainBkg: '#2e6e3e',
+          mainBkg: '#2d684b',
           noteBkgColor: '#444444',
-          noteTextColor: '#fafefa',
+          noteTextColor: '#f9faf9',
 
           // BEGIN flowchart styles
-          nodeTextColor: '#fafefa',
+          nodeTextColor: '#f9faf9',
 
           // BEGIN sequenceDiagram styles
-          actorBorder: '#2e6e3e',
-          actorLineColor: '#2e6e3e',
-          actorTextColor: '#fafefa',
-          activationBkgColor: '#2e6e3e',
-          activationBorderColor: '#2e6e3e',
+          actorBorder: '#2d684b',
+          actorLineColor: '#2d684b',
+          actorTextColor: '#f9faf9',
+          activationBkgColor: '#2d684b',
+          activationBorderColor: '#2d684b',
           labelBoxBkgColor: '#444444',
-          labelTextColor: '#fafefa',
+          labelTextColor: '#f9faf9',
         },
       },
     },
