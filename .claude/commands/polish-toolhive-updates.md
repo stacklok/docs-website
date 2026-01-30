@@ -181,9 +181,8 @@ For each major feature/component:
 
 For detailed release notes, check the project repositories:
 
-- [ToolHive Registry Server](https://github.com/stacklok/toolhive-registry/releases)
+- [ToolHive Registry Server](https://github.com/stacklok/toolhive-registry-server/releases)
 - [ToolHive desktop UI](https://github.com/stacklok/toolhive-studio/releases)
-- [ToolHive Cloud UI](https://github.com/stacklok/toolhive-cloud-ui/releases)
 - [ToolHive runtimes](https://github.com/stacklok/toolhive/releases) (CLI and Kubernetes Operator)
 
 You can find all ToolHive documentation on the [ToolHive documentation site](/toolhive).
