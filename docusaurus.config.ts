@@ -185,7 +185,7 @@ const config: Config = {
       id: 'optimizer',
       content:
         'NEW: Improve performance and cut token costs with the ToolHive MCP Optimizer! <a href="/toolhive/tutorials/mcp-optimizer">Try it →</a>',
-      backgroundColor: '#816D9D',
+      backgroundColor: '#6e6080',
       textColor: '#fafefa',
       isCloseable: true,
     },
