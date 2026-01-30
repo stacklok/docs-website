@@ -152,7 +152,7 @@ Considerations for screenshots and other images:
   been used in Stacklok docs to date) and zoom level (ex: zoom twice in VS Code,
   125% in browsers).
 - Crop screenshots to the relevant portion of the interface.
-- Use the primary brand colors (`#2E6E3E` on light backgrounds, `#B2E4BC` on
+- Use the primary brand colors (`#2D684B` on light backgrounds, `#BDDFC2` on
   dark backgrounds) for annotations like callouts and highlight boxes.
 
 ## Markdown style

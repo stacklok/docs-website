@@ -156,8 +156,8 @@ const config: Config = {
           },
         ],
         theme: {
-          primaryColor: '#2e6e3e',
-          primaryColorDark: '#b2e4bc',
+          primaryColor: '#2d684b',
+          primaryColorDark: '#bddfc2',
           options: {
             sortTagsAlphabetically: true,
             sortOperationsAlphabetically: true,
@@ -322,14 +322,14 @@ const config: Config = {
       options: {
         themeVariables: {
           fontFamily: 'Figtree, system-ui, sans-serif',
-          primaryColor: '#2e6e3e',
-          primaryBorderColor: '#2e6e3e',
+          primaryColor: '#2d684b',
+          primaryBorderColor: '#2d684b',
           primaryTextColor: '#fafefa',
-          lineColor: '#2e6e3e',
+          lineColor: '#2d684b',
           secondaryColor: '#f3e6ee',
 
           // Base styling
-          mainBkg: '#2e6e3e',
+          mainBkg: '#2d684b',
           noteBkgColor: '#444444',
           noteTextColor: '#fafefa',
 
@@ -337,11 +337,11 @@ const config: Config = {
           nodeTextColor: '#fafefa',
 
           // BEGIN sequenceDiagram styles
-          actorBorder: '#2e6e3e',
-          actorLineColor: '#2e6e3e',
+          actorBorder: '#2d684b',
+          actorLineColor: '#2d684b',
           actorTextColor: '#fafefa',
-          activationBkgColor: '#2e6e3e',
-          activationBorderColor: '#2e6e3e',
+          activationBkgColor: '#2d684b',
+          activationBorderColor: '#2d684b',
           labelBoxBkgColor: '#444444',
           labelTextColor: '#fafefa',
         },
