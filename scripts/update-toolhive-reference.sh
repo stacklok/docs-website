@@ -23,7 +23,8 @@ UPSTREAM_REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive/pkg/registry/data/upstream-
 UPSTREAM_REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/upstream-registry.schema.json"
 
 CRD_API_SRC="${IMPORT_DIR}/toolhive/docs/operator/crd-api.md"
-CRD_API_DST="${STATIC_DIR}/api-specs/toolhive-crd-api.md"
+CRD_API_DST="${DOCS_DIR}/toolhive/reference/crd-spec.md"
+CRD_API_FRONTMATTER="${REPO_ROOT}/scripts/crd-ref-frontmatter.txt"
 
 # Test the required directories exist
 if [ ! -d "$IMPORT_DIR" ]; then
@@ -134,12 +135,12 @@ else
 fi
 
 ## CRD API reference
-echo "Updating ToolHive CRD API reference in ${STATIC_DIR}/api-specs"
+echo "Updating ToolHive CRD API reference in ${DOCS_DIR}/toolhive/reference"
 
-# Copy CRD API documentation
+# Copy CRD API documentation with frontmatter prepended
 if [ -f "${CRD_API_SRC}" ]; then
-    # Remove h1 title from the CRD API documentation, Docusaurus will use the title from the front matter
-    sed '1{/^# /d;}' ${CRD_API_SRC} > ${CRD_API_DST}
+    # Concatenate frontmatter with source file, removing h1 title (Docusaurus uses title from front matter)
+    { cat "${CRD_API_FRONTMATTER}"; sed '1{/^# /d;}' "${CRD_API_SRC}"; } > "${CRD_API_DST}"
     echo "CRD API reference updated successfully"
 else
     echo "Warning: CRD API documentation not found at ${CRD_API_SRC}"
