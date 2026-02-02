@@ -1,3 +1,12 @@
+---
+title: Kubernetes CRD reference
+sidebar_label: CRD Reference
+description:
+  ToolHive Kubernetes Operator Custom Resource Definitions (CRDs) reference.
+toc_max_heading_level: 4
+mdx:
+  format: md
+---
 
 ## Packages
 - [toolhive.stacklok.dev/audit](#toolhivestacklokdevaudit)
