@@ -431,6 +431,92 @@ spec:
 Now the proxy exchanges validated company tokens for remote service tokens
 before forwarding requests.
 
+### Inject custom headers
+
+Some remote MCP servers require custom headers for tenant identification, API
+keys, or other purposes. Use the `headerForward` field to inject headers into
+every request forwarded to the remote server.
+
+For non-sensitive values like tenant IDs or correlation headers, use
+`addPlaintextHeaders`:
+
+```yaml {6-9}
+spec:
+  remoteURL: https://mcp.analytics.example.com
+  # ... other config ...
+
+  headerForward:
+    addPlaintextHeaders:
+      X-Tenant-ID: 'tenant-123'
+      X-Correlation-ID: 'corr-abc-def-456'
+```
+
+For sensitive values like API keys, reference Kubernetes Secrets using
+`addHeadersFromSecret`. First, create a Secret containing the header value:
+
+```yaml title="api-key-secret.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-key-secret
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  api-key: 'your-api-key-value'
+```
+
+Then reference the Secret in your MCPRemoteProxy:
+
+```yaml title="analytics-proxy.yaml" {12-17}
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPRemoteProxy
+metadata:
+  name: analytics-proxy
+  namespace: toolhive-system
+spec:
+  remoteURL: https://mcp.analytics.example.com
+  # ... other config ...
+
+  headerForward:
+    addHeadersFromSecret:
+      - headerName: 'X-API-Key'
+        valueSecretRef:
+          name: api-key-secret
+          key: api-key
+```
+
+You can combine plaintext and secret-backed headers:
+
+```yaml {6-14}
+spec:
+  remoteURL: https://mcp.analytics.example.com
+  # ... other config ...
+
+  headerForward:
+    addPlaintextHeaders:
+      X-Tenant-ID: 'tenant-123'
+      X-Request-Source: 'toolhive-proxy'
+    addHeadersFromSecret:
+      - headerName: 'X-API-Key'
+        valueSecretRef:
+          name: api-key-secret
+          key: api-key
+```
+
+:::warning[Security considerations]
+
+- Plaintext header values are visible when you inspect the full resource (e.g.,
+  `kubectl get ... -o yaml` or `kubectl describe`). For sensitive values (API
+  keys, tokens), always use `addHeadersFromSecret`.
+- Secret-backed header values are stored in Kubernetes Secrets and resolved at
+  runtime. Only secret references (not actual values) appear in ConfigMaps used
+  internally by ToolHive.
+- Certain headers cannot be configured for security reasons, including `Host`,
+  `Connection`, `Transfer-Encoding`, and proxy-related headers like
+  `X-Forwarded-For`.
+
+:::
+
 ## Quick start example
 
 For testing and development, you can use the public MCP specification server:
