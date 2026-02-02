@@ -1,0 +1,477 @@
+---
+title: Audit logging
+description:
+  Configure audit logging for Virtual MCP Server to meet security compliance
+  requirements and track MCP operations.
+---
+
+Virtual MCP Server (vMCP) provides comprehensive audit logging for all MCP
+operations. Audit logs enable security teams to meet compliance requirements,
+investigate incidents, and maintain operational visibility.
+
+## Overview
+
+The audit logging system captures structured JSON events for every MCP protocol
+operation, including tool calls, resource reads, prompt requests, and composite
+workflow executions. The implementation is designed to meet NIST SP 800-53
+compliance requirements for enterprise security.
+
+## Audit event types
+
+vMCP logs several categories of events:
+
+### MCP protocol operations
+
+Standard MCP protocol interactions are logged with these event types:
+
+- `mcp_initialize`: MCP connection initialization
+- `mcp_tool_call`: Tool invocation
+- `mcp_tools_list`: List available tools
+- `mcp_resource_read`: Read a resource
+- `mcp_resources_list`: List available resources
+- `mcp_prompt_get`: Get a prompt
+- `mcp_prompts_list`: List available prompts
+- `mcp_notification`: MCP notifications
+- `mcp_completion`: Completion requests
+- `mcp_roots_list_changed`: Root list changed notifications
+
+### Connection and transport events
+
+Connection establishment events:
+
+- `sse_connection`: SSE transport connection established
+- `mcp_ping`: Health check pings
+
+### Logging events
+
+MCP logging protocol events:
+
+- `mcp_logging`: Logging messages from MCP servers
+
+### Composite workflow operations
+
+Composite tools (multi-step workflows) generate additional audit events:
+
+- `vmcp_workflow_started`: Workflow execution begins
+- `vmcp_workflow_completed`: Workflow completes successfully
+- `vmcp_workflow_failed`: Workflow fails
+- `vmcp_workflow_timed_out`: Workflow exceeds timeout
+- `vmcp_workflow_step_started`: Individual step begins
+- `vmcp_workflow_step_completed`: Individual step completes
+- `vmcp_workflow_step_failed`: Individual step fails
+- `vmcp_workflow_step_skipped`: Conditional step is skipped
+
+### Fallback event types
+
+Generic event types for unrecognized requests:
+
+- `mcp_request`: Generic MCP request when specific type cannot be determined
+- `http_request`: Generic HTTP request (non-MCP)
+
+## Enable audit logging
+
+Configure audit logging in the VirtualMCPServer resource using the
+`spec.config.audit` field:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: my-vmcp
+  namespace: toolhive-system
+spec:
+  config:
+    groupRef: my-group
+    # highlight-start
+    audit:
+      enabled: true
+      component: vmcp-production
+      includeRequestData: true
+      includeResponseData: false
+      maxDataSize: 4096
+    # highlight-end
+  incomingAuth:
+    type: oidc
+    oidcConfig:
+      type: inline
+      inline:
+        issuer: https://auth.example.com
+        clientId: <YOUR_CLIENT_ID>
+        audience: vmcp
+```
+
+### Configuration options
+
+| Field                 | Description                                      | Default       |
+| --------------------- | ------------------------------------------------ | ------------- |
+| `enabled`             | Enable audit logging                             | `false`       |
+| `component`           | Component name in audit events                   | `vmcp-server` |
+| `eventTypes`          | Specific event types to log (empty = all events) | `[]` (all)    |
+| `excludeEventTypes`   | Event types to exclude from logging              | `[]`          |
+| `includeRequestData`  | Include request payloads in audit logs           | `false`       |
+| `includeResponseData` | Include response payloads in audit logs          | `false`       |
+| `maxDataSize`         | Maximum payload size in bytes                    | `1024`        |
+| `logFile`             | File path for audit logs (empty = stdout)        | `""` (stdout) |
+
+## Filter audit events
+
+### Log specific events only
+
+Filter to capture only critical operations:
+
+```yaml
+spec:
+  config:
+    audit:
+      enabled: true
+      eventTypes:
+        - mcp_initialize
+        - mcp_tool_call
+        - vmcp_workflow_started
+        - vmcp_workflow_completed
+        - vmcp_workflow_failed
+```
+
+### Exclude noisy events
+
+Exclude high-frequency events like health checks:
+
+```yaml
+spec:
+  config:
+    audit:
+      enabled: true
+      excludeEventTypes:
+        - mcp_ping
+        - mcp_logging
+```
+
+:::info
+
+When both `eventTypes` and `excludeEventTypes` are specified,
+`excludeEventTypes` takes precedence. Events matching the exclusion list are
+never logged, even if they appear in `eventTypes`.
+
+:::
+
+## Control payload logging
+
+### Include request and response data
+
+For forensic analysis, capture the full request and response payloads:
+
+```yaml
+spec:
+  config:
+    audit:
+      enabled: true
+      includeRequestData: true
+      includeResponseData: true
+      maxDataSize: 16384 # 16KB limit
+```
+
+:::warning
+
+Request and response payloads may contain sensitive data. Review your
+organization's data handling policies before enabling payload logging in
+production environments.
+
+:::
+
+### Limit payload size
+
+Control the maximum size of captured payloads to prevent log bloat:
+
+```yaml
+spec:
+  config:
+    audit:
+      enabled: true
+      includeRequestData: true
+      maxDataSize: 8192 # Truncate payloads larger than 8KB
+```
+
+## Audit log format
+
+Each audit event is a structured JSON object with these fields:
+
+```json
+{
+  "time": "2025-02-02T15:45:30.123456789Z",
+  "level": "INFO+2",
+  "msg": "audit_event",
+  "audit_id": "a3f2b8d1-4c5e-6789-abcd-ef0123456789",
+  "type": "mcp_tool_call",
+  "logged_at": "2025-02-02T15:45:30.123456Z",
+  "outcome": "success",
+  "component": "vmcp-production",
+  "source": {
+    "type": "network",
+    "value": "10.0.1.50",
+    "extra": {
+      "user_agent": "Claude/1.0"
+    }
+  },
+  "subjects": {
+    "user": "alice@company.com",
+    "user_id": "sub-alice-123",
+    "client_name": "Claude Desktop",
+    "client_version": "1.0.0"
+  },
+  "target": {
+    "endpoint": "/mcp",
+    "method": "tools/call",
+    "type": "tool",
+    "name": "github_create_pr"
+  },
+  "metadata": {
+    "extra": {
+      "duration_ms": 234,
+      "transport": "http",
+      "backend_name": "github"
+    }
+  },
+  "data": {
+    "request": {
+      "title": "Add new feature",
+      "base": "main"
+    }
+  }
+}
+```
+
+### Field descriptions
+
+| Field       | Description                                               |
+| ----------- | --------------------------------------------------------- |
+| `time`      | Timestamp when the log was generated                      |
+| `level`     | Log level (INFO+2 for audit events)                       |
+| `msg`       | Always "audit_event" for audit logs                       |
+| `audit_id`  | Unique identifier for this audit event                    |
+| `type`      | Event classification (what happened)                      |
+| `logged_at` | UTC timestamp when the event occurred                     |
+| `outcome`   | Result (success, failure, denied, error)                  |
+| `component` | System component that generated the event                 |
+| `source`    | Request origin (IP address, user agent)                   |
+| `subjects`  | Identity information (user, client)                       |
+| `target`    | Resource or operation targeted                            |
+| `metadata`  | Additional context (duration_ms, transport, backend_name) |
+| `data`      | Optional request and response payloads                    |
+
+## User identity in audit logs
+
+The audit system extracts user identity from authentication tokens with an
+intelligent fallback chain.
+
+### Identity extraction
+
+The `subjects` field contains identity information:
+
+```json
+{
+  "subjects": {
+    "user": "alice@company.com",
+    "user_id": "sub-alice-123",
+    "client_name": "Claude Desktop",
+    "client_version": "1.0.0"
+  }
+}
+```
+
+### Identity source precedence
+
+The `user` field is populated using this fallback order from OIDC token claims:
+
+1. `name` claim (full name)
+2. `preferred_username` claim (username)
+3. `email` claim (email address)
+4. `"anonymous"` (when authentication is disabled)
+
+The `user_id` field contains the OIDC `sub` claim (subject identifier).
+
+### Anonymous authentication
+
+When using anonymous authentication (not recommended for production), audit logs
+show:
+
+```json
+{
+  "subjects": {
+    "user": "anonymous"
+  }
+}
+```
+
+## Configure output destination
+
+### Log to stdout (default)
+
+By default, audit logs are written to standard output, which integrates with
+Kubernetes log collection:
+
+```yaml
+spec:
+  config:
+    audit:
+      enabled: true
+      # logFile not specified = stdout
+```
+
+This approach works well with log aggregation systems like Fluentd, Fluent Bit,
+or cloud provider log collectors (CloudWatch, Google Cloud Logging, Azure
+Monitor).
+
+### Log to a file
+
+Write audit logs to a persistent file:
+
+```yaml
+spec:
+  config:
+    audit:
+      enabled: true
+      logFile: /var/log/vmcp/audit.log
+```
+
+Mount a persistent volume to retain audit logs:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: my-vmcp
+  namespace: toolhive-system
+spec:
+  config:
+    audit:
+      enabled: true
+      logFile: /var/log/audit/vmcp.log
+  podTemplateSpec:
+    spec:
+      volumes:
+        - name: audit-logs
+          persistentVolumeClaim:
+            claimName: vmcp-audit-pvc
+      containers:
+        - name: vmcp
+          volumeMounts:
+            - name: audit-logs
+              mountPath: /var/log/audit
+```
+
+:::info
+
+File-based audit logs are written with secure permissions (`0600`) that allow
+read/write access only to the file owner.
+
+:::
+
+## Configuration patterns
+
+### Security compliance
+
+For environments requiring comprehensive audit trails:
+
+```yaml
+spec:
+  config:
+    audit:
+      enabled: true
+      component: vmcp-production
+      eventTypes:
+        - mcp_initialize
+        - mcp_tool_call
+        - vmcp_workflow_started
+        - vmcp_workflow_completed
+        - vmcp_workflow_failed
+      excludeEventTypes:
+        - mcp_ping
+      includeRequestData: true
+      includeResponseData: true
+      maxDataSize: 16384
+      logFile: /var/log/vmcp/audit.log
+```
+
+### Performance-optimized
+
+For high-throughput environments, log only critical events:
+
+```yaml
+spec:
+  config:
+    audit:
+      enabled: true
+      component: vmcp-high-throughput
+      eventTypes:
+        - mcp_tool_call
+        - vmcp_workflow_failed
+      includeRequestData: false
+      includeResponseData: false
+```
+
+### Development and debugging
+
+For detailed troubleshooting during development:
+
+```yaml
+spec:
+  config:
+    audit:
+      enabled: true
+      component: vmcp-debug
+      includeRequestData: true
+      includeResponseData: true
+      maxDataSize: 32768
+```
+
+## Query and analyze audit logs
+
+### Search for specific operations
+
+Query logs for a specific user's tool calls:
+
+```bash
+kubectl logs -n toolhive-system -l app.kubernetes.io/instance=my-vmcp \
+  | jq 'select(.type == "mcp_tool_call" and .subjects.user == "alice@company.com")'
+```
+
+### Analyze workflow failures
+
+Find all failed workflows in the last hour:
+
+```bash
+kubectl logs -n toolhive-system -l app.kubernetes.io/instance=my-vmcp --since=1h \
+  | jq 'select(.type == "vmcp_workflow_failed")'
+```
+
+### Track backend usage
+
+Count tool calls per backend:
+
+```bash
+kubectl logs -n toolhive-system -l app.kubernetes.io/instance=my-vmcp \
+  | jq -r 'select(.type == "mcp_tool_call") | .metadata.extra.backend_name' \
+  | sort | uniq -c
+```
+
+## Integrate with log collection systems
+
+When audit logs are written to stdout (the default), they integrate with
+standard Kubernetes log collection infrastructure. Your existing log collectors
+(Fluentd, Fluent Bit, Filebeat, Splunk forwarders) can parse the JSON audit
+events and route them to your observability backend.
+
+For detailed configuration examples and best practices for setting up log
+collection with Fluentd, Filebeat, Splunk, and other systems, see the
+[Kubernetes logging guide](../guides-k8s/logging.mdx#set-up-log-collection).
+
+## Related information
+
+- [Authentication](./authentication.mdx) - Configure client and backend
+  authentication for user identity in audit logs
+- [Telemetry and metrics](./telemetry-and-metrics.mdx) - Monitor vMCP
+  performance with OpenTelemetry
+- [Observability concepts](../concepts/observability.mdx) - Overview of
+  ToolHive's observability architecture
+- [Kubernetes logging guide](../guides-k8s/logging.mdx) - Configure logging for
+  MCP servers in Kubernetes
