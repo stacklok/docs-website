@@ -171,8 +171,8 @@ export default function ProductCard(props: ProductCardProps) {
       return (
         <ThemedImage
           sources={{
-            light: icon.src,
-            dark: icon.srcDark,
+            light: useBaseUrl(icon.src),
+            dark: useBaseUrl(icon.srcDark),
           }}
           alt={icon.alt}
           style={iconStyle}
@@ -180,7 +180,7 @@ export default function ProductCard(props: ProductCardProps) {
       );
     }
 
-    return <img src={icon.src} alt={icon.alt} style={iconStyle} />;
+    return <img src={useBaseUrl(icon.src)} alt={icon.alt} style={iconStyle} />;
   };
 
   // Type-safe content rendering based on discriminated union
