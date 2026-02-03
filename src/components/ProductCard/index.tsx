@@ -12,6 +12,22 @@ import styles from './styles.module.css';
 // ============================================================================
 
 /**
+ * Configuration for an inline icon displayed to the right of card content
+ */
+interface IconConfig {
+  /** Path to icon/image (used for light mode, or both if srcDark not provided) */
+  src: string;
+  /** Optional path to dark mode icon */
+  srcDark?: string;
+  /** Alt text for the icon */
+  alt: string;
+  /** Icon width - defaults to '60px' */
+  width?: string;
+  /** Custom style overrides merged with defaults */
+  style?: React.CSSProperties;
+}
+
+/**
  * Base props shared by all ProductCard variants
  */
 interface BaseProductCardProps {
@@ -25,6 +41,8 @@ interface BaseProductCardProps {
   variant?: 'default' | 'compact' | 'featured';
   /** Custom hover effect override */
   hoverEffect?: 'default' | 'none' | 'custom';
+  /** Optional inline icon displayed to the right of content */
+  icon?: IconConfig;
 }
 
 /**
@@ -104,6 +122,17 @@ function getExternalLinkAttributes(url: string) {
   };
 }
 
+/**
+ * Default styles for inline icons
+ */
+const defaultIconStyle: React.CSSProperties = {
+  float: 'right',
+  display: 'block',
+  height: 'auto',
+  maxWidth: '40%',
+  marginLeft: '1rem',
+};
+
 // ============================================================================
 // COMPONENT
 // ============================================================================
@@ -122,10 +151,37 @@ export default function ProductCard(props: ProductCardProps) {
     className,
     variant = 'default',
     hoverEffect = 'default',
+    icon,
     children,
   } = props;
 
   const linkAttributes = getExternalLinkAttributes(href);
+
+  // Render inline icon if provided
+  const renderIcon = () => {
+    if (!icon) return null;
+
+    const iconStyle: React.CSSProperties = {
+      ...defaultIconStyle,
+      width: icon.width || '60px',
+      ...icon.style,
+    };
+
+    if (icon.srcDark) {
+      return (
+        <ThemedImage
+          sources={{
+            light: useBaseUrl(icon.src),
+            dark: useBaseUrl(icon.srcDark),
+          }}
+          alt={icon.alt}
+          style={iconStyle}
+        />
+      );
+    }
+
+    return <img src={useBaseUrl(icon.src)} alt={icon.alt} style={iconStyle} />;
+  };
 
   // Type-safe content rendering based on discriminated union
   const renderContent = () => {
@@ -152,7 +208,10 @@ export default function ProductCard(props: ProductCardProps) {
               }}
             />
           </div>
-          <div className={styles.body}>{children || description}</div>
+          <div className={styles.body}>
+            {renderIcon()}
+            {children || description}
+          </div>
         </>
       );
     }
@@ -165,7 +224,10 @@ export default function ProductCard(props: ProductCardProps) {
           <div className={styles.logo}>
             <h3 className={styles.titleHeading}>{title}</h3>
           </div>
-          <div className={styles.body}>{children || description}</div>
+          <div className={styles.body}>
+            {renderIcon()}
+            {children || description}
+          </div>
         </>
       );
     }
@@ -191,5 +253,5 @@ export default function ProductCard(props: ProductCardProps) {
   );
 }
 
-// Export type for external usage
-export type { ProductCardProps };
+// Export types for external usage
+export type { ProductCardProps, IconConfig };

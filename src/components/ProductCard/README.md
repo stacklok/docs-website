@@ -8,6 +8,8 @@ with hover effects and multiple content types.
 - **Self-contained**: All types and utilities are included within the component
 - **Type-safe content patterns**: Logo-based or text-based content using
   discriminated unions
+- **Inline icon support**: Optional icon displayed to the right of content with
+  theme support
 - **Multiple variants**: Default, compact, and featured styling
 - **Configurable hover effects**: Default, none, or custom hover behaviors
 - **Theme support**: CSS custom properties for easy customization
@@ -31,7 +33,7 @@ import ProductCard from '@site/src/components/ProductCard';
   logoTitle='Product Logo'
   linkText='Read documentation'
   variant='default' // Optional: 'default' | 'compact' | 'featured'
-  invertLogoOnHover={true} // Optional, default: true
+  invertLogoOnHover={true} // Optional, default: false
 >
   Product description content goes here. You can use any React content.
 </ProductCard>;
@@ -54,18 +56,54 @@ import ProductCard from '@site/src/components/ProductCard';
 </ProductCard>;
 ```
 
+### ProductCard with Inline Icon
+
+```jsx
+import ProductCard from '@site/src/components/ProductCard';
+
+<ProductCard
+  contentType='text'
+  href='/product-path'
+  title='Product Name'
+  linkText='Learn more'
+  icon={{
+    src: '/img/icon-light.svg',
+    srcDark: '/img/icon-dark.svg', // Optional
+    alt: 'Product icon',
+    width: '80px', // Optional, default: '60px'
+    style: { marginLeft: '1.5rem' }, // Optional style overrides
+  }}
+>
+  Product description with an icon floated to the right.
+</ProductCard>;
+```
+
 ## Props
 
 ### Base Props (shared by all variants)
 
-| Prop          | Type                                 | Required | Default   | Description                      |
-| ------------- | ------------------------------------ | -------- | --------- | -------------------------------- |
-| `href`        | string                               | Yes      | -         | The URL the card links to        |
-| `linkText`    | string                               | Yes      | -         | Text for the call-to-action link |
-| `className`   | string                               | No       | -         | Additional CSS class names       |
-| `variant`     | 'default' \| 'compact' \| 'featured' | No       | 'default' | Card styling variant             |
-| `hoverEffect` | 'default' \| 'none' \| 'custom'      | No       | 'default' | Hover effect behavior            |
-| `children`    | ReactNode                            | No       | -         | Custom description content       |
+| Prop          | Type                                 | Required | Default   | Description                            |
+| ------------- | ------------------------------------ | -------- | --------- | -------------------------------------- |
+| `href`        | string                               | Yes      | -         | The URL the card links to              |
+| `linkText`    | string                               | Yes      | -         | Text for the call-to-action link       |
+| `className`   | string                               | No       | -         | Additional CSS class names             |
+| `variant`     | 'default' \| 'compact' \| 'featured' | No       | 'default' | Card styling variant                   |
+| `hoverEffect` | 'default' \| 'none' \| 'custom'      | No       | 'default' | Hover effect behavior                  |
+| `icon`        | IconConfig                           | No       | -         | Inline icon displayed right of content |
+| `children`    | ReactNode                            | No       | -         | Custom description content             |
+
+### IconConfig Props
+
+| Prop      | Type          | Required | Default | Description                                 |
+| --------- | ------------- | -------- | ------- | ------------------------------------------- |
+| `src`     | string        | Yes      | -       | Path to icon (used for light mode or both)  |
+| `srcDark` | string        | No       | -       | Optional path to dark mode icon             |
+| `alt`     | string        | Yes      | -       | Alt text for the icon                       |
+| `width`   | string        | No       | '60px'  | Icon width                                  |
+| `style`   | CSSProperties | No       | -       | Custom style overrides merged with defaults |
+
+Default icon styles: `float: right`, `display: block`, `height: auto`,
+`maxWidth: 40%`, `marginLeft: 1rem`.
 
 ### Logo Content Type Props
 
@@ -76,7 +114,7 @@ import ProductCard from '@site/src/components/ProductCard';
 | `logoDark`          | string  | No       | -       | Optional path to dark mode logo                     |
 | `logoAlt`           | string  | No       | ''      | Alt text for the logo image                         |
 | `logoTitle`         | string  | No       | ''      | Title attribute for the logo image                  |
-| `invertLogoOnHover` | boolean | No       | true    | Whether to invert logo color on hover in light mode |
+| `invertLogoOnHover` | boolean | No       | false   | Whether to invert logo color on hover in light mode |
 | `description`       | string  | No       | -       | Description text (alternative to children)          |
 
 ### Text Content Type Props
