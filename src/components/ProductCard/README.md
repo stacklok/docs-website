@@ -33,7 +33,7 @@ import ProductCard from '@site/src/components/ProductCard';
   logoTitle='Product Logo'
   linkText='Read documentation'
   variant='default' // Optional: 'default' | 'compact' | 'featured'
-  invertLogoOnHover={true} // Optional, default: true
+  invertLogoOnHover={true} // Optional, default: false
 >
   Product description content goes here. You can use any React content.
 </ProductCard>;
@@ -114,7 +114,7 @@ Default icon styles: `float: right`, `display: block`, `height: auto`,
 | `logoDark`          | string  | No       | -       | Optional path to dark mode logo                     |
 | `logoAlt`           | string  | No       | ''      | Alt text for the logo image                         |
 | `logoTitle`         | string  | No       | ''      | Title attribute for the logo image                  |
-| `invertLogoOnHover` | boolean | No       | true    | Whether to invert logo color on hover in light mode |
+| `invertLogoOnHover` | boolean | No       | false   | Whether to invert logo color on hover in light mode |
 | `description`       | string  | No       | -       | Description text (alternative to children)          |
 
 ### Text Content Type Props
