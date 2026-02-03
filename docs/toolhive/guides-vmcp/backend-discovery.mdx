@@ -1,29 +1,75 @@
 ---
 title: Backend discovery modes
 description:
-  Choose between dynamic and static backend discovery for Virtual MCP Server.
+  Choose between discovered and inline backend discovery for Virtual MCP Server.
 ---
 
 Virtual MCP Server (vMCP) supports two backend discovery modes, allowing you to
-optimize for either operational convenience (dynamic mode with declarative
-backend management) or security (static mode with minimal permissions).
+optimize for either operational convenience (discovered mode with declarative
+backend management) or security (inline mode with minimal permissions).
 
 ## Overview
 
 The deployment mode is configured via the `spec.outgoingAuth.source` field in
-the VirtualMCPServer resource:
+the VirtualMCPServer resource.
 
 | Mode         | Backend Discovery         | RBAC Requirements                      | K8s API Access     |
 | ------------ | ------------------------- | -------------------------------------- | ------------------ |
 | `discovered` | Runtime from K8s API      | Namespace-scoped read + status updates | Yes                |
-| `inline`     | Static from configuration | Minimal (status updates only)          | No (except status) |
+| `inline`     | Inline from configuration | Minimal (status updates only)          | No (except status) |
 
-## Dynamic mode (discovered)
+:::note[Design rationale]
 
-Dynamic mode automatically discovers backend MCP servers at runtime by querying
-the Kubernetes API. This is the default mode.
+Backend discovery is configured via `outgoingAuth.source` because the
+authentication strategy and backend source are tightly coupled:
 
-### Dynamic mode configuration
+- **Discovered backends** (`source: discovered`) are found at runtime by
+  querying the Kubernetes API and can reference MCPExternalAuthConfig resources
+  for their authentication
+- **Inline backends** (`source: inline`) are defined in the configuration and
+  require their authentication to be explicitly configured in
+  `outgoingAuth.backends`
+
+This coupling ensures authentication configuration matches the backend discovery
+method, preventing misconfigurations.
+
+:::
+
+### When to use discovered mode
+
+Choose discovered mode when:
+
+- Backends change frequently and you want declarative management via Kubernetes
+  resources
+- Centralized authentication via MCPExternalAuthConfig is preferred
+- Namespace-scoped read permissions are acceptable
+
+### When to use inline mode
+
+Choose inline mode when:
+
+- Security or compliance requires minimal permissions and attack surface
+- Backend configuration is stable and changes infrequently
+- Explicit control over all backend details is required (zero-trust, air-gapped
+  environments)
+
+### Trade-offs comparison
+
+| Consideration                  | Discovered Mode                                  | Inline Mode                               |
+| ------------------------------ | ------------------------------------------------ | ----------------------------------------- |
+| Backend management             | Declarative (K8s resources)                      | Explicit (in configuration)               |
+| Configuration changes          | Add/remove resources without vMCP config changes | Update vMCP config and restart            |
+| RBAC permissions               | Namespace read access                            | Minimal (status updates only)             |
+| Attack surface                 | Larger (K8s API access)                          | Smaller (no backend discovery API access) |
+| Auth management                | Centralized (MCPExternalAuthConfig)              | Duplicated in YAML                        |
+| Individual backend pod updates | Supported without vMCP changes                   | Requires vMCP awareness                   |
+
+## Discovered mode
+
+Discovered mode queries the Kubernetes API at runtime to find backend MCP
+servers. This is the default mode.
+
+### Discovered mode configuration
 
 ```yaml
 apiVersion: toolhive.stacklok.dev/v1alpha1
@@ -55,19 +101,12 @@ When vMCP starts in discovered mode:
    available tools, resources, and prompts
 5. **Status updates**: Reports backend health in the VirtualMCPServer status
 
-### What vMCP discovers
+### Discovered mode RBAC
 
-For each backend in the group, vMCP automatically discovers:
+The operator automatically creates the required RBAC resources (ServiceAccount,
+Role, and RoleBinding) when you create a VirtualMCPServer resource.
 
-- Backend name and service URL
-- MCP transport protocol (SSE, streamable-http)
-- Authentication configuration (from MCPExternalAuthConfig resources)
-- Available tools, resources, and prompts
-- Health and connectivity status
-
-### Dynamic mode RBAC
-
-Dynamic mode requires the vMCP service account to have read access to:
+For reference, the vMCP service account needs read access to:
 
 - `configmaps`, `secrets`: Read OIDC configs and auth secrets
 - `mcpgroups`: Verify group exists and list members
@@ -75,9 +114,6 @@ Dynamic mode requires the vMCP service account to have read access to:
 - `mcpexternalauthconfigs`: Resolve authentication configurations
 - `mcptoolconfigs`: Resolve tool filtering and renaming
 - `virtualmcpservers/status`: Update status with discovered backends
-
-The operator automatically creates a ServiceAccount, Role, and RoleBinding with
-these permissions when you create a VirtualMCPServer resource.
 
 ### Runtime updates
 
@@ -91,29 +127,13 @@ When backend resources are added, modified, or removed in the group:
 kubectl rollout restart deployment vmcp-my-vmcp -n toolhive-system
 ```
 
-:::info
+## Inline mode
 
-Future releases may add automatic backend rediscovery without pod restarts.
-
-:::
-
-### When to use dynamic mode
-
-Use dynamic mode when:
-
-- You want backends to be managed declaratively via Kubernetes resources
-- Backend servers are added or removed frequently
-- You need centralized authentication management via MCPExternalAuthConfig
-- Namespace-scoped RBAC permissions are acceptable
-- Operational convenience is prioritized over minimal attack surface
-
-## Static mode (inline)
-
-Static mode uses pre-configured backends defined in the VirtualMCPServer
+Inline mode uses pre-configured backends defined in the VirtualMCPServer
 resource. This eliminates the need for Kubernetes API access (except status
 updates), reducing the attack surface.
 
-### Static mode configuration
+### Inline mode configuration
 
 ```yaml
 apiVersion: toolhive.stacklok.dev/v1alpha1
@@ -137,7 +157,7 @@ spec:
     type: anonymous
   outgoingAuth:
     # highlight-start
-    source: inline # Use static backend configuration
+    source: inline # Use inline backend configuration
     # highlight-end
     backends:
       github-mcp:
@@ -145,6 +165,15 @@ spec:
         externalAuthConfigRef:
           name: github-token-config
 ```
+
+:::note
+
+The `groupRef` field is required in both discovered and inline modes. In inline
+mode, the group reference is used for organizational purposes and status
+reporting, even though backends are defined inline rather than discovered from
+the group.
+
+:::
 
 :::info
 
@@ -167,25 +196,14 @@ Each backend in `spec.config.backends` requires:
 | `transport` | MCP transport protocol (`sse` or `streamable-http`)      | Yes      |
 | `metadata`  | Custom labels for the backend                            | No       |
 
-### Static mode RBAC
+### Inline mode RBAC
 
-Static mode requires minimal permissions:
+Inline mode requires minimal permissions:
 
 - `virtualmcpservers/status`: Update status (only permission needed)
 
 The operator still creates RBAC resources for status updates, but the vMCP pod
 does not query the Kubernetes API for backend discovery.
-
-### When to use static mode
-
-Use static mode when:
-
-- Security is prioritized over operational convenience
-- Backend servers rarely change
-- You want explicit control over backend configuration
-- Minimizing Kubernetes API access is required (zero-trust, air-gapped
-  environments)
-- Compliance requires minimal service account permissions
 
 ## Verify backend status
 
@@ -323,40 +341,7 @@ restarting the vMCP pod.
      -o jsonpath='{.status.discoveredBackends}' | jq
    ```
 
-## Comparison
-
-### Dynamic mode trade-offs
-
-**Advantages:**
-
-- Declarative backend management (add/remove backends via
-  MCPServer/MCPRemoteProxy resources without changing VirtualMCPServer config)
-- Centralized authentication management via MCPExternalAuthConfig
-- Backend discovery at pod startup reduces initial configuration complexity
-- Individual backend pods can be updated without affecting vMCP
-
-**Disadvantages:**
-
-- Requires namespace-scoped read RBAC permissions
-- vMCP pod can query Kubernetes API for sensitive resources
-- Larger attack surface if vMCP is compromised
-
-### Static mode trade-offs
-
-**Advantages:**
-
-- Minimal RBAC permissions (only status updates)
-- No Kubernetes API access for backend discovery (smaller attack surface)
-- Explicit control over backend configuration
-- Suitable for zero-trust and air-gapped environments
-
-**Disadvantages:**
-
-- Backend changes require VirtualMCPServer updates and pod restarts
-- More verbose configuration (backends defined inline)
-- Authentication configuration must be duplicated in YAML
-
-## Complete working example
+## Complete example
 
 Here's a complete example showing all required resources for discovered mode
 with authentication:
@@ -398,7 +383,7 @@ metadata:
   namespace: toolhive-system
 spec:
   groupRef: engineering-tools
-  image: ghcr.io/example/github-mcp-server:latest
+  image: ghcr.io/example/github-mcp-server:v1.2.3
   transport: sse
   externalAuthConfigRef:
     name: github-token-config
@@ -435,169 +420,10 @@ kubectl get virtualmcpserver engineering-vmcp -n toolhive-system \
   -o jsonpath='{.status.discoveredBackends}' | jq
 ```
 
-## Default behavior and validation
-
-### Default source value
-
-If `spec.outgoingAuth.source` is omitted, it defaults to `discovered`:
-
-```yaml
-spec:
-  outgoingAuth: {} # Defaults to source: discovered
-```
-
-This is equivalent to:
-
-```yaml
-spec:
-  outgoingAuth:
-    source: discovered
-```
-
-### Common validation errors
-
-#### Missing groupRef
-
-```text
-Error: spec.config.groupRef is required
-```
-
-**Fix:** Add `spec.config.groupRef` referencing an existing MCPGroup.
-
-#### Invalid backend URL in inline mode
-
-```text
-Error: spec.config.backends[0].url must start with http:// or https://
-```
-
-**Fix:** Ensure backend URLs use proper scheme:
-
-```yaml
-backends:
-  - name: my-backend
-    url: http://my-backend.default.svc.cluster.local:8080 # ✅ Valid
-    # url: my-backend:8080 # ❌ Invalid
-```
-
-#### Missing backends array in inline mode
-
-```text
-Error: spec.config.backends is required when outgoingAuth.source is "inline"
-```
-
-**Fix:** Define at least one backend in `spec.config.backends` when using inline
-mode.
-
-#### Invalid transport protocol
-
-```text
-Error: spec.config.backends[0].transport must be "sse" or "streamable-http"
-```
-
-**Fix:** Use only supported transport protocols:
-
-```yaml
-backends:
-  - name: my-backend
-    transport: sse # ✅ Valid
-    # transport: stdio # ❌ Invalid for inline backends
-```
-
-#### Referenced MCPExternalAuthConfig not found
-
-```text
-Error: MCPExternalAuthConfig "github-token-config" not found in namespace "toolhive-system"
-```
-
-**Fix:** Create the MCPExternalAuthConfig resource before referencing it, or
-remove the auth reference.
-
-## Performance and limits
-
-### Recommended backend count
-
-- **Small deployments**: 1-10 backends per VirtualMCPServer
-- **Medium deployments**: 10-50 backends per VirtualMCPServer
-- **Large deployments**: 50-100 backends per VirtualMCPServer
-
-Beyond 100 backends, consider splitting into multiple VirtualMCPServer instances
-with different groups for better performance and isolation.
-
-### Discovery time
-
-Backend discovery occurs at vMCP pod startup:
-
-- **Small groups (1-10 backends)**: ~1-2 seconds
-- **Medium groups (10-50 backends)**: ~2-5 seconds
-- **Large groups (50-100 backends)**: ~5-10 seconds
-
-Discovery time includes:
-
-1. Querying Kubernetes API for workload resources
-2. Fetching MCPExternalAuthConfig resources
-3. Calling each backend's `initialize` method to discover capabilities
-4. Building the aggregated tool/resource/prompt catalog
-
-### Health check configuration
-
-vMCP performs health checks on backends using configurable intervals:
-
-**Default settings:**
-
-- **Check interval**: 30 seconds
-- **Unhealthy threshold**: 3 consecutive failures before marking backend as
-  unhealthy
-- **Status reporting**: Status updates every 30 seconds
-
-**Configure health checks** via `spec.config.operational.failureHandling`:
-
-```yaml
-spec:
-  config:
-    operational:
-      failureHandling:
-        healthCheckInterval: '10s' # Check every 10 seconds
-        unhealthyThreshold: 5 # Require 5 failures before marking unhealthy
-        statusReportingInterval: '15s' # Report status every 15 seconds
-        partialFailureMode: 'best_effort' # Continue with healthy backends
-        circuitBreaker:
-          enabled: true
-          failureThreshold: 10
-          timeout: '120s'
-```
-
-**Configuration fields:**
-
-| Field                             | Default  | Description                               |
-| --------------------------------- | -------- | ----------------------------------------- |
-| `healthCheckInterval`             | `"30s"`  | Time between health checks                |
-| `unhealthyThreshold`              | `3`      | Failures before marking unhealthy         |
-| `statusReportingInterval`         | `"30s"`  | Status update frequency                   |
-| `partialFailureMode`              | `"fail"` | Behavior when some backends fail          |
-| `circuitBreaker.enabled`          | `false`  | Enable circuit breaker pattern            |
-| `circuitBreaker.failureThreshold` | `5`      | Failures before opening circuit           |
-| `circuitBreaker.timeout`          | `"60s"`  | Wait time before retrying failed backends |
-
-**Partial failure modes:**
-
-- `fail`: vMCP returns error if any backend is unhealthy (strict)
-- `best_effort`: vMCP continues with healthy backends only (tolerant)
-
-Health checks use the backend's MCP `initialize` method to verify connectivity.
-
-### Resource usage
-
-Approximate resource consumption per backend:
-
-- **Memory**: ~5-10 MB per backend connection
-- **CPU**: Minimal (~0.1m baseline + request handling)
-- **Network**: Depends on tool call frequency
-
-For 50 backends, expect ~250-500 MB memory baseline.
-
 ## Troubleshooting
 
-### Backends not appearing in status
+<details>
+<summary>Backends not appearing in status</summary>
 
 **Symptoms:**
 
@@ -632,7 +458,7 @@ For 50 backends, expect ~250-500 MB memory baseline.
    kubectl rollout restart deployment vmcp-my-vmcp -n toolhive-system
    ```
 
-4. **RBAC permissions missing (dynamic mode)**
+4. **RBAC permissions missing (discovered mode)**
 
    Check the vMCP service account has required permissions:
 
@@ -644,7 +470,10 @@ For 50 backends, expect ~250-500 MB memory baseline.
    The operator should create these automatically. If missing, delete and
    recreate the VirtualMCPServer resource.
 
-### Backends showing as unavailable
+</details>
+
+<details>
+<summary>Backends showing as unavailable</summary>
 
 **Symptoms:**
 
@@ -692,12 +521,15 @@ For 50 backends, expect ~250-500 MB memory baseline.
    The backend may be misconfigured or failing to start properly. Check backend
    logs and ensure it responds correctly to MCP `initialize` requests.
 
-### RBAC permission errors
+</details>
+
+<details>
+<summary>RBAC permission errors</summary>
 
 **Symptoms:**
 
 - vMCP logs show `forbidden` or `unauthorized` errors
-- Backends not being discovered in dynamic mode
+- Backends not being discovered in discovered mode
 
 **Error examples:**
 
@@ -723,7 +555,7 @@ resource "mcpservers"
    kubectl describe role vmcp-my-vmcp -n toolhive-system
    ```
 
-   Required permissions for dynamic mode:
+   Required permissions for discovered mode:
    - `configmaps`, `secrets`: get, list, watch
    - `mcpgroups`, `mcpservers`, `mcpremoteproxies`: get, list, watch
    - `mcpexternalauthconfigs`, `mcptoolconfigs`: get, list, watch
@@ -741,7 +573,10 @@ resource "mcpservers"
 
    The operator will recreate all RBAC resources automatically.
 
-### Mode switching issues
+</details>
+
+<details>
+<summary>Mode switching issues</summary>
 
 **Symptoms:**
 
@@ -768,7 +603,10 @@ spec:
     backends: [...] # ❌ Should be removed in discovered mode
 ```
 
-### Health check failures
+</details>
+
+<details>
+<summary>Health check failures</summary>
 
 **Symptoms:**
 
@@ -791,6 +629,69 @@ spec:
 
    Ensure `externalAuthConfigRef` is properly configured if the backend requires
    authentication.
+
+</details>
+
+<details>
+<summary>Configuration validation errors</summary>
+
+**Missing groupRef:**
+
+```text
+Error: spec.config.groupRef is required
+```
+
+**Fix:** Add `spec.config.groupRef` referencing an existing MCPGroup.
+
+**Invalid backend URL in inline mode:**
+
+```text
+Error: spec.config.backends[0].url must start with http:// or https://
+```
+
+**Fix:** Ensure backend URLs use proper scheme:
+
+```yaml
+backends:
+  - name: my-backend
+    url: http://my-backend.default.svc.cluster.local:8080 # Valid
+    # url: my-backend:8080 # Invalid
+```
+
+**Missing backends array in inline mode:**
+
+```text
+Error: spec.config.backends is required when outgoingAuth.source is "inline"
+```
+
+**Fix:** Define at least one backend in `spec.config.backends` when using inline
+mode.
+
+**Invalid transport protocol:**
+
+```text
+Error: spec.config.backends[0].transport must be "sse" or "streamable-http"
+```
+
+**Fix:** Use only supported transport protocols:
+
+```yaml
+backends:
+  - name: my-backend
+    transport: sse # Valid
+    # transport: stdio # Invalid for inline backends
+```
+
+**Referenced MCPExternalAuthConfig not found:**
+
+```text
+Error: MCPExternalAuthConfig "github-token-config" not found in namespace "toolhive-system"
+```
+
+**Fix:** Create the MCPExternalAuthConfig resource before referencing it, or
+remove the auth reference.
+
+</details>
 
 ## Related information
 
