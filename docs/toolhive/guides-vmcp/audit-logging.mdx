@@ -13,8 +13,45 @@ investigate incidents, and maintain operational visibility.
 
 The audit logging system captures structured JSON events for every MCP protocol
 operation, including tool calls, resource reads, prompt requests, and composite
-workflow executions. The implementation is designed to meet NIST SP 800-53
-compliance requirements for enterprise security.
+workflow executions. The implementation can help organizations address
+audit-related compliance requirements for enterprise security.
+
+## Enable audit logging
+
+Configure audit logging in the VirtualMCPServer resource using the
+`spec.config.audit` field:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: my-vmcp
+  namespace: toolhive-system
+spec:
+  config:
+    groupRef: my-group
+    # highlight-start
+    audit:
+      enabled: true
+      component: vmcp-production
+      includeRequestData: true
+      includeResponseData: false
+      maxDataSize: 4096
+    # highlight-end
+```
+
+### Configuration options
+
+| Field                 | Description                                      | Default       |
+| --------------------- | ------------------------------------------------ | ------------- |
+| `enabled`             | Enable audit logging                             | `false`       |
+| `component`           | Component name in audit events                   | `vmcp-server` |
+| `eventTypes`          | Specific event types to log (empty = all events) | `[]` (all)    |
+| `excludeEventTypes`   | Event types to exclude from logging              | `[]`          |
+| `includeRequestData`  | Include request payloads in audit logs           | `false`       |
+| `includeResponseData` | Include response payloads in audit logs          | `false`       |
+| `maxDataSize`         | Maximum payload size in bytes                    | `1024`        |
+| `logFile`             | File path for audit logs (empty = stdout)        | `""` (stdout) |
 
 ## Audit event types
 
@@ -39,7 +76,9 @@ Standard MCP protocol interactions are logged with these event types:
 
 Connection establishment events:
 
-- `sse_connection`: SSE transport connection established
+- `sse_connection`: SSE transport connection established (SSE connections are
+  logged separately due to their long-lived nature; other transports like
+  streamable HTTP use standard MCP protocol events)
 - `mcp_ping`: Health check pings
 
 ### Logging events
@@ -68,56 +107,10 @@ Generic event types for unrecognized requests:
 - `mcp_request`: Generic MCP request when specific type cannot be determined
 - `http_request`: Generic HTTP request (non-MCP)
 
-## Enable audit logging
-
-Configure audit logging in the VirtualMCPServer resource using the
-`spec.config.audit` field:
-
-```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: VirtualMCPServer
-metadata:
-  name: my-vmcp
-  namespace: toolhive-system
-spec:
-  config:
-    groupRef: my-group
-    # highlight-start
-    audit:
-      enabled: true
-      component: vmcp-production
-      includeRequestData: true
-      includeResponseData: false
-      maxDataSize: 4096
-    # highlight-end
-  incomingAuth:
-    type: oidc
-    oidcConfig:
-      type: inline
-      inline:
-        issuer: https://auth.example.com
-        clientId: <YOUR_CLIENT_ID>
-        audience: vmcp
-```
-
-### Configuration options
-
-| Field                 | Description                                      | Default       |
-| --------------------- | ------------------------------------------------ | ------------- |
-| `enabled`             | Enable audit logging                             | `false`       |
-| `component`           | Component name in audit events                   | `vmcp-server` |
-| `eventTypes`          | Specific event types to log (empty = all events) | `[]` (all)    |
-| `excludeEventTypes`   | Event types to exclude from logging              | `[]`          |
-| `includeRequestData`  | Include request payloads in audit logs           | `false`       |
-| `includeResponseData` | Include response payloads in audit logs          | `false`       |
-| `maxDataSize`         | Maximum payload size in bytes                    | `1024`        |
-| `logFile`             | File path for audit logs (empty = stdout)        | `""` (stdout) |
-
 ## Filter audit events
 
-### Log specific events only
-
-Filter to capture only critical operations:
+By default, all event types are logged. You can filter events using `eventTypes`
+(allowlist) and `excludeEventTypes` (blocklist):
 
 ```yaml
 spec:
@@ -130,35 +123,26 @@ spec:
         - vmcp_workflow_started
         - vmcp_workflow_completed
         - vmcp_workflow_failed
-```
-
-### Exclude noisy events
-
-Exclude high-frequency events like health checks:
-
-```yaml
-spec:
-  config:
-    audit:
-      enabled: true
       excludeEventTypes:
         - mcp_ping
-        - mcp_logging
 ```
+
+Use `eventTypes` to capture only specific operations. Use `excludeEventTypes` to
+filter out high-frequency events like health checks.
 
 :::info
 
-When both `eventTypes` and `excludeEventTypes` are specified,
-`excludeEventTypes` takes precedence. Events matching the exclusion list are
-never logged, even if they appear in `eventTypes`.
+When both fields are specified, `excludeEventTypes` takes precedence. Events
+matching the exclusion list are never logged, even if they appear in
+`eventTypes`.
 
 :::
 
-## Control payload logging
+## Payload logging
 
-### Include request and response data
-
-For forensic analysis, capture the full request and response payloads:
+By default, audit logs capture metadata about operations but not the actual
+request and response payloads. For forensic analysis or debugging, you can
+enable payload capture:
 
 ```yaml
 spec:
@@ -167,8 +151,11 @@ spec:
       enabled: true
       includeRequestData: true
       includeResponseData: true
-      maxDataSize: 16384 # 16KB limit
+      maxDataSize: 16384 # Truncate payloads larger than 16KB
 ```
+
+The `maxDataSize` field controls the maximum size of captured payloads to
+prevent log bloat. Payloads exceeding this limit are truncated.
 
 :::warning
 
@@ -177,19 +164,6 @@ organization's data handling policies before enabling payload logging in
 production environments.
 
 :::
-
-### Limit payload size
-
-Control the maximum size of captured payloads to prevent log bloat:
-
-```yaml
-spec:
-  config:
-    audit:
-      enabled: true
-      includeRequestData: true
-      maxDataSize: 8192 # Truncate payloads larger than 8KB
-```
 
 ## Audit log format
 
@@ -260,27 +234,10 @@ Each audit event is a structured JSON object with these fields:
 
 ## User identity in audit logs
 
-The audit system extracts user identity from authentication tokens with an
-intelligent fallback chain.
+The audit system extracts user identity from OIDC authentication tokens into the
+subjects field (shown in the audit log format above).
 
-### Identity extraction
-
-The `subjects` field contains identity information:
-
-```json
-{
-  "subjects": {
-    "user": "alice@company.com",
-    "user_id": "sub-alice-123",
-    "client_name": "Claude Desktop",
-    "client_version": "1.0.0"
-  }
-}
-```
-
-### Identity source precedence
-
-The `user` field is populated using this fallback order from OIDC token claims:
+The user field is populated using this fallback order from token claims:
 
 1. `name` claim (full name)
 2. `preferred_username` claim (username)
@@ -289,18 +246,13 @@ The `user` field is populated using this fallback order from OIDC token claims:
 
 The `user_id` field contains the OIDC `sub` claim (subject identifier).
 
-### Anonymous authentication
+:::note
 
 When using anonymous authentication (not recommended for production), audit logs
-show:
+show `"user": "anonymous"` with no `user_id`. This may not meet compliance
+requirements for user identification.
 
-```json
-{
-  "subjects": {
-    "user": "anonymous"
-  }
-}
-```
+:::
 
 ## Configure output destination
 
@@ -323,17 +275,7 @@ Monitor).
 
 ### Log to a file
 
-Write audit logs to a persistent file:
-
-```yaml
-spec:
-  config:
-    audit:
-      enabled: true
-      logFile: /var/log/vmcp/audit.log
-```
-
-Mount a persistent volume to retain audit logs:
+To persist audit logs to a file, configure a persistent volume:
 
 ```yaml
 apiVersion: toolhive.stacklok.dev/v1alpha1
@@ -362,7 +304,18 @@ spec:
 :::info
 
 File-based audit logs are written with secure permissions (`0600`) that allow
-read/write access only to the file owner.
+read/write access only to the file owner (the user the vMCP container runs as).
+
+To access these logs from persistent volumes or log collection sidecars, ensure:
+
+- The vMCP container user is explicitly configured via
+  `podTemplateSpec.spec.securityContext.runAsUser`
+- Log collection sidecars run as the same user, or
+- Use `podTemplateSpec.spec.securityContext.fsGroup` to enable group-based
+  access
+
+For most deployments, using the default stdout logging is simpler and integrates
+better with Kubernetes log collection systems.
 
 :::
 
@@ -378,14 +331,9 @@ spec:
     audit:
       enabled: true
       component: vmcp-production
-      eventTypes:
-        - mcp_initialize
-        - mcp_tool_call
-        - vmcp_workflow_started
-        - vmcp_workflow_completed
-        - vmcp_workflow_failed
+      # No eventTypes filter = log all events (comprehensive)
       excludeEventTypes:
-        - mcp_ping
+        - mcp_ping # Exclude health checks (not audit-relevant)
       includeRequestData: true
       includeResponseData: true
       maxDataSize: 16384
@@ -407,21 +355,6 @@ spec:
         - vmcp_workflow_failed
       includeRequestData: false
       includeResponseData: false
-```
-
-### Development and debugging
-
-For detailed troubleshooting during development:
-
-```yaml
-spec:
-  config:
-    audit:
-      enabled: true
-      component: vmcp-debug
-      includeRequestData: true
-      includeResponseData: true
-      maxDataSize: 32768
 ```
 
 ## Query and analyze audit logs
@@ -446,7 +379,7 @@ kubectl logs -n toolhive-system -l app.kubernetes.io/instance=my-vmcp --since=1h
 
 ### Track backend usage
 
-Count tool calls per backend:
+Count tool calls per backend MCP server:
 
 ```bash
 kubectl logs -n toolhive-system -l app.kubernetes.io/instance=my-vmcp \
