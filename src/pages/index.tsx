@@ -10,7 +10,6 @@ import Head from '@docusaurus/Head';
 import ProductGrid from '@site/src/components/ProductGrid';
 import ProductCard from '@site/src/components/ProductCard';
 import Heading from '@theme/Heading';
-import ThemedImage from '@theme/ThemedImage';
 
 import styles from './index.module.css';
 
@@ -95,22 +94,14 @@ export default function Home(): ReactNode {
             logoAlt='ToolHive logo'
             logoTitle='ToolHive logo'
             linkText='Read documentation'
+            icon={{
+              src: '/img/logos/toolhive-symbol-black.svg',
+              srcDark: '/img/logos/toolhive-symbol-white.svg',
+              alt: 'ToolHive symbol',
+              width: '120px',
+              style: { marginLeft: '1.5rem' },
+            }}
           >
-            <ThemedImage
-              sources={{
-                light: '/img/logos/toolhive-symbol-black.svg',
-                dark: '/img/logos/toolhive-symbol-white.svg',
-              }}
-              alt='ToolHive symbol'
-              style={{
-                width: '120px',
-                height: 'auto',
-                float: 'right',
-                marginLeft: '1.5rem',
-                display: 'block',
-                maxWidth: '40%',
-              }}
-            />
             ToolHive simplifies the deployment and management of Model Context
             Protocol (MCP) servers, ensuring ease of use, consistency, and
             security. It&apos;s available as a standalone tool or as a
@@ -126,23 +117,13 @@ export default function Home(): ReactNode {
             href='/toolhive/support#toolhive-documentation-mcp-server'
             title='Stacklok Documentation Search'
             linkText='Read the docs'
+            icon={{
+              src: '/img/logos/stacklok-symbol-dark-green.svg',
+              srcDark: '/img/logos/stacklok-symbol-light-green.svg',
+              alt: 'Stacklok symbol',
+              style: { marginBottom: '0.5rem' },
+            }}
           >
-            <ThemedImage
-              sources={{
-                light: '/img/logos/stacklok-symbol-dark-green.svg',
-                dark: '/img/logos/stacklok-symbol-light-green.svg',
-              }}
-              alt='Stacklok symbol'
-              style={{
-                width: '60px',
-                height: 'auto',
-                float: 'right',
-                marginLeft: '1rem',
-                marginBottom: '0.5rem',
-                display: 'block',
-                maxWidth: '40%',
-              }}
-            />
             Access the ToolHive user and contributor documentation directly from
             your LLM-powered applications. Available as a local or remote MCP
             server.
@@ -152,19 +133,12 @@ export default function Home(): ReactNode {
             href='https://github.com/StacklokLabs/gofetch'
             title='GoFetch MCP server'
             linkText='Go to project'
+            icon={{
+              src: '/img/mcp-servers/gofetch-mascot.webp',
+              alt: 'GoFetch mascot',
+              width: '80px',
+            }}
           >
-            <img
-              src='/img/mcp-servers/gofetch-mascot.webp'
-              alt='GoFetch mascot'
-              style={{
-                width: '80px',
-                height: 'auto',
-                float: 'right',
-                marginLeft: '1rem',
-                display: 'block',
-                maxWidth: '40%',
-              }}
-            />
             A Go implementation of the Fetch MCP server that retrieves web
             content for easier consumption by LLMs.
           </ProductCard>
@@ -173,19 +147,11 @@ export default function Home(): ReactNode {
             href='/toolhive/guides-mcp/k8s'
             title='MKP - Model Kontext Protocol'
             linkText='Read the guide'
+            icon={{
+              src: '/img/mcp-servers/mkp-logo.webp',
+              alt: 'MKP logo',
+            }}
           >
-            <img
-              src='/img/mcp-servers/mkp-logo.webp'
-              alt='MKP logo'
-              style={{
-                width: '60px',
-                height: 'auto',
-                float: 'right',
-                marginLeft: '1rem',
-                display: 'block',
-                maxWidth: '40%',
-              }}
-            />
             MKP is an MCP server that allows LLM-powered applications to
             interact with Kubernetes clusters.
           </ProductCard>
@@ -235,23 +201,15 @@ export default function Home(): ReactNode {
             href='/toolhive/tutorials/mcp-optimizer'
             title='MCP Optimizer'
             linkText='Read the docs'
+            icon={{
+              src: '/img/mcp-servers/stacklok-website-icons-efficiency-dark-green.svg',
+              srcDark:
+                '/img/mcp-servers/stacklok-website-icons-efficiency-light-green.svg',
+              alt: 'Stacklok efficiency icon',
+              width: '80px',
+              style: { marginLeft: '1.5rem' },
+            }}
           >
-            <ThemedImage
-              sources={{
-                light:
-                  '/img/mcp-servers/stacklok-website-icons-efficiency-dark-green.svg',
-                dark: '/img/mcp-servers/stacklok-website-icons-efficiency-light-green.svg',
-              }}
-              alt='Stacklok efficiency icon'
-              style={{
-                width: '80px',
-                height: 'auto',
-                float: 'right',
-                marginLeft: '1.5rem',
-                display: 'block',
-                maxWidth: '40%',
-              }}
-            />
             MCP Optimizer discovers the tools from your MCP servers in ToolHive
             and optimizes token usage by intelligently filtering based on the
             task at hand.
@@ -261,19 +219,12 @@ export default function Home(): ReactNode {
             href='https://stacklok.com/blog/governing-mcp-servers-in-cursor-with-stacklok/'
             title='Cursor Hooks'
             linkText='Read the blog post'
+            icon={{
+              src: '/img/mcp-servers/cursor-logo.svg',
+              alt: 'Cursor logo',
+              style: { marginLeft: '1.5rem' },
+            }}
           >
-            <img
-              src='/img/mcp-servers/cursor-logo.svg'
-              alt='Cursor logo'
-              style={{
-                width: '60px',
-                height: 'auto',
-                float: 'right',
-                marginLeft: '1.5rem',
-                display: 'block',
-                maxWidth: '40%',
-              }}
-            />
             Enforce governance policies on MCP server usage at execution time in
             Cursor. The Cursor Hook restricts MCP tool calls to servers that are
             managed by ToolHive.
@@ -283,20 +234,12 @@ export default function Home(): ReactNode {
             href='https://github.com/StacklokLabs/yardstick'
             title='Yardstick'
             linkText='Go to project'
+            icon={{
+              src: '/img/mcp-servers/yardstick-logo.webp',
+              alt: 'Yardstick logo',
+              style: { marginLeft: '1.5rem', marginBottom: '0.5rem' },
+            }}
           >
-            <img
-              src='/img/mcp-servers/yardstick-logo.webp'
-              alt='Yardstick logo'
-              style={{
-                width: '60px',
-                height: 'auto',
-                float: 'right',
-                marginLeft: '1.5rem',
-                marginBottom: '0.5rem',
-                display: 'block',
-                maxWidth: '40%',
-              }}
-            />
             Yardstick is an MCP server and client reference implementation for
             deterministic testing.
           </ProductCard>
@@ -305,19 +248,12 @@ export default function Home(): ReactNode {
             href='https://github.com/StacklokLabs/toolhive-actions'
             title='ToolHive GitHub Actions'
             linkText='Go to project'
+            icon={{
+              src: '/img/mcp-servers/github-actions-logo.png',
+              alt: 'GitHub Actions logo',
+              style: { marginLeft: '1.5rem' },
+            }}
           >
-            <img
-              src='/img/mcp-servers/github-actions-logo.png'
-              alt='Buildkite logo'
-              style={{
-                width: '60px',
-                height: 'auto',
-                float: 'right',
-                marginLeft: '1.5rem',
-                display: 'block',
-                maxWidth: '40%',
-              }}
-            />
             A collection of GitHub Actions to install ToolHive and run MCP
             servers in your CI/CD workflows.
           </ProductCard>
@@ -326,19 +262,12 @@ export default function Home(): ReactNode {
             href='https://github.com/StacklokLabs/toolhive-buildkite-plugin'
             title='ToolHive Buildkite Plugin'
             linkText='Go to project'
+            icon={{
+              src: '/img/mcp-servers/buildkite-logo.svg',
+              alt: 'Buildkite logo',
+              style: { marginLeft: '0.5rem' },
+            }}
           >
-            <img
-              src='/img/mcp-servers/buildkite-logo.svg'
-              alt='Buildkite logo'
-              style={{
-                width: '60px',
-                height: 'auto',
-                float: 'right',
-                marginLeft: '0.5rem',
-                display: 'block',
-                maxWidth: '40%',
-              }}
-            />
             A Buildkite plugin to run MCP servers in your CI/CD pipelines using
             ToolHive.
           </ProductCard>
