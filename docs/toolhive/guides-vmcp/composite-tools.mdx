@@ -117,7 +117,7 @@ spec:
 When a client calls this composite tool, vMCP executes all three steps in
 sequence and returns the paper content.
 
-**Structured content vs JSON text**
+## Structured content vs JSON text
 
 MCP servers can return data in two ways:
 
@@ -222,7 +222,6 @@ spec:
 
 Collect and correlate data from multiple backend MCP servers:
 
-{/* prettier-ignore */}
 ```yaml title="VirtualMCPServer resource"
 spec:
   config:
@@ -232,15 +231,22 @@ spec:
         parameters:
           type: object
           properties:
+            package_name:
+              type: string
+            ecosystem:
+              type: string
             repo:
               type: string
           required:
+            - package_name
+            - ecosystem
             - repo
         steps:
           - id: vulnerability_scan
-            tool: osv.scan_dependencies
+            tool: osv.query_vulnerability
             arguments:
-              repository: '{{.params.repo}}'
+              package_name: '{{.params.package_name}}'
+              ecosystem: '{{.params.ecosystem}}'
           - id: secret_scan
             tool: gitleaks.scan_repo
             arguments:
@@ -250,7 +256,7 @@ spec:
             arguments:
               repo: '{{.params.repo}}'
               title: 'Security Scan Results'
-              body: 'Found {{.steps.vulnerability_scan.output.count}} vulnerabilities'
+              body: 'Vulnerability scan completed for {{.params.package_name}}'
             dependsOn: [vulnerability_scan, secret_scan]
             onError:
               action: continue
@@ -300,6 +306,15 @@ spec:
               action: abort # abort | continue | retry
 ```
 
+:::tip
+
+When using the `condition` field, downstream steps that reference the
+conditional step's output may require
+[default step outputs](#default-step-outputs) to handle cases where the
+condition evaluates to false.
+
+:::
+
 ### Elicitation (user prompts)
 
 Request input from users during workflow execution:
@@ -343,6 +358,142 @@ spec:
               retryCount: 3
 ```
 
+:::tip
+
+When using `onError.action: continue`, downstream steps that reference this
+step's output may require [default step outputs](#default-step-outputs) to
+handle cases where the step fails.
+
+:::
+
+### Default step outputs
+
+When steps can be skipped (due to `condition` being false or
+`onError.action: continue`), downstream steps that reference their outputs need
+fallback values. Use `defaultResults` to provide these values.
+
+#### When defaultResults are required
+
+You must provide `defaultResults` when **both** of these conditions are true:
+
+1. A step can be skipped (has a `condition` field or `onError.action: continue`)
+2. A downstream step references the skipped step's output in its arguments
+
+#### Configuration
+
+Define default values that match the expected output structure:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  config:
+    compositeTools:
+      - name: optional_security_check
+        description: Run security scan with optional vulnerability check
+        parameters:
+          type: object
+          properties:
+            package_name:
+              type: string
+            ecosystem:
+              type: string
+            run_vuln_scan:
+              type: boolean
+              default: false
+          required:
+            - package_name
+            - ecosystem
+        steps:
+          # Step 1: Optional vulnerability scan
+          - id: vuln_scan
+            tool: osv.query_vulnerability
+            arguments:
+              package_name: '{{.params.package_name}}'
+              ecosystem: '{{.params.ecosystem}}'
+            condition: '{{.params.run_vuln_scan}}'
+            # highlight-start
+            defaultResults:
+              vulns: []
+            # highlight-end
+          # Step 2: Create report using scan results
+          - id: create_report
+            tool: docs.create_document
+            arguments:
+              title: 'Security Report'
+              # This references vuln_scan output, so defaultResults are needed
+              body:
+                'Found {{len .steps.vuln_scan.output.vulns}} vulnerabilities'
+            dependsOn: [vuln_scan]
+```
+
+#### Continue on error example
+
+When using `onError.action: continue`, provide defaults for potential failures:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  config:
+    compositeTools:
+      - name: multi_source_data
+        description: Gather data from multiple sources, continue on failures
+        steps:
+          # Step 1: Fetch from primary source (may fail)
+          - id: fetch_primary
+            tool: api.get_data
+            arguments:
+              source: 'primary'
+            onError:
+              action: continue
+            # highlight-start
+            defaultResults:
+              status: 'unavailable'
+              data: null
+            # highlight-end
+          # Step 2: Aggregate results
+          - id: aggregate
+            tool: processing.combine_data
+            arguments:
+              # Uses fetch_primary output even if it failed
+              primary: '{{.steps.fetch_primary.output.data}}'
+            dependsOn: [fetch_primary]
+```
+
+#### Validation
+
+vMCP validates `defaultResults` at configuration time:
+
+- **Missing defaults**: If a step can be skipped and downstream steps reference
+  its output, but `defaultResults` is not provided, vMCP returns a validation
+  error
+- **Structure**: The `defaultResults` value can be any valid JSON type (object,
+  array, string, number, boolean, null)
+- **No type checking**: vMCP does not verify that `defaultResults` match the
+  actual output structure—you must ensure they match the format your downstream
+  steps expect
+
+#### Example validation error
+
+```yaml
+# This will fail validation
+steps:
+  - id: conditional_step
+    tool: backend.fetch
+    condition: '{{.params.enabled}}'
+    # Missing defaultResults!
+  - id: use_result
+    tool: backend.process
+    arguments:
+      # References conditional_step output
+      data: '{{.steps.conditional_step.output.value}}'
+    dependsOn: [conditional_step]
+```
+
+**Error message:**
+
+```text
+step 'conditional_step' can be skipped but is referenced by downstream steps
+without defaultResults defined
+```
+
 ## Template syntax
 
 Access workflow context in arguments:
@@ -365,6 +516,10 @@ The following functions are available for use in templates:
 | `json`     | Encode a value as a JSON string  | `{{json .steps.s1.output}}`                  |
 | `quote`    | Quote a string value             | `{{quote .params.name}}`                     |
 | `index`    | Access array elements by index   | `{{index .steps.s1.output.items 0}}`         |
+
+All
+[Go template built-in functions](https://pkg.go.dev/text/template#hdr-Functions)
+are also supported (e.g., `len`, `eq`, `and`, `or`, `printf`).
 
 ### Accessing step outputs
 
