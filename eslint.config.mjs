@@ -12,8 +12,13 @@ const gitignorePath = fileURLToPath(new URL('.gitignore', import.meta.url));
 /** @type {import('eslint').Linter.Config[]} */
 export default [
   includeIgnoreFile(gitignorePath),
-  // Auto-generated CLI docs (tracked in git but generated upstream)
-  { ignores: ['docs/toolhive/reference/cli/'] },
+  // Auto-generated docs (tracked in git but generated upstream)
+  {
+    ignores: [
+      'docs/toolhive/reference/cli/',
+      'docs/toolhive/reference/crd-spec.md',
+    ],
+  },
   { files: ['**/*.{js,mjs,cjs,ts,jsx,tsx}'] },
   { languageOptions: { globals: globals.node } },
 
