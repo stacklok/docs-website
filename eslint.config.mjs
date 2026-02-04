@@ -1,3 +1,5 @@
+import { includeIgnoreFile } from '@eslint/compat';
+import { fileURLToPath } from 'node:url';
 import globals from 'globals';
 import pluginJs from '@eslint/js';
 import tseslint from 'typescript-eslint';
@@ -5,9 +7,13 @@ import pluginReact from 'eslint-plugin-react';
 import eslintConfigPrettier from 'eslint-config-prettier';
 import * as mdx from 'eslint-plugin-mdx';
 
+const gitignorePath = fileURLToPath(new URL('.gitignore', import.meta.url));
+
 /** @type {import('eslint').Linter.Config[]} */
 export default [
-  { ignores: ['.docusaurus/', 'build/', 'node_modules/'] },
+  includeIgnoreFile(gitignorePath),
+  // Auto-generated CLI docs (tracked in git but generated upstream)
+  { ignores: ['docs/toolhive/reference/cli/'] },
   { files: ['**/*.{js,mjs,cjs,ts,jsx,tsx}'] },
   { languageOptions: { globals: globals.node } },
 
@@ -27,6 +33,7 @@ export default [
       ...mdx.flat.rules,
       'react/no-unescaped-entities': 'off',
       'react/jsx-no-undef': ['error', { allowGlobals: true }],
+      'mdx/remark': 'warn',
     },
     languageOptions: {
       ...mdx.flat.languageOptions,
