@@ -182,6 +182,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-vmcp/tool-aggregation',
         'toolhive/guides-vmcp/composite-tools',
         'toolhive/guides-vmcp/telemetry-and-metrics',
+        'toolhive/guides-vmcp/audit-logging',
       ],
     },
 
@@ -198,6 +199,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-registry/configuration',
         'toolhive/guides-registry/authentication',
         'toolhive/guides-registry/database',
+        'toolhive/guides-registry/telemetry-metrics',
         'toolhive/guides-registry/deployment',
         'toolhive/reference/registry-api',
       ],
