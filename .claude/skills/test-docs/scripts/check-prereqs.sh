@@ -1,4 +1,7 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 # Check prerequisites for ToolHive documentation testing.
 # Exits with non-zero status if critical prerequisites are missing.
 # Outputs a summary of what's available.
@@ -32,8 +35,8 @@ check_command() {
 check_kind_cluster() {
     local cluster_name="${1:-toolhive}"
     if ! command -v kind &>/dev/null; then
-        echo -e "${RED}[MISSING]${NC} kind CLI not found"
-        ERRORS=$((ERRORS + 1))
+        echo -e "${YELLOW}[SKIP]${NC} kind CLI not found (optional for CLI-only docs)"
+        WARNINGS=$((WARNINGS + 1))
         return
     fi
 
@@ -51,9 +54,9 @@ check_kind_cluster() {
             WARNINGS=$((WARNINGS + 1))
         fi
     else
-        echo -e "${RED}[MISSING]${NC} kind cluster '$cluster_name' not found"
+        echo -e "${YELLOW}[WARN]${NC} kind cluster '$cluster_name' not found (required for K8s docs)"
         echo "       Available clusters: $(kind get clusters 2>/dev/null | tr '\n' ' ')"
-        ERRORS=$((ERRORS + 1))
+        WARNINGS=$((WARNINGS + 1))
     fi
 }
 

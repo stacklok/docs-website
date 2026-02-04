@@ -72,7 +72,7 @@ Present the test plan to the user for approval before executing.
 
 Docs often contain placeholder values like `ghp_your_github_token_here` or
 `your-org`. Before executing, scan for obvious placeholders (ALL_CAPS
-patterns, "your-_", "example-_", "replace-\*") and ask the user for real
+patterns, "your-\*", "example-\*", "replace-\*") and ask the user for real
 values. If a step requires a secret that the user cannot provide, mark it
 as **skipped** with a note explaining why.
 
@@ -87,7 +87,7 @@ bash <skill-path>/scripts/check-prereqs.sh
 Where `<skill-path>` is the absolute path to this skill's directory.
 
 If the script reports errors, inform the user and stop. For K8s docs, the
-script checks for a kind cluster named "ToolHive". For CLI docs, confirm
+script checks for a kind cluster named "toolhive". For CLI docs, confirm
 with the user that the installed `thv` version matches what the doc expects.
 
 ## Step 4: Prepare the environment
@@ -211,7 +211,7 @@ User: "test the vault integration tutorial"
 
 1. Explore agent finds `docs/toolhive/tutorials/vault-integration.mdx`
 2. Parse the doc: 5 major steps with 12 bash commands and 1 YAML manifest
-3. Run `check-prereqs.sh` - kind cluster "ToolHive" exists, thv v0.8.2
+3. Run `check-prereqs.sh` - kind cluster "toolhive" exists, thv v0.8.2
 4. Ask user: "The doc uses a placeholder GitHub token
    `ghp_your_github_token_here`. Provide a real token or skip step 2?"
 5. Present test plan, user approves
