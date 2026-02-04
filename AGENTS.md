@@ -39,8 +39,7 @@ Development commands:
 Code quality commands (note: pre-commit hooks run these automatically on staged files):
 
 - `npm run prettier` and `npm run prettier:fix`: check and fix code formatting issues (all file types).
-- `npm run eslint` and `npm run eslint:fix`: check and fix code quality issues (`.js`, `.jsx`, `.ts`, `.tsx`, `.mdx` files only).
-- `npm run markdownlint` and `npm run markdownlint:fix`: check and fix Markdown style issues (`.md` files only - DO NOT use with `.mdx` files).
+- `npm run eslint` and `npm run eslint:fix`: check and fix code quality and Markdown style issues (`.js`, `.jsx`, `.ts`, `.tsx`, `.mdx` files).
 
 ## Contribution guidelines
 
@@ -54,14 +53,14 @@ Code quality commands (note: pre-commit hooks run these automatically on staged 
 
 The project uses automated tooling to enforce code quality and formatting standards:
 
-- **Pre-commit hooks**: lint-staged runs automatically on `git commit`, applying prettier and appropriate linters to staged files.
-- **GitHub Actions**: All PRs trigger automated checks (ESLint, markdownlint, Prettier).
+- **Pre-commit hooks**: lint-staged runs automatically on `git commit`, applying Prettier and appropriate linters to staged files.
+- **GitHub Actions**: All PRs trigger automated checks (ESLint, Prettier).
 - **No manual formatting needed**: The pre-commit hook handles formatting automatically - you do not need to run formatters manually.
 
 File type to linter mapping (handled automatically by pre-commit hooks):
 
-- `.md` files: Prettier + markdownlint
-- `.mdx` files: Prettier + ESLint (NOT markdownlint)
+- `.md` files: Prettier only
+- `.mdx` files: Prettier + ESLint (includes remark-lint for Markdown structure)
 - `.js`, `.jsx`, `.ts`, `.tsx` files: Prettier + ESLint
 - `.css`, `.json`, `.jsonc`, `.yaml`, `.yml` files: Prettier only
 
@@ -180,7 +179,7 @@ If you encounter a term not listed here that appears frequently in the documenta
 
 ## Markdown style
 
-Prettier and markdownlint are used to enforce the following Markdown style conventions.
+Prettier and ESLint (with remark-lint) are used to enforce the following Markdown style conventions.
 
 - Headings: use "ATX-style" headings
 - Use unique headings within a document

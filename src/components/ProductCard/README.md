@@ -209,5 +209,3 @@ If migrating from a version that used shared utilities:
 
 The component now includes all necessary types and utilities internally, making
 it more portable and easier to maintain.
-
-<!-- markdownlint-disable-file MD024 -->

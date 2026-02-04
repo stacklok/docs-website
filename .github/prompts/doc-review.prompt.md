@@ -24,5 +24,4 @@ You can run `editFiles` to make changes based on your review. You can also run `
 - `npm run build` to build the documentation site.
 - `npm run start` to start the local development server.
 - `npm run prettier` to check formatting.
-- `npm run markdownlint` to check for linting errors.
-- `npm run eslint` to check for JavaScript/TypeScript linting errors.
+- `npm run eslint` to check for JavaScript/TypeScript/MDX linting errors.
