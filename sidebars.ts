@@ -66,6 +66,7 @@ const sidebars: SidebarsConfig = {
           ],
         },
         'toolhive/guides-ui/client-configuration',
+        'toolhive/guides-ui/cli-access',
         'toolhive/guides-ui/mcp-optimizer',
         'toolhive/guides-ui/playground',
       ],
