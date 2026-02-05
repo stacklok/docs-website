@@ -62,7 +62,10 @@ For complex, reusable workflows, you can also reference external
 ## Simple example
 
 Here's a composite tool that searches arXiv for papers on a topic and reads the
-top result:
+top result. This example assumes you have an MCPServer resource named `arxiv` in
+a group that your vMCP server references, and that you're using the default
+[conflict resolution strategy](./tool-aggregation.mdx#conflict-resolution-strategies)
+and prefix format (`<SERVER_NAME>_<TOOL_NAME>`):
 
 ```yaml title="VirtualMCPServer resource"
 spec:
@@ -81,7 +84,7 @@ spec:
         steps:
           # Step 1: Search arXiv for papers matching the query
           - id: search
-            tool: arxiv.search_papers
+            tool: arxiv_search_papers
             arguments:
               query: '{{.params.query}}'
               max_results: 1
@@ -90,14 +93,14 @@ spec:
           # rather than structured content. This is common for servers that
           # don't fully support MCP's structuredContent field.
           - id: download
-            tool: arxiv.download_paper
+            tool: arxiv_download_paper
             arguments:
               paper_id:
                 '{{(index (fromJson .steps.search.output.text).papers 0).id}}'
             dependsOn: [search]
           # Step 3: Read the downloaded paper content
           - id: read
-            tool: arxiv.read_paper
+            tool: arxiv_read_paper
             arguments:
               paper_id:
                 '{{(index (fromJson .steps.search.output.text).papers 0).id}}'
@@ -107,7 +110,7 @@ spec:
 **What's happening:**
 
 1. **Parameters**: Define the workflow inputs (`query` for the research topic)
-2. **Step 1 (search)**: Calls `arxiv.search_papers` with the query from
+2. **Step 1 (search)**: Calls `arxiv_search_papers` with the query from
    parameters using template syntax `{{.params.query}}`
 3. **Step 2 (download)**: Waits for search (`dependsOn: [search]`), then
    downloads the paper. The `fromJson` function parses the JSON text returned by
@@ -151,22 +154,22 @@ spec:
         steps:
           # These steps run in parallel (no dependencies)
           - id: get_logs
-            tool: logging.search_logs
+            tool: logging_search_logs
             arguments:
               query: 'incident_id={{.params.incident_id}}'
               timerange: '1h'
           - id: get_metrics
-            tool: monitoring.get_metrics
+            tool: monitoring_get_metrics
             arguments:
               filter: 'error_rate'
               timerange: '1h'
           - id: get_alerts
-            tool: pagerduty.list_alerts
+            tool: pagerduty_list_alerts
             arguments:
               incident: '{{.params.incident_id}}'
           # This step waits for all parallel steps to complete
           - id: create_summary
-            tool: docs.create_document
+            tool: docs_create_document
             arguments:
               title: 'Incident {{.params.incident_id}} Summary'
               content: 'Logs: {{.steps.get_logs.output.results}}'
@@ -195,7 +198,7 @@ spec:
             - pr_number
         steps:
           - id: get_pr_details
-            tool: github.get_pull_request
+            tool: github_get_pull_request
             arguments:
               pr: '{{.params.pr_number}}'
           - id: approval
@@ -210,7 +213,7 @@ spec:
             timeout: '10m'
             dependsOn: [get_pr_details]
           - id: deploy
-            tool: deploy.trigger_deployment
+            tool: deploy_trigger_deployment
             arguments:
               ref: '{{.steps.get_pr_details.output.head_sha}}'
               environment: '{{.params.environment}}'
@@ -243,16 +246,16 @@ spec:
             - repo
         steps:
           - id: vulnerability_scan
-            tool: osv.query_vulnerability
+            tool: osv_query_vulnerability
             arguments:
               package_name: '{{.params.package_name}}'
               ecosystem: '{{.params.ecosystem}}'
           - id: secret_scan
-            tool: gitleaks.scan_repo
+            tool: gitleaks_scan_repo
             arguments:
               repository: '{{.params.repo}}'
           - id: create_issue
-            tool: github.create_issue
+            tool: github_create_issue
             arguments:
               repo: '{{.params.repo}}'
               title: 'Security Scan Results'
@@ -296,7 +299,7 @@ spec:
       - name: <TOOL_NAME>
         steps:
           - id: step_name # Unique identifier
-            tool: backend.tool # Tool to call
+            tool: backend_tool # Tool to call
             arguments: # Arguments with template expansion
               arg1: '{{.params.input}}'
             dependsOn: [other_step] # Dependencies (this step waits for other_step)
@@ -305,6 +308,12 @@ spec:
             onError:
               action: abort # abort | continue | retry
 ```
+
+The `tool` field specifies which MCP server tool to call. This depends on your
+[conflict resolution strategy](./tool-aggregation.mdx#conflict-resolution-strategies)
+and prefix format. For example, if you have a tool named `search` in an MCP
+server named `arxiv`, and you're using the default prefix format, you would
+reference it as `arxiv_search`.
 
 :::tip
 
@@ -405,7 +414,7 @@ spec:
         steps:
           # Step 1: Optional vulnerability scan
           - id: vuln_scan
-            tool: osv.query_vulnerability
+            tool: osv_query_vulnerability
             arguments:
               package_name: '{{.params.package_name}}'
               ecosystem: '{{.params.ecosystem}}'
@@ -416,7 +425,7 @@ spec:
             # highlight-end
           # Step 2: Create report using scan results
           - id: create_report
-            tool: docs.create_document
+            tool: docs_create_document
             arguments:
               title: 'Security Report'
               # This references vuln_scan output, so defaultResults are needed
@@ -438,7 +447,7 @@ spec:
         steps:
           # Step 1: Fetch from primary source (may fail)
           - id: fetch_primary
-            tool: api.get_data
+            tool: api_get_data
             arguments:
               source: 'primary'
             onError:
@@ -450,7 +459,7 @@ spec:
             # highlight-end
           # Step 2: Aggregate results
           - id: aggregate
-            tool: processing.combine_data
+            tool: processing_combine_data
             arguments:
               # Uses fetch_primary output even if it failed
               primary: '{{.steps.fetch_primary.output.data}}'
@@ -476,11 +485,11 @@ vMCP validates `defaultResults` at configuration time:
 # This will fail validation
 steps:
   - id: conditional_step
-    tool: backend.fetch
+    tool: backend_fetch
     condition: '{{.params.enabled}}'
     # Missing defaultResults!
   - id: use_result
-    tool: backend.process
+    tool: backend_process
     arguments:
       # References conditional_step output
       data: '{{.steps.conditional_step.output.value}}'
@@ -590,18 +599,18 @@ spec:
             - query
         steps:
           - id: search
-            tool: arxiv.search_papers
+            tool: arxiv_search_papers
             arguments:
               query: '{{.params.query}}'
               max_results: 1
           - id: download
-            tool: arxiv.download_paper
+            tool: arxiv_download_paper
             arguments:
               paper_id:
                 '{{(index (fromJson .steps.search.output.text).papers 0).id}}'
             dependsOn: [search]
           - id: read
-            tool: arxiv.read_paper
+            tool: arxiv_read_paper
             arguments:
               paper_id:
                 '{{(index (fromJson .steps.search.output.text).papers 0).id}}'
