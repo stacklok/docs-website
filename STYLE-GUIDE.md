@@ -163,8 +163,7 @@ Markdown-based documentation.
 
 We generally adopt the
 [Google Markdown style guide](https://google.github.io/styleguide/docguide/style.html),
-which is well-aligned with default settings in formatting tools like Prettier
-and `markdownlint`.
+which is well-aligned with default settings in formatting tools like Prettier.
 
 Our preferred style elements include:
 
@@ -316,5 +315,3 @@ from Microsoft. Per Microsoft's
 "Visual Studio Code" name the first time you reference it. "VS Code" is an
 acceptable short form after the first reference. It's written as two words and
 there are no other abbreviations/acronyms (not "VSCode", "VSC", or just "Code").
-
-<!-- markdownlint-disable-file MD044 -->
