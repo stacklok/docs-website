@@ -138,7 +138,7 @@ fi
 
 echo "Updating ToolHive registry extensions JSON schema at ${REGISTRY_META_SCHEMA_DST}"
 
-if [ -f "${REGISTRY_META_SCHEMA_DST}" ]; then
+if [ -f "${REGISTRY_META_SCHEMA_SRC}" ]; then
     cp ${REGISTRY_META_SCHEMA_SRC} ${REGISTRY_META_SCHEMA_DST}
     echo "Registry extensions JSON schema updated successfully"
 else
