@@ -208,7 +208,7 @@ const config: Config = {
       items: [
         {
           type: 'dropdown',
-          label: 'ToolHive Docs',
+          label: 'Docs',
           position: 'left',
           items: [
             {
@@ -275,6 +275,11 @@ const config: Config = {
         {
           to: '/toolhive/updates',
           label: 'Updates',
+          position: 'left',
+        },
+        {
+          href: 'https://stacklok.com/platform/',
+          label: 'Enterprise',
           position: 'left',
         },
         {
