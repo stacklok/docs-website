@@ -167,6 +167,16 @@ const config: Config = {
     ],
   ],
 
+  scripts: [
+    {
+      id: 'hs-script-loader',
+      type: 'text/javascript',
+      src: '//js-na2.hs-scripts.com/42544743.js',
+      async: true,
+      defer: true,
+    },
+  ],
+
   themeConfig: {
     colorMode: {
       defaultMode: 'dark',
