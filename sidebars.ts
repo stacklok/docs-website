@@ -178,6 +178,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'toolhive/guides-vmcp/intro',
         'toolhive/guides-vmcp/configuration',
+        'toolhive/guides-vmcp/backend-discovery',
         'toolhive/guides-vmcp/authentication',
         'toolhive/guides-vmcp/tool-aggregation',
         'toolhive/guides-vmcp/composite-tools',
