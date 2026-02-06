@@ -195,7 +195,7 @@ export default function Home(): ReactNode {
 
         <h1 className='text--center'>Other MCP Projects</h1>
 
-        <ProductGrid layout='fixed-2' spacing='spacious'>
+        <ProductGrid layout='fixed-3' spacing='spacious'>
           <ProductCard
             contentType='text'
             href='/toolhive/tutorials/mcp-optimizer'
@@ -207,12 +207,27 @@ export default function Home(): ReactNode {
                 '/img/mcp-servers/stacklok-website-icons-efficiency-light-green.svg',
               alt: 'Stacklok efficiency icon',
               width: '80px',
-              style: { marginLeft: '1.5rem' },
+              style: { marginLeft: '1.5rem', marginBottom: '0.5rem' },
             }}
           >
             MCP Optimizer discovers the tools from your MCP servers in ToolHive
             and optimizes token usage by intelligently filtering based on the
             task at hand.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='https://stacklok.com/blog/policy-control-for-mcp-servers-in-claude-code-with-stacklok/'
+            title='Claude Code Hooks'
+            linkText='Read the blog post'
+            icon={{
+              src: '/img/mcp-servers/claude-code-logo.svg',
+              alt: 'Claude Code logo',
+              style: { marginLeft: '1.5rem', marginBottom: '0.5rem' },
+            }}
+          >
+            The Claude Code Hook restricts MCP tool calls to servers that are
+            managed by ToolHive, enabling governance on MCP server usage at
+            execution time.
           </ProductCard>
           <ProductCard
             contentType='text'
@@ -225,9 +240,9 @@ export default function Home(): ReactNode {
               style: { marginLeft: '1.5rem' },
             }}
           >
-            Enforce governance policies on MCP server usage at execution time in
-            Cursor. The Cursor Hook restricts MCP tool calls to servers that are
-            managed by ToolHive.
+            The Cursor Hook restricts MCP tool calls to servers that are managed
+            by ToolHive, enabling governance on MCP server usage at execution
+            time.
           </ProductCard>
           <ProductCard
             contentType='text'
@@ -251,7 +266,7 @@ export default function Home(): ReactNode {
             icon={{
               src: '/img/mcp-servers/github-actions-logo.png',
               alt: 'GitHub Actions logo',
-              style: { marginLeft: '1.5rem' },
+              style: { marginLeft: '1.5rem', marginBottom: '0.5rem' },
             }}
           >
             A collection of GitHub Actions to install ToolHive and run MCP
