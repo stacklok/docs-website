@@ -21,6 +21,8 @@ REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive/pkg/registry/data/toolhive-legacy-re
 REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/toolhive-legacy-registry.schema.json"
 UPSTREAM_REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive/pkg/registry/data/upstream-registry.schema.json"
 UPSTREAM_REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/upstream-registry.schema.json"
+REGISTRY_META_SCHEMA_SRC="${IMPORT_DIR}/toolhive/pkg/registry/data/publisher-provided.schema.json"
+REGISTRY_META_SCHEMA_DST="${STATIC_DIR}/api-specs/publisher-provided.schema.json"
 
 CRD_API_SRC="${IMPORT_DIR}/toolhive/docs/operator/crd-api.md"
 CRD_API_DST="${DOCS_DIR}/toolhive/reference/crd-spec.md"
@@ -132,6 +134,15 @@ if [ -f "${UPSTREAM_REGISTRY_SCHEMA_SRC}" ]; then
     node "${REPO_ROOT}/scripts/bundle-upstream-schema.mjs"
 else
     echo "Warning: Registry schema not found at ${UPSTREAM_REGISTRY_SCHEMA_SRC}"
+fi
+
+echo "Updating ToolHive registry extensions JSON schema at ${REGISTRY_META_SCHEMA_DST}"
+
+if [ -f "${REGISTRY_META_SCHEMA_SRC}" ]; then
+    cp ${REGISTRY_META_SCHEMA_SRC} ${REGISTRY_META_SCHEMA_DST}
+    echo "Registry extensions JSON schema updated successfully"
+else
+    echo "Warning: Registry extensions schema not found at ${REGISTRY_META_SCHEMA_SRC}"
 fi
 
 ## CRD API reference

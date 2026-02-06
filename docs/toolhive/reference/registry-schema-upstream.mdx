@@ -7,6 +7,7 @@ displayed_sidebar: toolhiveSidebar
 import JSONSchemaViewer from '@theme/JSONSchemaViewer';
 import RegistrySchema from '@site/static/api-specs/upstream-registry.schema.json';
 import McpServerSchema from '@site/static/api-specs/mcp-server.schema.json';
+import PublisherProvidedSchema from '@site/static/api-specs/publisher-provided.schema.json';
 
 This is the JSON schema for the official upstream MCP registry format. It
 defines the structure and constraints for registry entries, ensuring that all
@@ -42,3 +43,152 @@ The `servers` array in the registry contains objects that conform to the
 official MCP server schema:
 
 <JSONSchemaViewer schema={McpServerSchema} />
+
+## ToolHive extensions schema
+
+ToolHive extends the upstream MCP server schema with additional metadata to
+support features like container configuration, authentication, and
+categorization. These extensions are stored in the
+`_meta['io.modelcontextprotocol.registry/publisher-provided']` property of each
+server definition.
+
+The available properties vary by server type:
+
+- **Container servers** (keyed by OCI image reference): `permissions`, `args`,
+  `provenance`, `docker_tags`, and `proxy_port`
+- **Remote servers** (keyed by URL): `oauth_config` and `env_vars`
+- **All servers**: `status`, `tier`, `tools`, `tags`, `metadata`, and
+  `custom_metadata`
+
+<JSONSchemaViewer schema={PublisherProvidedSchema} />
+
+## Full example
+
+The following example shows a complete registry file with both a container
+server and a remote server, demonstrating the different ToolHive extensions
+available for each type:
+
+```json title="Example registry file with ToolHive extensions"
+{
+  "$schema": "https://raw.githubusercontent.com/stacklok/toolhive/main/pkg/registry/data/upstream-registry.schema.json",
+  "version": "1.0.0",
+  "meta": {
+    "last_updated": "2026-02-05T16:59:49Z"
+  },
+  "data": {
+    "servers": [
+      {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.stacklok/osv",
+        "description": "OSV (Open Source Vulnerabilities) database access for querying package and commit vulnerabilities",
+        "title": "osv",
+        "repository": {
+          "url": "https://github.com/StacklokLabs/osv-mcp",
+          "source": "github"
+        },
+        "version": "1.0.0",
+        // highlight-next-line
+        "packages": [
+          {
+            "registryType": "oci",
+            "identifier": "ghcr.io/stackloklabs/osv-mcp/server:0.1.0",
+            "transport": {
+              "type": "streamable-http",
+              "url": "http://localhost:8080"
+            }
+          }
+        ],
+        // highlight-start
+        "_meta": {
+          "io.modelcontextprotocol.registry/publisher-provided": {
+            "io.github.stacklok": {
+              "ghcr.io/stackloklabs/osv-mcp/server:0.1.0": {
+                // highlight-end
+                "metadata": {
+                  "last_updated": "2026-01-30T02:55:46Z",
+                  "pulls": 0,
+                  "stars": 0
+                },
+                "permissions": {
+                  "network": {
+                    "outbound": {
+                      "allow_host": ["api.osv.dev"],
+                      "allow_port": [443]
+                    }
+                  }
+                },
+                "provenance": {
+                  "sigstore_url": "tuf-repo-cdn.sigstore.dev",
+                  "repository_uri": "https://github.com/StacklokLabs/osv-mcp",
+                  "signer_identity": "/.github/workflows/release.yml",
+                  "runner_environment": "github-hosted",
+                  "cert_issuer": "https://token.actions.githubusercontent.com"
+                },
+                "status": "Active",
+                "tags": ["vulnerability", "security", "osv"],
+                "tier": "Community",
+                "tools": [
+                  "query_vulnerability",
+                  "query_vulnerabilities_batch",
+                  "get_vulnerability"
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.stacklok/toolhive-doc-mcp-remote",
+        "description": "Search ToolHive docs for help with using and contributing to the project (hosted version)",
+        "title": "toolhive-doc-mcp-remote",
+        "repository": {
+          "url": "https://github.com/StacklokLabs/toolhive-doc-mcp",
+          "source": "github"
+        },
+        "version": "1.0.0",
+        // highlight-next-line
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://toolhive-doc-mcp.stacklok.dev/mcp"
+          }
+        ],
+        // highlight-start
+        "_meta": {
+          "io.modelcontextprotocol.registry/publisher-provided": {
+            "io.github.stacklok": {
+              "https://toolhive-doc-mcp.stacklok.dev/mcp": {
+                // highlight-end
+                "custom_metadata": {
+                  "author": "Stacklok",
+                  "homepage": "https://github.com/StacklokLabs/toolhive-doc-mcp",
+                  "license": "Apache-2.0"
+                },
+                "metadata": {
+                  "last_updated": "2026-01-25T13:39:45Z",
+                  "pulls": 0,
+                  "stars": 3
+                },
+                "status": "Active",
+                "tags": [
+                  "remote",
+                  "docs",
+                  "documentation",
+                  "help",
+                  "search",
+                  "stacklok",
+                  "support",
+                  "toolhive"
+                ],
+                "tier": "Official",
+                "tools": ["query_docs", "get_chunk"]
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}
+```
