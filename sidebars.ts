@@ -182,6 +182,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-vmcp/authentication',
         'toolhive/guides-vmcp/tool-aggregation',
         'toolhive/guides-vmcp/composite-tools',
+        'toolhive/guides-vmcp/failure-handling',
         'toolhive/guides-vmcp/telemetry-and-metrics',
         'toolhive/guides-vmcp/audit-logging',
       ],
