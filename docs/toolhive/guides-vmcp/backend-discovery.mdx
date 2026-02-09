@@ -268,16 +268,235 @@ Response format:
 
 **Health values:**
 
-- `healthy`: Backend is responding correctly
-- `degraded`: Backend responding but with errors
-- `unhealthy`: Backend not responding
+- `healthy`: Backend is responding correctly with good performance
+- `degraded`: Backend is operational but experiencing issues (slow responses >5s
+  or recovering from failures)
+- `unhealthy`: Backend not responding or health checks failing
+- `unauthenticated`: Backend authentication failed
 - `unknown`: Health check not yet performed
 
-:::info
+:::info[Status representations]
+
+The `/status` endpoint uses internal health values (`healthy`, `degraded`,
+`unhealthy`, `unauthenticated`, `unknown`).
+
+The VirtualMCPServer CRD `status.discoveredBackends[].status` field uses
+user-facing values (`ready`, `degraded`, `unavailable`, `unknown`) where `ready`
+= healthy, `unavailable` = unhealthy or unauthenticated.
+
+Both representations show the same underlying health state with different
+terminology.
+
+:::
+
+:::info[Unauthenticated access]
 
 The `/status` endpoint is unauthenticated for operator consumption. It exposes
 operational metadata but does not include secrets, tokens, internal URLs, or
 request data.
+
+:::
+
+## Configure health checks
+
+vMCP continuously monitors backend health to detect failures and route requests
+appropriately. Health check behavior is configurable via the VirtualMCPServer
+resource.
+
+### Health check configuration
+
+Configure health monitoring in `spec.config.operational.failureHandling`:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: my-vmcp
+  namespace: toolhive-system
+spec:
+  config:
+    groupRef: my-group
+    operational:
+      failureHandling:
+        # Health check interval (how often to check each backend)
+        # Default: 30s
+        healthCheckInterval: 30s
+
+        # Health check timeout (max duration for a single check)
+        # Should be less than healthCheckInterval
+        # Default: 10s
+        healthCheckTimeout: 10s
+
+        # Number of consecutive failures before marking unhealthy
+        # Default: 3
+        unhealthyThreshold: 3
+
+        # How often to report status updates to Kubernetes
+        # Default: 30s
+        statusReportingInterval: 30s
+  incomingAuth:
+    type: anonymous
+```
+
+### Circuit breaker configuration
+
+Circuit breakers prevent cascading failures by temporarily stopping requests to
+consistently failing backends. When a backend exceeds the failure threshold, the
+circuit breaker opens and stops sending requests for a cooldown period.
+
+```yaml
+spec:
+  config:
+    operational:
+      failureHandling:
+        circuitBreaker:
+          # Enable circuit breaker (default: false)
+          enabled: true
+
+          # Number of failures before opening circuit (default: 5)
+          failureThreshold: 5
+
+          # How long to wait before attempting recovery (default: 60s)
+          timeout: 60s
+```
+
+**Circuit breaker states:**
+
+- **Closed**: Normal operation, requests flow to backend
+- **Open**: Too many failures, requests blocked for timeout duration
+- **Half-open**: Testing recovery, allowing limited requests through
+
+### Timeout configuration
+
+Configure timeouts for backend requests:
+
+```yaml
+spec:
+  config:
+    operational:
+      timeouts:
+        # Default timeout for all backend requests (default: 30s)
+        default: 30s
+
+        # Per-workload timeout overrides
+        perWorkload:
+          slow-backend: 60s
+          fast-backend: 10s
+```
+
+:::note
+
+Health check timeouts are configured separately via
+`failureHandling.healthCheckTimeout` (default: 10s), not via the `timeouts`
+section.
+
+:::
+
+### Remote workload health checks
+
+By default, health checks are:
+
+- **Always enabled** for local backends (MCPServer)
+- **Disabled by default** for remote backends (MCPRemoteProxy)
+
+To enable health checks for remote workloads, set the
+`TOOLHIVE_REMOTE_HEALTHCHECKS` environment variable in the vMCP pod:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: my-vmcp
+spec:
+  podTemplateSpec:
+    spec:
+      containers:
+        - name: vmcp
+          env:
+            - name: TOOLHIVE_REMOTE_HEALTHCHECKS
+              value: 'true'
+```
+
+:::caution[Network overhead]
+
+Enabling health checks for remote backends increases network traffic to external
+services. Only enable this if you need real-time health status for remote
+endpoints.
+
+:::
+
+### Degraded backend detection
+
+Backends are marked as **degraded** when:
+
+- Health checks succeed but response times exceed 5 seconds (slow performance)
+- Backend recently recovered from failures and is stabilizing
+
+Degraded backends remain in the routing table but may indicate performance
+problems.
+
+### Health check behavior
+
+1. **Initial check**: All backends checked immediately on startup
+2. **Periodic checks**: Repeated at `healthCheckInterval` (default: 30s)
+3. **Status updates**: Reported to Kubernetes at `statusReportingInterval`
+   (default: 30s)
+4. **Backend unhealthy**: After `unhealthyThreshold` consecutive failures
+   (default: 3), backend marked unhealthy
+5. **Recovery**: One successful check marks backend as healthy (or degraded if
+   slow)
+
+### Monitoring health status
+
+Check backend health via the VirtualMCPServer status:
+
+```bash
+kubectl get virtualmcpserver my-vmcp -n toolhive-system -o json | jq '.status.discoveredBackends'
+```
+
+Returns an array of backends with their health status:
+
+```json
+[
+  {
+    "name": "github-mcp",
+    "url": "http://github-mcp.toolhive-system.svc.cluster.local:8080",
+    "status": "ready",
+    "authConfigRef": "github-token-config",
+    "authType": "token_exchange",
+    "lastHealthCheck": "2025-02-09T10:30:00Z",
+    "message": "Healthy",
+    "circuitBreakerState": "closed",
+    "circuitLastChanged": "2025-02-09T10:00:00Z",
+    "consecutiveFailures": 0
+  },
+  {
+    "name": "fetch-mcp",
+    "url": "http://fetch-mcp.toolhive-system.svc.cluster.local:8080",
+    "status": "ready",
+    "authType": "unauthenticated",
+    "lastHealthCheck": "2025-02-09T10:30:00Z",
+    "message": "Healthy",
+    "consecutiveFailures": 0
+  }
+]
+```
+
+**Status values** (CRD representation):
+
+- `ready`: Backend is healthy and accepting requests with good performance
+- `degraded`: Backend operational but with issues (slow responses >5s or
+  recovering from failures)
+- `unavailable`: Backend not responding, health checks failing, or
+  authentication failed
+- `unknown`: Health check not yet performed
+
+:::note[Status terminology]
+
+The VirtualMCPServer CRD uses user-facing status values (`ready`, `degraded`,
+`unavailable`, `unknown`). The `/status` HTTP endpoint uses internal health
+values (`healthy`, `degraded`, `unhealthy`, `unauthenticated`, `unknown`). These
+represent the same health state with different terminology.
 
 :::
 
