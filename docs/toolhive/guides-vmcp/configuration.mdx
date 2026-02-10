@@ -160,12 +160,156 @@ Key status fields:
 | `backendCount`       | Number of discovered backend MCP servers         |
 | `discoveredBackends` | Details about each backend and its auth type     |
 
+## Operational configuration
+
+### Health checks
+
+vMCP continuously monitors backend health to detect failures and route requests
+appropriately. Health check behavior is configurable via the VirtualMCPServer
+resource.
+
+#### Health check configuration
+
+Configure health monitoring in `spec.config.operational.failureHandling`:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: my-vmcp
+  namespace: toolhive-system
+spec:
+  config:
+    groupRef: my-group
+    operational:
+      failureHandling:
+        # Health check interval (how often to check each backend)
+        # Default: 30s
+        healthCheckInterval: 30s
+
+        # Health check timeout (max duration for a single check)
+        # Should be less than healthCheckInterval
+        # Default: 10s
+        healthCheckTimeout: 10s
+
+        # Number of consecutive failures before marking unhealthy
+        # Default: 3
+        unhealthyThreshold: 3
+
+        # How often to report status updates to Kubernetes
+        # Default: 30s
+        statusReportingInterval: 30s
+  incomingAuth:
+    type: anonymous
+```
+
+#### Circuit breaker configuration
+
+Circuit breakers prevent cascading failures by temporarily stopping requests to
+consistently failing backends. For detailed configuration, behavior, and
+troubleshooting, see [Failure handling](./failure-handling.mdx).
+
+To enable circuit breaker:
+
+```yaml
+spec:
+  config:
+    operational:
+      failureHandling:
+        circuitBreaker:
+          enabled: true
+          failureThreshold: 5 # Number of failures before opening circuit
+          timeout: 60s # How long to wait before attempting recovery
+```
+
+### Timeouts
+
+Configure timeouts for backend requests:
+
+```yaml
+spec:
+  config:
+    operational:
+      timeouts:
+        # Default timeout for all backend requests (default: 30s)
+        default: 30s
+
+        # Per-workload timeout overrides
+        perWorkload:
+          slow-backend: 60s
+          fast-backend: 10s
+```
+
+:::note
+
+Health check timeouts are configured separately via
+`failureHandling.healthCheckTimeout` (default: 10s), not via the `timeouts`
+section.
+
+:::
+
+#### Remote workload health checks
+
+By default, health checks are:
+
+- **Always enabled** for local backends (MCPServer)
+- **Disabled by default** for remote backends (MCPRemoteProxy)
+
+To enable health checks for remote workloads, set the
+`TOOLHIVE_REMOTE_HEALTHCHECKS` environment variable in the vMCP pod:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: my-vmcp
+spec:
+  podTemplateSpec:
+    spec:
+      containers:
+        - name: vmcp
+          env:
+            - name: TOOLHIVE_REMOTE_HEALTHCHECKS
+              value: 'true'
+```
+
+:::caution[Network overhead]
+
+Enabling health checks for remote backends increases network traffic to external
+services. Only enable this if you need real-time health status for remote
+endpoints.
+
+:::
+
+#### Degraded backend detection
+
+Backends are marked as **degraded** when:
+
+- Health checks succeed but response times exceed 5 seconds (slow performance)
+- Backend recently recovered from failures and is stabilizing
+
+Degraded backends remain in the routing table but may indicate performance
+problems.
+
+#### Health check behavior
+
+1. **Initial check**: All backends checked immediately on startup
+2. **Periodic checks**: Repeated at `healthCheckInterval` (default: 30s)
+3. **Status updates**: Reported to Kubernetes at `statusReportingInterval`
+   (default: 30s)
+4. **Backend unhealthy**: After `unhealthyThreshold` consecutive failures
+   (default: 3), backend marked unhealthy
+5. **Recovery**: One successful check marks backend as healthy (or degraded if
+   slow)
+
+For detailed backend health monitoring, see
+[Verify backend status](./backend-discovery.mdx#verify-backend-status) in the
+Backend discovery guide.
+
 ## Next steps
 
 - Review [performance and sizing guidance](./performance.mdx) for resource
   planning
-- Configure [health checks](./backend-discovery.mdx#configure-health-checks) to
-  monitor backend availability
 - Discover your deployed MCP servers automatically using the
   [Kubernetes registry](../guides-registry/configuration.mdx#kubernetes-registry)
   feature in the ToolHive Registry Server

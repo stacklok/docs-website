@@ -28,6 +28,8 @@ Resource needs increase based on:
 
 - **Number of backends**: Each backend adds minimal overhead (~10-20Mi memory)
 - **Request volume**: Higher traffic requires more CPU for request processing
+- **Data volume**: Large inputs and tool responses increase memory usage and
+  network bandwidth
 - **Composite tool complexity**: Workflows with many parallel steps consume more
   memory
 - **Token caching**: Authentication token cache grows with unique client count
@@ -43,57 +45,41 @@ vMCP performs well across different scales:
 | 15-30         | Large teams, comprehensive    | Increase health check interval       |
 | 30+           | Enterprise-scale deployments  | Consider multiple vMCP instances     |
 
-## Performance characteristics
+## Scaling strategies
 
-### Backend discovery
+### Horizontal scaling
 
-- **Timing**: Happens once per client session
-- **Duration**: Typically completes in 1-3 seconds for 10 backends
-- **Timeout**: 15 seconds (returns HTTP 504 on timeout)
-- **Parallelism**: Backends queried concurrently for capabilities
+Horizontal scaling is possible for **stateless use cases** where MCP sessions
+can be resumed on any vMCP instance. However, **stateful backends** (e.g.,
+Playwright browser sessions, database connections) complicate horizontal scaling
+because requests must be routed to the same vMCP instance that established the
+session.
 
-### Health checks
+**Session considerations:**
 
-- **Interval**: Every 30 seconds by default (configurable)
-- **Impact**: Minimal overhead on backend servers
-- **Timeout**: 10 seconds by default (configurable via `healthCheckTimeout`)
-- **Configuration**: See
-  [Configure health checks](./backend-discovery.mdx#configure-health-checks)
+- vMCP uses
+  [MCP session IDs](https://spec.modelcontextprotocol.io/specification/architecture/lifecycle/#sessions)
+  to cache routing tables and maintain consistency
+- Some backends maintain persistent state that requires session affinity
+- Clients must be able to
+  [disconnect and resume sessions](https://spec.modelcontextprotocol.io/specification/architecture/lifecycle/#connection-lifecycle)
+  for horizontal scaling to work reliably
 
-### Tool routing
+**When horizontal scaling works well:**
 
-- **Overhead**: Single-digit millisecond latency for routing and conflict
-  resolution
-- **Caching**: Routing table cached per session for consistent behavior
-- **Lookup**: O(1) hash table lookup for tool/resource/prompt routing
+- Stateless backends (fetch, search, read-only operations)
+- Short-lived sessions with no persistent state
+- Use cases where session affinity can be reliably maintained
 
-### Composite workflows
+**When horizontal scaling is challenging:**
 
-- **Parallelism**: Up to 10 parallel step executions (hard-coded)
-- **Execution model**: DAG-based with dependency resolution
-- **Bottleneck**: Limited by slowest backend response time in each level
-- **Memory**: Step results cached in memory during workflow execution
+- Stateful backends (Playwright, database connections, file system operations)
+- Long-lived sessions requiring persistent state
+- Complex session interdependencies
 
-### Token caching
+#### Configuration
 
-- **Reduction**: 90%+ reduction in authentication overhead for repeated requests
-- **Duration**: Tokens cached until expiration
-- **Scope**: Per-client, per-backend token cache
-- **Impact**: Significantly improves response times for authenticated backends
-
-## Horizontal scaling
-
-vMCP is **stateless** and supports horizontal scaling:
-
-### Scaling characteristics
-
-- **Independence**: Each vMCP instance operates independently
-- **Session state**: vMCP uses session IDs internally to cache routing tables
-  and maintain consistency within a session
-- **State**: No shared state between instances
-- **Method**: Scale by increasing replicas in the Deployment
-
-### Example scaling configuration
+To scale horizontally, increase replicas in the Deployment:
 
 ```yaml
 apiVersion: apps/v1
@@ -101,15 +87,21 @@ kind: Deployment
 metadata:
   name: vmcp-my-vmcp
 spec:
-  replicas: 3 # Scale to 3 instances
+  replicas: 3 # Horizontal scaling
   # ... rest of deployment spec
 ```
 
-### Load balancing
+:::caution[Backend scaling]
 
-When using multiple replicas, clients must be routed to the same vMCP instance
-for the duration of their session (to maintain routing table consistency).
-Configure session affinity based on your deployment:
+When scaling vMCP horizontally, the backend MCP servers will also see increased
+load. Ensure your backend deployments (MCPServer resources) are also scaled
+appropriately to handle the additional traffic.
+
+:::
+
+**Session affinity is required** when using multiple replicas. Clients must be
+routed to the same vMCP instance for the duration of their session. Configure
+based on your deployment:
 
 - **Kubernetes Service**: Use `sessionAffinity: ClientIP` for basic
   client-to-pod stickiness
@@ -121,13 +113,28 @@ Configure session affinity based on your deployment:
 - **Gateway API**: Use appropriate session affinity configuration based on your
   Gateway implementation
 
-:::tip[Recommended approach]
+:::tip[Session affinity recommendations]
 
-For production deployments behind an Ingress, use **cookie-based sticky
-sessions** rather than `ClientIP` affinity. This works reliably even when
-traffic comes through proxies or load balancers.
+- For **stateless backends**: Cookie-based sticky sessions work well and provide
+  reliable routing through proxies
+- For **stateful backends** (Playwright, databases): Consider vertical scaling
+  or dedicated vMCP instances instead of horizontal scaling with session
+  affinity, as session resumption may not work reliably
 
 :::
+
+### Vertical scaling
+
+Vertical scaling (increasing CPU/memory per instance) provides the **simplest
+scaling story** and works for all use cases, including stateful backends.
+However, it has limits and may not provide high availability since a single
+instance failure affects all sessions.
+
+**Recommended approach:**
+
+- Start with vertical scaling for simplicity
+- Add horizontal scaling with session affinity when vertical limits are reached
+- For stateful backends, consider dedicated vMCP instances per team/use case
 
 ## When to scale
 
@@ -198,7 +205,8 @@ spec:
 1. **Use inline mode** for static backend configurations (eliminates Kubernetes
    API queries)
 2. **Minimize backend count** by grouping related tools in fewer servers
-3. **Ensure fast backend responses** to initialize requests
+3. **Optimize backend initialization** by reducing tool/resource counts or using
+   lazy loading patterns in backend servers
 
 </details>
 
@@ -239,7 +247,7 @@ details.
 ## Related information
 
 - [Introduction to vMCP](./intro.mdx)
-- [Configure health checks](./backend-discovery.mdx#configure-health-checks)
+- [Configure health checks](./configuration.mdx#health-checks)
 - [Backend discovery modes](./backend-discovery.mdx)
 - [Telemetry and metrics](./telemetry-and-metrics.mdx)
 - [VirtualMCPServer CRD specification](../reference/crd-spec.md#apiv1alpha1virtualmcpserver)
