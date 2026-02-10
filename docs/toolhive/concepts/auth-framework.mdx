@@ -55,6 +55,14 @@ server—just configure ToolHive with your IdP and write clear Cedar policies.
 This approach is more flexible, secure, and easier to manage for you and your
 team.
 
+With the [embedded authorization server](#embedded-authorization-server),
+ToolHive can also operate in a mode that aligns more closely with the MCP
+specification's OAuth model. In this mode, the proxy exposes standard OAuth
+endpoints (`/oauth/authorize`, `/oauth/token`,
+`/.well-known/oauth-authorization-server`) and delegates authentication to an
+upstream identity provider. This gives MCP clients a spec-compliant OAuth
+experience while ToolHive still centralizes the complexity.
+
 ## Authentication framework
 
 ToolHive uses OAuth-based authentication with support for both OAuth 2.1 and
@@ -146,6 +154,104 @@ flowchart TD
     Cedar_Authorizer -->|Deny| Denied[403 Forbidden]
 ```
 
+### Embedded authorization server
+
+In the standard authentication flow described above, clients obtain tokens
+independently from an external identity provider and present them to ToolHive
+for validation. The embedded authorization server provides an alternative model
+where ToolHive itself acts as an OAuth authorization server, retrieving tokens
+from an upstream identity provider on behalf of clients.
+
+:::note
+
+The embedded authorization server is currently available only for Kubernetes
+deployments using the ToolHive Operator.
+
+:::
+
+This approach is designed for MCP servers that accept `Authorization: Bearer`
+tokens and is particularly useful when:
+
+- Your MCP clients support the MCP OAuth specification and expect OAuth
+  endpoints on the server (such as `/oauth/authorize` and `/oauth/token`)
+- You want ToolHive to handle the full OAuth flow rather than requiring clients
+  to obtain tokens independently
+- You need to authenticate interactive users through a corporate identity
+  provider like Okta or Microsoft Entra ID
+
+#### How the embedded authorization server works
+
+The embedded authorization server runs in-process within the ToolHive proxy.
+When a client connects, the following flow occurs:
+
+1. The client is directed to the proxy's `/oauth/authorize` endpoint.
+2. The proxy redirects the client to the upstream identity provider for
+   authentication.
+3. The user authenticates with the upstream identity provider (for example,
+   signing in with Okta or Microsoft Entra ID).
+4. The upstream identity provider redirects back to the proxy with an
+   authorization code.
+5. The embedded authorization server exchanges the authorization code for tokens
+   with the upstream identity provider.
+6. The embedded authorization server issues its own JWT to the client, signed
+   with keys you configure.
+7. The client includes this JWT as a `Bearer` token in the `Authorization`
+   header on subsequent requests.
+8. The proxy validates the JWT and forwards requests to the MCP server.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Proxy as ToolHive Proxy
+    participant IdP as Upstream IdP
+    participant MCP as MCP Server
+
+    Client->>Proxy: Connect to MCP server
+    Proxy-->>Client: Redirect to /oauth/authorize
+    Client->>Proxy: GET /oauth/authorize
+    Proxy-->>Client: Redirect to upstream IdP
+    Client->>IdP: Authenticate
+    IdP-->>Client: Redirect with authorization code
+    Client->>Proxy: GET /oauth/callback?code=...
+    Proxy->>IdP: Exchange code for tokens
+    IdP-->>Proxy: Upstream tokens
+    Proxy-->>Client: Issue ToolHive JWT
+    Client->>Proxy: MCP request with Bearer token
+    Proxy->>Proxy: Validate JWT
+    Proxy->>MCP: Forward request
+    MCP-->>Proxy: Response
+    Proxy-->>Client: Response
+```
+
+#### Key characteristics
+
+- **In-process execution:** The authorization server runs within the ToolHive
+  proxy—no separate infrastructure or sidecar containers needed.
+- **Configurable signing keys:** JWTs are signed with keys you provide,
+  supporting key rotation for zero-downtime updates.
+- **Flexible upstream providers:** Supports both OIDC providers (with automatic
+  endpoint discovery) and OAuth 2.0 providers (with explicit endpoint
+  configuration).
+- **Configurable token lifespans:** Access tokens, refresh tokens, and
+  authorization codes have configurable durations with sensible defaults.
+- **Single upstream provider:** Currently supports one upstream identity
+  provider per configuration.
+
+#### Comparing authentication models
+
+ToolHive supports two authentication models for different use cases:
+
+- **External token validation** (`oidcConfig` only): Clients obtain tokens
+  independently from an external identity provider and present them to ToolHive
+  for validation. This is best for service-to-service authentication or when
+  clients already manage their own OAuth flows.
+- **Embedded authorization server** (`externalAuthConfigRef` + `oidcConfig`):
+  ToolHive runs its own OAuth authorization server, delegates user
+  authentication to an upstream identity provider, and issues JWTs that the
+  proxy validates via `oidcConfig` pointed at itself. This is best for
+  interactive user login flows or when MCP clients expect spec-compliant OAuth
+  endpoints.
+
 ### Identity providers
 
 ToolHive can integrate with any provider that supports OAuth 2.1 or OIDC,
@@ -158,8 +264,9 @@ including:
 - Auth0
 - Kubernetes (service account tokens)
 
-This flexibility lets you use your existing identity infrastructure for both
-users and services, reducing operational overhead and improving security.
+These same providers work with both external token validation and the embedded
+authorization server. For the embedded authorization server, the upstream
+provider must support the OAuth 2.0 authorization code flow.
 
 ### Token validation methods
 
@@ -280,6 +387,8 @@ standardized across clients.
 
 ## Related information
 
+- For configuring the embedded authorization server in Kubernetes, see
+  [Embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
 - For backend authentication concepts, see
   [Backend authentication](./backend-auth.mdx)
 - For detailed policy writing guidance, see

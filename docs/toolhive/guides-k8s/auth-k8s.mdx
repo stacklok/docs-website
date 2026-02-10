@@ -33,8 +33,7 @@ You'll need:
 
 ## Choose your authentication approach
 
-There are three main ways to authenticate with MCP servers running in
-Kubernetes:
+There are four main ways to authenticate with MCP servers running in Kubernetes:
 
 ### Approach 1: External identity provider authentication
 
@@ -66,6 +65,24 @@ account tokens for authentication.
 
 - Client applications running in Kubernetes pods
 - Understanding of Kubernetes service accounts and RBAC
+
+### Approach 4: Embedded authorization server authentication
+
+Use this when your MCP clients support the MCP OAuth specification and you want
+ToolHive to handle the full OAuth flow, including redirecting users to an
+upstream identity provider for authentication. This approach is ideal when you
+need ToolHive to retrieve OAuth tokens from an upstream provider for MCP servers
+that accept `Authorization: Bearer` tokens.
+
+For conceptual background, see
+[Embedded authorization server](../concepts/auth-framework.mdx#embedded-authorization-server).
+
+**Prerequisites for embedded authorization server:**
+
+- An upstream identity provider that supports the OAuth 2.0 authorization code
+  flow (such as Okta, Microsoft Entra ID, Auth0, or any OIDC-compliant provider)
+- A registered OAuth application/client with your upstream provider
+- Client ID and client secret from your upstream provider
 
 ## Set up external identity provider authentication
 
@@ -304,10 +321,281 @@ Your client application can now authenticate to the MCP server using its
 Kubernetes service account token, which is automatically mounted at
 `/var/run/secrets/kubernetes.io/serviceaccount/token`.
 
+## Set up embedded authorization server authentication
+
+The embedded authorization server runs an OAuth authorization server within the
+ToolHive proxy. It handles the full OAuth flow by redirecting users to your
+upstream identity provider for authentication, then issuing JWTs that the proxy
+validates on subsequent requests. This provides MCP servers with
+`Authorization: Bearer` tokens without requiring separate authorization server
+infrastructure.
+
+This setup uses the `MCPExternalAuthConfig` custom resource, following the same
+pattern as [token exchange configuration](./token-exchange-k8s.mdx).
+
+**Step 1: Create a Secret for the upstream provider client credentials**
+
+Store the OAuth client secret for your upstream identity provider:
+
+```yaml title="upstream-idp-secret.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: upstream-idp-secret
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  client-secret: '<YOUR_UPSTREAM_CLIENT_SECRET>'
+```
+
+```bash
+kubectl apply -f upstream-idp-secret.yaml
+```
+
+**Step 2: Create a Secret for JWT signing keys**
+
+The embedded authorization server signs JWTs with a private key you provide.
+Generate a PEM-encoded private key (RSA or EC), for example:
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out signing-key.pem
+```
+
+Then create a Secret containing the key:
+
+```yaml title="auth-server-signing-key.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-server-signing-key
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  signing-key: |
+    -----BEGIN EC PRIVATE KEY-----
+    <YOUR_PEM_ENCODED_PRIVATE_KEY>
+    -----END EC PRIVATE KEY-----
+```
+
+```bash
+kubectl apply -f auth-server-signing-key.yaml
+```
+
+:::tip[Key rotation]
+
+For key rotation, you can reference multiple signing key Secrets in the
+`signingKeySecretRefs` list. The first key is used for signing new tokens.
+Additional keys are used for verification only, so tokens signed before rotation
+remain valid.
+
+:::
+
+**Step 3: Create a Secret for HMAC keys**
+
+The embedded authorization server uses a symmetric HMAC key to sign
+authorization codes and refresh tokens. The key must be at least 32 bytes and
+cryptographically random:
+
+```yaml title="auth-server-hmac-secret.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-server-hmac-secret
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  hmac-key: '<YOUR_CRYPTOGRAPHICALLY_RANDOM_KEY>'
+```
+
+```bash
+kubectl apply -f auth-server-hmac-secret.yaml
+```
+
+:::warning[Ephemeral keys for development only]
+
+If you omit the `signingKeySecretRefs` and `hmacSecretRefs` fields, ToolHive
+generates ephemeral keys that are lost on pod restart. All previously issued
+tokens become invalid after a restart. Only omit these Secrets for development
+and testing.
+
+:::
+
+**Step 4: Create the MCPExternalAuthConfig resource**
+
+Create an `MCPExternalAuthConfig` resource with the `embeddedAuthServer` type.
+This example configures an OIDC upstream provider (the most common case):
+
+```yaml title="embedded-auth-config.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPExternalAuthConfig
+metadata:
+  name: embedded-auth-server
+  namespace: toolhive-system
+spec:
+  type: embeddedAuthServer
+  embeddedAuthServer:
+    issuer: 'https://mcp.example.com'
+    signingKeySecretRefs:
+      - name: auth-server-signing-key
+        key: signing-key
+    hmacSecretRefs:
+      - name: auth-server-hmac-secret
+        key: hmac-key
+    tokenLifespans:
+      accessTokenLifespan: '1h'
+      refreshTokenLifespan: '168h'
+      authCodeLifespan: '10m'
+    upstreamProviders:
+      - name: okta
+        type: oidc
+        oidcConfig:
+          issuerUrl: 'https://dev-123456.okta.com/oauth2/default'
+          clientId: '<YOUR_OKTA_CLIENT_ID>'
+          clientSecretRef:
+            name: upstream-idp-secret
+            key: client-secret
+          scopes:
+            - openid
+            - offline_access
+            - profile
+            - email
+```
+
+```bash
+kubectl apply -f embedded-auth-config.yaml
+```
+
+**Configuration reference:**
+
+| Field                  | Description                                                                                                            |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `issuer`               | HTTPS URL identifying this authorization server. Appears in the `iss` claim of issued JWTs.                            |
+| `signingKeySecretRefs` | References to Secrets containing JWT signing keys. First key is active; additional keys support rotation.              |
+| `hmacSecretRefs`       | References to Secrets with symmetric keys for signing authorization codes and refresh tokens.                          |
+| `tokenLifespans`       | Configurable durations for access tokens (default: 1h), refresh tokens (default: 168h), and auth codes (default: 10m). |
+| `upstreamProviders`    | Configuration for the upstream identity provider. Currently supports one provider.                                     |
+
+**Step 5: Create the MCPServer resource**
+
+Create an `MCPServer` resource that references the embedded authorization server
+configuration. The MCPServer uses two fields together:
+
+- `externalAuthConfigRef`: references the embedded authorization server
+  configuration you created in step 4
+- `oidcConfig`: validates JWTs issued by the embedded authorization server, with
+  the issuer pointed at the embedded authorization server itself
+
+```yaml title="mcp-server-embedded-auth.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: weather-server-embedded
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: streamable-http
+  port: 8080
+  permissionProfile:
+    type: builtin
+    name: network
+  # Reference the embedded authorization server configuration
+  externalAuthConfigRef:
+    name: embedded-auth-server
+  # Validate JWTs issued by the embedded authorization server
+  oidcConfig:
+    type: inline
+    resourceUrl: 'https://mcp.example.com'
+    inline:
+      issuer: 'https://mcp.example.com'
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+```
+
+```bash
+kubectl apply -f mcp-server-embedded-auth.yaml
+```
+
+:::note
+
+The `oidcConfig` issuer must match the `issuer` in your `MCPExternalAuthConfig`.
+The embedded authorization server exposes a JWKS endpoint that the proxy uses to
+validate the JWTs it issues. The proxy also exposes OAuth discovery endpoints
+(`/.well-known/oauth-authorization-server`) so MCP clients can discover the
+authorization endpoints automatically.
+
+:::
+
+### Using an OAuth 2.0 upstream provider
+
+If your upstream identity provider does not support OIDC discovery, you can
+configure it as an OAuth 2.0 provider with explicit endpoints. This is useful
+for providers like GitHub that use OAuth 2.0 but don't implement the full OIDC
+specification.
+
+```yaml title="embedded-auth-oauth2-config.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPExternalAuthConfig
+metadata:
+  name: embedded-auth-oauth2
+  namespace: toolhive-system
+spec:
+  type: embeddedAuthServer
+  embeddedAuthServer:
+    issuer: 'https://mcp.example.com'
+    signingKeySecretRefs:
+      - name: auth-server-signing-key
+        key: signing-key
+    hmacSecretRefs:
+      - name: auth-server-hmac-secret
+        key: hmac-key
+    upstreamProviders:
+      - name: github
+        type: oauth2
+        oauth2Config:
+          authorizationEndpoint: 'https://github.com/login/oauth/authorize'
+          tokenEndpoint: 'https://github.com/login/oauth/access_token'
+          userInfo:
+            endpointUrl: 'https://api.github.com/user'
+            httpMethod: GET
+            additionalHeaders:
+              Accept: 'application/vnd.github+json'
+            fieldMapping:
+              subjectFields:
+                - id
+                - login
+              nameFields:
+                - name
+                - login
+              emailFields:
+                - email
+          clientId: '<YOUR_GITHUB_CLIENT_ID>'
+          clientSecretRef:
+            name: upstream-idp-secret
+            key: client-secret
+          scopes:
+            - user:email
+            - read:user
+```
+
+:::note
+
+OAuth 2.0 providers require explicit endpoint configuration and a `userInfo`
+section, unlike OIDC providers which auto-discover these from the issuer URL.
+The `fieldMapping` section maps provider-specific response fields to standard
+user identity fields. For example, GitHub returns `login` instead of the
+standard `name` field.
+
+:::
+
 ## Set up authorization
 
-Both authentication approaches can use the same authorization configuration
-using Cedar policies.
+All authentication approaches can use the same authorization configuration using
+Cedar policies.
 
 **Step 1: Create authorization configuration**
 
@@ -406,6 +694,32 @@ kubectl apply -f mcp-server-with-authz.yaml
 kubectl logs -n toolhive-system -l app.kubernetes.io/name=weather-server-k8s
 ```
 
+### Test embedded authorization server authentication
+
+1. Deploy the `MCPExternalAuthConfig` and `MCPServer` resources
+2. Check that the MCPServer is running:
+
+   ```bash
+   kubectl get mcpserver -n toolhive-system weather-server-embedded
+   ```
+
+3. If the server is exposed outside the cluster, verify the OAuth discovery
+   endpoint is available:
+
+   ```bash
+   curl https://<YOUR_SERVER_URL>/.well-known/oauth-authorization-server
+   ```
+
+4. Connect with an MCP client that supports the MCP OAuth specification. The
+   client should be redirected to your upstream identity provider for
+   authentication.
+5. Check the proxy logs for successful authentication:
+
+   ```bash
+   kubectl logs -n toolhive-system \
+     -l app.kubernetes.io/name=weather-server-embedded
+   ```
+
 ### Test authorization
 
 1. Make requests that should be permitted by your policies
@@ -416,6 +730,10 @@ kubectl logs -n toolhive-system -l app.kubernetes.io/name=weather-server-k8s
 
 - For conceptual understanding, see
   [Authentication and authorization framework](../concepts/auth-framework.mdx)
+- For conceptual background on the embedded authorization server, see
+  [Embedded authorization server](../concepts/auth-framework.mdx#embedded-authorization-server)
+- For a similar configuration pattern using token exchange, see
+  [Configure token exchange](./token-exchange-k8s.mdx)
 - For detailed Cedar policy syntax, see
   [Cedar policies](../concepts/cedar-policies.mdx) and the
   [Cedar documentation](https://docs.cedarpolicy.com/)
@@ -467,5 +785,51 @@ kubectl logs -n toolhive-system -l app.kubernetes.io/name=weather-server-k8s
 - Check operator logs:
   `kubectl logs -n toolhive-system -l app.kubernetes.io/name=toolhive-operator`
 - Verify the operator is running: `kubectl get pods -n toolhive-system`
+
+</details>
+
+<details>
+<summary>Embedded authorization server issues</summary>
+
+**OAuth flow not initiating:**
+
+- Verify the `MCPExternalAuthConfig` resource exists in the same namespace:
+  `kubectl get mcpexternalauthconfig -n toolhive-system`
+- Check that the `externalAuthConfigRef.name` in your `MCPServer` matches the
+  `MCPExternalAuthConfig` resource name
+- Verify the upstream provider's client ID and redirect URI are correctly
+  configured in the `MCPExternalAuthConfig`
+
+**Token validation failures after restart:**
+
+- Ensure you have configured `signingKeySecretRefs` and `hmacSecretRefs` with
+  persistent keys
+- Without these, ephemeral keys are generated on startup, invalidating all
+  previously issued tokens
+
+**Upstream IdP redirect errors:**
+
+- Verify the redirect URI configured in your upstream provider matches the
+  ToolHive proxy's callback URL (typically
+  `https://<YOUR_SERVER_URL>/oauth/callback`)
+- Check that the upstream provider's issuer URL is accessible from within the
+  cluster
+- For OIDC providers, ensure the `/.well-known/openid-configuration` endpoint is
+  reachable from the proxy pod
+
+**JWT signing key issues:**
+
+- Verify signing key Secrets exist:
+  `kubectl get secret -n toolhive-system auth-server-signing-key`
+- Ensure the key format is correct (PEM-encoded RSA or EC private key)
+- Check proxy logs for key loading errors:
+  `kubectl logs -n toolhive-system -l app.kubernetes.io/name=weather-server-embedded`
+
+**OIDC configuration mismatch:**
+
+- Ensure the `oidcConfig.inline.issuer` on your `MCPServer` matches the `issuer`
+  in your `MCPExternalAuthConfig`
+- Verify the `resourceUrl` in `oidcConfig` matches the external URL of the MCP
+  server
 
 </details>
