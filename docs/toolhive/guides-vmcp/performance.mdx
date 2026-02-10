@@ -160,25 +160,42 @@ Add more vMCP instances when:
 
 Adjust operational settings when scaling:
 
-<details>
-<summary>Configuration for large backend counts (15+)</summary>
+#### Large backend counts (15+)
+
+Health checks become a significant source of overhead with many backends. With
+the default 30-second interval, 20 backends generate 40 health check requests
+per minute. Increasing the `healthCheckInterval` to 60 seconds cuts this
+overhead in half while still detecting failures within a reasonable timeframe.
+
+Raising the `unhealthyThreshold` from 3 to 5 prevents transient network issues
+or brief slowdowns from unnecessarily removing backends from rotation. This is
+especially important in larger deployments where temporary hiccups shouldn't
+trigger immediate failover.
 
 ```yaml
 spec:
   config:
     operational:
       failureHandling:
-        # Reduce health check frequency to minimize overhead
         healthCheckInterval: 60s
-
-        # Increase thresholds for better stability
         unhealthyThreshold: 5
 ```
 
-</details>
+The tradeoff is slower failure detection—with these settings, it takes up to 5
+minutes to mark a backend unhealthy. This is acceptable for most use cases, but
+if your backends serve latency-sensitive operations, consider keeping the
+30-second interval and raising only the threshold.
 
-<details>
-<summary>Configuration for high request volumes</summary>
+#### High request volumes
+
+Resource requirements scale with request volume and backend complexity. Monitor
+your current deployment's CPU and memory usage under typical load. If you're
+seeing CPU throttling (check `throttled_time` metrics) or memory pressure,
+increase resources proportionally.
+
+For production deployments handling sustained traffic, allocate headroom for
+traffic spikes. A good starting point is 1 CPU and 1Gi memory with limits of 2
+CPUs and 2Gi memory, allowing the pod to burst during peak load.
 
 ```yaml
 spec:
@@ -195,54 +212,101 @@ spec:
               memory: 2Gi
 ```
 
-</details>
+Watch for memory growth over time if you're using token caching with many unique
+clients or backends exposing large resource payloads. Use
+[vMCP telemetry](./telemetry-and-metrics.mdx) to track actual usage and adjust
+accordingly.
 
 ## Performance optimization
 
-<details>
-<summary>Reduce backend discovery time</summary>
+### Backend discovery
 
-1. **Use inline mode** for static backend configurations (eliminates Kubernetes
-   API queries)
-2. **Minimize backend count** by grouping related tools in fewer servers
-3. **Optimize backend initialization** by reducing tool/resource counts or using
-   lazy loading patterns in backend servers
+Backend discovery happens at vMCP startup and affects how quickly your
+deployment becomes ready. The discovery mode you choose has significant
+performance implications:
 
-</details>
+**Discovered mode** (default) queries the Kubernetes API to find backends
+matching your group selector. This is flexible and updates automatically as
+backends change, but adds 1-3 seconds of startup latency for 10-20 backends. For
+deployments with frequent pod restarts, this can add up.
 
-<details>
-<summary>Reduce authentication overhead</summary>
+**Inline mode** specifies backends directly in the VirtualMCPServer spec,
+eliminating Kubernetes API calls for near-instantaneous startup. Use this when
+your backend set is relatively static and you're willing to update the vMCP
+configuration when backends change.
 
-1. **Enable token caching** (enabled by default)
-2. **Use unauthenticated mode** for internal/trusted backends
-3. **Configure appropriate token expiration** in your OIDC provider
+Beyond the discovery mode, optimize individual backends by reducing the number
+of tools and resources each exposes. A backend advertising 50 tools takes longer
+to initialize than one with 5. Group related tools into focused backend servers
+rather than creating monolithic servers.
 
-</details>
+### Authentication
 
-<details>
-<summary>Optimize composite workflows</summary>
+Authentication adds latency to every backend request, so optimizing this layer
+pays dividends at scale. vMCP's token cache (enabled by default) stores tokens
+with their expiration times, eliminating repeated fetches for the same client.
+This is particularly effective when you have a small number of clients making
+many requests.
 
-1. **Minimize dependencies** between steps to maximize parallelism
-2. **Use step-level error handling** with `onError.action: continue` to prevent
-   single step failures from blocking entire workflows
-3. **Set appropriate timeouts** for slow backends using `timeout` field on
-   individual steps
+For internal backends running in the same cluster—especially those providing
+read-only operations or serving trusted internal services—consider using
+unauthenticated mode. This removes authentication latency entirely (typically
+50-200ms per request) and simplifies configuration. Only do this for backends
+that don't require access control.
 
-</details>
+When using OAuth/OIDC authentication, configure token expiration times to
+balance security and performance. Tokens that expire too quickly (under 5
+minutes) force frequent re-authentication. Tokens that last too long (over 1
+hour) increase security risk. A 15-30 minute expiration typically provides a
+good balance.
 
-<details>
-<summary>Monitor performance</summary>
+### Composite workflows
 
-Use the vMCP telemetry integration to monitor:
+Composite workflows enable multi-step automation, but design matters for
+performance. The key is maximizing parallelism—vMCP can execute up to 10 steps
+concurrently by default.
 
-- Backend request latency and error rates
-- Workflow execution times and failure patterns
-- Health check success/failure rates
+When designing workflows, identify which steps must run sequentially versus
+which are independent. For example, fetching data from three backends should use
+parallel steps, with only the aggregation step depending on them.
 
-See [Telemetry and metrics](./telemetry-and-metrics.mdx) for configuration
-details.
+Use `onError.action: continue` for steps that provide optional enrichment. If a
+workflow fetches a user profile and then enriches it with activity data, marking
+the enrichment as continuable ensures failures don't prevent workflow
+completion. Reserve strict error handling for critical steps.
 
-</details>
+Set explicit timeouts on steps calling potentially slow backends. Without
+timeouts, a hanging backend can block execution for 30-60 seconds. If a backend
+typically responds in under 5 seconds, set a 10-second timeout to fail fast.
+
+### Monitoring
+
+Effective monitoring helps maintain vMCP performance at scale. Use the
+[Telemetry and metrics](./telemetry-and-metrics.mdx) integration to export
+metrics to your observability platform.
+
+Focus on these key metrics:
+
+**Backend request latency**: Track P95 and P99 latency for requests to each
+backend. Sudden increases indicate backend degradation or network issues. Set
+alerts when P95 exceeds your SLO.
+
+**Backend error rates**: Monitor the percentage of failing requests for each
+backend. Healthy backends should have error rates under 1%. Sustained rates
+above 5% suggest problems that need investigation.
+
+**Health check success rates**: Track the percentage of successful health checks
+for each backend. This leading indicator often reveals problems before they
+impact user requests. Declining rates may indicate resource pressure or
+impending failure.
+
+**Workflow execution times**: For composite workflows, monitor total execution
+time and per-step timing. This helps identify bottlenecks and verify that
+workflows are benefiting from parallelism.
+
+Set up dashboards showing these metrics over time and configure alerts for
+anomalies. Proactive monitoring catches degradation early, often before users
+notice impact.
 
 ## Related information
 
