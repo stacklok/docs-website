@@ -167,6 +167,16 @@ const config: Config = {
     ],
   ],
 
+  scripts: [
+    {
+      id: 'hs-script-loader',
+      type: 'text/javascript',
+      src: '//js-na2.hs-scripts.com/42544743.js',
+      async: true,
+      defer: true,
+    },
+  ],
+
   themeConfig: {
     colorMode: {
       defaultMode: 'dark',
@@ -198,7 +208,7 @@ const config: Config = {
       items: [
         {
           type: 'dropdown',
-          label: 'ToolHive Docs',
+          label: 'Docs',
           position: 'left',
           items: [
             {
@@ -265,6 +275,11 @@ const config: Config = {
         {
           to: '/toolhive/updates',
           label: 'Updates',
+          position: 'left',
+        },
+        {
+          href: 'https://stacklok.com/platform/',
+          label: 'Enterprise',
           position: 'left',
         },
         {

@@ -253,7 +253,7 @@ of workloads. The types being watched are
 The Registry server will receive events when a resource among those listed above
 is annotated with the following annotations:
 
-```yaml {7-10}
+```yaml {7-16}
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
@@ -264,15 +264,58 @@ metadata:
     toolhive.stacklok.dev/registry-url: 'https://mcp.example.com/servers/my-mcp-server'
     toolhive.stacklok.dev/registry-description: |
       Production MCP server for code analysis
+    toolhive.stacklok.dev/tool-definitions:
+      '[{"name":"analyze_code","description":"Analyze code for potential
+      issues","inputSchema":{"type":"object","properties":{"file":{"type":"string","description":"Path
+      to the file to
+      analyze"},"rules":{"type":"array","items":{"type":"string"},"description":"List
+      of rule IDs to check"}},"required":["file"]}}]'
 spec:
   # ... MCP server spec
 ```
 
-| Annotation                                   | Required | Description                               |
-| -------------------------------------------- | -------- | ----------------------------------------- |
-| `toolhive.stacklok.dev/registry-export`      | Yes      | Must be `"true"` to include in registry   |
-| `toolhive.stacklok.dev/registry-url`         | Yes      | The external endpoint URL for this server |
-| `toolhive.stacklok.dev/registry-description` | Yes      | Override the description in registry      |
+| Annotation                                   | Required | Description                                                                       |
+| -------------------------------------------- | -------- | --------------------------------------------------------------------------------- |
+| `toolhive.stacklok.dev/registry-export`      | Yes      | Must be `"true"` to include in registry                                           |
+| `toolhive.stacklok.dev/registry-url`         | Yes      | The external endpoint URL for this server                                         |
+| `toolhive.stacklok.dev/registry-description` | Yes      | Description text displayed in registry listings                                   |
+| `toolhive.stacklok.dev/tool-definitions`     | No       | JSON array of tool definitions with MCP tool metadata (name, description, schema) |
+
+**Tool definitions format:**
+
+The `tool-definitions` annotation accepts a JSON array containing tool metadata
+that follows the MCP specification. Each tool definition can include:
+
+- `name` (required): Tool identifier
+- `description`: Human-readable description of what the tool does
+- `inputSchema`: JSON Schema describing the tool's input parameters
+- `outputSchema`: JSON Schema describing the tool's output format
+- `annotations`: Additional metadata about the tool
+
+The Registry server validates JSON syntax only. Schema validation is performed
+by the operator during resource reconciliation. If the annotation contains
+invalid JSON, a warning is logged and the tool definitions are omitted from the
+registry, but the server is still registered normally.
+
+Tool definitions appear in the Registry API response under the server's registry
+URL within the publisher-provided metadata:
+
+```json
+{
+  "_meta": {
+    "publisher-provided": {
+      "io.github.stacklok": {
+        "https://mcp.example.com/servers/my-mcp-server": {
+          "tool_definitions": [...]
+        }
+      }
+    }
+  }
+}
+```
+
+The registry URL from the `registry-url` annotation becomes a key in the JSON
+structure.
 
 This feature requires the Registry server to be granted access to those
 resources via a Service Account, check the details in the

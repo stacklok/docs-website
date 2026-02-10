@@ -55,12 +55,11 @@ having to restart the server.
 
 ## Formatting
 
-We use a combination of Prettier, markdownlint, and ESLint to normalize
-formatting and syntax. Before you submit a PR, please check for issues:
+We use Prettier and ESLint to normalize formatting and syntax. Before you submit
+a PR, please check for issues:
 
 ```bash
 npm run prettier
-npm run markdownlint
 npm run eslint
 ```
 
@@ -68,7 +67,6 @@ To automatically fix issues:
 
 ```bash
 npm run prettier:fix
-npm run markdownlint:fix
 npm run eslint:fix
 ```
 
