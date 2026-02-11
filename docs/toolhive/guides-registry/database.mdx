@@ -5,9 +5,9 @@ description:
   Registry server
 ---
 
-The Registry server optionally supports PostgreSQL database connectivity for
-storing registry state and metadata. This enables persistence across restarts
-and provides a foundation for advanced features.
+The Registry server requires a PostgreSQL database for storing registry state
+and metadata. This enables persistence across restarts and provides a foundation
+for advanced features.
 
 ## Configuration
 
@@ -23,24 +23,27 @@ database:
   maxOpenConns: 25
   maxIdleConns: 5
   connMaxLifetime: '5m'
+  maxMetaSize: 65536
 ```
 
 ### Configuration fields
 
-| Field             | Type   | Required | Default   | Description                                                                |
-| ----------------- | ------ | -------- | --------- | -------------------------------------------------------------------------- |
-| `host`            | string | Yes      | -         | Database server hostname or IP address                                     |
-| `port`            | int    | Yes      | -         | Database server port                                                       |
-| `user`            | string | Yes      | -         | Database username for normal operations                                    |
-| `migrationUser`   | string | No       | `user`    | Database username for running migrations (should have elevated privileges) |
-| `database`        | string | Yes      | -         | Database name                                                              |
-| `sslMode`         | string | No       | `require` | SSL mode (`disable`, `require`, `verify-ca`, `verify-full`)                |
-| `maxOpenConns`    | int    | No       | `25`      | Maximum number of open connections to the database                         |
-| `maxIdleConns`    | int    | No       | `5`       | Maximum number of idle connections in the pool                             |
-| `connMaxLifetime` | string | No       | `5m`      | Maximum lifetime of a connection (e.g., "1h", "30m")                       |
+| Field             | Type   | Required | Default   | Description                                                                                        |
+| ----------------- | ------ | -------- | --------- | -------------------------------------------------------------------------------------------------- |
+| `host`            | string | Yes      | -         | Database server hostname or IP address                                                             |
+| `port`            | int    | Yes      | -         | Database server port                                                                               |
+| `user`            | string | Yes      | -         | Database username for normal operations                                                            |
+| `migrationUser`   | string | No       | `user`    | Database username for running migrations (should have elevated privileges)                         |
+| `database`        | string | Yes      | -         | Database name                                                                                      |
+| `sslMode`         | string | No       | `require` | SSL mode (`disable`, `require`, `verify-ca`, `verify-full`)                                        |
+| `maxOpenConns`    | int    | No       | `25`      | Maximum number of open connections to the database                                                 |
+| `maxIdleConns`    | int    | No       | `5`       | Maximum number of idle connections in the pool                                                     |
+| `connMaxLifetime` | string | No       | `5m`      | Maximum lifetime of a connection (e.g., "1h", "30m")                                               |
+| `maxMetaSize`     | int    | No       | `65536`   | Maximum allowed size in bytes for publisher-provided metadata extensions                           |
+| `dynamicAuth`     | object | No       | -         | Dynamic authentication configuration (see [Dynamic authentication](#dynamic-authentication) below) |
 
 \* Password configuration is required but has multiple sources (see Password
-Security below)
+Security and Dynamic authentication below)
 
 ## Password security
 
@@ -118,6 +121,43 @@ for more details.
 
 You can find more details about user creation and initial configuration in this
 [test file](https://github.com/stacklok/toolhive-registry-server/blob/301ccf4e3ad13daad28be7b669d8e5fca337ec14/cmd/thv-registry-api/app/serve_test.go#L56-L103).
+
+## Dynamic authentication
+
+As an alternative to pgpass files, you can use dynamic authentication to
+generate database credentials at runtime. This is useful for cloud-hosted
+databases that support IAM-based authentication.
+
+### AWS RDS IAM authentication
+
+When running on AWS, you can authenticate to RDS using IAM credentials instead
+of static passwords. The server generates short-lived authentication tokens
+using the IAM role attached to the workload.
+
+```yaml title="config-aws-rds.yaml"
+database:
+  host: my-database.123456789.us-east-1.rds.amazonaws.com
+  port: 5432
+  user: my_app_user
+  database: registry
+  sslMode: require
+  dynamicAuth:
+    awsRdsIam:
+      region: us-east-1
+```
+
+**Configuration options:**
+
+- `dynamicAuth.awsRdsIam.region` (required): The AWS region of the RDS instance.
+  Set to `detect` to automatically determine the region from the EC2 instance
+  metadata service (IMDS).
+
+:::note
+
+Dynamic authentication replaces pgpass files. The server generates
+authentication tokens automatically before each connection.
+
+:::
 
 ## Database migrations
 
