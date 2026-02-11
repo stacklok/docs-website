@@ -178,7 +178,6 @@ const sidebars: SidebarsConfig = {
       items: [
         'toolhive/guides-vmcp/intro',
         'toolhive/guides-vmcp/configuration',
-        'toolhive/guides-vmcp/performance',
         'toolhive/guides-vmcp/backend-discovery',
         'toolhive/guides-vmcp/authentication',
         'toolhive/guides-vmcp/tool-aggregation',
@@ -186,6 +185,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-vmcp/failure-handling',
         'toolhive/guides-vmcp/telemetry-and-metrics',
         'toolhive/guides-vmcp/audit-logging',
+        'toolhive/guides-vmcp/performance',
       ],
     },
 
