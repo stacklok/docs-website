@@ -41,27 +41,40 @@ flexible, and auditable. You don't need to add custom authentication or
 authorization logic to every server—ToolHive handles it for you, consistently
 and securely.
 
-## ToolHive vs. MCP specification
+## Why ToolHive centralizes authentication
 
 The
-[official Model Context Protocol (MCP) specification](https://modelcontextprotocol.io/docs/tutorials/security/authorization)
-recommends OAuth 2.1-based authorization for HTTP transports, which requires
-each MCP server to act as an OAuth resource server that validates access tokens
-and enforces scope-based access control. ToolHive takes a different approach: it
-centralizes authentication and authorization in its proxy layer, using
-OAuth/OIDC for authentication and Cedar for fine-grained authorization. This
-means you don't need to implement token validation or scope management in every
-server—just configure ToolHive with your IdP and write clear Cedar policies.
-This approach is more flexible, secure, and easier to manage for you and your
-team.
+[official MCP specification](https://modelcontextprotocol.io/docs/tutorials/security/authorization)
+recommends OAuth 2.1-based authorization for HTTP transports, where each MCP
+server acts as an OAuth resource server. In practice, this model creates
+significant operational challenges:
+
+- **OAuth client registration burden:** OAuth 2.0 requires pre-registered
+  redirect URIs at each identity provider. Many providers—such as Google,
+  GitHub, and Atlassian—require manual registration of OAuth clients to obtain a
+  client ID and client secret. If each user client (for example, an IDE) were
+  its own OAuth client, the registration burden would be impractical at scale.
+- **No federation with external services:** While token exchange (RFC 8693) and
+  federated identity providers work when the upstream service is in the same
+  trust domain, many MCP servers need to access external services like GitHub,
+  Google, or Atlassian APIs where no federation relationship exists.
+- **Per-server implementation cost:** Each MCP server would need to implement
+  its own token validation and scope management, duplicating security-critical
+  logic across servers.
+
+ToolHive addresses these challenges by centralizing authentication and
+authorization in its proxy layer. You configure ToolHive with your identity
+provider and write Cedar policies for fine-grained authorization—individual MCP
+servers don't need to implement token validation or scope management.
 
 With the [embedded authorization server](#embedded-authorization-server),
-ToolHive can also operate in a mode that aligns more closely with the MCP
-specification's OAuth model. In this mode, the proxy exposes standard OAuth
-endpoints (`/oauth/authorize`, `/oauth/token`,
-`/.well-known/oauth-authorization-server`) and delegates authentication to an
-upstream identity provider. This gives MCP clients a spec-compliant OAuth
-experience while ToolHive still centralizes the complexity.
+ToolHive can also operate in a mode that aligns with the MCP specification's
+OAuth model. The proxy exposes standard OAuth endpoints (`/oauth/authorize`,
+`/oauth/token`, `/.well-known/oauth-authorization-server`) and handles the full
+OAuth web flow—clients don't need to obtain or manage tokens externally.
+ToolHive delegates authentication to an upstream identity provider and issues
+its own tokens, giving MCP clients a spec-compliant OAuth experience while
+centralizing the complexity of client registration and token management.
 
 ## Authentication framework
 
@@ -172,8 +185,6 @@ deployments using the ToolHive Operator.
 This approach is designed for MCP servers that accept `Authorization: Bearer`
 tokens and is particularly useful when:
 
-- Your MCP clients support the MCP OAuth specification and expect OAuth
-  endpoints on the server (such as `/oauth/authorize` and `/oauth/token`)
 - You want ToolHive to handle the full OAuth flow rather than requiring clients
   to obtain tokens independently
 - You need to authenticate interactive users through a corporate identity
@@ -234,23 +245,38 @@ sequenceDiagram
   configuration).
 - **Configurable token lifespans:** Access tokens, refresh tokens, and
   authorization codes have configurable durations with sensible defaults.
+- **Dynamic Client Registration (DCR):** Supports OAuth 2.0 Dynamic Client
+  Registration (RFC 7591), allowing MCP clients to register automatically
+  without manual configuration at the identity provider.
+- **Direct upstream redirect:** The embedded authorization server redirects
+  clients directly to the upstream provider for authentication. This means the
+  upstream provider must be the service whose API the MCP server calls (for
+  example, GitHub or Atlassian). Chained authentication—where a client
+  authenticates with a corporate IdP like Okta, which then federates to an
+  external provider like GitHub—is not yet supported.
 - **Single upstream provider:** Currently supports one upstream identity
   provider per configuration.
 
-#### Comparing authentication models
+#### Choosing the right backend authentication model
 
-ToolHive supports two authentication models for different use cases:
+How you configure backend authentication depends on what the MCP server needs to
+call and how that backend service accepts credentials:
 
-- **External token validation** (`oidcConfig` only): Clients obtain tokens
-  independently from an external identity provider and present them to ToolHive
-  for validation. This is best for service-to-service authentication or when
-  clients already manage their own OAuth flows.
-- **Embedded authorization server** (`externalAuthConfigRef` + `oidcConfig`):
-  ToolHive runs its own OAuth authorization server, delegates user
-  authentication to an upstream identity provider, and issues JWTs that the
-  proxy validates via `oidcConfig` pointed at itself. This is best for
-  interactive user login flows or when MCP clients expect spec-compliant OAuth
-  endpoints.
+- **Static credentials or API keys:** If the MCP server only supports static
+  credentials or API keys, configure them in ToolHive directly—either as
+  environment variables, secrets, or injected headers. No token exchange or
+  embedded authorization server is needed.
+- **Token exchange:** If the MCP server makes authenticated API calls to a
+  backend service in the same trust domain as your corporate identity provider
+  (for example, an internal API that accepts tokens from your Okta or Entra ID
+  tenant), token exchange is a good fit. ToolHive exchanges the client's token
+  for a backend-scoped token using RFC 8693, preserving the user's identity
+  across services. See [Backend authentication](./backend-auth.mdx) for details.
+- **Embedded authorization server:** If the MCP server needs to call an external
+  API where no federation relationship exists—such as GitHub, Google, or
+  Atlassian APIs—the embedded authorization server is a good fit. It runs the
+  full OAuth web flow against the external provider, obtaining tokens that the
+  MCP server can use to access those APIs on behalf of the user.
 
 ### Identity providers
 
