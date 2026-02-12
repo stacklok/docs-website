@@ -68,11 +68,10 @@ account tokens for authentication.
 
 ### Approach 4: Embedded authorization server authentication
 
-Use this when your MCP clients support the MCP OAuth specification and you want
-ToolHive to handle the full OAuth flow, including redirecting users to an
-upstream identity provider for authentication. This approach is ideal when you
-need ToolHive to retrieve OAuth tokens from an upstream provider for MCP servers
-that accept `Authorization: Bearer` tokens.
+Use this when you want ToolHive to handle the full OAuth flow, including
+redirecting users to an upstream identity provider for authentication. This
+approach is ideal when you need ToolHive to retrieve OAuth tokens from an
+upstream provider for MCP servers that accept `Authorization: Bearer` tokens.
 
 For conceptual background, see
 [Embedded authorization server](../concepts/auth-framework.mdx#embedded-authorization-server).
@@ -450,17 +449,16 @@ spec:
       refreshTokenLifespan: '168h'
       authCodeLifespan: '10m'
     upstreamProviders:
-      - name: okta
+      - name: google
         type: oidc
         oidcConfig:
-          issuerUrl: 'https://dev-123456.okta.com/oauth2/default'
-          clientId: '<YOUR_OKTA_CLIENT_ID>'
+          issuerUrl: 'https://accounts.google.com'
+          clientId: '<YOUR_GOOGLE_CLIENT_ID>'
           clientSecretRef:
             name: upstream-idp-secret
             key: client-secret
           scopes:
             - openid
-            - offline_access
             - profile
             - email
 ```
@@ -481,13 +479,12 @@ kubectl apply -f embedded-auth-config.yaml
 
 **Step 5: Create the MCPServer resource**
 
-Create an `MCPServer` resource that references the embedded authorization server
-configuration. The MCPServer uses two fields together:
-
-- `externalAuthConfigRef`: references the embedded authorization server
-  configuration you created in step 4
-- `oidcConfig`: validates JWTs issued by the embedded authorization server, with
-  the issuer pointed at the embedded authorization server itself
+The MCPServer needs two configuration references: `externalAuthConfigRef`
+enables the embedded authorization server, and `oidcConfig` validates the JWTs
+that the embedded authorization server issues. Unlike approaches 1–3 where
+`oidcConfig` points to an external identity provider, here it points to the
+embedded authorization server itself—the `oidcConfig` issuer must match the
+`issuer` in your `MCPExternalAuthConfig`.
 
 ```yaml title="mcp-server-embedded-auth.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
@@ -498,7 +495,7 @@ metadata:
 spec:
   image: ghcr.io/stackloklabs/weather-mcp/server
   transport: streamable-http
-  port: 8080
+  proxyPort: 8080
   permissionProfile:
     type: builtin
     name: network
@@ -508,8 +505,9 @@ spec:
   # Validate JWTs issued by the embedded authorization server
   oidcConfig:
     type: inline
-    resourceUrl: 'https://mcp.example.com'
+    resourceUrl: 'https://mcp.example.com/mcp'
     inline:
+      # This must match the embedded authorization server issuer url
       issuer: 'https://mcp.example.com'
   resources:
     limits:
