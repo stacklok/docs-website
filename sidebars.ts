@@ -185,7 +185,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-vmcp/failure-handling',
         'toolhive/guides-vmcp/telemetry-and-metrics',
         'toolhive/guides-vmcp/audit-logging',
-        'toolhive/guides-vmcp/performance',
+        'toolhive/guides-vmcp/scaling-and-performance',
       ],
     },
 
