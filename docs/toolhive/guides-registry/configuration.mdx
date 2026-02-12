@@ -102,6 +102,7 @@ registries:
 - `tag` (optional): Tag name to pin to a specific version
 - `commit` (optional): Commit SHA to pin to a specific commit
 - `path` (required): Path to the registry file within the repository
+- `auth` (optional): Authentication for private repositories (see below)
 
 :::tip
 
@@ -110,6 +111,103 @@ multiple are specified, `commit` takes precedence over `tag`, which takes
 precedence over `branch`.
 
 :::
+
+#### Private repository authentication
+
+To access private Git repositories, configure the `auth` section with your
+credentials:
+
+```yaml title="config-git-private.yaml"
+registries:
+  - name: private-registry
+    format: toolhive
+    git:
+      repository: https://github.com/my-org/private-registry.git
+      branch: main
+      path: registry.json
+      # highlight-start
+      auth:
+        username: oauth2
+        passwordFile: /secrets/git/token
+      # highlight-end
+    syncPolicy:
+      interval: '30m'
+```
+
+**Authentication options:**
+
+- `auth.username` (required with `passwordFile`): Git username for HTTP Basic
+  authentication. For GitHub and GitLab, use `oauth2` as the username when
+  authenticating with a personal access token (PAT).
+- `auth.passwordFile` (required with `username`): Absolute path to a file
+  containing the Git password or token. Whitespace is trimmed from the file
+  content.
+
+:::warning
+
+Both `username` and `passwordFile` must be specified together. If only one is
+provided, the configuration will fail validation.
+
+:::
+
+**Using with Kubernetes secrets:**
+
+In Kubernetes deployments, mount a secret containing your Git token and
+reference the mount path:
+
+:::note
+
+This is not the full `Deployment` manifest and has been shortened to display the
+git credentials configuration
+
+:::
+
+```yaml title="registry-deployment.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-credentials
+type: Opaque
+stringData:
+  token: ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry-server
+spec:
+  ...
+  template:
+    spec:
+      containers:
+        - name: registry
+          volumeMounts:
+            - name: git-credentials
+              mountPath: /secrets/git
+              readOnly: true
+            - name: data
+              mountPath: /data
+              readOnly: false
+      volumes:
+        - name: git-credentials
+          secret:
+            secretName: git-credentials
+            items:
+              - key: token
+                path: token
+        - name: data
+          emptyDir: {}
+```
+
+:::note
+
+The `/data` mount path is used by the registry server in order to storage cloned
+Git repositories.
+
+:::
+
+Then reference `/secrets/git/token` as the `passwordFile` in your registry
+configuration.
 
 ### API endpoint source
 
