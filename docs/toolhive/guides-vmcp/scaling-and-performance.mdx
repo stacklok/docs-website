@@ -1,0 +1,81 @@
+---
+title: Scaling and Performance
+description:
+  How to scale Virtual MCP Server deployments vertically and horizontally.
+---
+
+This guide explains how to scale Virtual MCP Server (vMCP) deployments.
+
+## Vertical scaling
+
+Vertical scaling (increasing CPU/memory per instance) is the simplest approach
+and works for all use cases, including stateful backends.
+
+To increase resources, configure `podTemplateSpec` in your VirtualMCPServer:
+
+```yaml
+spec:
+  podTemplateSpec:
+    spec:
+      containers:
+        - name: vmcp
+          resources:
+            requests:
+              cpu: '500m'
+              memory: 512Mi
+            limits:
+              cpu: '1'
+              memory: 1Gi
+```
+
+Vertical scaling is recommended as the starting point for most deployments.
+
+## Horizontal scaling
+
+Horizontal scaling (adding more replicas) can improve availability and handle
+higher request volumes.
+
+### How to scale horizontally
+
+The VirtualMCPServer CRD does not have a `replicas` field. The operator creates
+a Deployment named `vmcp-<NAME>` (where `<NAME>` is your VirtualMCPServer name)
+with 1 replica and preserves the replicas count, allowing you to manage scaling
+separately.
+
+**Option 1: Manual scaling**
+
+```bash
+kubectl scale deployment vmcp-<vmcp-name> -n <NAMESPACE> --replicas=3
+```
+
+**Option 2: Autoscaling with HPA**
+
+```bash
+kubectl autoscale deployment vmcp-<vmcp-name> -n <NAMESPACE> \
+  --min=2 --max=5 --cpu-percent=70
+```
+
+### When horizontal scaling is challenging
+
+Horizontal scaling works well for **stateless backends** (fetch, search,
+read-only operations) where sessions can be resumed on any instance.
+
+However, **stateful backends** make horizontal scaling difficult:
+
+- **Stateful backends** (Playwright browser sessions, database connections, file
+  system operations) require requests to be routed to the same vMCP instance
+  that established the session
+- Requires session affinity configuration (which may not work reliably through
+  proxies)
+- Session resumption may not work reliably for stateful backends
+
+For stateful backends, vertical scaling or dedicated vMCP instances per team/use
+case are recommended instead of horizontal scaling.
+
+## Related information
+
+- [Introduction to vMCP](./intro.mdx)
+- [Configure health checks](./configuration.mdx#health-checks)
+- [Backend discovery modes](./backend-discovery.mdx)
+- [Telemetry and metrics](./telemetry-and-metrics.mdx)
+- [VirtualMCPServer CRD specification](../reference/crd-spec.md#apiv1alpha1virtualmcpserver)
