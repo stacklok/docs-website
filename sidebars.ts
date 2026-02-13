@@ -39,7 +39,7 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Guides: ToolHive UI',
+      label: 'ToolHive UI',
       description: 'How to use the ToolHive desktop application',
       link: {
         type: 'doc',
@@ -74,7 +74,7 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Guides: ToolHive CLI',
+      label: 'ToolHive CLI',
       description: 'How to use the ToolHive CLI for managing MCP servers',
       link: {
         type: 'doc',
@@ -145,7 +145,7 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Guides: Kubernetes Operator',
+      label: 'Kubernetes Operator',
       description: 'How to deploy and manage ToolHive on Kubernetes',
       link: {
         type: 'doc',
@@ -169,7 +169,7 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Guides: Virtual MCP Server',
+      label: 'Virtual MCP Server',
       description:
         'How to aggregate multiple MCP servers into a unified endpoint',
       link: {
@@ -192,7 +192,7 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Guides: Registry Server',
+      label: 'Registry Server',
       description:
         'How to deploy and use the ToolHive Registry server to discover and access MCP servers',
       link: {
@@ -259,7 +259,7 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Guides: MCP server usage',
+      label: 'MCP server guides',
       description:
         'How to configure and use MCP servers for different use cases',
       link: {
