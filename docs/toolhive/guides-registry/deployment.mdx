@@ -11,10 +11,6 @@ development to production Kubernetes clusters.
 The Registry server is designed to run as an independent deployment, possibly
 alongside the ToolHive Operator.
 
-Although it is possible to run ToolHive Registry to use an in-memory store, it
-is unreliable to run multiple replicas as they would not share state, and you
-should run it with a proper Postgres database.
-
 ### ToolHive Operator
 
 ToolHive Operator supports deploying the Registry server. See
@@ -181,7 +177,7 @@ Apply the deployment:
 kubectl apply -f deployment.yaml
 ```
 
-## Workload Discovery
+## Workload discovery
 
 Kubernetes workload discovery works by looking for annotations in a specific set
 of workloads. The types being watched are
@@ -189,17 +185,30 @@ of workloads. The types being watched are
 [`MCPRemoteProxy`](../guides-k8s/remote-mcp-proxy.mdx), and
 [`VirtualMCPServer`](../guides-vmcp/configuration.mdx).
 
-:::note
+By default, the Registry server discovers resources in all namespaces
+(cluster-wide). You can restrict discovery to specific namespaces by setting the
+`THV_REGISTRY_WATCH_NAMESPACE` environment variable to a comma-separated list of
+namespace names in your deployment:
 
-Currently, only resources in the same namespace as the Registry server are
-discovered.
+```yaml
+env:
+  - name: THV_REGISTRY_WATCH_NAMESPACE
+    value: toolhive-system,production
+```
 
-:::
+When `THV_REGISTRY_WATCH_NAMESPACE` is set, only resources in the specified
+namespaces are discovered. When unset, the server watches all namespaces.
 
-This feature requires the Registry server to be granted access to those
-resources.
+Both RBAC options below use the same ClusterRole for workload discovery and a
+separate namespace-scoped Role for leader election. The difference is how the
+ClusterRole is bound.
 
-```yaml title="registry-service-account.yaml"
+### Cluster-wide discovery (default)
+
+For cluster-wide discovery, apply the following resources:
+
+{/* prettier-ignore */}
+```yaml title="registry-rbac-cluster.yaml"
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -208,13 +217,13 @@ metadata:
   name: registry-api
   namespace: toolhive-system
 ---
+# Manager role for workload discovery (ToolHive CRDs + services)
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
   labels:
     toolhive.stacklok.io/registry-name: registry-api
-  name: registry-api
-  namespace: toolhive-system
+  name: registry-api-manager
 rules:
   - apiGroups:
       - toolhive.stacklok.dev
@@ -234,6 +243,16 @@ rules:
       - get
       - list
       - watch
+---
+# Leader election role (namespace-scoped, always required)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: registry-api
+  name: registry-api-leader-election
+  namespace: toolhive-system
+rules:
   - apiGroups:
       - ''
     resources:
@@ -266,22 +285,70 @@ rules:
       - create
       - patch
 ---
+# Leader election binding (always namespace-scoped)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   labels:
     toolhive.stacklok.io/registry-name: registry-api
-  name: registry-api
+  name: registry-api-leader-election
   namespace: toolhive-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: registry-api
+  name: registry-api-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: registry-api
+    namespace: toolhive-system
+---
+# Cluster-wide binding for the manager role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: registry-api
+  name: registry-api-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: registry-api-manager
 subjects:
   - kind: ServiceAccount
     name: registry-api
     namespace: toolhive-system
 ```
+
+### Namespace-scoped discovery
+
+When `THV_REGISTRY_WATCH_NAMESPACE` is set, use the same ClusterRole but bind it
+with a RoleBinding in each watched namespace instead of a ClusterRoleBinding.
+Create one RoleBinding per namespace:
+
+{/* prettier-ignore */}
+```yaml title="registry-rbac-namespace.yaml"
+# Use the same ServiceAccount, ClusterRole, and leader election
+# Role/RoleBinding from the cluster-wide example above.
+# Replace the ClusterRoleBinding with one RoleBinding per namespace:
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: registry-api
+  name: registry-api-manager
+  namespace: toolhive-system # repeat for each watched namespace
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: registry-api-manager
+subjects:
+  - kind: ServiceAccount
+    name: registry-api
+    namespace: toolhive-system
+```
+
+### Applying the service account
 
 Apply the service account to the registry server deployment in the
 `spec.template.spec` section:
@@ -292,3 +359,12 @@ spec:
     spec:
       serviceAccountName: registry-api
 ```
+
+:::tip
+
+If you run multiple Registry Server instances in the same namespace, set the
+`THV_REGISTRY_LEADER_ELECTION_ID` environment variable to a unique value for
+each instance to avoid leader election lease conflicts. The Helm chart handles
+this automatically.
+
+:::

@@ -44,7 +44,7 @@ registries:
 auth:
   mode: anonymous
 
-# Optional: Database configuration
+# Database configuration (required)
 database:
   host: localhost
   port: 5432
@@ -54,14 +54,20 @@ database:
   maxOpenConns: 25
   maxIdleConns: 5
   connMaxLifetime: '5m'
+  maxMetaSize: 65536
+  # Optional: dynamic authentication (alternative to pgpass)
+  # dynamicAuth:
+  #   awsRdsIam:
+  #     region: us-east-1
 ```
 
 ## Command-line flags
 
-| Flag        | Description                     | Required | Default |
-| ----------- | ------------------------------- | -------- | ------- |
-| `--config`  | Path to YAML configuration file | Yes      | -       |
-| `--address` | Server listen address           | No       | `:8080` |
+| Flag          | Description                                 | Required | Default |
+| ------------- | ------------------------------------------- | -------- | ------- |
+| `--config`    | Path to YAML configuration file             | Yes      | -       |
+| `--address`   | Server listen address                       | No       | `:8080` |
+| `--auth-mode` | Override auth mode (`anonymous` or `oauth`) | No       | -       |
 
 ## Registry data formats
 
@@ -101,7 +107,11 @@ registries:
 - `branch` (optional): Branch name to use (defaults to `main`)
 - `tag` (optional): Tag name to pin to a specific version
 - `commit` (optional): Commit SHA to pin to a specific commit
-- `path` (required): Path to the registry file within the repository
+- `path` (optional): Path to the registry file within the repository (defaults
+  to `registry.json`)
+- `auth.username` (optional): Username for Git authentication
+- `auth.passwordFile` (optional): Path to a file containing the Git password or
+  token
 
 :::tip
 
@@ -221,12 +231,11 @@ Server standalone (without the operator).
 
 :::
 
-:::note
-
-Currently, only resources in the same namespace as the Registry Server are
-discovered.
-
-:::
+By default, the Registry server discovers resources in all namespaces
+(cluster-wide). You can restrict discovery to specific namespaces using the
+`THV_REGISTRY_WATCH_NAMESPACE` environment variable. See
+[Workload discovery](./deployment.mdx#workload-discovery) for configuration
+details and RBAC requirements.
 
 ```yaml title="config-kubernetes.yaml"
 registries:
@@ -258,7 +267,7 @@ apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
   name: my-mcp-server
-  namespace: toolhive-system # Must match Registry Server namespace
+  namespace: toolhive-system
   annotations:
     toolhive.stacklok.dev/registry-export: 'true'
     toolhive.stacklok.dev/registry-url: 'https://mcp.example.com/servers/my-mcp-server'
@@ -279,6 +288,7 @@ spec:
 | `toolhive.stacklok.dev/registry-export`      | Yes      | Must be `"true"` to include in registry                                           |
 | `toolhive.stacklok.dev/registry-url`         | Yes      | The external endpoint URL for this server                                         |
 | `toolhive.stacklok.dev/registry-description` | Yes      | Description text displayed in registry listings                                   |
+| `toolhive.stacklok.dev/tools`                | No       | JSON array of tool name strings (e.g., `["get_weather","get_forecast"]`)          |
 | `toolhive.stacklok.dev/tool-definitions`     | No       | JSON array of tool definitions with MCP tool metadata (name, description, schema) |
 
 **Tool definitions format:**
@@ -303,7 +313,7 @@ URL within the publisher-provided metadata:
 ```json
 {
   "_meta": {
-    "publisher-provided": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
       "io.github.stacklok": {
         "https://mcp.example.com/servers/my-mcp-server": {
           "tool_definitions": [...]
@@ -410,9 +420,9 @@ information on configuring each mode.
 
 ## Database configuration
 
-The server optionally supports PostgreSQL database connectivity for storing
-registry state and metadata. See the [Database configuration](./database.mdx)
-guide for detailed information.
+The server requires a PostgreSQL database for storing registry state and
+metadata. See the [Database configuration](./database.mdx) guide for detailed
+information.
 
 ## Telemetry configuration
 
@@ -425,4 +435,4 @@ distributed tracing and metrics collection. See the
 - [Configure authentication](./authentication.mdx) for secure access
 - [Configure telemetry](./telemetry-metrics.mdx) for metrics and tracing
 - [Deploy the server](./deployment.mdx) with your configuration
-- [Configure database storage](./database.mdx) for production use
+- [Configure database storage](./database.mdx)
