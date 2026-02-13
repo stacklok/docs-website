@@ -230,19 +230,17 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Tutorials',
-      description: 'Step-by-step guides to using ToolHive effectively',
+      label: 'Integrations',
+      description: 'Connect ToolHive with third-party tools and services',
       link: {
         type: 'generated-index',
-        slug: 'toolhive/tutorials',
+        slug: 'toolhive/integrations',
         description:
-          'Learn how to use ToolHive with these step-by-step tutorials.',
+          'Guides for integrating ToolHive with third-party tools and services like OpenTelemetry, HashiCorp Vault, and ngrok.',
       },
       items: [
-        'toolhive/tutorials/mcp-optimizer',
-        'toolhive/tutorials/custom-registry',
-        'toolhive/tutorials/vault-integration',
         'toolhive/tutorials/opentelemetry',
+        'toolhive/tutorials/vault-integration',
         'toolhive/tutorials/k8s-ingress-ngrok',
       ],
     },
