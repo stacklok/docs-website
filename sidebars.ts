@@ -195,11 +195,12 @@ const sidebars: SidebarsConfig = {
         id: 'toolhive/guides-registry/index',
       },
       items: [
+        'toolhive/guides-registry/intro',
+        'toolhive/guides-registry/deployment',
         'toolhive/guides-registry/configuration',
         'toolhive/guides-registry/authentication',
         'toolhive/guides-registry/database',
         'toolhive/guides-registry/telemetry-metrics',
-        'toolhive/guides-registry/deployment',
         'toolhive/reference/registry-api',
       ],
     },
