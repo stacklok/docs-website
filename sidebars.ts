@@ -19,33 +19,14 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Get started',
-      description: 'Step-by-step guides to get started with ToolHive',
-      link: {
-        type: 'generated-index',
-        slug: 'toolhive/quickstart',
-        description:
-          'Learn how to use ToolHive with these step-by-step tutorials.',
-      },
-      collapsed: false,
-      items: [
-        'toolhive/tutorials/quickstart-ui',
-        'toolhive/tutorials/quickstart-cli',
-        'toolhive/tutorials/quickstart-k8s',
-      ],
-    },
-
-    'toolhive/reference/client-compatibility',
-
-    {
-      type: 'category',
-      label: 'Guides: ToolHive UI',
+      label: 'ToolHive UI',
       description: 'How to use the ToolHive desktop application',
       link: {
         type: 'doc',
         id: 'toolhive/guides-ui/index',
       },
       items: [
+        'toolhive/tutorials/quickstart-ui',
         'toolhive/guides-ui/install',
         'toolhive/guides-ui/registry',
         {
@@ -74,13 +55,14 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Guides: ToolHive CLI',
+      label: 'ToolHive CLI',
       description: 'How to use the ToolHive CLI for managing MCP servers',
       link: {
         type: 'doc',
         id: 'toolhive/guides-cli/index',
       },
       items: [
+        'toolhive/tutorials/quickstart-cli',
         'toolhive/guides-cli/install',
         'toolhive/guides-cli/registry',
         {
@@ -102,7 +84,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-cli/client-configuration',
         {
           type: 'category',
-          label: 'Custom permissions',
+          label: 'Permissions and security',
           description:
             'How to configure filesystem and network access for MCP servers',
           collapsed: false,
@@ -117,12 +99,31 @@ const sidebars: SidebarsConfig = {
             'toolhive/guides-cli/network-isolation',
           ],
         },
-        'toolhive/guides-cli/telemetry-and-metrics',
-        'toolhive/guides-cli/auth',
-        'toolhive/guides-cli/token-exchange',
-        'toolhive/guides-cli/test-mcp-servers',
-        'toolhive/guides-cli/build-containers',
-        'toolhive/guides-cli/advanced-cicd',
+        {
+          type: 'category',
+          label: 'Advanced workflows',
+          description: 'Build, test, secure, and automate',
+          collapsed: true,
+          items: [
+            'toolhive/guides-cli/auth',
+            'toolhive/guides-cli/token-exchange',
+            'toolhive/guides-cli/telemetry-and-metrics',
+            'toolhive/guides-cli/test-mcp-servers',
+            'toolhive/guides-cli/build-containers',
+            'toolhive/guides-cli/advanced-cicd',
+            'toolhive/tutorials/custom-registry',
+            {
+              type: 'category',
+              label: 'API server',
+              description: 'How to set up and use the ToolHive API server',
+              link: {
+                type: 'doc',
+                id: 'toolhive/guides-cli/api-server',
+              },
+              items: ['toolhive/reference/api'],
+            },
+          ],
+        },
         {
           type: 'category',
           label: 'Command reference',
@@ -130,22 +131,12 @@ const sidebars: SidebarsConfig = {
           collapsed: true,
           items: buildCliReferenceSidebar(),
         },
-        {
-          type: 'category',
-          label: 'API server',
-          description: 'How to set up and use the ToolHive API server',
-          link: {
-            type: 'doc',
-            id: 'toolhive/guides-cli/api-server',
-          },
-          items: ['toolhive/reference/api'],
-        },
       ],
     },
 
     {
       type: 'category',
-      label: 'Guides: Kubernetes Operator',
+      label: 'Kubernetes Operator',
       description: 'How to deploy and manage ToolHive on Kubernetes',
       link: {
         type: 'doc',
@@ -153,15 +144,16 @@ const sidebars: SidebarsConfig = {
       },
       items: [
         'toolhive/guides-k8s/intro',
+        'toolhive/tutorials/quickstart-k8s',
         'toolhive/guides-k8s/deploy-operator',
         'toolhive/guides-k8s/run-mcp-k8s',
         'toolhive/guides-k8s/remote-mcp-proxy',
         'toolhive/guides-k8s/connect-clients',
         'toolhive/guides-k8s/customize-tools',
-        'toolhive/guides-k8s/telemetry-and-metrics',
-        'toolhive/guides-k8s/logging',
         'toolhive/guides-k8s/auth-k8s',
         'toolhive/guides-k8s/token-exchange-k8s',
+        'toolhive/guides-k8s/telemetry-and-metrics',
+        'toolhive/guides-k8s/logging',
         'toolhive/guides-k8s/deploy-registry',
         'toolhive/reference/crd-spec',
       ],
@@ -169,7 +161,7 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Guides: Virtual MCP Server',
+      label: 'Virtual MCP Server',
       description:
         'How to aggregate multiple MCP servers into a unified endpoint',
       link: {
@@ -178,6 +170,7 @@ const sidebars: SidebarsConfig = {
       },
       items: [
         'toolhive/guides-vmcp/intro',
+        'toolhive/tutorials/quickstart-vmcp',
         'toolhive/guides-vmcp/configuration',
         'toolhive/guides-vmcp/backend-discovery',
         'toolhive/guides-vmcp/authentication',
@@ -192,7 +185,7 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Guides: Registry Server',
+      label: 'Registry Server',
       description:
         'How to deploy and use the ToolHive Registry server to discover and access MCP servers',
       link: {
@@ -200,11 +193,12 @@ const sidebars: SidebarsConfig = {
         id: 'toolhive/guides-registry/index',
       },
       items: [
+        'toolhive/guides-registry/intro',
+        'toolhive/guides-registry/deployment',
         'toolhive/guides-registry/configuration',
         'toolhive/guides-registry/authentication',
         'toolhive/guides-registry/database',
         'toolhive/guides-registry/telemetry-metrics',
-        'toolhive/guides-registry/deployment',
         'toolhive/reference/registry-api',
       ],
     },
@@ -234,32 +228,24 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
-      label: 'Tutorials',
-      description: 'Step-by-step guides to using ToolHive effectively',
+      label: 'Integrations',
+      description: 'Connect ToolHive with third-party tools and services',
       link: {
         type: 'generated-index',
-        slug: 'toolhive/tutorials',
+        slug: 'toolhive/integrations',
         description:
-          'Learn how to use ToolHive with these step-by-step tutorials.',
+          'Guides for integrating ToolHive with third-party tools and services like OpenTelemetry, HashiCorp Vault, and ngrok.',
       },
       items: [
-        {
-          type: 'link',
-          href: '/toolhive/quickstart',
-          label: 'Quickstart guides',
-        },
-        'toolhive/tutorials/quickstart-vmcp',
-        'toolhive/tutorials/mcp-optimizer',
-        'toolhive/tutorials/custom-registry',
-        'toolhive/tutorials/vault-integration',
         'toolhive/tutorials/opentelemetry',
+        'toolhive/tutorials/vault-integration',
         'toolhive/tutorials/k8s-ingress-ngrok',
       ],
     },
 
     {
       type: 'category',
-      label: 'Guides: MCP server usage',
+      label: 'MCP server guides',
       description:
         'How to configure and use MCP servers for different use cases',
       link: {
@@ -270,6 +256,24 @@ const sidebars: SidebarsConfig = {
           'These guides provide step-by-step instructions for using various MCP servers with ToolHive. They cover everything from installation to advanced configuration options.',
       },
       items: [{ type: 'autogenerated', dirName: 'toolhive/guides-mcp' }],
+    },
+
+    {
+      type: 'category',
+      label: 'Reference',
+      description: 'Technical reference material',
+      link: {
+        type: 'generated-index',
+        slug: 'toolhive/reference',
+        description:
+          'Technical reference material for ToolHive, including client compatibility, API specifications, and registry schemas.',
+      },
+      collapsed: true,
+      items: [
+        'toolhive/reference/client-compatibility',
+        'toolhive/reference/registry-schema-toolhive',
+        'toolhive/reference/registry-schema-upstream',
+      ],
     },
 
     'toolhive/faq',

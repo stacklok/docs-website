@@ -216,8 +216,8 @@ const config: Config = {
               href: '/toolhive',
             },
             {
-              label: 'Tutorials',
-              to: 'toolhive/tutorials',
+              label: 'Integrations',
+              to: 'toolhive/integrations',
             },
             {
               label: 'ToolHive UI',
