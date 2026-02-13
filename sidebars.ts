@@ -17,24 +17,6 @@ const sidebars: SidebarsConfig = {
   toolhiveSidebar: [
     'toolhive/index',
 
-    {
-      type: 'category',
-      label: 'Get started',
-      description: 'Step-by-step guides to get started with ToolHive',
-      link: {
-        type: 'generated-index',
-        slug: 'toolhive/quickstart',
-        description:
-          'Learn how to use ToolHive with these step-by-step tutorials.',
-      },
-      collapsed: false,
-      items: [
-        'toolhive/tutorials/quickstart-ui',
-        'toolhive/tutorials/quickstart-cli',
-        'toolhive/tutorials/quickstart-k8s',
-      ],
-    },
-
     'toolhive/reference/client-compatibility',
 
     {
@@ -46,6 +28,7 @@ const sidebars: SidebarsConfig = {
         id: 'toolhive/guides-ui/index',
       },
       items: [
+        'toolhive/tutorials/quickstart-ui',
         'toolhive/guides-ui/install',
         'toolhive/guides-ui/registry',
         {
@@ -81,6 +64,7 @@ const sidebars: SidebarsConfig = {
         id: 'toolhive/guides-cli/index',
       },
       items: [
+        'toolhive/tutorials/quickstart-cli',
         'toolhive/guides-cli/install',
         'toolhive/guides-cli/registry',
         {
@@ -153,6 +137,7 @@ const sidebars: SidebarsConfig = {
       },
       items: [
         'toolhive/guides-k8s/intro',
+        'toolhive/tutorials/quickstart-k8s',
         'toolhive/guides-k8s/deploy-operator',
         'toolhive/guides-k8s/run-mcp-k8s',
         'toolhive/guides-k8s/remote-mcp-proxy',
@@ -178,6 +163,7 @@ const sidebars: SidebarsConfig = {
       },
       items: [
         'toolhive/guides-vmcp/intro',
+        'toolhive/tutorials/quickstart-vmcp',
         'toolhive/guides-vmcp/configuration',
         'toolhive/guides-vmcp/backend-discovery',
         'toolhive/guides-vmcp/authentication',
@@ -243,12 +229,6 @@ const sidebars: SidebarsConfig = {
           'Learn how to use ToolHive with these step-by-step tutorials.',
       },
       items: [
-        {
-          type: 'link',
-          href: '/toolhive/quickstart',
-          label: 'Quickstart guides',
-        },
-        'toolhive/tutorials/quickstart-vmcp',
         'toolhive/tutorials/mcp-optimizer',
         'toolhive/tutorials/custom-registry',
         'toolhive/tutorials/vault-integration',
