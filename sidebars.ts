@@ -239,6 +239,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'toolhive/tutorials/opentelemetry',
         'toolhive/tutorials/vault-integration',
+        'toolhive/tutorials/aws-sts-integration',
         'toolhive/tutorials/k8s-ingress-ngrok',
       ],
     },
