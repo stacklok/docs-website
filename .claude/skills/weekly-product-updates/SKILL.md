@@ -224,7 +224,7 @@ description:
 
 [Repeat for each component with marketing-worthy changes. Use ### headings.]
 
-### Getting started
+**Getting started**
 
 For detailed release notes, check the project repositories:
 
