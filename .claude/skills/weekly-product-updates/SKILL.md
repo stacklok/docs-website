@@ -55,7 +55,7 @@ Note: The `toolhive` repo contains both Runtimes and vMCP components -- distingu
 ```bash
 if [ -z "$ARGUMENTS" ] || [ "$ARGUMENTS" = "last-week" ]; then
   END_DATE=$(date +%Y-%m-%d)
-  START_DATE=$(date -v-7d +%Y-%m-%d 2>/dev/null || date -d '7 days ago' +%Y-%m-%d)
+  START_DATE=$(date -v-7d +%Y-%m-%d 2>/dev/null || date -d '7 days ago' +%Y-%m-%d 2>/dev/null)
 else
   START_DATE=$(echo "$ARGUMENTS" | cut -d'.' -f1)
   END_DATE=$(echo "$ARGUMENTS" | cut -d'.' -f3)
