@@ -18,8 +18,10 @@ Before starting this tutorial, ensure you have:
 - A Kubernetes cluster with the ToolHive Operator installed (see the
   [Kubernetes quickstart guide](./quickstart-k8s.mdx))
 - `kubectl` configured to access your cluster
-- An AWS account with permissions to create IAM roles, policies, and OIDC
-  identity providers
+- The
+  [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+  installed and configured with an AWS account that has permissions to create
+  IAM roles, policies, and OIDC identity providers
 - An OIDC identity provider (such as Okta, Auth0, Microsoft Entra ID, or
   Keycloak) that your users authenticate with
 - Basic familiarity with AWS IAM concepts and OIDC
@@ -94,8 +96,9 @@ aws iam create-open-id-connect-provider \
 
 Replace the placeholders:
 
-- `<YOUR_OIDC_ISSUER>` - your identity provider's issuer URL (for example,
-  `https://dev-123456.okta.com/oauth2/default`)
+- `<YOUR_OIDC_ISSUER>` - your identity provider's issuer identifier without the
+  `https://` scheme. Include any path components (for example,
+  `dev-123456.okta.com/oauth2/default`)
 - `<YOUR_OIDC_AUDIENCE>` - the audience claim in your OIDC tokens that
   identifies this proxy (for example, `toolhive-aws-proxy`)
 
@@ -127,7 +130,7 @@ The `aws-mcp` namespace defines three actions:
 
 - `InvokeMcp` - required to connect and discover available tools
 - `CallReadOnlyTool` - search documentation, list regions, get CLI suggestions
-  (7 of 9 tools)
+  (most tools)
 - `CallReadWriteTool` - execute real AWS API calls via the `aws___call_aws` tool
   (requires additional service permissions)
 
@@ -147,12 +150,12 @@ condition rejects tokens meant for other services:
     {
       "Effect": "Allow",
       "Principal": {
-        "Federated": "arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:oidc-provider/<YOUR_OIDC_ISSUER_HOST>"
+        "Federated": "arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:oidc-provider/<YOUR_OIDC_ISSUER>"
       },
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
         "StringEquals": {
-          "<YOUR_OIDC_ISSUER_HOST>:aud": "<YOUR_OIDC_AUDIENCE>"
+          "<YOUR_OIDC_ISSUER>:aud": "<YOUR_OIDC_AUDIENCE>"
         }
       }
     }
@@ -244,24 +247,12 @@ aws iam put-role-policy \
   --policy-document file://s3-readonly-permissions.json
 ```
 
-:::info[How role selection works]
-
-When a request arrives, ToolHive evaluates your role mappings in priority order
-(lower number = higher priority). The first matching rule determines which IAM
-role to assume. If no mapping matches, the fallback role is used.
-
-For example, if a user belongs to both `s3-readers` and `developers` groups, and
-`s3-readers` has a lower priority number, ToolHive selects the S3 read-only
-role.
-
-:::
-
 ## Step 3: Create the MCPExternalAuthConfig
 
 Create an `MCPExternalAuthConfig` resource that defines how ToolHive exchanges
 OIDC tokens for AWS credentials.
 
-```yaml {4,7,10,13-17} title="aws-sts-auth-config.yaml"
+```yaml {4,7} title="aws-sts-auth-config.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPExternalAuthConfig
 metadata:
@@ -289,6 +280,18 @@ Replace the placeholders:
 - `<YOUR_AWS_REGION>` - the AWS region (for example, `us-east-1`)
 - `<YOUR_AWS_ACCOUNT_ID>` - your 12-digit AWS account ID
 
+:::info[How role selection works]
+
+When a request arrives, ToolHive evaluates your role mappings in priority order
+(lower number = higher priority). The first matching rule determines which IAM
+role to assume. If no mapping matches, the fallback role is used.
+
+For example, if a user belongs to both `s3-readers` and `developers` groups, and
+`s3-readers` has a lower priority number, ToolHive selects the S3 read-only
+role.
+
+:::
+
 Apply the configuration:
 
 ```bash
@@ -297,10 +300,22 @@ kubectl apply -f aws-sts-auth-config.yaml
 
 :::info[What's happening?]
 
-The `roleMappings` field uses simple claim matching by default: if the value in
-the `roleClaim` JWT claim (here, `groups`) contains `s3-readers`, ToolHive
-assumes the S3 read-only role. For more complex matching logic, you can use CEL
-expressions in the `matcher` field instead of `claim`:
+ToolHive checks the `groups` claim in the JWT by default (controlled by the
+`roleClaim` field, which defaults to `"groups"` when omitted). Each mapping's
+`claim` field is the **value** to match against that claim. In this example, if
+the user's JWT contains `"s3-readers"` in their `groups` array, ToolHive assumes
+the S3 read-only role.
+
+If your identity provider uses a different claim name (e.g., `roles` or
+`memberOf`), add the `roleClaim` field:
+
+```yaml
+awsSts:
+  roleClaim: roles # look at the "roles" claim instead of "groups"
+```
+
+For more complex matching logic, use CEL expressions in the `matcher` field
+instead of `claim`:
 
 ```yaml
 roleMappings:
@@ -352,8 +367,7 @@ spec:
       memory: 128Mi
 ```
 
-Replace the placeholders with your OIDC provider's configuration. Update the
-region in `remoteURL` if you're not using `us-east-1`.
+Replace the placeholders with your OIDC provider's configuration.
 
 Apply the proxy:
 
@@ -375,7 +389,11 @@ When you apply this resource, the ToolHive Operator:
 ## Step 5: Expose the proxy
 
 To make the proxy accessible to clients outside the cluster, create Gateway and
-HTTPRoute resources:
+HTTPRoute resources. This example uses Kubernetes
+[Gateway API](https://gateway-api.sigs.k8s.io/); if your cluster uses a
+traditional Ingress controller, see
+[Connect clients to MCP servers](../guides-k8s/connect-clients.mdx) for
+alternatives.
 
 ```yaml title="aws-mcp-gateway.yaml"
 apiVersion: gateway.networking.k8s.io/v1
@@ -424,8 +442,9 @@ configuration.
 kubectl apply -f aws-mcp-gateway.yaml
 ```
 
-For detailed guidance on setting up ingress, including ngrok for development,
-see
+For more on exposing MCP servers, see
+[Connect clients to MCP servers](../guides-k8s/connect-clients.mdx). For a
+worked example using ngrok for development, see
 [Configure secure ingress for MCP servers on Kubernetes](./k8s-ingress-ngrok.mdx).
 
 ## Step 6: Verify the integration
@@ -458,9 +477,9 @@ curl -s -o /dev/null -w "%{http_code}" \
 ```
 
 Now test with a valid OIDC token. This example uses
-[oauth2c](https://github.com/cloudentity/oauth2c) to obtain a token via the
-authorization code flow, but any method that produces a valid access token from
-your identity provider will work:
+[oauth2c](https://github.com/cloudentity/oauth2c) and
+[jq](https://jqlang.github.io/jq/) to obtain and extract a token, but any method
+that produces a valid access token from your identity provider will work:
 
 ```bash
 TOKEN=$(oauth2c https://<YOUR_OIDC_ISSUER> \
@@ -514,7 +533,7 @@ kubectl delete gateway aws-mcp-gateway -n toolhive-system
 kubectl delete httproute aws-mcp-route -n toolhive-system
 ```
 
-Optionally, remove the AWS IAM resources:
+Remove the AWS IAM resources:
 
 ```bash
 aws iam delete-role-policy \
@@ -528,7 +547,7 @@ aws iam delete-role --role-name S3ReadOnlyMCPRole
 
 aws iam delete-open-id-connect-provider \
   --open-id-connect-provider-arn \
-  arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:oidc-provider/<YOUR_OIDC_ISSUER_HOST>
+  arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:oidc-provider/<YOUR_OIDC_ISSUER>
 ```
 
 ## What's next?
