@@ -650,6 +650,9 @@ _Appears in:_
 | `enablePrometheusMetricsPath` _boolean_ | EnablePrometheusMetricsPath controls whether to expose Prometheus-style /metrics endpoint.<br />The metrics are served on the main transport port at /metrics.<br />This is separate from OTLP metrics which are sent to the Endpoint. | false | Optional: \{\} <br /> |
 | `environmentVariables` _string array_ | EnvironmentVariables is a list of environment variable names that should be<br />included in telemetry spans as attributes. Only variables in this list will<br />be read from the host machine and included in spans for observability.<br />Example: ["NODE_ENV", "DEPLOYMENT_ENV", "SERVICE_VERSION"] |  | Optional: \{\} <br /> |
 | `customAttributes` _object (keys:string, values:string)_ | CustomAttributes contains custom resource attributes to be added to all telemetry signals.<br />These are parsed from CLI flags (--otel-custom-attributes) or environment variables<br />(OTEL_RESOURCE_ATTRIBUTES) as key=value pairs. |  | Optional: \{\} <br /> |
+| `useLegacyAttributes` _boolean_ | UseLegacyAttributes controls whether legacy (pre-MCP OTEL semconv) attribute names<br />are emitted alongside the new standard attribute names. When true, spans include both<br />old and new attribute names for backward compatibility with existing dashboards.<br />Currently defaults to true; this will change to false in a future release. | true | Optional: \{\} <br /> |
+
+
 
 
 
@@ -742,6 +745,30 @@ _Appears in:_
 | `readySince` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#time-v1-meta)_ | ReadySince is the timestamp when the API became ready |  | Optional: \{\} <br /> |
 
 
+#### api.v1alpha1.AWSStsConfig
+
+
+
+AWSStsConfig holds configuration for AWS STS authentication with SigV4 request signing.
+This configuration exchanges incoming authentication tokens (typically OIDC JWT) for AWS STS
+temporary credentials, then signs requests to AWS services using SigV4.
+
+
+
+_Appears in:_
+- [api.v1alpha1.MCPExternalAuthConfigSpec](#apiv1alpha1mcpexternalauthconfigspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `region` _string_ | Region is the AWS region for the STS endpoint and service (e.g., "us-east-1", "eu-west-1") |  | MinLength: 1 <br />Pattern: `^[a-z]\{2\}(-[a-z]+)+-\d+$` <br />Required: \{\} <br /> |
+| `service` _string_ | Service is the AWS service name for SigV4 signing<br />Defaults to "aws-mcp" for AWS MCP Server endpoints | aws-mcp | Optional: \{\} <br /> |
+| `fallbackRoleArn` _string_ | FallbackRoleArn is the IAM role ARN to assume when no role mappings match<br />Used as the default role when RoleMappings is empty or no mapping matches<br />At least one of FallbackRoleArn or RoleMappings must be configured (enforced by webhook) |  | Pattern: `^arn:(aws\|aws-cn\|aws-us-gov):iam::\d\{12\}:role/[\w+=,.@\-_/]+$` <br />Optional: \{\} <br /> |
+| `roleMappings` _[api.v1alpha1.RoleMapping](#apiv1alpha1rolemapping) array_ | RoleMappings defines claim-based role selection rules<br />Allows mapping JWT claims (e.g., groups, roles) to specific IAM roles<br />Lower priority values are evaluated first (higher priority) |  | Optional: \{\} <br /> |
+| `roleClaim` _string_ | RoleClaim is the JWT claim to use for role mapping evaluation<br />Defaults to "groups" to match common OIDC group claims | groups | Optional: \{\} <br /> |
+| `sessionDuration` _integer_ | SessionDuration is the duration in seconds for the STS session<br />Must be between 900 (15 minutes) and 43200 (12 hours)<br />Defaults to 3600 (1 hour) if not specified | 3600 | Maximum: 43200 <br />Minimum: 900 <br />Optional: \{\} <br /> |
+| `sessionNameClaim` _string_ | SessionNameClaim is the JWT claim to use for role session name<br />Defaults to "sub" to use the subject claim | sub | Optional: \{\} <br /> |
+
+
 #### api.v1alpha1.AuditConfig
 
 
@@ -757,6 +784,40 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `enabled` _boolean_ | Enabled controls whether audit logging is enabled<br />When true, enables audit logging with default configuration | false | Optional: \{\} <br /> |
+
+
+#### api.v1alpha1.AuthServerStorageConfig
+
+
+
+AuthServerStorageConfig configures the storage backend for the embedded auth server.
+
+
+
+_Appears in:_
+- [api.v1alpha1.EmbeddedAuthServerConfig](#apiv1alpha1embeddedauthserverconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `type` _[api.v1alpha1.AuthServerStorageType](#apiv1alpha1authserverstoragetype)_ | Type specifies the storage backend type.<br />Valid values: "memory" (default), "redis". | memory | Enum: [memory redis] <br /> |
+| `redis` _[api.v1alpha1.RedisStorageConfig](#apiv1alpha1redisstorageconfig)_ | Redis configures the Redis storage backend.<br />Required when type is "redis". |  | Optional: \{\} <br /> |
+
+
+#### api.v1alpha1.AuthServerStorageType
+
+_Underlying type:_ _string_
+
+AuthServerStorageType represents the type of storage backend for the embedded auth server
+
+
+
+_Appears in:_
+- [api.v1alpha1.AuthServerStorageConfig](#apiv1alpha1authserverstorageconfig)
+
+| Field | Description |
+| --- | --- |
+| `memory` | AuthServerStorageTypeMemory is the in-memory storage backend (default)<br /> |
+| `redis` | AuthServerStorageTypeRedis is the Redis storage backend<br /> |
 
 
 #### api.v1alpha1.AuthzConfigRef
@@ -887,6 +948,7 @@ _Appears in:_
 | `hmacSecretRefs` _[api.v1alpha1.SecretKeyRef](#apiv1alpha1secretkeyref) array_ | HMACSecretRefs references Kubernetes Secrets containing symmetric secrets for signing<br />authorization codes and refresh tokens (opaque tokens).<br />Current secret must be at least 32 bytes and cryptographically random.<br />Supports secret rotation via multiple entries (first is current, rest are for verification).<br />If not specified, an ephemeral secret will be auto-generated (development only -<br />auth codes and refresh tokens will be invalid after restart). |  | Optional: \{\} <br /> |
 | `tokenLifespans` _[api.v1alpha1.TokenLifespanConfig](#apiv1alpha1tokenlifespanconfig)_ | TokenLifespans configures the duration that various tokens are valid.<br />If not specified, defaults are applied (access: 1h, refresh: 7d, authCode: 10m). |  | Optional: \{\} <br /> |
 | `upstreamProviders` _[api.v1alpha1.UpstreamProviderConfig](#apiv1alpha1upstreamproviderconfig) array_ | UpstreamProviders configures connections to upstream Identity Providers.<br />The embedded auth server delegates authentication to these providers.<br />Currently only a single upstream provider is supported (validated at runtime). |  | MinItems: 1 <br />Required: \{\} <br /> |
+| `storage` _[api.v1alpha1.AuthServerStorageConfig](#apiv1alpha1authserverstorageconfig)_ | Storage configures the storage backend for the embedded auth server.<br />If not specified, defaults to in-memory storage. |  | Optional: \{\} <br /> |
 
 
 #### api.v1alpha1.EmbeddingResourceOverrides
@@ -1092,6 +1154,7 @@ _Appears in:_
 | `bearerToken` | ExternalAuthTypeBearerToken is the type for bearer token authentication<br />This allows authenticating to remote MCP servers using bearer tokens stored in Kubernetes Secrets<br /> |
 | `unauthenticated` | ExternalAuthTypeUnauthenticated is the type for no authentication<br />This should only be used for backends on trusted networks (e.g., localhost, VPC)<br />or when authentication is handled by network-level security<br /> |
 | `embeddedAuthServer` | ExternalAuthTypeEmbeddedAuthServer is the type for embedded OAuth2/OIDC authorization server<br />This enables running an embedded auth server that delegates to upstream IDPs<br /> |
+| `awsSts` | ExternalAuthTypeAWSSts is the type for AWS STS authentication<br /> |
 
 
 #### api.v1alpha1.GitAuthConfig
@@ -1334,11 +1397,12 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `type` _[api.v1alpha1.ExternalAuthType](#apiv1alpha1externalauthtype)_ | Type is the type of external authentication to configure |  | Enum: [tokenExchange headerInjection bearerToken unauthenticated embeddedAuthServer] <br />Required: \{\} <br /> |
+| `type` _[api.v1alpha1.ExternalAuthType](#apiv1alpha1externalauthtype)_ | Type is the type of external authentication to configure |  | Enum: [tokenExchange headerInjection bearerToken unauthenticated embeddedAuthServer awsSts] <br />Required: \{\} <br /> |
 | `tokenExchange` _[api.v1alpha1.TokenExchangeConfig](#apiv1alpha1tokenexchangeconfig)_ | TokenExchange configures RFC-8693 OAuth 2.0 Token Exchange<br />Only used when Type is "tokenExchange" |  | Optional: \{\} <br /> |
 | `headerInjection` _[api.v1alpha1.HeaderInjectionConfig](#apiv1alpha1headerinjectionconfig)_ | HeaderInjection configures custom HTTP header injection<br />Only used when Type is "headerInjection" |  | Optional: \{\} <br /> |
 | `bearerToken` _[api.v1alpha1.BearerTokenConfig](#apiv1alpha1bearertokenconfig)_ | BearerToken configures bearer token authentication<br />Only used when Type is "bearerToken" |  | Optional: \{\} <br /> |
 | `embeddedAuthServer` _[api.v1alpha1.EmbeddedAuthServerConfig](#apiv1alpha1embeddedauthserverconfig)_ | EmbeddedAuthServer configures an embedded OAuth2/OIDC authorization server<br />Only used when Type is "embeddedAuthServer" |  | Optional: \{\} <br /> |
+| `awsSts` _[api.v1alpha1.AWSStsConfig](#apiv1alpha1awsstsconfig)_ | AWSSts configures AWS STS authentication with SigV4 request signing<br />Only used when Type is "awsSts" |  | Optional: \{\} <br /> |
 
 
 #### api.v1alpha1.MCPExternalAuthConfigStatus
@@ -2158,6 +2222,7 @@ _Appears in:_
 | `insecure` _boolean_ | Insecure indicates whether to use HTTP instead of HTTPS for the OTLP endpoint | false | Optional: \{\} <br /> |
 | `metrics` _[api.v1alpha1.OpenTelemetryMetricsConfig](#apiv1alpha1opentelemetrymetricsconfig)_ | Metrics defines OpenTelemetry metrics-specific configuration |  | Optional: \{\} <br /> |
 | `tracing` _[api.v1alpha1.OpenTelemetryTracingConfig](#apiv1alpha1opentelemetrytracingconfig)_ | Tracing defines OpenTelemetry tracing configuration |  | Optional: \{\} <br /> |
+| `useLegacyAttributes` _boolean_ | UseLegacyAttributes controls whether legacy attribute names are emitted alongside<br />the new MCP OTEL semantic convention names. Defaults to true for backward compatibility.<br />This will change to false in a future release and eventually be removed. | true | Optional: \{\} <br /> |
 
 
 #### api.v1alpha1.OpenTelemetryMetricsConfig
@@ -2302,6 +2367,63 @@ _Appears in:_
 | `imagePullSecrets` _[LocalObjectReference](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#localobjectreference-v1-core) array_ | ImagePullSecrets allows specifying image pull secrets for the proxy runner<br />These are applied to both the Deployment and the ServiceAccount |  | Optional: \{\} <br /> |
 
 
+#### api.v1alpha1.RedisACLUserConfig
+
+
+
+RedisACLUserConfig configures Redis ACL user authentication.
+
+
+
+_Appears in:_
+- [api.v1alpha1.RedisStorageConfig](#apiv1alpha1redisstorageconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `usernameSecretRef` _[api.v1alpha1.SecretKeyRef](#apiv1alpha1secretkeyref)_ | UsernameSecretRef references a Secret containing the Redis ACL username. |  | Required: \{\} <br /> |
+| `passwordSecretRef` _[api.v1alpha1.SecretKeyRef](#apiv1alpha1secretkeyref)_ | PasswordSecretRef references a Secret containing the Redis ACL password. |  | Required: \{\} <br /> |
+
+
+#### api.v1alpha1.RedisSentinelConfig
+
+
+
+RedisSentinelConfig configures Redis Sentinel connection.
+
+
+
+_Appears in:_
+- [api.v1alpha1.RedisStorageConfig](#apiv1alpha1redisstorageconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `masterName` _string_ | MasterName is the name of the Redis master monitored by Sentinel. |  | Required: \{\} <br /> |
+| `sentinelAddrs` _string array_ | SentinelAddrs is a list of Sentinel host:port addresses.<br />Mutually exclusive with SentinelService. |  | Optional: \{\} <br /> |
+| `sentinelService` _[api.v1alpha1.SentinelServiceRef](#apiv1alpha1sentinelserviceref)_ | SentinelService enables automatic discovery from a Kubernetes Service.<br />Mutually exclusive with SentinelAddrs. |  | Optional: \{\} <br /> |
+| `db` _integer_ | DB is the Redis database number. | 0 | Optional: \{\} <br /> |
+
+
+#### api.v1alpha1.RedisStorageConfig
+
+
+
+RedisStorageConfig configures Redis connection for auth server storage.
+Redis is deployed in Sentinel mode with ACL user authentication (the only supported configuration).
+
+
+
+_Appears in:_
+- [api.v1alpha1.AuthServerStorageConfig](#apiv1alpha1authserverstorageconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `sentinelConfig` _[api.v1alpha1.RedisSentinelConfig](#apiv1alpha1redissentinelconfig)_ | SentinelConfig holds Redis Sentinel configuration. |  | Required: \{\} <br /> |
+| `aclUserConfig` _[api.v1alpha1.RedisACLUserConfig](#apiv1alpha1redisacluserconfig)_ | ACLUserConfig configures Redis ACL user authentication. |  | Required: \{\} <br /> |
+| `dialTimeout` _string_ | DialTimeout is the timeout for establishing connections.<br />Format: Go duration string (e.g., "5s", "1m"). | 5s | Pattern: `^([0-9]+(\.[0-9]+)?(ns\|us\|µs\|ms\|s\|m\|h))+$` <br />Optional: \{\} <br /> |
+| `readTimeout` _string_ | ReadTimeout is the timeout for socket reads.<br />Format: Go duration string (e.g., "3s", "1m"). | 3s | Pattern: `^([0-9]+(\.[0-9]+)?(ns\|us\|µs\|ms\|s\|m\|h))+$` <br />Optional: \{\} <br /> |
+| `writeTimeout` _string_ | WriteTimeout is the timeout for socket writes.<br />Format: Go duration string (e.g., "3s", "1m"). | 3s | Pattern: `^([0-9]+(\.[0-9]+)?(ns\|us\|µs\|ms\|s\|m\|h))+$` <br />Optional: \{\} <br /> |
+
+
 #### api.v1alpha1.RegistryFilter
 
 
@@ -2393,6 +2515,28 @@ _Appears in:_
 | `requests` _[api.v1alpha1.ResourceList](#apiv1alpha1resourcelist)_ | Requests describes the minimum amount of compute resources required |  | Optional: \{\} <br /> |
 
 
+#### api.v1alpha1.RoleMapping
+
+
+
+RoleMapping defines a rule for mapping JWT claims to IAM roles.
+Mappings are evaluated in priority order (lower number = higher priority), and the first
+matching rule determines which IAM role to assume.
+Exactly one of Claim or Matcher must be specified.
+
+
+
+_Appears in:_
+- [api.v1alpha1.AWSStsConfig](#apiv1alpha1awsstsconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `claim` _string_ | Claim is a simple claim value to match against<br />The claim type is specified by AWSStsConfig.RoleClaim<br />For example, if RoleClaim is "groups", this would be a group name<br />Internally compiled to a CEL expression: "<claim_value>" in claims["<role_claim>"]<br />Mutually exclusive with Matcher |  | MinLength: 1 <br />Optional: \{\} <br /> |
+| `matcher` _string_ | Matcher is a CEL expression for complex matching against JWT claims<br />The expression has access to a "claims" variable containing all JWT claims as map[string]any<br />Examples:<br />  - "admins" in claims["groups"]<br />  - claims["sub"] == "user123" && !("act" in claims)<br />Mutually exclusive with Claim |  | MinLength: 1 <br />Optional: \{\} <br /> |
+| `roleArn` _string_ | RoleArn is the IAM role ARN to assume when this mapping matches |  | Pattern: `^arn:(aws\|aws-cn\|aws-us-gov):iam::\d\{12\}:role/[\w+=,.@\-_/]+$` <br />Required: \{\} <br /> |
+| `priority` _integer_ | Priority determines evaluation order (lower values = higher priority)<br />Allows fine-grained control over role selection precedence<br />When omitted, this mapping has the lowest possible priority and<br />configuration order acts as tie-breaker via stable sort |  | Minimum: 0 <br />Optional: \{\} <br /> |
+
+
 #### api.v1alpha1.SecretKeyRef
 
 
@@ -2410,6 +2554,7 @@ _Appears in:_
 - [api.v1alpha1.InlineOIDCConfig](#apiv1alpha1inlineoidcconfig)
 - [api.v1alpha1.OAuth2UpstreamConfig](#apiv1alpha1oauth2upstreamconfig)
 - [api.v1alpha1.OIDCUpstreamConfig](#apiv1alpha1oidcupstreamconfig)
+- [api.v1alpha1.RedisACLUserConfig](#apiv1alpha1redisacluserconfig)
 - [api.v1alpha1.TokenExchangeConfig](#apiv1alpha1tokenexchangeconfig)
 
 | Field | Description | Default | Validation |
@@ -2434,6 +2579,19 @@ _Appears in:_
 | `name` _string_ | Name is the name of the secret |  | Required: \{\} <br /> |
 | `key` _string_ | Key is the key in the secret itself |  | Required: \{\} <br /> |
 | `targetEnvName` _string_ | TargetEnvName is the environment variable to be used when setting up the secret in the MCP server<br />If left unspecified, it defaults to the key |  | Optional: \{\} <br /> |
+
+
+#### api.v1alpha1.SentinelServiceRef
+
+_Underlying type:_ _[api.v1alpha1.struct{Name string "json:\"name\""; Namespace string "json:\"namespace,omitempty\""; Port int32 "json:\"port,omitempty\""}](#apiv1alpha1struct{name string "json:\"name\""; namespace string "json:\"namespace,omitempty\""; port int32 "json:\"port,omitempty\""})_
+
+SentinelServiceRef references a Kubernetes Service for Sentinel discovery.
+
+
+
+_Appears in:_
+- [api.v1alpha1.RedisSentinelConfig](#apiv1alpha1redissentinelconfig)
+
 
 
 #### api.v1alpha1.StorageReference
