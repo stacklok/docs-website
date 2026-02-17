@@ -1,0 +1,136 @@
+---
+title: Enterprise identity and production resilience
+sidebar_label: 'Feb 16: Enterprise identity & resilience'
+description:
+  ToolHive's new embedded authorization server enables federated identity for
+  MCP servers, vMCP adds circuit breakers to prevent cascading failures, and
+  Registry Server gains cluster-wide namespace scanning for multi-tenant
+  deployments.
+---
+
+This week brings enterprise readiness and resilience improvements across
+ToolHive. The new embedded authorization server lets users authenticate to MCP
+servers through their company identity provider, no locally stored credentials
+required. vMCP adds circuit breakers that prevent cascading failures when
+backends degrade, and the Registry Server gains cluster-wide namespace scanning
+for multi-tenant Kubernetes deployments.
+
+{/* truncate */}
+
+### Registry Server: Multi-namespace management and production hardening
+
+[Registry Server](/toolhive/guides-registry/) v0.6.0 and v0.6.1 improve
+operational readiness and simplify production deployments:
+
+- **Cluster-wide scanning** lets the Registry Server watch MCP servers across
+  multiple Kubernetes namespaces, not just the namespace where it's deployed.
+  Configure which namespaces to monitor with the `THV_REGISTRY_WATCH_NAMESPACE`
+  environment variable.
+- **RBAC support in Helm** includes the necessary ClusterRole and RoleBinding
+  resources out of the box, so you no longer need to create RBAC permissions
+  manually for multi-namespace deployments.
+- **PostgreSQL-only storage** simplifies configuration by removing in-memory and
+  file storage options; all deployments now use production-grade persistence by
+  default.
+- **Registry entry separation** restructures the internal data model to decouple
+  entries from MCP-specific details, laying groundwork for future extensibility
+  such as non-MCP tool types.
+
+Additional fixes address leader election conflicts when multiple Registry Server
+instances exist in the same namespace, and add 64 KB metadata size limits to
+prevent abuse.
+
+### Virtual MCP Server: Circuit breakers and observability standards
+
+[vMCP](/toolhive/guides-vmcp/) adds resilience primitives and aligns with
+emerging observability standards:
+
+- **Circuit breakers** detect unhealthy backends and temporarily remove them
+  from the available capability set. This prevents a single degraded MCP server
+  from causing cascading failures across dependent workflows, particularly
+  important as organizations connect more business-critical tools through MCP.
+- **OpenTelemetry MCP semantic conventions** align ToolHive's telemetry with the
+  [official OTel MCP standards](https://github.com/open-telemetry/semantic-conventions/pull/2083)
+  merged in January 2026\. If you're already using observability tooling like
+  Grafana, Datadog, or Honeycomb, ToolHive traces and metrics will use the same
+  attribute names and span formats the rest of the AI ecosystem is standardizing
+  on.
+
+### Embedded authorization server: Federated identity for MCP servers
+
+The **embedded authorization server** eliminates the complexity of configuring
+and managing credentials for authenticated MCP servers. Instead of requiring
+users to obtain tokens independently and configure credentials locally, ToolHive
+handles the full OAuth flow:
+
+- **Centralized token management**: The authorization server runs in-process
+  within the ToolHive proxy, exposing standard OAuth endpoints. Users
+  authenticate through their company identity provider (such as Okta, Entra ID,
+  or Google), and ToolHive issues tokens that MCP servers accept.
+- **Dynamic Client Registration**: MCP clients register automatically without
+  manual configuration at the identity provider, removing the operational burden
+  of pre-registering OAuth clients for each tool.
+- **Per-request identity**: MCP servers receive authenticated identity on each
+  request without users needing to store long-lived credentials on their
+  machines.
+
+This approach supports multiple authentication patterns. For example, with AWS
+STS token exchange, users authenticate via their company identity provider and
+receive appropriate IAM roles based on policy, with no AWS CLI setup or stored
+credentials required.
+
+For enterprise teams, this addresses common security requirements: credential
+rotation happens automatically, audit trails capture who accessed what, and
+security policies that prohibit local credential storage are satisfied by
+design. For details, see the
+[auth framework documentation](/toolhive/concepts/auth-framework#embedded-authorization-server).
+
+### Cloud UI: Faster registry discovery
+
+[Cloud UI](https://github.com/stacklok/toolhive-cloud-ui) v0.2.0 makes it easier
+to find and evaluate servers in large registries:
+
+- **Registry filtering by data source** helps you find relevant servers quickly
+  when working with registries containing multiple data sources.
+- **Tool visibility** displays tool names and descriptions for MCP servers
+  directly in the registry view, so you can understand what each server offers
+  before connecting.
+
+### Desktop UI: Latest models and simplified maintenance
+
+The [Desktop UI](/toolhive/guides-ui/) keeps your environment current with less
+manual effort:
+
+- **Opus 4.6 in Playground** gives you immediate access to test prompts against
+  the latest Claude model without waiting for broader rollouts.
+- **Update outdated MCP servers** detects locally installed MCP servers with
+  newer versions available and lets you update them directly in the app,
+  eliminating manual version checking and reinstallation.
+
+### Ecosystem updates: Broader client compatibility
+
+The **Desktop UI and CLI** now support automatic configuration for three
+additional clients:
+
+- OpenAI Codex
+- Gemini CLI
+- Mistral Vibe
+
+Register these clients once, and ToolHive automatically manages their MCP server
+configurations. Whenever you run an MCP server, it's immediately available
+without manual config file edits. See the
+[client compatibility reference](/toolhive/reference/client-compatibility) for
+the full list of supported clients.
+
+### Getting started
+
+For detailed release notes, check the project repositories:
+
+- [ToolHive Runtimes](https://github.com/stacklok/toolhive/releases) (CLI and
+  Kubernetes Operator)
+- [ToolHive Desktop UI](https://github.com/stacklok/toolhive-studio/releases)
+- [ToolHive Cloud UI](https://github.com/stacklok/toolhive-cloud-ui/releases)
+- [ToolHive Registry Server](https://github.com/stacklok/toolhive-registry-server/releases)
+
+You can find all ToolHive documentation on the
+[Stacklok documentation site](/toolhive).
