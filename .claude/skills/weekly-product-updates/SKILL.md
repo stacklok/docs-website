@@ -148,7 +148,7 @@ If the user provides team updates (e.g., from Slack):
 
 - New capabilities users can now do that they couldn't before
 - Production-ready improvements (operational, performance, reliability)
-- Developer experience wins (significantly easier setup, configuration, workflows)
+- User experience wins (significantly easier setup, configuration, workflows)
 - Enterprise/scale features (multi-tenancy, authentication, monitoring, compliance)
 - Integration expansions (new platforms, clients, services)
 - Breaking changes (frame positively with migration guidance)
