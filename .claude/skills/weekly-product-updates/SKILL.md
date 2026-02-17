@@ -207,7 +207,7 @@ Use when explicitly requested with `blog` argument. Adds Docusaurus frontmatter 
 title: [Thematic, benefit-oriented title]
 sidebar_label: '[Mon DD]: [Short theme]'
 description:
-  [One-sentence summary covering main components, wrapped at 80 chars]
+  [Brief summary for SEO purposes covering main components, wrapped at 80 chars]
 ---
 
 [Opening paragraph: 2-3 sentences setting the theme, hinting at value without feature-listing, accessible to both open source and commercial audiences.]
