@@ -233,7 +233,7 @@ For detailed release notes, check the project repositories:
 - [ToolHive Cloud UI](https://github.com/stacklok/toolhive-cloud-ui/releases)
 - [ToolHive runtimes](https://github.com/stacklok/toolhive/releases) (CLI and Kubernetes Operator)
 
-You can find all ToolHive documentation on the [ToolHive documentation site](/toolhive).
+You can find all ToolHive documentation on the [Stacklok documentation site](/toolhive).
 ```
 
 Note: the blog format uses the relative `/toolhive` link (not the full URL) since it's published on the same docs site.
