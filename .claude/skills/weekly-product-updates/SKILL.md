@@ -157,6 +157,7 @@ If the user provides team updates (e.g., from Slack):
 
 - Internal code refactoring without user impact
 - Routine dependency bumps (unless enabling new features)
+- Test additions (unit tests, integration tests, e2e tests)
 - Minor text/doc fixes
 - Debug logging additions
 - CI/CD pipeline changes (unless affecting user workflows)
@@ -176,7 +177,7 @@ Use this for Slack, email, Google Docs, or any non-blog context.
 
 [Opening paragraph: 2-3 sentences setting the theme, hinting at value without feature-listing, accessible to both open source and commercial audiences.]
 
-### [Component]: [Benefit-focused headline]
+## [Component]: [Benefit-focused headline]
 
 **[Component bold intro]** [opening sentence about what this enables]:
 
@@ -184,9 +185,9 @@ Use this for Slack, email, Google Docs, or any non-blog context.
 - **[Outcome in bold]** explains the mechanism and benefit, staying honest about maturity without overselling.
 - **[Outcome in bold]** explains the value proposition for the target audience.
 
-[Repeat for each component with marketing-worthy changes. Use ### headings.]
+[Repeat for each component with marketing-worthy changes. Use ## headings.]
 
-### Getting started
+## Getting started
 
 For detailed release notes, check the project repositories:
 
@@ -214,7 +215,7 @@ description:
 
 {/_ truncate _/}
 
-### [Component]: [Benefit-focused headline]
+## [Component]: [Benefit-focused headline]
 
 **[Component bold intro]** [opening sentence about what this enables]:
 
@@ -222,9 +223,9 @@ description:
 - **[Outcome in bold]** explains the mechanism and benefit, staying honest about maturity without overselling.
 - **[Outcome in bold]** explains the value proposition for the target audience.
 
-[Repeat for each component with marketing-worthy changes. Use ### headings.]
+[Repeat for each component with marketing-worthy changes. Use ## headings.]
 
-### Getting started
+## Getting started
 
 For detailed release notes, check the project repositories:
 
@@ -240,10 +241,11 @@ Note: the blog format uses the relative `/toolhive` link (not the full URL) sinc
 
 ### Format rules
 
-- **Section headings**: Use `###` (h3) for component sections, not `##`. The h1 is the page title (from frontmatter or `#` heading), h2 is reserved.
+- **Section headings**: Use `##` (h2) for component sections and the Getting started section. The h1 is the page title (from frontmatter or `#` heading).
 - **Component intro**: Bold the component name inline at the start of the section body (e.g., `**vMCP** adds...` or `**The ToolHive Registry Server** expands...`).
 - **Bullet style**: Bold the outcome, then flow into the explanation as a sentence. No colon after the bold text. Example: `**Dynamic backend discovery** detects servers added or removed and updates routing automatically.`
 - **No version numbers in headlines**: Version numbers belong in release links, not section titles.
+- **Short, thematic titles**: Titles should be punchy and theme-oriented, not feature-listing. Aim for 5-7 words. Example: "Enterprise identity and production resilience" -- not "Embedded authorization server for federated identity, vMCP circuit breakers for fault tolerance, and cluster-wide registry scanning". The `sidebar_label` should be even shorter.
 - **Opening paragraph**: 2-3 sentences. Set the theme, hint at value, avoid internal jargon. The `{/* truncate */}` goes after this paragraph in blog format.
 - **Getting started section**: Standardized across all posts. Do not modify the content or link order. Use the exact format shown above.
 - **No "Highlights" / TL;DR section**: The opening paragraph serves this purpose.
@@ -314,7 +316,7 @@ Flexibility is okay -- not every bullet needs the exact same format if the benef
 **Output**:
 
 ```markdown
-### Virtual MCP Server: Circuit breaker protection
+## Virtual MCP Server: Circuit breaker protection
 
 **vMCP** adds operational capabilities that teams need for production deployments:
 
@@ -326,7 +328,7 @@ Flexibility is okay -- not every bullet needs the exact same format if the benef
 **Output**:
 
 ```markdown
-### Kubernetes Operator: Embedded authorization and identity federation
+## Kubernetes Operator: Embedded authorization and identity federation
 
 **The Kubernetes Operator** now supports deploying MCP servers with built-in authentication, eliminating the need for users to manage credentials locally:
 
