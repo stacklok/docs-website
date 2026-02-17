@@ -228,10 +228,10 @@ description:
 
 For detailed release notes, check the project repositories:
 
+- [ToolHive Runtimes](https://github.com/stacklok/toolhive/releases) (CLI and Kubernetes Operator)
+- [ToolHive Desktop UI](https://github.com/stacklok/toolhive-studio/releases)
+- [ToolHive Cloud UI](https://github.com/stacklok/toolhive-cloud/releases)
 - [ToolHive Registry Server](https://github.com/stacklok/toolhive-registry-server/releases)
-- [ToolHive desktop UI](https://github.com/stacklok/toolhive-studio/releases)
-- [ToolHive Cloud UI](https://github.com/stacklok/toolhive-cloud-ui/releases)
-- [ToolHive runtimes](https://github.com/stacklok/toolhive/releases) (CLI and Kubernetes Operator)
 
 You can find all ToolHive documentation on the [Stacklok documentation site](/toolhive).
 ```
