@@ -59,8 +59,14 @@ else
     echo "Using specified tag: $TAG_NAME"
 fi
 
+# Build GitHub API auth headers (use GITHUB_TOKEN when available to avoid rate limiting)
+GITHUB_API_HEADERS=( -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" )
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    GITHUB_API_HEADERS+=( -H "Authorization: Bearer ${GITHUB_TOKEN}" )
+fi
+
 # Fetch release information
-RELEASE_JSON=$(curl -sf "$API_ENDPOINT" || {
+RELEASE_JSON=$(curl -sf "${GITHUB_API_HEADERS[@]}" "$API_ENDPOINT" || {
     echo "Failed to fetch release information from GitHub API"
     exit 1
 })
@@ -88,16 +94,34 @@ echo "Importing to: $IMPORT_DIR"
 # Download and extract the toolhive release tarball
 curl -sfL "$RELEASE_TARBALL" | tar xz --strip-components=1 -C "${IMPORT_DIR}/toolhive"
 
-# Fetch the latest toolhive-core release (contains registry schemas)
-CORE_RELEASE_JSON=$(curl -sf "https://api.github.com/repos/stacklok/toolhive-core/releases/latest" || {
+# Derive the toolhive-core version used by this ToolHive release from go.mod
+CORE_VERSION=$(grep 'github.com/stacklok/toolhive-core' "${IMPORT_DIR}/toolhive/go.mod" | awk '{print $2}' | head -1)
+CORE_API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive-core/releases/latest"
+if [ -z "$CORE_VERSION" ]; then
+    echo "Warning: Could not determine toolhive-core version from go.mod; falling back to latest release"
+else
+    echo "Detected toolhive-core version: ${CORE_VERSION}"
+    CORE_API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive-core/releases/tags/${CORE_VERSION}"
+fi
+
+# Fetch the matching toolhive-core release (contains registry schemas)
+CORE_RELEASE_JSON=$(curl -sf "${GITHUB_API_HEADERS[@]}" "${CORE_API_ENDPOINT}" || true)
+if [ -z "$CORE_RELEASE_JSON" ] && [ -n "$CORE_VERSION" ]; then
+    echo "Warning: Could not fetch toolhive-core release for version ${CORE_VERSION}; falling back to latest release"
+    CORE_RELEASE_JSON=$(curl -sf "${GITHUB_API_HEADERS[@]}" \
+        "https://api.github.com/repos/stacklok/toolhive-core/releases/latest" || {
+        echo "Failed to fetch toolhive-core release information from GitHub API"
+        exit 1
+    })
+elif [ -z "$CORE_RELEASE_JSON" ]; then
     echo "Failed to fetch toolhive-core release information from GitHub API"
     exit 1
-})
+fi
 CORE_RELEASE_TARBALL=$(echo "$CORE_RELEASE_JSON" | jq -r '.tarball_url // empty')
 CORE_RELEASE_VERSION=$(echo "$CORE_RELEASE_JSON" | jq -r '.tag_name // empty')
 
 if [ -z "$CORE_RELEASE_TARBALL" ]; then
-    echo "Failed to get toolhive-core release tarball URL"
+    echo "Failed to get toolhive-core release tarball URL for version ${CORE_VERSION}"
     exit 1
 fi
 
