@@ -17,11 +17,11 @@ CLI_DOCS_DST="${DOCS_DIR}/toolhive/reference/cli"
 API_SPEC_SRC="${IMPORT_DIR}/toolhive/docs/server/swagger.yaml"
 API_SPEC_DST="${STATIC_DIR}/api-specs/toolhive-api.yaml"
 
-REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive/pkg/registry/data/toolhive-legacy-registry.schema.json"
+REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive-core/registry/types/data/toolhive-legacy-registry.schema.json"
 REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/toolhive-legacy-registry.schema.json"
-UPSTREAM_REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive/pkg/registry/data/upstream-registry.schema.json"
+UPSTREAM_REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive-core/registry/types/data/upstream-registry.schema.json"
 UPSTREAM_REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/upstream-registry.schema.json"
-REGISTRY_META_SCHEMA_SRC="${IMPORT_DIR}/toolhive/pkg/registry/data/publisher-provided.schema.json"
+REGISTRY_META_SCHEMA_SRC="${IMPORT_DIR}/toolhive-core/registry/types/data/publisher-provided.schema.json"
 REGISTRY_META_SCHEMA_DST="${STATIC_DIR}/api-specs/publisher-provided.schema.json"
 
 CRD_API_SRC="${IMPORT_DIR}/toolhive/docs/operator/crd-api.md"
@@ -78,15 +78,31 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
     echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 fi
 
-# Clean up and prepare import directory
-rm -rf ${IMPORT_DIR}/toolhive
-mkdir -p ${IMPORT_DIR}/toolhive
+# Clean up and prepare import directories
+rm -rf ${IMPORT_DIR}/toolhive ${IMPORT_DIR}/toolhive-core
+mkdir -p ${IMPORT_DIR}/toolhive ${IMPORT_DIR}/toolhive-core
 
 echo "Fetching ToolHive release (${RELEASE_VERSION}) from: $RELEASE_TARBALL"
 echo "Importing to: $IMPORT_DIR"
 
-# Download and extract the release tarball
-curl -sfL "$RELEASE_TARBALL" | tar xz --strip-components=1 -C ./imports/toolhive
+# Download and extract the toolhive release tarball
+curl -sfL "$RELEASE_TARBALL" | tar xz --strip-components=1 -C "${IMPORT_DIR}/toolhive"
+
+# Fetch the latest toolhive-core release (contains registry schemas)
+CORE_RELEASE_JSON=$(curl -sf "https://api.github.com/repos/stacklok/toolhive-core/releases/latest" || {
+    echo "Failed to fetch toolhive-core release information from GitHub API"
+    exit 1
+})
+CORE_RELEASE_TARBALL=$(echo "$CORE_RELEASE_JSON" | jq -r '.tarball_url // empty')
+CORE_RELEASE_VERSION=$(echo "$CORE_RELEASE_JSON" | jq -r '.tag_name // empty')
+
+if [ -z "$CORE_RELEASE_TARBALL" ]; then
+    echo "Failed to get toolhive-core release tarball URL"
+    exit 1
+fi
+
+echo "Fetching toolhive-core release (${CORE_RELEASE_VERSION}) for registry schemas"
+curl -sfL "$CORE_RELEASE_TARBALL" | tar xz --strip-components=1 -C "${IMPORT_DIR}/toolhive-core"
 
 ## CLI reference
 echo "Updating ToolHive CLI reference documentation in ${CLI_DOCS_DST}"
