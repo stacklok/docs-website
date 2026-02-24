@@ -7,31 +7,17 @@ set -euo pipefail
 REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 
-IMPORT_DIR="./imports"
 DOCS_DIR="./docs"
 STATIC_DIR="./static"
 
-CLI_DOCS_SRC="${IMPORT_DIR}/toolhive/docs/cli"
 CLI_DOCS_DST="${DOCS_DIR}/toolhive/reference/cli"
-
-API_SPEC_SRC="${IMPORT_DIR}/toolhive/docs/server/swagger.yaml"
 API_SPEC_DST="${STATIC_DIR}/api-specs/toolhive-api.yaml"
-
-REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive-core/registry/types/data/toolhive-legacy-registry.schema.json"
 REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/toolhive-legacy-registry.schema.json"
-UPSTREAM_REGISTRY_SCHEMA_SRC="${IMPORT_DIR}/toolhive-core/registry/types/data/upstream-registry.schema.json"
 UPSTREAM_REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/upstream-registry.schema.json"
-REGISTRY_META_SCHEMA_SRC="${IMPORT_DIR}/toolhive-core/registry/types/data/publisher-provided.schema.json"
 REGISTRY_META_SCHEMA_DST="${STATIC_DIR}/api-specs/publisher-provided.schema.json"
-
-CRD_API_SRC="${IMPORT_DIR}/toolhive/docs/operator/crd-api.md"
 CRD_API_DST="${DOCS_DIR}/toolhive/reference/crd-spec.md"
 CRD_API_FRONTMATTER="${REPO_ROOT}/scripts/crd-ref-frontmatter.txt"
 
-# Test the required directories exist
-if [ ! -d "$IMPORT_DIR" ]; then
-    mkdir -p "$IMPORT_DIR"
-fi
 if [ ! -d "$DOCS_DIR" ]; then
     echo "Docs directory does not exist: $DOCS_DIR"
     exit 1
@@ -41,160 +27,91 @@ if [ ! -d "$STATIC_DIR" ]; then
     exit 1
 fi
 
-# Check if jq is installed
-if ! command -v jq >/dev/null 2>&1; then
-    echo "Error: 'jq' is required but not installed. Please install jq and try again."
+# Check if gh CLI is installed
+if ! command -v gh >/dev/null 2>&1; then
+    echo "Error: 'gh' is required but not installed."
     exit 1
 fi
 
 VERSION=$(echo "${1:-}" | tr -cd '[:alnum:].-')
 
-# Handle tag name parameter - default to "latest" if not provided
+# Resolve to actual tag if "latest" or unset
 if [ -z "$VERSION" ] || [ "$VERSION" = "latest" ]; then
-    API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive/releases/latest"
-    echo "No tag specified or 'latest' specified, using latest release"
+    echo "No tag specified or 'latest' specified, resolving latest release..."
+    VERSION=$(gh release view --repo stacklok/toolhive --json tagName --jq '.tagName')
+    echo "Resolved to: $VERSION"
 else
-    TAG_NAME="$VERSION"
-    API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive/releases/tags/$TAG_NAME"
-    echo "Using specified tag: $TAG_NAME"
-fi
-
-# Build GitHub API auth headers (use GITHUB_TOKEN when available to avoid rate limiting)
-GITHUB_API_HEADERS=( -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" )
-if [ -n "${GITHUB_TOKEN:-}" ]; then
-    GITHUB_API_HEADERS+=( -H "Authorization: Bearer ${GITHUB_TOKEN}" )
-fi
-
-# Fetch release information
-RELEASE_JSON=$(curl -sf "${GITHUB_API_HEADERS[@]}" "$API_ENDPOINT" || {
-    echo "Failed to fetch release information from GitHub API"
-    exit 1
-})
-RELEASE_TARBALL=$(echo "$RELEASE_JSON" | jq -r '.tarball_url // empty')
-RELEASE_VERSION=$(echo "$RELEASE_JSON" | jq -r '.tag_name // empty')
-
-if [ -z "$RELEASE_TARBALL" ]; then
-    echo "Failed to get release tarball URL for release: ${RELEASE_VERSION}"
-    echo "Please check if the tag exists in the repository"
-    exit 1
+    echo "Using specified tag: $VERSION"
 fi
 
 # Output the release version for use in CI workflows (if running in GitHub Actions)
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
-    echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+    echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 fi
 
-# Clean up and prepare import directories
-rm -rf ${IMPORT_DIR}/toolhive ${IMPORT_DIR}/toolhive-core
-mkdir -p ${IMPORT_DIR}/toolhive ${IMPORT_DIR}/toolhive-core
+DOWNLOAD_DIR=$(mktemp -d)
+trap 'rm -rf "$DOWNLOAD_DIR"' EXIT
 
-echo "Fetching ToolHive release (${RELEASE_VERSION}) from: $RELEASE_TARBALL"
-echo "Importing to: $IMPORT_DIR"
+## ToolHive assets
+echo "Downloading ToolHive release assets for ${VERSION}..."
 
-# Download and extract the toolhive release tarball
-curl -sfL "$RELEASE_TARBALL" | tar xz --strip-components=1 -C "${IMPORT_DIR}/toolhive"
-
-# Derive the toolhive-core version used by this ToolHive release from go.mod
-CORE_VERSION=$(grep 'github.com/stacklok/toolhive-core' "${IMPORT_DIR}/toolhive/go.mod" | awk '{print $2}' | head -1)
-CORE_API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive-core/releases/latest"
-if [ -z "$CORE_VERSION" ]; then
-    echo "Warning: Could not determine toolhive-core version from go.mod; falling back to latest release"
-else
-    echo "Detected toolhive-core version: ${CORE_VERSION}"
-    CORE_API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive-core/releases/tags/${CORE_VERSION}"
-fi
-
-# Fetch the matching toolhive-core release (contains registry schemas)
-CORE_RELEASE_JSON=$(curl -sf "${GITHUB_API_HEADERS[@]}" "${CORE_API_ENDPOINT}" || true)
-if [ -z "$CORE_RELEASE_JSON" ] && [ -n "$CORE_VERSION" ]; then
-    echo "Warning: Could not fetch toolhive-core release for version ${CORE_VERSION}; falling back to latest release"
-    CORE_RELEASE_JSON=$(curl -sf "${GITHUB_API_HEADERS[@]}" \
-        "https://api.github.com/repos/stacklok/toolhive-core/releases/latest" || {
-        echo "Failed to fetch toolhive-core release information from GitHub API"
-        exit 1
-    })
-elif [ -z "$CORE_RELEASE_JSON" ]; then
-    echo "Failed to fetch toolhive-core release information from GitHub API"
-    exit 1
-fi
-CORE_RELEASE_TARBALL=$(echo "$CORE_RELEASE_JSON" | jq -r '.tarball_url // empty')
-CORE_RELEASE_VERSION=$(echo "$CORE_RELEASE_JSON" | jq -r '.tag_name // empty')
-
-if [ -z "$CORE_RELEASE_TARBALL" ]; then
-    echo "Failed to get toolhive-core release tarball URL for version ${CORE_VERSION}"
-    exit 1
-fi
-
-echo "Fetching toolhive-core release (${CORE_RELEASE_VERSION}) for registry schemas"
-curl -sfL "$CORE_RELEASE_TARBALL" | tar xz --strip-components=1 -C "${IMPORT_DIR}/toolhive-core"
+gh release download "$VERSION" \
+    --repo stacklok/toolhive \
+    --pattern "thv-cli-docs.tar.gz" \
+    --pattern "swagger.yaml" \
+    --pattern "crd-api.md" \
+    --dir "$DOWNLOAD_DIR"
 
 ## CLI reference
 echo "Updating ToolHive CLI reference documentation in ${CLI_DOCS_DST}"
-
-# Copy CLI documentation
-if [ -d "${CLI_DOCS_SRC}" ]; then
-    # Remove existing CLI reference documentation files in case we remove any commands
-    rm -f ${CLI_DOCS_DST}/thv_*.md
-
-    cp -r ${CLI_DOCS_SRC}/* ${CLI_DOCS_DST}
-    echo "CLI reference documentation updated successfully"
-else
-    echo "Warning: CLI documentation not found in ${CLI_DOCS_SRC}"
-fi
+# Remove existing CLI reference documentation files in case we remove any commands
+rm -f "${CLI_DOCS_DST}"/thv_*.md
+tar -xzf "${DOWNLOAD_DIR}/thv-cli-docs.tar.gz" -C "${CLI_DOCS_DST}"
+echo "CLI reference documentation updated successfully"
 
 ## API reference
 echo "Updating ToolHive API reference at ${API_SPEC_DST}"
-
-# Copy API specification
-if [ -f "${API_SPEC_SRC}" ]; then
-    cp ${API_SPEC_SRC} ${API_SPEC_DST}
-    echo "API reference updated successfully"
-else
-    echo "Warning: API specification not found at ${API_SPEC_SRC}"
-fi
-
-## Registry schemas
-echo "Updating ToolHive registry JSON schema at ${REGISTRY_SCHEMA_DST}"
-
-if [ -f "${REGISTRY_SCHEMA_SRC}" ]; then
-    cp ${REGISTRY_SCHEMA_SRC} ${REGISTRY_SCHEMA_DST}
-    echo "Registry JSON schema updated successfully"
-else
-    echo "Warning: Registry schema not found at ${REGISTRY_SCHEMA_SRC}"
-fi
-
-echo "Updating upstream registry JSON schema at ${UPSTREAM_REGISTRY_SCHEMA_DST}"
-
-if [ -f "${UPSTREAM_REGISTRY_SCHEMA_SRC}" ]; then
-    cp ${UPSTREAM_REGISTRY_SCHEMA_SRC} ${UPSTREAM_REGISTRY_SCHEMA_DST}
-    echo "Upstream registry JSON schema updated successfully"
-    
-    # Bundle the upstream schema to resolve remote $ref references
-    echo "Bundling upstream registry schema (resolving remote references)..."
-    node "${REPO_ROOT}/scripts/bundle-upstream-schema.mjs"
-else
-    echo "Warning: Registry schema not found at ${UPSTREAM_REGISTRY_SCHEMA_SRC}"
-fi
-
-echo "Updating ToolHive registry extensions JSON schema at ${REGISTRY_META_SCHEMA_DST}"
-
-if [ -f "${REGISTRY_META_SCHEMA_SRC}" ]; then
-    cp ${REGISTRY_META_SCHEMA_SRC} ${REGISTRY_META_SCHEMA_DST}
-    echo "Registry extensions JSON schema updated successfully"
-else
-    echo "Warning: Registry extensions schema not found at ${REGISTRY_META_SCHEMA_SRC}"
-fi
+cp "${DOWNLOAD_DIR}/swagger.yaml" "${API_SPEC_DST}"
+echo "API reference updated successfully"
 
 ## CRD API reference
-echo "Updating ToolHive CRD API reference in ${DOCS_DIR}/toolhive/reference"
+echo "Updating ToolHive CRD API reference at ${CRD_API_DST}"
+# Prepend frontmatter and strip the h1 title (Docusaurus uses title from front matter)
+{ cat "${CRD_API_FRONTMATTER}"; sed '1{/^# /d;}' "${DOWNLOAD_DIR}/crd-api.md"; } > "${CRD_API_DST}"
+echo "CRD API reference updated successfully"
 
-# Copy CRD API documentation with frontmatter prepended
-if [ -f "${CRD_API_SRC}" ]; then
-    # Concatenate frontmatter with source file, removing h1 title (Docusaurus uses title from front matter)
-    { cat "${CRD_API_FRONTMATTER}"; sed '1{/^# /d;}' "${CRD_API_SRC}"; } > "${CRD_API_DST}"
-    echo "CRD API reference updated successfully"
-else
-    echo "Warning: CRD API documentation not found at ${CRD_API_SRC}"
+## Derive toolhive-core version from go.mod at the tagged commit
+echo "Determining toolhive-core version from go.mod at tag ${VERSION}..."
+CORE_VERSION=$(gh api "repos/stacklok/toolhive/contents/go.mod?ref=${VERSION}" \
+    --jq '.content' | base64 -d | grep 'github.com/stacklok/toolhive-core' | awk '{print $2}' | head -1)
+
+if [ -z "$CORE_VERSION" ]; then
+    echo "Warning: Could not determine toolhive-core version from go.mod; falling back to latest release"
+    CORE_VERSION=$(gh release view --repo stacklok/toolhive-core --json tagName --jq '.tagName')
 fi
+echo "Using toolhive-core version: ${CORE_VERSION}"
 
-echo "Release processing completed for: $RELEASE_VERSION"
+## toolhive-core schema assets
+echo "Downloading toolhive-core schema assets for ${CORE_VERSION}..."
+
+gh release download "$CORE_VERSION" \
+    --repo stacklok/toolhive-core \
+    --pattern "toolhive-legacy-registry.schema.json" \
+    --pattern "upstream-registry.schema.json" \
+    --pattern "publisher-provided.schema.json" \
+    --dir "$DOWNLOAD_DIR"
+
+cp "${DOWNLOAD_DIR}/toolhive-legacy-registry.schema.json" "${REGISTRY_SCHEMA_DST}"
+echo "Registry JSON schema updated successfully"
+
+cp "${DOWNLOAD_DIR}/upstream-registry.schema.json" "${UPSTREAM_REGISTRY_SCHEMA_DST}"
+echo "Upstream registry JSON schema updated successfully"
+
+# Bundle the upstream schema to resolve remote $ref references
+echo "Bundling upstream registry schema (resolving remote references)..."
+node "${REPO_ROOT}/scripts/bundle-upstream-schema.mjs"
+
+cp "${DOWNLOAD_DIR}/publisher-provided.schema.json" "${REGISTRY_META_SCHEMA_DST}"
+echo "Registry extensions JSON schema updated successfully"
+
+echo "Release processing completed for: $VERSION (toolhive-core: $CORE_VERSION)"
