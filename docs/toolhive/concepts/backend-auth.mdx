@@ -73,19 +73,17 @@ auditability. Static credentials are long-lived and shared across all users, so
 there is no per-user attribution in audit logs.
 
 When using static credentials, consider integrating with a secret management
-system like [HashiCorp Vault](../integrations/vault.mdx) for secure
-storage and rotation.
+system like [HashiCorp Vault](../integrations/vault.mdx) for secure storage and
+rotation.
 
 ### Token exchange
 
 When the backend service trusts the same IdP as your MCP clients—or federation
 is configured between the two IdPs—ToolHive can exchange the client's token for
-one scoped to the backend service using
-[RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) token exchange. This
-preserves the user's identity across services and provides short-lived, narrowly
-scoped tokens. Because the trust relationship between services is pre-configured
-at the IdP, no consent screen or user interaction is required—the exchange is
-transparent to the end user.
+one scoped to the backend service using RFC 8693 token exchange. This preserves
+the user's identity across services and provides short-lived, narrowly scoped
+tokens. Because the trust relationship is pre-configured at the IdP, the
+exchange is transparent to the end user—no consent screen required.
 
 #### Same IdP with token exchange
 
@@ -170,12 +168,13 @@ flowchart LR
     Proxy[ToolHive Proxy]
     ExtProvider[External Provider]
 
-    User -->|connect| Proxy
-    Proxy -->|redirect to login| ExtProvider
-    User -->|authenticate| ExtProvider
-    ExtProvider -->|authorization code| Proxy
-    Proxy -->|exchange code for token| ExtProvider
-    Proxy -->|issue JWT| User
+    User -->|1. connect| Proxy
+    Proxy -->|2. redirect to login| ExtProvider
+    User -->|3. authenticate| ExtProvider
+    ExtProvider -->|4. authorization code| Proxy
+    Proxy -->|5. exchange code for token| ExtProvider
+    ExtProvider -->|6. upstream tokens| Proxy
+    Proxy -->|7. issue JWT| User
 ```
 
 **How it works:**
@@ -283,6 +282,8 @@ single ToolHive-issued JWT.
 
 In Kubernetes deployments, session storage is currently in-memory only. Upstream
 tokens are lost when pods restart, requiring users to re-authenticate.
+Persistent storage using Redis is
+[planned](https://github.com/stacklok/toolhive/issues/3628).
 
 :::
 
@@ -298,7 +299,7 @@ described above. For setup instructions, see
 [Configure token exchange](../guides-cli/token-exchange.mdx) (CLI) or
 [Configure token exchange in Kubernetes](../guides-k8s/token-exchange-k8s.mdx).
 
-### Token exchange implementation
+### Same IdP with token exchange
 
 The token exchange flow demonstrates how ToolHive transforms user identity
 tokens into properly scoped service tokens.
@@ -322,8 +323,6 @@ sequenceDiagram
     MCP Server-->>ToolHive: Response
     ToolHive-->>Client: Response
 ```
-
-### Token transformation
 
 When a client authenticates to ToolHive, it receives a token scoped for the MCP
 server:
@@ -353,7 +352,7 @@ Notice how the audience (`aud`) and scopes (`scp`) change while preserving the
 user's identity (`sub`). This exchanged token is then injected into the
 `Authorization: Bearer` HTTP header and passed to the MCP server.
 
-### Federation flow
+### Federated IdPs with identity mapping
 
 When using federated identity providers, ToolHive can map your corporate
 identity to an external service identity. This is particularly useful for
@@ -408,9 +407,8 @@ and passed to the MCP server. The MCP server uses this token to make upstream
 API calls, with each request attributed to the individual user's federated
 identity rather than a shared service account.
 
-### Key differences from standard token exchange
-
-Federation-based token exchange has several important characteristics:
+Federation-based token exchange has several important characteristics that
+distinguish it from standard token exchange:
 
 1. **No client authentication required:** The external STS endpoint doesn't
    require `client_id` or `client_secret`. The OAuth JWT itself serves as proof
@@ -424,7 +422,8 @@ Federation-based token exchange has several important characteristics:
 
 ## Security and operational benefits
 
-ToolHive's backend authentication patterns provide several key advantages:
+ToolHive's token-based authentication patterns (token exchange and the embedded
+authorization server) provide several key advantages over static credentials:
 
 - **Secure:** MCP servers receive short-lived, properly scoped access tokens
   instead of embedding long-lived secrets
@@ -439,7 +438,7 @@ ToolHive's backend authentication patterns provide several key advantages:
 - **Consistent:** The same pattern works across different backend services and
   identity providers
 
-## Choosing the right backend authentication model
+## Choosing the right backend authentication pattern
 
 | Scenario                                                            | Pattern                                                              | Why                                                               |
 | ------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------- |
