@@ -241,6 +241,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/tutorials/vault-integration',
         'toolhive/tutorials/aws-sts-integration',
         'toolhive/tutorials/k8s-ingress-ngrok',
+        'toolhive/tutorials/authorization-with-okta',
       ],
     },
 
