@@ -31,56 +31,75 @@ Here's what a trace looks like when a client calls a tool in the GitHub MCP
 server (some fields omitted for brevity):
 
 ```text
-Span: mcp.tools/call (150ms)
-├── service.name: toolhive-mcp-proxy
+Span: tools/call create_issue (150ms)
+├── service.name: thv-github
 ├── service.version: v0.1.9
-├── http.duration_ms: 150.3
-├── http.host: localhost:14972
-├── http.method: POST
-├── http.request_content_length: 256
-├── http.response_content_length: 1024
-├── http.status_code: 202
-├── http.url: /messages?session_id=b1d22d07-b35f-4260-9c0c-b872f92f64b1
-├── http.user_agent: claude-code/1.0.53
-├── mcp.method: tools/call
-├── mcp.request.id: 5
+├── http.request.method: POST
+├── http.request.body.size: 256
+├── http.response.status_code: 202
+├── http.response.body.size: 1024
+├── url.full: /messages?session_id=b1d22d07-b35f-4260-9c0c-b872f92f64b1
+├── url.path: /messages
+├── url.scheme: https
+├── server.address: localhost:14972
+├── user_agent.original: claude-code/1.0.53
+├── mcp.method.name: tools/call
 ├── mcp.server.name: github
-├── mcp.tool.arguments: owner=stacklok, repo=toolhive, pullNumber=1131
-├── mcp.tool.name: create_issue
-└── mcp.transport: stdio
+├── mcp.session.id: abc123
+├── rpc.system.name: jsonrpc
+├── jsonrpc.protocol.version: 2.0
+├── jsonrpc.request.id: 5
+├── gen_ai.tool.name: create_issue
+├── gen_ai.operation.name: execute_tool
+├── gen_ai.tool.call.arguments: owner=stacklok, repo=toolhive, pullNumber=1131
+├── network.transport: tcp
+└── network.protocol.name: http
 ```
 
 ### MCP-specific traces
 
 ToolHive automatically captures traces for all MCP operations, including:
 
-- **Tool calls** (`mcp.tools/call`) - When AI assistants use tools
-- **Resource access** (`mcp.resources/read`) - When servers read files or data
-- **Prompt operations** (`mcp.prompts/get`) - When servers retrieve prompts
-- **Connection events** (`mcp.initialize`) - When clients connect to servers
+- **Tool calls** (`tools/call`) - When AI assistants use tools
+- **Resource access** (`resources/read`) - When servers read files or data
+- **Prompt operations** (`prompts/get`) - When servers retrieve prompts
+- **Connection events** (`initialize`) - When clients connect to servers
 
 ### Trace attributes
 
-Each trace includes detailed context across three layers:
+Each trace includes detailed context across several layers:
 
 #### Service information
 
 ```text
-service.name: toolhive-mcp-proxy
+service.name: thv-github
 service.version: v0.1.9
+host.name: my-machine
 ```
 
-#### HTTP layer information
+#### HTTP layer
 
 ```text
-http.duration_ms: 150.3
-http.host: localhost:14972
-http.method: POST
-http.request_content_length: 256
-http.response_content_length: 1024
-http.status_code: 202
-http.url: /messages?session_id=b1d22d07-b35f-4260-9c0c-b872f92f64b1
-http.user_agent: claude-code/1.0.53
+http.request.method: POST
+http.request.body.size: 256
+http.response.status_code: 202
+http.response.body.size: 1024
+url.full: /messages?session_id=b1d22d07-b35f-4260-9c0c-b872f92f64b1
+url.path: /messages
+url.scheme: https
+url.query: session_id=b1d22d07-b35f-4260-9c0c-b872f92f64b1
+server.address: localhost:14972
+user_agent.original: claude-code/1.0.53
+```
+
+#### Network layer
+
+```text
+network.transport: tcp
+network.protocol.name: http
+network.protocol.version: 1.1
+client.address: 127.0.0.1
+client.port: 52431
 ```
 
 #### MCP protocol details
@@ -89,31 +108,41 @@ Details about the MCP operation being performed (some fields are specific to
 each operation):
 
 ```text
-mcp.client.name: claude-code
-mcp.method: tools/call
-mcp.request.id: 123
+mcp.method.name: tools/call
 mcp.server.name: github
-mcp.tool.arguments: owner=stacklok, repo=toolhive, path=pkg/telemetry/middleware.go, start_index=130, max_length=1000
-mcp.tool.name: get_file_contents
-mcp.transport: stdio
-rpc.service: mcp
-rpc.system: jsonrpc
+mcp.session.id: abc123
+mcp.protocol.version: 2025-03-26
+mcp.is_batch: false
+rpc.system.name: jsonrpc
+jsonrpc.protocol.version: 2.0
+jsonrpc.request.id: 123
 ```
 
 #### Method-specific attributes
 
-- **`mcp.tools/call`** traces include:
-  - `mcp.tool.name` - The name of the tool being called
-  - `mcp.tool.arguments` - Sanitized tool arguments (sensitive values redacted)
+- **`tools/call`** traces include:
+  - `gen_ai.tool.name` - The name of the tool being called
+  - `gen_ai.operation.name` - Set to `execute_tool`
+  - `gen_ai.tool.call.arguments` - Sanitized tool arguments (sensitive values
+    redacted)
 
-- **`mcp.resources/read`** traces include:
+- **`resources/read`** traces include:
   - `mcp.resource.uri` - The URI of the resource being accessed
 
-- **`mcp.prompts/get`** traces include:
-  - `mcp.prompt.name` - The name of the prompt being retrieved
+- **`prompts/get`** traces include:
+  - `gen_ai.prompt.name` - The name of the prompt being retrieved
 
-- **`mcp.initialize`** traces include:
-  - `mcp.client.name` - The name of the connecting client
+- **`initialize`** traces include:
+  - `mcp.protocol.version` - The MCP protocol version negotiated
+
+:::note[Legacy attribute names]
+
+By default, ToolHive emits both the new OpenTelemetry semantic convention
+attribute names shown above and legacy attribute names (e.g., `http.method`,
+`mcp.method`, `mcp.tool.name`) for backward compatibility with existing
+dashboards. You can control this with the `--otel-use-legacy-attributes` flag.
+
+:::
 
 ## Metrics collection
 
@@ -171,6 +200,40 @@ toolhive_mcp_tool_calls_total{server="github",status="success",tool="list_pull_r
 toolhive_mcp_tool_calls_total{server="github",status="success",tool="search_issues"} 2
 ```
 
+### MCP semantic convention metrics
+
+In addition to the ToolHive-prefixed metrics above, ToolHive emits metrics that
+follow the
+[OpenTelemetry MCP semantic conventions](https://github.com/open-telemetry/semantic-conventions):
+
+| Metric                          | Type      | Description                              |
+| ------------------------------- | --------- | ---------------------------------------- |
+| `mcp.server.operation.duration` | Histogram | Duration of MCP server operations        |
+| `mcp.client.operation.duration` | Histogram | Duration of MCP client operations (vMCP) |
+
+These metrics use the same labels as the ToolHive-prefixed metrics and are
+compatible with dashboards built for the OpenTelemetry MCP semantic conventions.
+
+### vMCP metrics
+
+When using Virtual MCP Server (vMCP), additional metrics are available for
+monitoring backend operations, workflow executions, and optimizer performance.
+For details, see the
+[vMCP telemetry guide](../guides-vmcp/telemetry-and-metrics.mdx).
+
+## Trace context propagation
+
+ToolHive supports two methods of trace context propagation:
+
+- **HTTP headers**: Standard W3C Trace Context (`traceparent` and `tracestate`
+  headers) and W3C Baggage propagation
+- **MCP `_meta` field**: Trace context embedded in MCP request parameters via
+  the `params._meta` field, following the MCP specification
+
+When both are present, the MCP `_meta` trace context takes priority. This
+enables proper trace correlation across MCP server boundaries, even when MCP
+clients inject trace context into the request payload rather than HTTP headers.
+
 ## Export options
 
 ToolHive supports multiple export formats to integrate with your existing
@@ -217,13 +280,13 @@ ToolHive automatically protects sensitive information in traces:
 For example, a tool call with sensitive arguments:
 
 ```text
-mcp.tool.arguments: password=secret123, api_key=abc456, title=Bug report
+gen_ai.tool.call.arguments: password=secret123, api_key=abc456, title=Bug report
 ```
 
-Is sanitized in the trace as:
+ToolHive sanitizes this in the trace as:
 
 ```text
-mcp.tool.arguments: password=[REDACTED], api_key=[REDACTED], title=Bug report
+gen_ai.tool.call.arguments: password=[REDACTED], api_key=[REDACTED], title=Bug report
 ```
 
 ## Monitoring examples
@@ -254,15 +317,15 @@ When a client calls the `create_issue` tool:
 **Generated trace**:
 
 ```text
-Span: mcp.tools/call
-├── mcp.method: tools/call
-├── mcp.request.id: req_456
-├── mcp.tool.name: create_issue
-├── mcp.tool.arguments: title=Bug report, body=Found an issue with the API
+Span: tools/call create_issue
+├── mcp.method.name: tools/call
+├── jsonrpc.request.id: req_456
+├── gen_ai.tool.name: create_issue
+├── gen_ai.tool.call.arguments: title=Bug report, body=Found an issue with...
 ├── mcp.server.name: github
-├── mcp.transport: sse
-├── http.method: POST
-├── http.status_code: 200
+├── network.transport: tcp
+├── http.request.method: POST
+├── http.response.status_code: 200
 └── duration: 850ms
 ```
 
@@ -281,10 +344,10 @@ Failed requests generate error traces and metrics:
 **Error trace**:
 
 ```text
-Span: mcp.tools/call
-├── mcp.method: tools/call
-├── mcp.tool.name: invalid_tool
-├── http.status_code: 400
+Span: tools/call invalid_tool
+├── mcp.method.name: tools/call
+├── gen_ai.tool.name: invalid_tool
+├── http.response.status_code: 400
 ├── span.status: ERROR
 ├── span.status_message: Tool not found
 └── duration: 12ms
