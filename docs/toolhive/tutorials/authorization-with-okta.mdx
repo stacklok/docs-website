@@ -5,9 +5,11 @@ description:
   enforce role-based access control (RBAC) with Cedar policies.
 ---
 
-By the end of this tutorial, you'll have a GitHub MCP server on Kubernetes
-secured with Okta OIDC authentication and Cedar RBAC policies — writers get full
-access while readers see only read-only tools.
+Without authorization, every authenticated user has access to every tool an MCP
+server exposes. By the end of this tutorial, you'll have a GitHub MCP server on
+Kubernetes secured with Okta OpenID Connect (OIDC) authentication and Cedar
+role-based access control (RBAC) policies — writers get full access while
+readers see only read-only tools.
 
 :::tip[Using a different identity provider?]
 
@@ -35,7 +37,8 @@ Before starting this tutorial, make sure you have:
   (PAT) with `repo` scope
 - An Okta developer account (free at
   [developer.okta.com](https://developer.okta.com/))
-- Basic familiarity with OAuth, OIDC, and JWT concepts. For background, see
+- Basic familiarity with OAuth, OIDC, and JSON Web Token (JWT) concepts. For
+  background, see
   [Authentication and authorization framework](../concepts/auth-framework.mdx).
 
 :::
@@ -44,7 +47,7 @@ Before starting this tutorial, make sure you have:
 
 Set up your Okta environment with an OIDC application, user groups, and a groups
 claim so that ToolHive can authenticate users and read their group memberships
-from JWT tokens.
+from JWTs.
 
 ### Create an OIDC application
 
@@ -119,7 +122,7 @@ stringData:
 kubectl apply -f github-pat-secret.yaml
 ```
 
-### Deploy the MCPServer (no auth)
+### Deploy the MCPServer without authentication
 
 Create the MCPServer resource without authentication to verify the basic
 deployment works:
@@ -206,7 +209,7 @@ spec:
 kubectl apply -f github-mcpserver-oidc.yaml
 ```
 
-After applying this change, the MCP server requires a valid JWT token on every
+After applying this change, the MCP server requires a valid JWT on every
 request. Unauthenticated requests now return `401 Unauthorized`.
 
 :::tip
@@ -234,6 +237,15 @@ The following table summarizes the two roles and the tools each role can access:
 | Reader | `mcp-read`  | Read-only tools: `get_file_contents`, `list_commits`, `list_branches`, `list_issues`, `list_pull_requests`, `search_issues`, `get_me` |
 
 ### Create the authorization ConfigMap
+
+:::note
+
+ToolHive exposes JWT claims to Cedar policies with a `claim_` prefix, so the
+`groups` claim you configured in Okta becomes `principal.claim_groups` in policy
+expressions. For more details, see
+[Working with JWT claims](../concepts/cedar-policies.mdx#working-with-jwt-claims).
+
+:::
 
 Create a ConfigMap containing the Cedar policies:
 
@@ -306,7 +318,7 @@ spec:
 kubectl apply -f github-mcpserver-authz.yaml
 ```
 
-## Step 5: Observe tool filtering in action
+## Step 5: Verify tool filtering
 
 ToolHive automatically filters the `tools/list` response based on your Cedar
 policies. When a client calls `tools/list`, the proxy evaluates each tool
@@ -319,7 +331,7 @@ call. For more details, see
 ```text
 add_issue_comment, create_branch, create_pull_request,
 create_repository, get_file_contents, list_branches,
-list_commits, list_issues, merge_pull_request, ...
+list_commits, list_issues, merge_pull_request, ... (truncated)
 ```
 
 **Reader** (Alice, in `mcp-read` only) sees only the read-only tools permitted
@@ -339,7 +351,7 @@ returns tools the user is allowed to call.
 
 :::
 
-## Step 6: Test denied access
+## Step 6: Verify denied access
 
 Verify that authorization is enforced by calling a write tool with a reader's
 token.
@@ -383,17 +395,9 @@ curl -X POST http://localhost:8080/mcp \
   }'
 ```
 
-The proxy denies the request and returns a `403` response:
-
-```json
-{
-  "Result": null,
-  "Error": { "code": 403, "message": "Unauthorized" },
-  "ID": {}
-}
-```
-
-Sending the same request with a writer's token succeeds.
+The proxy denies the request and returns a `403 Forbidden` response. Sending the
+same request with a writer's token succeeds — the proxy forwards the request to
+the MCP server and returns the tool's response.
 
 ## Clean up
 
@@ -424,7 +428,7 @@ kubectl delete secret -n toolhive-system github-pat
 
 If clients can't authenticate:
 
-1. Check that the JWT token is valid and not expired.
+1. Check that the JWT is valid and not expired.
 2. Verify that the audience and issuer match your `oidcConfig` values.
 3. Ensure the JWKS URL is accessible from within the cluster.
 4. Check the operator and proxy logs for specific errors:
