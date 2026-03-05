@@ -26,7 +26,7 @@ const sidebars: SidebarsConfig = {
         id: 'toolhive/guides-ui/index',
       },
       items: [
-        'toolhive/tutorials/quickstart-ui',
+        'toolhive/guides-ui/quickstart',
         'toolhive/guides-ui/install',
         'toolhive/guides-ui/registry',
         {
@@ -62,7 +62,7 @@ const sidebars: SidebarsConfig = {
         id: 'toolhive/guides-cli/index',
       },
       items: [
-        'toolhive/tutorials/quickstart-cli',
+        'toolhive/guides-cli/quickstart',
         'toolhive/guides-cli/install',
         'toolhive/guides-cli/registry',
         {
@@ -111,7 +111,6 @@ const sidebars: SidebarsConfig = {
             'toolhive/guides-cli/test-mcp-servers',
             'toolhive/guides-cli/build-containers',
             'toolhive/guides-cli/advanced-cicd',
-            'toolhive/tutorials/custom-registry',
             {
               type: 'category',
               label: 'API server',
@@ -144,7 +143,7 @@ const sidebars: SidebarsConfig = {
       },
       items: [
         'toolhive/guides-k8s/intro',
-        'toolhive/tutorials/quickstart-k8s',
+        'toolhive/guides-k8s/quickstart',
         'toolhive/guides-k8s/deploy-operator',
         'toolhive/guides-k8s/run-mcp-k8s',
         'toolhive/guides-k8s/remote-mcp-proxy',
@@ -154,7 +153,6 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/token-exchange-k8s',
         'toolhive/guides-k8s/telemetry-and-metrics',
         'toolhive/guides-k8s/logging',
-        'toolhive/guides-k8s/deploy-registry',
         'toolhive/reference/crd-spec',
       ],
     },
@@ -170,7 +168,7 @@ const sidebars: SidebarsConfig = {
       },
       items: [
         'toolhive/guides-vmcp/intro',
-        'toolhive/tutorials/quickstart-vmcp',
+        'toolhive/guides-vmcp/quickstart',
         'toolhive/guides-vmcp/configuration',
         'toolhive/guides-vmcp/backend-discovery',
         'toolhive/guides-vmcp/authentication',
@@ -195,6 +193,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'toolhive/guides-registry/intro',
         'toolhive/guides-registry/deployment',
+        'toolhive/guides-registry/deploy-registry',
         'toolhive/guides-registry/configuration',
         'toolhive/guides-registry/authentication',
         'toolhive/guides-registry/database',
@@ -202,6 +201,41 @@ const sidebars: SidebarsConfig = {
         'toolhive/reference/registry-api',
         'toolhive/reference/registry-schema-upstream',
         'toolhive/reference/registry-schema-toolhive',
+      ],
+    },
+
+    {
+      type: 'category',
+      label: 'Integrations',
+      description: 'Connect ToolHive with third-party tools and services',
+      link: {
+        type: 'generated-index',
+        slug: 'toolhive/integrations',
+        description:
+          'Guides for integrating ToolHive with third-party tools and services like OpenTelemetry, HashiCorp Vault, and ngrok.',
+      },
+      items: [
+        'toolhive/integrations/opentelemetry',
+        'toolhive/integrations/vault',
+        'toolhive/integrations/aws-sts',
+        'toolhive/integrations/ingress-ngrok',
+        'toolhive/integrations/okta',
+      ],
+    },
+
+    {
+      type: 'category',
+      label: 'Tutorials',
+      description: 'End-to-end tutorials covering multiple ToolHive components',
+      link: {
+        type: 'generated-index',
+        slug: 'toolhive/tutorials',
+        description:
+          'End-to-end tutorials that span multiple ToolHive components.',
+      },
+      items: [
+        'toolhive/tutorials/custom-registry',
+        'toolhive/tutorials/mcp-optimizer',
       ],
     },
 
@@ -225,25 +259,6 @@ const sidebars: SidebarsConfig = {
         'toolhive/concepts/cedar-policies',
         'toolhive/concepts/backend-auth',
         'toolhive/concepts/vmcp',
-      ],
-    },
-
-    {
-      type: 'category',
-      label: 'Integrations',
-      description: 'Connect ToolHive with third-party tools and services',
-      link: {
-        type: 'generated-index',
-        slug: 'toolhive/integrations',
-        description:
-          'Guides for integrating ToolHive with third-party tools and services like OpenTelemetry, HashiCorp Vault, and ngrok.',
-      },
-      items: [
-        'toolhive/tutorials/opentelemetry',
-        'toolhive/tutorials/vault-integration',
-        'toolhive/tutorials/aws-sts-integration',
-        'toolhive/tutorials/k8s-ingress-ngrok',
-        'toolhive/tutorials/authorization-with-okta',
       ],
     },
 
