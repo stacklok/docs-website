@@ -389,6 +389,7 @@ _Appears in:_
 | `logLevel` _string_ | LogLevel sets the logging level for the Virtual MCP server.<br />The only valid value is "debug" to enable debug logging.<br />When omitted or empty, the server uses info level logging. |  | Enum: [debug] <br />Optional: \{\} <br /> |
 | `timeouts` _[vmcp.config.TimeoutConfig](#vmcpconfigtimeoutconfig)_ | Timeouts configures timeout settings. |  | Optional: \{\} <br /> |
 | `failureHandling` _[vmcp.config.FailureHandlingConfig](#vmcpconfigfailurehandlingconfig)_ | FailureHandling configures failure handling behavior. |  | Optional: \{\} <br /> |
+| `sessionManagementV2` _boolean_ | SessionManagementV2 enables session-scoped backend client lifecycle.<br />When true, vMCP creates real backend connections per session via MultiSessionFactory<br />and routes tool calls directly through the session rather than the global router.<br />Defaults to false; existing behaviour is completely unchanged when disabled. |  | Optional: \{\} <br /> |
 
 
 #### vmcp.config.OptimizerConfig
@@ -1873,6 +1874,7 @@ _Appears in:_
 | `endpointPrefix` _string_ | EndpointPrefix is the path prefix to prepend to SSE endpoint URLs.<br />This is used to handle path-based ingress routing scenarios where the ingress<br />strips a path prefix before forwarding to the backend. |  | Optional: \{\} <br /> |
 | `resourceOverrides` _[api.v1alpha1.ResourceOverrides](#apiv1alpha1resourceoverrides)_ | ResourceOverrides allows overriding annotations and labels for resources created by the operator |  | Optional: \{\} <br /> |
 | `groupRef` _string_ | GroupRef is the name of the MCPGroup this proxy belongs to<br />Must reference an existing MCPGroup in the same namespace |  | Optional: \{\} <br /> |
+| `sessionAffinity` _string_ | SessionAffinity controls whether the Service routes repeated client connections to the same pod.<br />MCP protocols (SSE, streamable-http) are stateful, so ClientIP is the default.<br />Set to "None" for stateless servers or when using an external load balancer with its own affinity. | ClientIP | Enum: [ClientIP None] <br />Optional: \{\} <br /> |
 
 
 #### api.v1alpha1.MCPRemoteProxyStatus
@@ -2000,6 +2002,7 @@ _Appears in:_
 | `trustProxyHeaders` _boolean_ | TrustProxyHeaders indicates whether to trust X-Forwarded-* headers from reverse proxies<br />When enabled, the proxy will use X-Forwarded-Proto, X-Forwarded-Host, X-Forwarded-Port,<br />and X-Forwarded-Prefix headers to construct endpoint URLs | false | Optional: \{\} <br /> |
 | `endpointPrefix` _string_ | EndpointPrefix is the path prefix to prepend to SSE endpoint URLs.<br />This is used to handle path-based ingress routing scenarios where the ingress<br />strips a path prefix before forwarding to the backend. |  | Optional: \{\} <br /> |
 | `groupRef` _string_ | GroupRef is the name of the MCPGroup this server belongs to<br />Must reference an existing MCPGroup in the same namespace |  | Optional: \{\} <br /> |
+| `sessionAffinity` _string_ | SessionAffinity controls whether the Service routes repeated client connections to the same pod.<br />MCP protocols (SSE, streamable-http) are stateful, so ClientIP is the default.<br />Set to "None" for stateless servers or when using an external load balancer with its own affinity. | ClientIP | Enum: [ClientIP None] <br />Optional: \{\} <br /> |
 
 
 #### api.v1alpha1.MCPServerStatus
@@ -3076,6 +3079,7 @@ _Appears in:_
 | `incomingAuth` _[api.v1alpha1.IncomingAuthConfig](#apiv1alpha1incomingauthconfig)_ | IncomingAuth configures authentication for clients connecting to the Virtual MCP server.<br />Must be explicitly set - use "anonymous" type when no authentication is required.<br />This field takes precedence over config.IncomingAuth and should be preferred because it<br />supports Kubernetes-native secret references (SecretKeyRef, ConfigMapRef) for secure<br />dynamic discovery of credentials, rather than requiring secrets to be embedded in config. |  | Required: \{\} <br /> |
 | `outgoingAuth` _[api.v1alpha1.OutgoingAuthConfig](#apiv1alpha1outgoingauthconfig)_ | OutgoingAuth configures authentication from Virtual MCP to backend MCPServers.<br />This field takes precedence over config.OutgoingAuth and should be preferred because it<br />supports Kubernetes-native secret references (SecretKeyRef, ConfigMapRef) for secure<br />dynamic discovery of credentials, rather than requiring secrets to be embedded in config. |  | Optional: \{\} <br /> |
 | `serviceType` _string_ | ServiceType specifies the Kubernetes service type for the Virtual MCP server | ClusterIP | Enum: [ClusterIP NodePort LoadBalancer] <br />Optional: \{\} <br /> |
+| `sessionAffinity` _string_ | SessionAffinity controls whether the Service routes repeated client connections to the same pod.<br />MCP protocols (SSE, streamable-http) are stateful, so ClientIP is the default.<br />Set to "None" for stateless servers or when using an external load balancer with its own affinity. | ClientIP | Enum: [ClientIP None] <br />Optional: \{\} <br /> |
 | `serviceAccount` _string_ | ServiceAccount is the name of an already existing service account to use by the Virtual MCP server.<br />If not specified, a ServiceAccount will be created automatically and used by the Virtual MCP server. |  | Optional: \{\} <br /> |
 | `podTemplateSpec` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.27/#rawextension-runtime-pkg)_ | PodTemplateSpec defines the pod template to use for the Virtual MCP server<br />This allows for customizing the pod configuration beyond what is provided by the other fields.<br />Note that to modify the specific container the Virtual MCP server runs in, you must specify<br />the 'vmcp' container name in the PodTemplateSpec.<br />This field accepts a PodTemplateSpec object as JSON/YAML. |  | Type: object <br />Optional: \{\} <br /> |
 | `config` _[vmcp.config.Config](#vmcpconfigconfig)_ | Config is the Virtual MCP server configuration<br />The only field currently required within config is `config.groupRef`.<br />GroupRef references an existing MCPGroup that defines backend workloads.<br />The referenced MCPGroup must exist in the same namespace.<br />The telemetry and audit config from here are also supported, but not required. |  | Type: object <br />Optional: \{\} <br /> |
