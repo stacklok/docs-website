@@ -206,6 +206,29 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
+      label: 'Concepts',
+      description: 'Core concepts and architecture of ToolHive and MCP',
+      link: {
+        type: 'generated-index',
+        slug: 'toolhive/concepts',
+        description:
+          'Learn about the key concepts behind ToolHive and the Model Context Protocol (MCP).',
+      },
+      items: [
+        'toolhive/concepts/mcp-primer',
+        'toolhive/concepts/groups',
+        'toolhive/concepts/tool-optimization',
+        'toolhive/concepts/registry-criteria',
+        'toolhive/concepts/observability',
+        'toolhive/concepts/auth-framework',
+        'toolhive/concepts/cedar-policies',
+        'toolhive/concepts/backend-auth',
+        'toolhive/concepts/vmcp',
+      ],
+    },
+
+    {
+      type: 'category',
       label: 'Integrations',
       description: 'Connect ToolHive with third-party tools and services',
       link: {
@@ -236,29 +259,6 @@ const sidebars: SidebarsConfig = {
       items: [
         'toolhive/tutorials/custom-registry',
         'toolhive/tutorials/mcp-optimizer',
-      ],
-    },
-
-    {
-      type: 'category',
-      label: 'Concepts',
-      description: 'Core concepts and architecture of ToolHive and MCP',
-      link: {
-        type: 'generated-index',
-        slug: 'toolhive/concepts',
-        description:
-          'Learn about the key concepts behind ToolHive and the Model Context Protocol (MCP).',
-      },
-      items: [
-        'toolhive/concepts/mcp-primer',
-        'toolhive/concepts/groups',
-        'toolhive/concepts/tool-optimization',
-        'toolhive/concepts/registry-criteria',
-        'toolhive/concepts/observability',
-        'toolhive/concepts/auth-framework',
-        'toolhive/concepts/cedar-policies',
-        'toolhive/concepts/backend-auth',
-        'toolhive/concepts/vmcp',
       ],
     },
 
