@@ -191,14 +191,6 @@ const config: Config = {
         autoCollapseCategories: false,
       },
     },
-    announcementBar: {
-      id: 'optimizer',
-      content:
-        'NEW: Improve performance and cut token costs with the ToolHive MCP Optimizer! <a href="/toolhive/tutorials/mcp-optimizer">Try it →</a>',
-      backgroundColor: '#6e6080',
-      textColor: '#f9faf9',
-      isCloseable: true,
-    },
     navbar: {
       logo: {
         alt: 'Stacklok logo',
