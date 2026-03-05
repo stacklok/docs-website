@@ -21,9 +21,9 @@ registries:
 
     # Git repository configuration
     git:
-      repository: https://github.com/stacklok/toolhive.git
+      repository: https://github.com/stacklok/toolhive-catalog.git
       branch: main
-      path: pkg/registry/data/registry.json
+      path: pkg/catalog/toolhive/data/official-registry.json
 
     # Per-registry automatic sync policy (required for synced registries)
     syncPolicy:
@@ -89,14 +89,23 @@ options. You can configure multiple registries in a single server instance.
 
 Clone and sync from Git repositories. Ideal for version-controlled registries.
 
+:::note
+
+When the registry server clones a Git repository, it stores the local copy in
+`/data`. Mounting a persistent volume there is optional but recommended for
+production deployments. Without it, the registry server re-clones the repository
+on every container restart, adding startup latency and increasing network usage.
+
+:::
+
 ```yaml title="config-git.yaml"
 registries:
   - name: toolhive
     format: toolhive
     git:
-      repository: https://github.com/stacklok/toolhive.git
+      repository: https://github.com/stacklok/toolhive-catalog.git
       branch: main
-      path: pkg/registry/data/registry.json
+      path: pkg/catalog/toolhive/data/registry.json
     syncPolicy:
       interval: '30m'
 ```
@@ -109,9 +118,7 @@ registries:
 - `commit` (optional): Commit SHA to pin to a specific commit
 - `path` (optional): Path to the registry file within the repository (defaults
   to `registry.json`)
-- `auth.username` (optional): Username for Git authentication
-- `auth.passwordFile` (optional): Path to a file containing the Git password or
-  token
+- `auth` (optional): Authentication for private repositories (see below)
 
 :::tip
 
@@ -120,6 +127,86 @@ multiple are specified, `commit` takes precedence over `tag`, which takes
 precedence over `branch`.
 
 :::
+
+#### Private repository authentication
+
+To access private Git repositories, configure the `auth` section with your
+credentials:
+
+```yaml title="config-git-private.yaml"
+registries:
+  - name: private-registry
+    format: toolhive
+    git:
+      repository: https://github.com/my-org/private-registry.git
+      branch: main
+      path: registry.json
+      # highlight-start
+      auth:
+        username: oauth2
+        passwordFile: /secrets/git/token
+      # highlight-end
+    syncPolicy:
+      interval: '30m'
+```
+
+**Authentication options:**
+
+- `auth.username` (required with `passwordFile`): Git username for HTTP Basic
+  authentication. For GitHub and GitLab, use `oauth2` as the username when
+  authenticating with a personal access token (PAT).
+- `auth.passwordFile` (required with `username`): Absolute path to a file
+  containing the Git password or token. Whitespace is trimmed from the file
+  content.
+
+:::warning
+
+Both `username` and `passwordFile` must be specified together. If only one is
+provided, the configuration will fail validation.
+
+:::
+
+**Using with Kubernetes secrets:**
+
+In Kubernetes deployments, mount a secret containing your Git token and
+reference the mount path:
+
+```yaml title="registry-deployment.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-credentials
+type: Opaque
+stringData:
+  token: <YOUR_GITHUB_TOKEN>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry-server
+spec:
+  # Other deployment fields omitted, refer to the Deployment in Kubernetes guide
+  template:
+    spec:
+      containers:
+        - name: registry
+          volumeMounts:
+            - name: git-credentials
+              mountPath: /secrets/git
+              readOnly: true
+            - name: data
+              mountPath: /data
+              readOnly: false
+      volumes:
+        - name: git-credentials
+          secret:
+            secretName: git-credentials
+            items:
+              - key: token
+                path: token
+        - name: data
+          emptyDir: {}
+```
 
 ### API endpoint source
 
@@ -234,7 +321,7 @@ Server standalone (without the operator).
 By default, the Registry server discovers resources in all namespaces
 (cluster-wide). You can restrict discovery to specific namespaces using the
 `THV_REGISTRY_WATCH_NAMESPACE` environment variable. See
-[Workload discovery](./deployment.mdx#workload-discovery) for configuration
+[Workload discovery](./deploy-manual.mdx#workload-discovery) for configuration
 details and RBAC requirements.
 
 ```yaml title="config-kubernetes.yaml"
@@ -329,7 +416,7 @@ structure.
 
 This feature requires the Registry server to be granted access to those
 resources via a Service Account, check the details in the
-[deployment section](./deployment.mdx#workload-discovery).
+[deployment section](./deploy-manual.mdx#workload-discovery).
 
 :::
 
@@ -349,9 +436,9 @@ or Kubernetes registries.
 registries:
   - name: toolhive
     git:
-      repository: https://github.com/stacklok/toolhive.git
+      repository: https://github.com/stacklok/toolhive-catalog.git
       branch: main
-      path: pkg/registry/data/registry.json
+      path: pkg/catalog/toolhive/data/registry.json
     syncPolicy:
       # Sync interval (e.g., "30m", "1h", "24h")
       interval: '30m'
@@ -376,9 +463,9 @@ basis. Only applicable to synced registries (Git, API, File).
 registries:
   - name: toolhive
     git:
-      repository: https://github.com/stacklok/toolhive.git
+      repository: https://github.com/stacklok/toolhive-catalog.git
       branch: main
-      path: pkg/registry/data/registry.json
+      path: pkg/catalog/toolhive/data/registry.json
     syncPolicy:
       interval: '30m'
     filter:
