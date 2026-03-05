@@ -193,7 +193,8 @@ const sidebars: SidebarsConfig = {
       items: [
         'toolhive/guides-registry/intro',
         'toolhive/guides-registry/deployment',
-        'toolhive/guides-registry/deploy-registry',
+        'toolhive/guides-registry/deploy-operator',
+        'toolhive/guides-registry/deploy-manual',
         'toolhive/guides-registry/configuration',
         'toolhive/guides-registry/authentication',
         'toolhive/guides-registry/database',
