@@ -33,16 +33,34 @@ Choose an installation method based on your needs:
 <Tabs groupId="method" queryString="method">
 <TabItem value="helm" label="Helm" default>
 
+This command installs the latest version of the ToolHive operator CRDs Helm
+chart:
+
 ```bash
-helm upgrade --install toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds
+helm upgrade --install toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds \
+  -n toolhive-system --create-namespace
 ```
 
-This command installs the latest version of the ToolHive operator CRDs Helm
-chart. To install a specific version, append `--version <VERSION>` to the
-command, for example:
+:::warning[Namespace consistency]
+
+When you install this chart, Helm stamps all CRDs with a
+`meta.helm.sh/release-namespace` annotation set to the namespace used at install
+time and is fixed for that release. You must continue to use the same namespace
+on all future `helm upgrade` commands for the CRDs. If you decide to specify a
+different namespace, an error will occur due to ownership issues.
+
+If you need to migrate to a different namespace, see the
+[CRD namespace mismatch troubleshooting](#crd-upgrade-fails-with-namespace-mismatch)
+section.
+
+:::
+
+To install a specific version, append `--version <VERSION>` to the command, for
+example:
 
 ```bash
-helm upgrade --install toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds --version 0.8.3
+helm upgrade --install toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds \
+  -n toolhive-system --version 0.8.3
 ```
 
 #### CRD configuration options
@@ -62,7 +80,7 @@ For example, to install only server-related CRDs without vMCP support:
 
 ```bash
 helm upgrade --install toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds \
-  --set crds.install.virtualMcp=false
+  -n toolhive-system --set crds.install.virtualMcp=false
 ```
 
 :::note
@@ -477,6 +495,35 @@ Common causes include:
 - **Resource constraints**: Check if the cluster has sufficient CPU and memory
   resources available
 - **Image pull issues**: Verify that the cluster can pull images from `ghcr.io`
+
+</details>
+
+<details id="crd-upgrade-fails-with-namespace-mismatch">
+<summary>CRD upgrade fails with namespace mismatch</summary>
+
+If you see an error like the following when upgrading the CRD chart:
+
+```text
+Error: invalid ownership metadata; annotation validation error:
+key "meta.helm.sh/release-namespace" must equal "toolhive-system":
+current value is "default"
+```
+
+This means the CRD chart was originally installed in a different namespace than
+the one you're now targeting. To fix this, patch the
+`meta.helm.sh/release-namespace` annotation on all CRDs to match your desired
+namespace:
+
+```bash
+for crd in $(kubectl get crd -o name | grep toolhive.stacklok.dev); do
+  kubectl annotate "$crd" \
+    meta.helm.sh/release-namespace=<TARGET_NAMESPACE> --overwrite
+done
+```
+
+Replace `<TARGET_NAMESPACE>` with the namespace you want to use going forward
+(for example, `toolhive-system`). This is a one-time operation. After patching,
+future upgrades work as long as you use the same namespace consistently.
 
 </details>
 
