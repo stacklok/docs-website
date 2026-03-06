@@ -1,0 +1,492 @@
+---
+title: Role-based authorization with Okta
+description:
+  Deploy a GitHub MCP server on Kubernetes, add Okta OIDC authentication, and
+  enforce role-based access control (RBAC) with Cedar policies.
+---
+
+Without authorization, every authenticated user has access to every tool an MCP
+server exposes. By the end of this tutorial, you'll have a GitHub MCP server on
+Kubernetes secured with Okta OpenID Connect (OIDC) authentication and Cedar
+role-based access control (RBAC) policies — writers get full access while
+readers see only read-only tools.
+
+:::tip[Using a different identity provider?]
+
+This tutorial uses Okta, but the pattern applies to any OIDC provider. Only Step
+1 is Okta-specific — it covers creating an OIDC application, setting up groups,
+and adding a groups claim to the token. If you use a different provider
+(Keycloak, Entra ID, Auth0, etc.), complete the equivalent setup in your
+provider, then pick up from [Step 2](#step-2-deploy-the-github-mcp-server)
+onward. The Kubernetes manifests, Cedar policies, and `oidcConfig` fields all
+consume standard OIDC values regardless of which provider issued them.
+
+:::
+
+## Prerequisites
+
+:::info[Prerequisites]
+
+Before starting this tutorial, make sure you have:
+
+- A Kubernetes cluster with the ToolHive Operator installed. See the
+  [Kubernetes quickstart guide](../guides-k8s/quickstart.mdx) for setup
+  instructions.
+- `kubectl` configured to access your cluster
+- A
+  [GitHub personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+  (PAT) with `repo` scope
+- An Okta developer account (free at
+  [developer.okta.com](https://developer.okta.com/))
+- Basic familiarity with OAuth, OIDC, and JSON Web Token (JWT) concepts. For
+  background, see
+  [Authentication and authorization framework](../concepts/auth-framework.mdx).
+
+:::
+
+## Step 1: Configure Okta
+
+Set up your Okta environment with an OIDC application, user groups, and a groups
+claim so that ToolHive can authenticate users and read their group memberships
+from JWTs.
+
+### Create an OIDC application
+
+1. Sign in to the Okta admin console.
+2. Go to **Applications** > **Applications** > **Create App Integration**.
+3. Select **OIDC - OpenID Connect** and **Web Application**, then click
+   **Next**.
+4. Set the sign-in redirect URI to `http://localhost:8080/callback` (for local
+   testing).
+5. Under **Assignments**, assign the app to the groups you create in the next
+   section.
+6. Click **Save**.
+
+### Create groups and users
+
+1. Go to **Directory** > **Groups**.
+2. Create two groups: `mcp-read` and `mcp-write`.
+3. Create (or assign) two test users. Add Alice to `mcp-read` only. Add Bob to
+   both `mcp-read` and `mcp-write`.
+
+### Add a groups claim to your identity provider
+
+1. Go to **Security** > **API** > **Authorization Servers**.
+2. Select the `default` authorization server (or your custom one).
+3. Go to **Claims** > **Add Claim**.
+4. Set the following values:
+   - **Name**: `groups`
+   - **Include in**: **ID Token** and **Access Token**
+   - **Value type**: **Groups**
+   - **Filter**: **Matches regex** `.*`
+5. Click **Create**.
+6. Note the **Issuer URI** from the authorization server settings (for example,
+   `https://YOUR_OKTA_DOMAIN/oauth2/default`).
+
+### Collect your configuration values
+
+After setup, you need three values from Okta. Use the table below to locate each
+one:
+
+| Value      | Where to find it                                                                            | Example                                             |
+| ---------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Issuer URL | **Security** > **API** > **Authorization Servers** > Issuer URI                             | `https://dev-12345.okta.com/oauth2/default`         |
+| Audience   | `api://default` for the default authorization server, or the custom audience you configured | `api://default`                                     |
+| JWKS URL   | Issuer URL + `/v1/keys`                                                                     | `https://dev-12345.okta.com/oauth2/default/v1/keys` |
+
+## Step 2: Deploy the GitHub MCP server
+
+### Create a Secret for your GitHub PAT
+
+Store your GitHub personal access token as a Kubernetes Secret.
+
+:::tip
+
+Your PAT needs the `repo` scope for write tools (like `create_pull_request` and
+`push_files`) to appear. Without it, the GitHub MCP server only exposes
+read-only tools regardless of your Cedar policies.
+
+:::
+
+```yaml title="github-pat-secret.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-pat
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  token: 'YOUR_GITHUB_PAT'
+```
+
+```bash
+kubectl apply -f github-pat-secret.yaml
+```
+
+### Deploy the MCPServer without authentication
+
+Create the MCPServer resource without authentication to verify the basic
+deployment works:
+
+```yaml title="github-mcpserver.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: github
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/github/github-mcp-server:latest
+  transport: stdio
+  secrets:
+    - name: github-pat
+      key: token
+      targetEnvName: GITHUB_PERSONAL_ACCESS_TOKEN
+  resources:
+    limits:
+      cpu: '200m'
+      memory: '256Mi'
+    requests:
+      cpu: '100m'
+      memory: '128Mi'
+```
+
+```bash
+kubectl apply -f github-mcpserver.yaml
+```
+
+### Verify the server is running
+
+Check the status of the MCPServer resource:
+
+```bash
+kubectl get mcpserver -n toolhive-system github
+```
+
+You should see output similar to:
+
+```text
+NAME     STATUS   URL                                                              AGE
+github   Running  http://mcp-github-proxy.toolhive-system.svc.cluster.local:8080   30s
+```
+
+Wait until the status shows `Running` before continuing to the next step. If the
+server remains in a pending state, check the operator logs for errors:
+
+```bash
+kubectl logs -n toolhive-system deployment/toolhive-operator
+```
+
+## Step 3: Add Okta OIDC authentication
+
+Update the MCPServer to include an `oidcConfig` section. Replace the placeholder
+values with the configuration values you collected in
+[Step 1](#collect-your-configuration-values):
+
+```yaml title="github-mcpserver-oidc.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: github
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/github/github-mcp-server:latest
+  transport: stdio
+  secrets:
+    - name: github-pat
+      key: token
+      targetEnvName: GITHUB_PERSONAL_ACCESS_TOKEN
+  # highlight-start
+  oidcConfig:
+    type: inline
+    inline:
+      issuer: 'YOUR_ISSUER_URL'
+      audience: 'YOUR_AUDIENCE'
+      jwksUrl: 'YOUR_JWKS_URL'
+  # highlight-end
+  # ... resources same as before
+```
+
+```bash
+kubectl apply -f github-mcpserver-oidc.yaml
+```
+
+After applying this change, the MCP server requires a valid JWT on every
+request. Unauthenticated requests now return `401 Unauthorized`.
+
+:::tip
+
+To test authenticated requests, you can use a tool like
+[oauth2c](https://github.com/cloudentity/oauth2c) to obtain tokens from Okta, or
+use your Okta admin console to generate a test token from **Security** >
+**API** > **Authorization Servers** > **Token Preview**.
+
+:::
+
+## Step 4: Add Cedar policies for role-based access
+
+Now that authentication is in place, add authorization policies. In this step,
+you define Cedar policies that give writers full access while restricting
+readers to a set of read-only tools.
+
+### Define the roles
+
+The following table summarizes the two roles and the tools each role can access:
+
+| Role   | Group       | Allowed tools                                                                                                                         |
+| ------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Writer | `mcp-write` | All tools (read and write)                                                                                                            |
+| Reader | `mcp-read`  | Read-only tools: `get_file_contents`, `list_commits`, `list_branches`, `list_issues`, `list_pull_requests`, `search_issues`, `get_me` |
+
+### Create the authorization ConfigMap
+
+:::note
+
+ToolHive exposes JWT claims to Cedar policies with a `claim_` prefix, so the
+`groups` claim you configured in Okta becomes `principal.claim_groups` in policy
+expressions. For more details, see
+[Working with JWT claims](../concepts/cedar-policies.mdx#working-with-jwt-claims).
+
+:::
+
+Create a ConfigMap containing the Cedar policies:
+
+```yaml title="authz-config.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: github-authz
+  namespace: toolhive-system
+data:
+  authz-config.json: |
+    {
+      "version": "1.0",
+      "type": "cedarv1",
+      "cedar": {
+        "policies": [
+          "permit(principal, action, resource) when { principal.claim_groups.contains(\"mcp-write\") };",
+          "permit(principal, action == Action::\"call_tool\", resource == Tool::\"get_file_contents\") when { principal.claim_groups.contains(\"mcp-read\") };",
+          "permit(principal, action == Action::\"call_tool\", resource == Tool::\"list_commits\") when { principal.claim_groups.contains(\"mcp-read\") };",
+          "permit(principal, action == Action::\"call_tool\", resource == Tool::\"list_branches\") when { principal.claim_groups.contains(\"mcp-read\") };",
+          "permit(principal, action == Action::\"call_tool\", resource == Tool::\"list_issues\") when { principal.claim_groups.contains(\"mcp-read\") };",
+          "permit(principal, action == Action::\"call_tool\", resource == Tool::\"list_pull_requests\") when { principal.claim_groups.contains(\"mcp-read\") };",
+          "permit(principal, action == Action::\"call_tool\", resource == Tool::\"search_issues\") when { principal.claim_groups.contains(\"mcp-read\") };",
+          "permit(principal, action == Action::\"call_tool\", resource == Tool::\"get_me\") when { principal.claim_groups.contains(\"mcp-read\") };"
+        ],
+        "entities_json": "[]"
+      }
+    }
+```
+
+```bash
+kubectl apply -f authz-config.yaml
+```
+
+### Update the MCPServer with authorization
+
+Add the `authzConfig` section to reference the ConfigMap you just created. The
+highlighted lines show the new addition:
+
+```yaml title="github-mcpserver-authz.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: github
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/github/github-mcp-server:latest
+  transport: stdio
+  secrets:
+    - name: github-pat
+      key: token
+      targetEnvName: GITHUB_PERSONAL_ACCESS_TOKEN
+  oidcConfig:
+    type: inline
+    inline:
+      issuer: 'YOUR_ISSUER_URL'
+      audience: 'YOUR_AUDIENCE'
+      jwksUrl: 'YOUR_JWKS_URL'
+  # highlight-start
+  authzConfig:
+    type: configMap
+    configMap:
+      name: github-authz
+      key: authz-config.json
+  # highlight-end
+  # ... resources same as before
+```
+
+```bash
+kubectl apply -f github-mcpserver-authz.yaml
+```
+
+## Step 5: Verify tool filtering
+
+ToolHive automatically filters the `tools/list` response based on your Cedar
+policies. When a client calls `tools/list`, the proxy evaluates each tool
+against the user's policies and only returns the tools the user is allowed to
+call. For more details, see
+[list operations and filtering](../concepts/cedar-policies.mdx#list-operations-and-filtering).
+
+**Writer** (Bob, in both `mcp-write` and `mcp-read`) sees all available tools:
+
+```text
+add_issue_comment, create_branch, create_pull_request,
+create_repository, get_file_contents, list_branches,
+list_commits, list_issues, merge_pull_request, ... (truncated)
+```
+
+**Reader** (Alice, in `mcp-read` only) sees only the read-only tools permitted
+by the Cedar policies:
+
+```text
+get_file_contents, get_me, list_branches,
+list_commits, list_issues, list_pull_requests,
+search_issues
+```
+
+:::note
+
+Tool filtering happens automatically. You don't need separate policies for
+`list_tools`. The proxy evaluates `call_tool` policies for each tool and only
+returns tools the user is allowed to call.
+
+:::
+
+## Step 6: Verify denied access
+
+Verify that authorization is enforced by calling a write tool with a reader's
+token.
+
+First, port-forward to the MCP server service so you can send requests from your
+local machine:
+
+```bash
+kubectl port-forward -n toolhive-system svc/mcp-github-proxy 8080:8080
+```
+
+:::note
+
+Port-forwarding works well for testing. In production, expose your MCP servers
+using an Ingress or Gateway API resource instead. See
+[Connect clients to MCP servers](../guides-k8s/connect-clients.mdx) for
+configuration options.
+
+:::
+
+In a separate terminal, send a request using a reader's token:
+
+```bash
+# Using a reader's token to call a write operation
+curl -X POST http://localhost:8080/mcp \
+  -H "Authorization: Bearer READER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "create_pull_request",
+      "arguments": {
+        "repo": "example/repo",
+        "title": "Test",
+        "head": "feature",
+        "base": "main"
+      }
+    },
+    "id": 1
+  }'
+```
+
+The proxy denies the request and returns a `403 Forbidden` response. Sending the
+same request with a writer's token succeeds — the proxy forwards the request to
+the MCP server and returns the tool's response.
+
+## Clean up
+
+Remove the resources you created in this tutorial:
+
+```bash
+kubectl delete mcpserver -n toolhive-system github
+kubectl delete configmap -n toolhive-system github-authz
+kubectl delete secret -n toolhive-system github-pat
+```
+
+## What's next?
+
+- Learn more about Cedar policy syntax in
+  [Cedar policies](../concepts/cedar-policies.mdx)
+- Explore the
+  [authentication and authorization framework](../concepts/auth-framework.mdx)
+  concepts
+- Set up [token exchange](../guides-k8s/token-exchange-k8s.mdx) for downstream
+  service authentication
+- Deploy a [Virtual MCP Server](../guides-vmcp/index.mdx) to aggregate multiple
+  servers behind a single endpoint
+
+## Troubleshooting
+
+<details>
+<summary>Authentication issues</summary>
+
+If clients can't authenticate:
+
+1. Check that the JWT is valid and not expired.
+2. Verify that the audience and issuer match your `oidcConfig` values.
+3. Ensure the JWKS URL is accessible from within the cluster.
+4. Check the operator and proxy logs for specific errors:
+
+   ```bash
+   # Operator logs
+   kubectl logs -n toolhive-system deployment/toolhive-operator
+
+   # Proxy logs for the GitHub MCPServer
+   kubectl logs -n toolhive-system \
+     -l app.kubernetes.io/managed-by=toolhive,app.kubernetes.io/name=github \
+     -c proxy
+   ```
+
+</details>
+
+<details>
+<summary>Authorization issues</summary>
+
+If authenticated clients are denied access:
+
+1. Make sure your Cedar policies explicitly permit the specific action
+   (remember, default deny).
+2. Check that the principal, action, and resource match what's in your policies,
+   including capitalization and formatting.
+3. Examine any conditions in your policies to ensure they're satisfied (for
+   example, required JWT claims).
+
+</details>
+
+<details>
+<summary>Token missing groups claim</summary>
+
+Verify that the `groups` claim is configured on the **authorization server**,
+not just on the application. In the Okta admin console, go to **Security** >
+**API** > **Authorization Servers**, select your server, and check the
+**Claims** tab.
+
+</details>
+
+<details>
+<summary>Groups not matching Cedar policies</summary>
+
+Group names in Cedar policies must exactly match the Okta group names, including
+capitalization. For example, `mcp-write` is not the same as `MCP-Write`. Check
+your Okta group names under **Directory** > **Groups** and update your Cedar
+policies if needed.
+
+</details>
+
+<details>
+<summary>401 after adding oidcConfig</summary>
+
+Verify that the issuer URL includes the full authorization server path. For the
+default Okta authorization server, the issuer URL should end with
+`/oauth2/default` (for example, `https://dev-12345.okta.com/oauth2/default`). A
+common mistake is to use just the Okta domain without the authorization server
+path.
+
+</details>
