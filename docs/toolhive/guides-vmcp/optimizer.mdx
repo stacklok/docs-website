@@ -148,11 +148,11 @@ For the complete field reference, see the
 
 :::warning[ARM64 compatibility]
 
-The default
-[text-embeddings-inference](https://github.com/huggingface/text-embeddings-inference)
-(TEI) image (`ghcr.io/huggingface/text-embeddings-inference`) is amd64-only. If
-you are running on ARM64, you must pre-pull the image for `linux/amd64` and load
-it into your cluster:
+The default TEI CPU images depend on Intel MKL, which is x86_64-only. No
+official ARM64 images exist yet. On ARM64 nodes (including Apple Silicon with
+kind), you can run the amd64 image under emulation as a workaround.
+
+First, pull the amd64 image and load it into your cluster:
 
 ```bash
 docker pull --platform linux/amd64 \
@@ -160,6 +160,27 @@ docker pull --platform linux/amd64 \
 kind load docker-image \
   ghcr.io/huggingface/text-embeddings-inference:cpu-1.7
 ```
+
+The `kind load` command is specific to kind. For other cluster distributions,
+use the equivalent image-loading mechanism (for example, `ctr images import` for
+containerd, or push the image to a registry your cluster can pull from).
+
+Then, pin the image in your EmbeddingServer so the operator uses the pre-pulled
+tag instead of the default `cpu-latest`:
+
+```yaml title="embedding-server.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: EmbeddingServer
+metadata:
+  name: my-embedding
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7
+```
+
+Native ARM64 support is in progress upstream. Track the
+[TEI GitHub repository](https://github.com/huggingface/text-embeddings-inference)
+for updates.
 
 :::
 
