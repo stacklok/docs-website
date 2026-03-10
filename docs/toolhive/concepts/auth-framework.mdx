@@ -7,7 +7,7 @@ description:
 This document explains the concepts behind ToolHive's authentication and
 authorization framework, which secures MCP servers by verifying client identity
 and controlling access to resources. You'll learn how these systems work
-together, why they're designed this way, and the benefits of this approach.
+together, the reasoning behind their design, and the benefits of this approach.
 
 :::info[Scope of this documentation]
 
@@ -63,18 +63,20 @@ significant operational challenges:
   its own token validation and scope management, duplicating security-critical
   logic across servers.
 
-ToolHive addresses these challenges by centralizing authentication and
-authorization in its proxy layer. You configure ToolHive with your identity
-provider and write Cedar policies for fine-grained authorization—individual MCP
-servers don't need to implement token validation or scope management.
+ToolHive addresses the per-server implementation cost by centralizing
+authentication and authorization in its proxy layer. You configure ToolHive with
+your identity provider and write Cedar policies for fine-grained
+authorization—individual MCP servers don't need to implement token validation or
+scope management.
 
-With the [embedded authorization server](#embedded-authorization-server),
-ToolHive can also manage interactive token acquisition. The proxy exposes
-standard OAuth endpoints and handles the full OAuth web flow—clients don't need
-to obtain or manage tokens externally. ToolHive delegates authentication to an
-upstream identity provider and issues its own tokens, giving MCP clients a
-spec-compliant OAuth experience while centralizing the complexity of client
-registration and token management.
+The [embedded authorization server](#embedded-authorization-server) addresses
+the remaining challenges. It exposes standard OAuth endpoints and handles the
+full OAuth web flow, eliminating the client registration burden through Dynamic
+Client Registration (DCR) and solving the federation gap by obtaining tokens
+directly from external providers like GitHub or Atlassian. ToolHive delegates
+authentication to the upstream provider and issues its own tokens, giving MCP
+clients a spec-compliant OAuth experience while centralizing the complexity of
+token acquisition and management.
 
 ## Authentication framework
 
@@ -182,94 +184,26 @@ deployments using the ToolHive Operator.
 
 :::
 
-This approach is designed for MCP servers that accept `Authorization: Bearer`
-tokens and is particularly useful when you want ToolHive to handle the full
-OAuth flow rather than requiring clients to obtain tokens independently.
-
-#### How the embedded authorization server works
-
-The embedded authorization server runs in-process within the ToolHive proxy.
-When a client connects, the following flow occurs:
+From the client's perspective, the embedded authorization server provides a
+standard OAuth 2.0 experience:
 
 1. If the client is not yet registered, it registers via Dynamic Client
    Registration (DCR), receiving a `client_id` and `client_secret`.
 2. The client is directed to the ToolHive authorization endpoint.
-3. The proxy redirects the client to the upstream identity provider for
-   authentication.
-4. The user authenticates with the upstream identity provider (for example,
-   signing in with Google or GitHub).
-5. The upstream identity provider redirects back to the proxy with an
-   authorization code.
-6. The embedded authorization server exchanges the authorization code for tokens
-   with the upstream identity provider.
-7. The embedded authorization server issues its own JWT to the client, signed
-   with keys you configure.
-8. The client includes this JWT as a `Bearer` token in the `Authorization`
+3. ToolHive redirects the client to the upstream identity provider for
+   authentication (for example, signing in with GitHub or Atlassian).
+4. ToolHive exchanges the authorization code for upstream tokens and issues its
+   own JWT to the client, signed with keys you configure.
+5. The client includes this JWT as a `Bearer` token in the `Authorization`
    header on subsequent requests.
-9. The proxy validates the JWT, retrieves the upstream token, and forwards
-   requests to the MCP server.
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Proxy as ToolHive Proxy
-    participant IdP as Upstream IdP
-    participant MCP as MCP Server
+Behind the scenes, ToolHive stores the upstream tokens and uses them to
+authenticate MCP server requests to external APIs. For the complete flow,
+including token storage and forwarding, see
+[Embedded authorization server](./backend-auth.mdx#embedded-authorization-server).
 
-    Client->>Proxy: POST /oauth/register (DCR)
-    Proxy-->>Client: client_id + client_secret
-    Client->>Proxy: Connect to MCP server
-    Proxy-->>Client: Redirect to /oauth/authorize
-    Client->>Proxy: GET /oauth/authorize
-    Proxy-->>Client: Redirect to upstream IdP
-    Client->>IdP: Authenticate
-    IdP-->>Client: Redirect with authorization code
-    Client->>Proxy: GET /oauth/callback?code=...
-    Proxy->>IdP: Exchange code for tokens
-    IdP-->>Proxy: Upstream tokens
-    Proxy-->>Client: Issue ToolHive JWT
-    Client->>Proxy: MCP request with Bearer token
-    Proxy->>Proxy: Validate JWT
-    Proxy->>MCP: Forward request
-    MCP-->>Proxy: Response
-    Proxy-->>Client: Response
-```
-
-#### Key characteristics
-
-- **In-process execution:** The authorization server runs within the ToolHive
-  proxy—no separate infrastructure or sidecar containers needed.
-- **Configurable signing keys:** JWTs are signed with keys you provide,
-  supporting key rotation for zero-downtime updates.
-- **Flexible upstream providers:** Supports both OIDC providers (with automatic
-  endpoint discovery) and OAuth 2.0 providers (with explicit endpoint
-  configuration).
-- **Configurable token lifespans:** Access tokens, refresh tokens, and
-  authorization codes have configurable durations with sensible defaults.
-- **Dynamic Client Registration (DCR):** Supports OAuth 2.0 Dynamic Client
-  Registration (RFC 7591), allowing MCP clients to register automatically
-  without manual configuration at the identity provider.
-- **Direct upstream redirect:** The embedded authorization server redirects
-  clients directly to the upstream provider for authentication (for example,
-  GitHub or Atlassian).
-- **Single upstream provider:** Currently supports one upstream identity
-  provider per configuration.
-
-:::info[Chained authentication not yet supported]
-
-The embedded authorization server redirects clients directly to the upstream
-provider. This means the upstream provider must be the service whose API the MCP
-server calls. Chained authentication—where a client authenticates with a
-corporate IdP like Okta, which then federates to an external provider like
-GitHub—is not yet supported. If your deployment requires this pattern, consider
-using [token exchange](./backend-auth.mdx#same-idp-with-token-exchange) with a
-federated identity provider instead.
-
-:::
-
-For guidance on choosing the right backend authentication pattern for your MCP
-servers, see
-[Choosing the right backend authentication model](./backend-auth.mdx#choosing-the-right-backend-authentication-model).
+For Kubernetes setup instructions, see
+[Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication).
 
 ### Identity providers
 
