@@ -3,6 +3,7 @@ name: upstream-release-docs
 description: >
   Analyze an upstream project's new release, verify changes against source code, and update documentation. Covers discovery, deep-dive into PRs/issues, docs audit, source-verified implementation, and review feedback handling.
 
+
 argument-hint: '<owner/repo> [tag]'
 ---
 
@@ -74,6 +75,7 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
    - Check linked issues for user stories, acceptance criteria, and "definition of done"
    - Follow references to RFCs, design docs, or PRDs linked from issues or PR descriptions
    - Identify the intended user workflow: who uses this, why, and what happens after?
+   - Map the full lifecycle: if the feature has a publish/produce side, identify the consume/discover side too. Document both.
    - If the "why" and consumption story aren't clear from any source, flag this gap — documentation that only covers the API surface without explaining purpose or workflow is incomplete
 
 4. **Read the actual source code at the release tag** to verify every claim made in the PR description:
@@ -114,10 +116,26 @@ Apply the approved changes:
 1. **Update existing pages** — edit files using the impact map. Preserve the existing writing style and conventions.
 
 2. **Create new pages** for new features that lack existing documentation. Default to documenting new features rather than skipping them:
-   - Follow the project's information architecture framework (e.g., Diataxis: tutorials, how-to guides, reference, concepts)
-   - Place the page in the appropriate directory
+
+   **Diataxis separation** — create separate pages per document type, not one combined page:
+   - **Concept page** (explanation): What is this feature, why does it exist, when would you use it? Lead with concrete scenarios and user personas ("If you maintain a shared MCP registry and want to let teams publish reusable tool bundles..."). Explain relationships to existing features.
+   - **Guide page** (how-to): Task-oriented, organized by user goals — not by API endpoint order. Include practical examples: realistic `curl` commands, sample payloads with plausible values, expected responses, and error cases. If a feature has both producer and consumer sides, document both workflows.
+   - **Reference page**: Only create if not already auto-generated. If auto-generated API reference exists, link to it instead of duplicating endpoint listings.
+
+   **Consumer workflow** — always document "then what?" after the producer/API side. If a feature has a publish/consume pattern, document how consumers discover and use what was published. If consumption tooling isn't built yet, say so explicitly rather than leaving a gap.
+
+   **Practical examples** — every guide page needs at least one end-to-end example with:
+   - Realistic sample data (not `foo`/`bar` placeholders)
+   - The exact commands or API calls to run
+   - Expected output or response
+   - What to do if something goes wrong
+
+   **Naming conventions** — when the feature introduces naming rules (e.g., kebab-case identifiers, camelCase config keys), call these out explicitly with examples of valid and invalid names.
+
+   **Page mechanics:**
+   - Place each page in the appropriate directory
    - Update sidebar/navigation configuration
-   - Even if auto-generated API reference exists for the feature, create conceptual/guide content explaining what the feature is, when to use it, and how it fits into the broader product
+   - Update frontmatter descriptions on all new and modified pages
    - Only skip creating a page that would duplicate auto-generated reference content (e.g., don't manually list API endpoints that are already in a swagger-rendered page)
 
 3. **Add cross-references** — link new content from related existing pages and vice versa.
@@ -155,6 +173,12 @@ When receiving review comments (from humans or automated reviewers):
 - **Triple verification**: verify during deep dive (Phase 2), before finalizing (Phase 5), and when handling reviews (Phase 6)
 - **Transparency**: log the categorized summary (after Phase 1) and impact map (after Phase 3) for auditability, but do not stop — run all phases to completion
 - **Respect auto-generated content**: don't manually edit auto-generated files, but always create the surrounding conceptual/guide content that auto-generated reference docs don't provide
+- **Separate by Diataxis type**: never combine concepts and how-to guides in a single page. Create separate pages for each document type.
+- **Document the full lifecycle**: if a feature has producer and consumer sides, document both. Always answer "then what?" — don't leave the reader at the API call with no guidance on what happens next.
+- **Lead with scenarios, not abstractions**: open concept pages with concrete "who is this for and why should they care" scenarios, not abstract definitions
+- **Flag gaps honestly**: if consumption tooling, client support, or integration isn't ready yet, say so explicitly rather than omitting the topic
+- **Use realistic examples**: guide pages need end-to-end examples with plausible data, exact commands, and expected output — not placeholder values
+- **Call out naming conventions**: when a feature introduces naming rules (casing, allowed characters, namespacing), document them explicitly with valid/invalid examples
 - **Don't document hidden features**: skip features marked as hidden, experimental, or internal unless explicitly asked
 - **Follow existing conventions**: match the project's style guide, writing voice, file structure, and naming patterns
 - **Be project-agnostic**: this workflow applies to any upstream project and any docs site — do not assume specific frameworks, file paths, or tools
