@@ -150,6 +150,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/connect-clients',
         'toolhive/guides-k8s/customize-tools',
         'toolhive/guides-k8s/auth-k8s',
+        'toolhive/guides-k8s/redis-session-storage',
         'toolhive/guides-k8s/token-exchange-k8s',
         'toolhive/guides-k8s/telemetry-and-metrics',
         'toolhive/guides-k8s/logging',
