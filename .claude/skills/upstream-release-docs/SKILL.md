@@ -15,8 +15,8 @@ Analyze a new release of an upstream project and update the documentation site t
 
 **Verify everything against source code at the release tag.** Never trust release notes, PR descriptions, PR review comments, or issue descriptions at face value. Always check actual source code using:
 
-```
-gh api repos/OWNER/REPO/contents/PATH?ref=TAG
+```bash
+gh api repos/<OWNER>/<REPO>/contents/<PATH>?ref=<TAG>
 ```
 
 Claims from any human-written source (release notes, PR bodies, review comments) may be inaccurate, outdated, or aspirational. The source code at the tag is the single source of truth.
@@ -25,21 +25,21 @@ Claims from any human-written source (release notes, PR bodies, review comments)
 
 Parse the argument to extract:
 
-- `OWNER/REPO` — the upstream repository (e.g., `stacklok/toolhive-registry-server`)
-- `TAG` (optional) — the release tag (e.g., `v0.6.3`). If omitted, fetch the latest release.
+- `<OWNER>/<REPO>` — the upstream repository (e.g., `stacklok/toolhive-registry-server`)
+- `<TAG>` (optional) — the release tag (e.g., `v0.6.3`). If omitted, fetch the latest release.
 
 ## Phase 1: Discovery
 
 1. Fetch the release:
 
-   ```
-   gh release view TAG --repo OWNER/REPO --json tagName,name,body,publishedAt
+   ```bash
+   gh release view <TAG> --repo <OWNER>/<REPO> --json tagName,name,body,publishedAt
    ```
 
    If no tag was provided:
 
-   ```
-   gh release view --repo OWNER/REPO --json tagName,name,body,publishedAt
+   ```bash
+   gh release view --repo <OWNER>/<REPO> --json tagName,name,body,publishedAt
    ```
 
 2. Extract PR numbers from the release notes body (look for `#NNN` patterns or full PR URLs).
@@ -61,14 +61,14 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 
 1. Fetch PR details:
 
-   ```
-   gh pr view NUMBER --repo OWNER/REPO --json title,body,files
+   ```bash
+   gh pr view <NUMBER> --repo <OWNER>/<REPO> --json title,body,files
    ```
 
 2. Fetch linked issues if referenced:
 
-   ```
-   gh issue view NUMBER --repo OWNER/REPO --json title,body
+   ```bash
+   gh issue view <NUMBER> --repo <OWNER>/<REPO> --json title,body
    ```
 
 3. **Understand the "why"** — for new features, look beyond the code to understand motivation and intended usage:
@@ -80,8 +80,8 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 
 4. **Read the actual source code at the release tag** to verify every claim made in the PR description:
 
-   ```
-   gh api repos/OWNER/REPO/contents/PATH?ref=TAG
+   ```bash
+   gh api repos/<OWNER>/<REPO>/contents/<PATH>?ref=<TAG>
    ```
 
    The response is base64-encoded; decode it to read the content.
@@ -155,7 +155,7 @@ Apply the approved changes:
 4. **Run `/docs-review`** — invoke the docs-review skill on all changed and new files to catch style, structure, and clarity issues. When the review returns, **do not stop or present the findings to the user**. Instead, immediately apply every actionable fix yourself:
    - For primary issues: edit the files to resolve them.
    - For secondary issues and inline suggestions: apply the fixes directly.
-   - For items you disagree with (e.g., they conflict with verified source code): skip them silently.
+   - For items you disagree with (e.g., they conflict with verified source code): do not apply the suggestion, but briefly log each skipped item with a source-verified reason for auditability.
    - After applying fixes, re-run formatting/linting to ensure the fixes are clean.
 
 5. Fix any remaining issues found in the build or lint steps. Re-run validation until clean.
