@@ -3,7 +3,6 @@ name: upstream-release-docs
 description: >
   Analyze an upstream project's new release, verify changes against source code, and update documentation. Covers discovery, deep-dive into PRs/issues, docs audit, source-verified implementation, and review feedback handling.
 
-
 argument-hint: '<owner/repo> [tag]'
 ---
 
@@ -71,7 +70,13 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
    gh issue view NUMBER --repo OWNER/REPO --json title,body
    ```
 
-3. **Read the actual source code at the release tag** to verify every claim made in the PR description:
+3. **Understand the "why"** — for new features, look beyond the code to understand motivation and intended usage:
+   - Check linked issues for user stories, acceptance criteria, and "definition of done"
+   - Follow references to RFCs, design docs, or PRDs linked from issues or PR descriptions
+   - Identify the intended user workflow: who uses this, why, and what happens after?
+   - If the "why" and consumption story aren't clear from any source, flag this gap — documentation that only covers the API surface without explaining purpose or workflow is incomplete
+
+4. **Read the actual source code at the release tag** to verify every claim made in the PR description:
 
    ```
    gh api repos/OWNER/REPO/contents/PATH?ref=TAG
@@ -79,10 +84,10 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 
    The response is base64-encoded; decode it to read the content.
 
-4. Note discrepancies between PR descriptions and actual code. Trust the code.
+5. Note discrepancies between PR descriptions and actual code. Trust the code.
 
-5. Identify:
-   - **Auto-generated content** — files generated from upstream (OpenAPI specs, CLI reference docs, JSON schemas). These should not be manually edited; flag them for automated update instead. Critically, check whether new features are **already covered** by auto-generated docs (e.g., new API endpoints included in an upstream swagger spec that feeds a rendered API reference page). If so, do not create manual duplicates — the auto-generated content is the source of truth and manual pages will drift.
+6. Identify:
+   - **Auto-generated content** — files generated from upstream (OpenAPI specs, CLI reference docs, JSON schemas). Do not manually edit these; flag them for automated update instead. However, auto-generated reference docs (e.g., API endpoints from a swagger spec) do **not** replace the need for conceptual explanations, guide content, or cross-references in existing pages. A new feature with auto-generated API docs still needs: (1) a conceptual explanation of what it is and why it exists, (2) mentions and cross-references in related existing pages (intro pages, feature lists, related guides), and (3) guide content if the feature has non-trivial workflows. Only skip creating a **duplicate API reference page** — never skip the surrounding documentation.
    - **Hidden/experimental features** — look for indicators like `Hidden: true` in CLI command definitions, feature flags, or internal-only annotations. Do not document these unless the user explicitly asks.
 
 ## Phase 3: Audit Existing Docs
@@ -94,7 +99,11 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 
 2. Check the project style guide (CLAUDE.md, STYLE-GUIDE.md, or similar) for conventions.
 
-3. Build an **impact map** — a table with: | File | Current text/value | Verified replacement | Change type | |------|-------------------|---------------------|-------------| | path | what exists now | what it should be | update/new/remove |
+3. Build an **impact map** — a table with these columns:
+
+   | File | Current text/value | Verified replacement | Change type       |
+   | ---- | ------------------ | -------------------- | ----------------- |
+   | path | what exists now    | what it should be    | update/new/remove |
 
 4. **Log the impact map** for transparency, then proceed to Phase 4.
 
@@ -104,11 +113,12 @@ Apply the approved changes:
 
 1. **Update existing pages** — edit files using the impact map. Preserve the existing writing style and conventions.
 
-2. **Create new pages** for new features that lack existing documentation and are not already covered by auto-generated content. Default to documenting new features rather than skipping them:
+2. **Create new pages** for new features that lack existing documentation. Default to documenting new features rather than skipping them:
    - Follow the project's information architecture framework (e.g., Diataxis: tutorials, how-to guides, reference, concepts)
    - Place the page in the appropriate directory
    - Update sidebar/navigation configuration
-   - Skip only if the feature is already fully covered by auto-generated docs (e.g., API reference from a swagger spec)
+   - Even if auto-generated API reference exists for the feature, create conceptual/guide content explaining what the feature is, when to use it, and how it fits into the broader product
+   - Only skip creating a page that would duplicate auto-generated reference content (e.g., don't manually list API endpoints that are already in a swagger-rendered page)
 
 3. **Add cross-references** — link new content from related existing pages and vice versa.
 
@@ -144,7 +154,7 @@ When receiving review comments (from humans or automated reviewers):
 
 - **Triple verification**: verify during deep dive (Phase 2), before finalizing (Phase 5), and when handling reviews (Phase 6)
 - **Transparency**: log the categorized summary (after Phase 1) and impact map (after Phase 3) for auditability, but do not stop — run all phases to completion
-- **Respect auto-generated content**: identify and skip files that are updated by automated processes
+- **Respect auto-generated content**: don't manually edit auto-generated files, but always create the surrounding conceptual/guide content that auto-generated reference docs don't provide
 - **Don't document hidden features**: skip features marked as hidden, experimental, or internal unless explicitly asked
 - **Follow existing conventions**: match the project's style guide, writing voice, file structure, and naming patterns
 - **Be project-agnostic**: this workflow applies to any upstream project and any docs site — do not assume specific frameworks, file paths, or tools
