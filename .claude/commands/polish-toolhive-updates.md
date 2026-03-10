@@ -177,7 +177,7 @@ For each major feature/component:
 **Every update post must end with this exact section:**
 
 ```markdown
-### Getting started
+## Getting started
 
 For detailed release notes, check the project repositories:
 
