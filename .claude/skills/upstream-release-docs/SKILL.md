@@ -53,7 +53,7 @@ Parse the argument to extract:
    - **Bug fixes** — corrections that may affect documented behavior
    - **Internal/infra** — CI, dependencies, refactoring (usually no docs impact)
 
-4. **Present the categorized summary to the user.** Wait for approval before proceeding.
+4. **Log the categorized summary** for transparency, then proceed to Phase 2.
 
 ## Phase 2: Deep Dive
 
@@ -82,7 +82,7 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 4. Note discrepancies between PR descriptions and actual code. Trust the code.
 
 5. Identify:
-   - **Auto-updated content** — files generated from upstream (OpenAPI specs, CLI reference docs, JSON schemas). These should not be manually edited; flag them for automated update instead.
+   - **Auto-generated content** — files generated from upstream (OpenAPI specs, CLI reference docs, JSON schemas). These should not be manually edited; flag them for automated update instead. Critically, check whether new features are **already covered** by auto-generated docs (e.g., new API endpoints included in an upstream swagger spec that feeds a rendered API reference page). If so, do not create manual duplicates — the auto-generated content is the source of truth and manual pages will drift.
    - **Hidden/experimental features** — look for indicators like `Hidden: true` in CLI command definitions, feature flags, or internal-only annotations. Do not document these unless the user explicitly asks.
 
 ## Phase 3: Audit Existing Docs
@@ -96,7 +96,7 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 
 3. Build an **impact map** — a table with: | File | Current text/value | Verified replacement | Change type | |------|-------------------|---------------------|-------------| | path | what exists now | what it should be | update/new/remove |
 
-4. **Present the impact map to the user.** Wait for approval before implementing.
+4. **Log the impact map** for transparency, then proceed to Phase 4.
 
 ## Phase 4: Implementation
 
@@ -104,10 +104,11 @@ Apply the approved changes:
 
 1. **Update existing pages** — edit files using the impact map. Preserve the existing writing style and conventions.
 
-2. **Create new pages** if a feature requires dedicated documentation:
+2. **Create new pages** for new features that lack existing documentation and are not already covered by auto-generated content. Default to documenting new features rather than skipping them:
    - Follow the project's information architecture framework (e.g., Diataxis: tutorials, how-to guides, reference, concepts)
    - Place the page in the appropriate directory
    - Update sidebar/navigation configuration
+   - Skip only if the feature is already fully covered by auto-generated docs (e.g., API reference from a swagger spec)
 
 3. **Add cross-references** — link new content from related existing pages and vice versa.
 
@@ -142,7 +143,7 @@ When receiving review comments (from humans or automated reviewers):
 ## Key Principles
 
 - **Triple verification**: verify during deep dive (Phase 2), before finalizing (Phase 5), and when handling reviews (Phase 6)
-- **User checkpoints**: present the categorized summary (after Phase 1) and impact map (after Phase 3) for user approval before implementing
+- **Transparency**: log the categorized summary (after Phase 1) and impact map (after Phase 3) for auditability, but do not stop — run all phases to completion
 - **Respect auto-generated content**: identify and skip files that are updated by automated processes
 - **Don't document hidden features**: skip features marked as hidden, experimental, or internal unless explicitly asked
 - **Follow existing conventions**: match the project's style guide, writing voice, file structure, and naming patterns
