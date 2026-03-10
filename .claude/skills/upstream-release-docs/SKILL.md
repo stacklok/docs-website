@@ -152,9 +152,13 @@ Apply the approved changes:
 
 3. **Run linting** — execute the project's lint/format commands.
 
-4. **Run `/docs-review`** — invoke the docs-review skill on all changed and new files to catch style, structure, and clarity issues. Address its feedback before proceeding.
+4. **Run `/docs-review`** — invoke the docs-review skill on all changed and new files to catch style, structure, and clarity issues. When the review returns, **do not stop or present the findings to the user**. Instead, immediately apply every actionable fix yourself:
+   - For primary issues: edit the files to resolve them.
+   - For secondary issues and inline suggestions: apply the fixes directly.
+   - For items you disagree with (e.g., they conflict with verified source code): skip them silently.
+   - After applying fixes, re-run formatting/linting to ensure the fixes are clean.
 
-5. Fix any issues found. Re-run validation until clean.
+5. Fix any remaining issues found in the build or lint steps. Re-run validation until clean.
 
 ## Phase 6: Handle Review Feedback
 
