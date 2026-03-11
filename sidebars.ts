@@ -186,7 +186,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Registry Server',
       description:
-        'How to deploy and use the ToolHive Registry server to discover and access MCP servers',
+        'How to deploy and use the ToolHive Registry server to discover and access MCP servers and skills',
       link: {
         type: 'doc',
         id: 'toolhive/guides-registry/index',
