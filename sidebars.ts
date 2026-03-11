@@ -199,6 +199,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-registry/configuration',
         'toolhive/guides-registry/authentication',
         'toolhive/guides-registry/database',
+        'toolhive/guides-registry/skills',
         'toolhive/guides-registry/telemetry-metrics',
         'toolhive/reference/registry-api',
         'toolhive/reference/registry-schema-upstream',
@@ -226,6 +227,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/concepts/cedar-policies',
         'toolhive/concepts/backend-auth',
         'toolhive/concepts/vmcp',
+        'toolhive/concepts/skills',
       ],
     },
 

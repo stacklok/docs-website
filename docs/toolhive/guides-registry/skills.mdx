@@ -1,0 +1,201 @@
+---
+title: Manage skills
+description:
+  How to publish, list, retrieve, and delete skills using the ToolHive Registry
+  server extensions API.
+---
+
+The Registry server provides an extensions API for managing
+[skills](../concepts/skills.mdx). This guide covers the full lifecycle:
+publishing, listing, retrieving, and deleting skills.
+
+## Prerequisites
+
+- A running Registry server with at least one **managed** registry configured
+  (skills can only be published to managed registries)
+- `curl` or another HTTP client
+- If authentication is enabled, a valid bearer token (see
+  [Authentication](./authentication.mdx))
+
+## API base path
+
+All skills endpoints use the following base path:
+
+```text
+/{registryName}/v0.1/x/dev.toolhive/skills
+```
+
+Replace `{registryName}` with the name of your managed registry (for example,
+`my-registry`).
+
+## Publish a skill
+
+To publish a new skill version, send a `POST` request with the skill metadata:
+
+```bash title="Publish a skill"
+curl -X POST \
+  https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -d '{
+    "namespace": "io.github.acme",
+    "name": "code-review",
+    "description": "Performs structured code reviews using best practices",
+    "version": "1.0.0",
+    "status": "active",
+    "title": "Code Review Assistant",
+    "license": "Apache-2.0",
+    "packages": [
+      {
+        "registryType": "git",
+        "url": "https://github.com/acme/skills",
+        "ref": "v1.0.0",
+        "subfolder": "code-review"
+      }
+    ],
+    "repository": {
+      "url": "https://github.com/acme/skills",
+      "type": "git"
+    }
+  }'
+```
+
+**Required fields:** `namespace`, `name`, `description`, `version`
+
+A successful response returns `201 Created` with the published skill. If the
+version already exists, the server returns `409 Conflict`.
+
+The `status` field accepts `active`, `deprecated`, or `archived` (case
+insensitive). The server normalizes status values to uppercase internally.
+
+### Versioning behavior
+
+When you publish a new version, the registry compares it against the current
+latest version. If the new version is newer, the latest pointer updates
+automatically. Publishing an older version (for example, backfilling `0.9.0`
+after `1.0.0` exists) does not change the latest pointer.
+
+## List skills
+
+To list skills in a registry:
+
+```bash title="List all skills"
+curl https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills
+```
+
+### Query parameters
+
+| Parameter | Type   | Default | Description                                        |
+| --------- | ------ | ------- | -------------------------------------------------- |
+| `search`  | string | -       | Filter by name or description substring            |
+| `status`  | string | -       | Filter by status (comma-separated, e.g., `active`) |
+| `limit`   | int    | 50      | Maximum results per page (1-100)                   |
+| `cursor`  | string | -       | Pagination cursor from a previous response         |
+
+### Search example
+
+```bash title="Search for skills by keyword"
+curl "https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills?search=review&limit=10"
+```
+
+### Response format
+
+```json
+{
+  "skills": [
+    {
+      "namespace": "io.github.acme",
+      "name": "code-review",
+      "description": "Performs structured code reviews using best practices",
+      "version": "1.0.0",
+      "status": "ACTIVE",
+      "title": "Code Review Assistant",
+      "license": "Apache-2.0",
+      "packages": [
+        {
+          "registryType": "git",
+          "url": "https://github.com/acme/skills",
+          "ref": "v1.0.0",
+          "subfolder": "code-review"
+        }
+      ],
+      "repository": {
+        "url": "https://github.com/acme/skills",
+        "type": "git"
+      }
+    }
+  ],
+  "metadata": {
+    "count": 1,
+    "nextCursor": ""
+  }
+}
+```
+
+Use the `nextCursor` value to fetch the next page of results. An empty
+`nextCursor` indicates there are no more pages.
+
+## Retrieve a skill
+
+### Get the latest version
+
+```bash title="Get the latest version of a skill"
+curl https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills/io.github.acme/code-review
+```
+
+### Get a specific version
+
+```bash title="Get a specific version"
+curl https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills/io.github.acme/code-review/versions/1.0.0
+```
+
+### List all versions
+
+```bash title="List all versions of a skill"
+curl https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills/io.github.acme/code-review/versions
+```
+
+## Delete a skill version
+
+To delete a specific version:
+
+```bash title="Delete a skill version"
+curl -X DELETE \
+  https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills/io.github.acme/code-review/versions/1.0.0 \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+A successful delete returns `204 No Content`. Deleting a non-existent version
+returns `404 Not Found`.
+
+:::warning
+
+Deleting a skill version is permanent. If the deleted version was the latest,
+the latest pointer is not automatically reassigned to a previous version.
+
+:::
+
+## Error responses
+
+The API returns standard HTTP status codes:
+
+| Code | Meaning                                                       |
+| ---- | ------------------------------------------------------------- |
+| 400  | Invalid request (missing required fields, invalid parameters) |
+| 401  | Authentication required                                       |
+| 403  | Registry is not a managed registry (read-only registries)     |
+| 404  | Registry, skill, or version not found                         |
+| 409  | Version already exists                                        |
+| 500  | Internal server error                                         |
+
+## What's next
+
+Skill installation via agent clients (such as the ToolHive CLI or IDE
+extensions) is planned for a future release. For now, the registry serves as a
+discovery and distribution layer.
+
+- [Understanding skills](../concepts/skills.mdx) for background on the skills
+  model
+- [Registry server introduction](./intro.mdx) for an overview of the Registry
+  server
+- [Authentication](./authentication.mdx) for configuring API access
