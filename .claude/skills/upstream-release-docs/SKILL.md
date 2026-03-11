@@ -75,10 +75,17 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
    - Check linked issues for user stories, acceptance criteria, and "definition of done"
    - Follow references to RFCs, design docs, or PRDs linked from issues or PR descriptions
    - Identify the intended user workflow: who uses this, why, and what happens after?
-   - Map the full lifecycle: if the feature has a publish/produce side, identify the consume/discover side too. Document both.
+   - Map the full lifecycle: if the feature has a publish/produce side, actively search the source code for the consume/discover side. Check CLIs, client libraries, and related repositories. If consumption tooling doesn't exist in this release, note that explicitly — this gap **must** be documented rather than silently omitted.
    - If the "why" and consumption story aren't clear from any source, flag this gap — documentation that only covers the API surface without explaining purpose or workflow is incomplete
 
-4. **Read the actual source code at the release tag** to verify every claim made in the PR description:
+4. **For major new features** — when a change introduces an entirely new capability (not just a config change or incremental addition), the "why" and consumer workflow often cannot be derived from source code alone. In this case, **ask the user for additional context** before writing documentation:
+   - Request user stories, PRDs, RFCs, or design documents that explain the motivation and intended usage
+   - Ask who the target users are and what workflow they're expected to follow
+   - Ask how consumers are expected to discover and use the feature (CLI, IDE extension, API, etc.)
+   - Do not attempt to fabricate the "why" or consumer story from code structure alone — this produces documentation that covers the "what" and "how" but misses the perspective and voice that only comes from understanding the product intent
+   - Incremental changes (new config options, default changes, annotation additions) can proceed without this step
+
+5. **Read the actual source code at the release tag** to verify every claim made in the PR description:
 
    ```bash
    gh api repos/<OWNER>/<REPO>/contents/<PATH>?ref=<TAG>
@@ -86,9 +93,9 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 
    The response is base64-encoded; decode it to read the content.
 
-5. Note discrepancies between PR descriptions and actual code. Trust the code.
+6. Note discrepancies between PR descriptions and actual code. Trust the code.
 
-6. Identify:
+7. Identify:
    - **Auto-generated content** — files generated from upstream (OpenAPI specs, CLI reference docs, JSON schemas). Do not manually edit these; flag them for automated update instead. However, auto-generated reference docs (e.g., API endpoints from a swagger spec) do **not** replace the need for conceptual explanations, guide content, or cross-references in existing pages. A new feature with auto-generated API docs still needs: (1) a conceptual explanation of what it is and why it exists, (2) mentions and cross-references in related existing pages (intro pages, feature lists, related guides), and (3) guide content if the feature has non-trivial workflows. Only skip creating a **duplicate API reference page** — never skip the surrounding documentation.
    - **Hidden/experimental features** — look for indicators like `Hidden: true` in CLI command definitions, feature flags, or internal-only annotations. Do not document these unless the user explicitly asks.
 
@@ -122,7 +129,12 @@ Apply the approved changes:
    - **Guide page** (how-to): Task-oriented, organized by user goals — not by API endpoint order. Include practical examples: realistic `curl` commands, sample payloads with plausible values, expected responses, and error cases. If a feature has both producer and consumer sides, document both workflows.
    - **Reference page**: Only create if not already auto-generated. If auto-generated API reference exists, link to it instead of duplicating endpoint listings.
 
-   **Consumer workflow** — always document "then what?" after the producer/API side. If a feature has a publish/consume pattern, document how consumers discover and use what was published. If consumption tooling isn't built yet, say so explicitly rather than leaving a gap.
+   **Consumer workflow** — this is a hard requirement, not optional. For every feature that has a publish/produce side, you **must** answer "then what?" in the documentation. Specifically:
+   - How does a consumer discover what was published?
+   - How does a consumer install, fetch, or use it?
+   - What tooling exists for consumption (CLI commands, IDE extensions, API calls)?
+   - If consumption tooling doesn't exist yet, **say so explicitly** in the docs. A single sentence closing the gap is better than silence. Example: "Skill installation via agent clients is planned for a future release; for now, the registry serves as a discovery and distribution layer."
+   - Readers who follow the docs to completion must not hit a dead end.
 
    **Practical examples** — every guide page needs at least one end-to-end example with:
    - Realistic sample data (not `foo`/`bar` placeholders)
@@ -178,7 +190,8 @@ When receiving review comments (from humans or automated reviewers):
 - **Transparency**: log the categorized summary (after Phase 1) and impact map (after Phase 3) for auditability, but do not stop — run all phases to completion
 - **Respect auto-generated content**: don't manually edit auto-generated files, but always create the surrounding conceptual/guide content that auto-generated reference docs don't provide
 - **Separate by Diataxis type**: never combine concepts and how-to guides in a single page. Create separate pages for each document type.
-- **Document the full lifecycle**: if a feature has producer and consumer sides, document both. Always answer "then what?" — don't leave the reader at the API call with no guidance on what happens next.
+- **Document the full lifecycle**: if a feature has producer and consumer sides, document both. Always answer "then what?" — readers who follow the docs to completion must not hit a dead end. If consumption tooling isn't built yet, say so explicitly.
+- **Ask for context on major features**: for entirely new capabilities, don't fabricate the "why" from code alone. Ask the user for user stories, PRDs, or RFCs. Incremental changes can proceed autonomously, but big feature introductions need human input to capture product intent and voice.
 - **Lead with scenarios, not abstractions**: open concept pages with concrete "who is this for and why should they care" scenarios, not abstract definitions
 - **Flag gaps honestly**: if consumption tooling, client support, or integration isn't ready yet, say so explicitly rather than omitting the topic
 - **Use realistic examples**: guide pages need end-to-end examples with plausible data, exact commands, and expected output — not placeholder values
