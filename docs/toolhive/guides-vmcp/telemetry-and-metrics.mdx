@@ -40,7 +40,7 @@ spec:
       serviceName: 'my-vmcp'
       insecure: true
       tracingEnabled: true
-      samplingRate: '0.1'
+      samplingRate: '0.05'
       metricsEnabled: true
       enablePrometheusMetricsPath: true
     # highlight-end
@@ -113,6 +113,59 @@ vMCP supports two methods for collecting metrics:
   OTel Collector via OTLP
 - **Pull via Prometheus**: Set `enablePrometheusMetricsPath: true` to expose a
   `/metrics` endpoint on the vMCP service port (4483) for Prometheus to scrape
+
+### Backend metrics
+
+These metrics track requests to individual MCP server backends:
+
+| Metric                                    | Type      | Description                                              |
+| ----------------------------------------- | --------- | -------------------------------------------------------- |
+| `toolhive_vmcp_backends_discovered`       | Gauge     | Number of backends discovered                            |
+| `toolhive_vmcp_backend_requests`          | Counter   | Total requests per backend                               |
+| `toolhive_vmcp_backend_errors`            | Counter   | Total errors per backend                                 |
+| `toolhive_vmcp_backend_requests_duration` | Histogram | Duration of backend requests                             |
+| `mcp.client.operation.duration`           | Histogram | MCP client operation duration (OTel semantic convention) |
+
+### Workflow metrics
+
+These metrics track workflow execution across backends:
+
+| Metric                              | Type      | Description                     |
+| ----------------------------------- | --------- | ------------------------------- |
+| `toolhive_vmcp_workflow_executions` | Counter   | Total workflow executions       |
+| `toolhive_vmcp_workflow_errors`     | Counter   | Total workflow execution errors |
+| `toolhive_vmcp_workflow_duration`   | Histogram | Duration of workflow executions |
+
+### Optimizer metrics
+
+When the vMCP optimizer is enabled, these metrics track tool-finding and
+tool-calling performance:
+
+| Metric                                          | Type      | Description                             |
+| ----------------------------------------------- | --------- | --------------------------------------- |
+| `toolhive_vmcp_optimizer_find_tool_requests`    | Counter   | Total FindTool calls                    |
+| `toolhive_vmcp_optimizer_find_tool_errors`      | Counter   | Total FindTool errors                   |
+| `toolhive_vmcp_optimizer_find_tool_duration`    | Histogram | Duration of FindTool calls              |
+| `toolhive_vmcp_optimizer_find_tool_results`     | Histogram | Number of tools returned per call       |
+| `toolhive_vmcp_optimizer_token_savings_percent` | Histogram | Token savings percentage per call       |
+| `toolhive_vmcp_optimizer_call_tool_requests`    | Counter   | Total CallTool calls                    |
+| `toolhive_vmcp_optimizer_call_tool_errors`      | Counter   | Total CallTool errors                   |
+| `toolhive_vmcp_optimizer_call_tool_not_found`   | Counter   | CallTool calls where tool was not found |
+| `toolhive_vmcp_optimizer_call_tool_duration`    | Histogram | Duration of CallTool calls              |
+
+## Distributed tracing
+
+vMCP creates client-side spans for backend operations with the following span
+names:
+
+- `tools/call <tool_name>` - Tool calls to backends
+- `resources/read` - Resource reads from backends
+- `prompts/get <prompt_name>` - Prompt retrieval from backends
+- `list_capabilities` - Backend capability discovery
+
+Each span includes attributes for the target backend (`target.workload_id`,
+`target.workload_name`, `target.base_url`) and the relevant MCP attributes
+(`mcp.method.name`, `gen_ai.tool.name`, `mcp.resource.uri`).
 
 ## Related information
 
