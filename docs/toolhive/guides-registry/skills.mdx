@@ -1,0 +1,184 @@
+---
+title: Skills catalog
+description:
+  How to discover, publish, and manage Agent Skills through the ToolHive
+  Registry Server
+---
+
+The Registry server includes a skills catalog that lets you publish, discover,
+and manage [Agent Skills](../concepts/skills.mdx) alongside MCP servers. Skills
+are exposed through extension endpoints under each registry.
+
+## Prerequisites
+
+- A running Registry server with at least one
+  [managed registry](./configuration.mdx#managed-registry) configured
+- For write operations (publish, delete): authentication configured (see
+  [Authentication configuration](./authentication.mdx))
+
+Skills can only be published to managed registries. Read operations (list, get)
+work on any registry type.
+
+## Discover skills
+
+### List skills
+
+Retrieve a paginated list of skills in a registry, showing the latest version of
+each:
+
+```bash
+curl https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills
+```
+
+```json title="Response"
+{
+  "skills": [
+    {
+      "namespace": "io.github.acme",
+      "name": "code-review",
+      "description": "Structured code review following OWASP guidelines",
+      "version": "1.2.0",
+      "status": "active",
+      "title": "Security Code Review",
+      "license": "Apache-2.0"
+    }
+  ],
+  "metadata": {
+    "count": 1,
+    "nextCursor": ""
+  }
+}
+```
+
+**Query parameters:**
+
+| Parameter | Type   | Default | Description                                              |
+| --------- | ------ | ------- | -------------------------------------------------------- |
+| `search`  | string | -       | Filter by substring match on name, title, or description |
+| `status`  | string | -       | Filter by status (e.g., `active`, `deprecated`)          |
+| `limit`   | int    | 50      | Results per page (1-100)                                 |
+| `cursor`  | string | -       | Pagination cursor from a previous response               |
+
+### Get a specific skill
+
+Retrieve the latest version of a skill by namespace and name:
+
+```bash
+curl https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills/io.github.acme/code-review
+```
+
+### List all versions
+
+View the version history for a skill:
+
+```bash
+curl https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills/io.github.acme/code-review/versions
+```
+
+### Get a specific version
+
+Retrieve a particular version:
+
+```bash
+curl https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills/io.github.acme/code-review/versions/1.2.0
+```
+
+## Publish a skill
+
+To publish a skill version, send a `POST` request to the skills endpoint with
+the skill metadata:
+
+```bash
+curl -X POST \
+  https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -d '{
+    "namespace": "io.github.acme",
+    "name": "code-review",
+    "description": "Structured code review following OWASP guidelines and project-specific rules.",
+    "version": "1.2.0",
+    "title": "Security Code Review",
+    "license": "Apache-2.0",
+    "compatibility": "Requires git and access to the internet",
+    "repository": {
+      "url": "https://github.com/acme/agent-skills",
+      "type": "git"
+    },
+    "packages": [
+      {
+        "registryType": "git",
+        "url": "https://github.com/acme/agent-skills",
+        "ref": "v1.2.0",
+        "subfolder": "skills/code-review"
+      }
+    ],
+    "metadata": {
+      "author": "acme-security-team"
+    }
+  }'
+```
+
+**Required fields:**
+
+| Field         | Description                                                 |
+| ------------- | ----------------------------------------------------------- |
+| `namespace`   | Reverse-DNS ownership scope (e.g., `io.github.acme`)        |
+| `name`        | Skill identifier (e.g., `code-review`)                      |
+| `description` | What the skill does and when to use it                      |
+| `version`     | Version string (ideally semantic versioning, e.g., `1.2.0`) |
+
+For the complete list of optional fields and package types, see the
+[skills API reference](../reference/registry-skills-api.mdx#skill-object).
+
+### Version tracking
+
+The registry automatically tracks the latest version of each skill. When you
+publish a new version, the server compares it against the current latest using
+semantic version comparison. The "latest" pointer only updates if the new
+version is semantically newer, so publishing an older patch version won't
+regress the latest pointer.
+
+## Delete a skill version
+
+Remove a specific version from a managed registry:
+
+```bash
+curl -X DELETE \
+  https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills/io.github.acme/code-review/versions/1.2.0 \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+A successful deletion returns a `204 No Content` response. Deleting a version
+also removes its associated packages.
+
+## Naming conventions
+
+Skills use a namespace + name addressing scheme:
+
+- **Namespace**: Reverse-DNS format representing ownership (e.g.,
+  `io.github.acme`, `com.example.team`). This prevents naming conflicts between
+  different publishers.
+- **Name**: The skill identifier. Follow the
+  [Agent Skills specification](https://agentskills.io/specification) naming
+  rules: lowercase letters, numbers, and hyphens only; no leading, trailing, or
+  consecutive hyphens; maximum 64 characters.
+
+**Valid examples:**
+
+- `io.github.acme/code-review`
+- `com.example.security/vulnerability-scan`
+
+**Invalid examples:**
+
+- `acme/Code-Review` (uppercase not allowed in name)
+- `io.github.acme/-code-review` (name cannot start with a hyphen)
+
+## Next steps
+
+- Learn about [Agent Skills concepts](../concepts/skills.mdx) and how they
+  relate to MCP servers
+- View the [skills API reference](../reference/registry-skills-api.mdx) for
+  complete endpoint documentation
+- [Configure a managed registry](./configuration.mdx#managed-registry) to enable
+  skill publishing
