@@ -1,0 +1,174 @@
+---
+title: Managing skills
+description:
+  How to publish, discover, and manage skills in the ToolHive Registry Server
+---
+
+The Registry Server provides API endpoints for managing
+[skills](../concepts/skills.mdx) — reusable instruction sets for AI coding
+agents. You can publish skills to your registry, search for existing skills, and
+manage their lifecycle.
+
+Skills endpoints are available under the extension path
+`/registry/{registryName}/v0.1/x/dev.toolhive/skills`. All endpoints require
+authentication unless the registry is configured in anonymous mode.
+
+:::info[Managed registry required for write operations]
+
+Publishing and deleting skills requires a
+[managed registry](./configuration.mdx#managed-registry). Read operations (list,
+get) work with all registry types.
+
+:::
+
+## List skills
+
+Retrieve all skills from a registry, with optional filtering and pagination.
+
+```bash
+curl -s "https://REGISTRY_URL/registry/REGISTRY_NAME/v0.1/x/dev.toolhive/skills" \
+  -H "Authorization: Bearer TOKEN" | jq
+```
+
+### Query parameters
+
+| Parameter | Type    | Default | Description                                                  |
+| --------- | ------- | ------- | ------------------------------------------------------------ |
+| `search`  | string  | -       | Filter by name or description substring                      |
+| `status`  | string  | -       | Filter by status (comma-separated, e.g. `active,deprecated`) |
+| `limit`   | integer | `50`    | Maximum results per page (max 100)                           |
+| `cursor`  | string  | -       | Pagination cursor from a previous response                   |
+
+The response includes a `metadata` object with `count` (total matching skills)
+and `nextCursor` (for pagination).
+
+### Example: search for skills
+
+```bash
+curl -s "https://REGISTRY_URL/registry/REGISTRY_NAME/v0.1/x/dev.toolhive/skills?search=lint&status=active" \
+  -H "Authorization: Bearer TOKEN" | jq
+```
+
+## Get a skill
+
+Retrieve the latest version of a specific skill by namespace and name.
+
+```bash
+curl -s "https://REGISTRY_URL/registry/REGISTRY_NAME/v0.1/x/dev.toolhive/skills/NAMESPACE/SKILL_NAME" \
+  -H "Authorization: Bearer TOKEN" | jq
+```
+
+For example, to get the latest version of a skill named `lint-fix` in the
+`io.github.user` namespace:
+
+```bash
+curl -s "https://REGISTRY_URL/registry/my-registry/v0.1/x/dev.toolhive/skills/io.github.user/lint-fix" \
+  -H "Authorization: Bearer TOKEN" | jq
+```
+
+## List skill versions
+
+Retrieve all published versions of a skill.
+
+```bash
+curl -s "https://REGISTRY_URL/registry/REGISTRY_NAME/v0.1/x/dev.toolhive/skills/NAMESPACE/SKILL_NAME/versions" \
+  -H "Authorization: Bearer TOKEN" | jq
+```
+
+## Get a specific version
+
+Retrieve a specific version of a skill.
+
+```bash
+curl -s "https://REGISTRY_URL/registry/REGISTRY_NAME/v0.1/x/dev.toolhive/skills/NAMESPACE/SKILL_NAME/versions/VERSION" \
+  -H "Authorization: Bearer TOKEN" | jq
+```
+
+## Publish a skill
+
+Publish a new skill version to a managed registry. The request body is a JSON
+object containing the skill metadata.
+
+```bash
+curl -X POST "https://REGISTRY_URL/registry/REGISTRY_NAME/v0.1/x/dev.toolhive/skills" \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "namespace": "io.github.user",
+    "name": "lint-fix",
+    "title": "Lint Fixer",
+    "description": "Find and fix linting errors in a project",
+    "version": "1.0.0",
+    "status": "active",
+    "license": "Apache-2.0",
+    "allowedTools": ["Read", "Edit", "Bash", "Grep"],
+    "packages": [
+      {
+        "registryType": "oci",
+        "identifier": "ghcr.io/user/skills/lint-fix",
+        "ref": "1.0.0",
+        "digest": "sha256:abc123..."
+      }
+    ],
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/user/my-skills"
+    }
+  }'
+```
+
+A successful publish returns a `201 Created` response.
+
+### Skill fields
+
+| Field           | Type     | Required | Description                                               |
+| --------------- | -------- | -------- | --------------------------------------------------------- |
+| `namespace`     | string   | Yes      | Reverse-DNS owner identifier (e.g. `io.github.user`)      |
+| `name`          | string   | Yes      | Skill identifier (lowercase alphanumeric and hyphens)     |
+| `version`       | string   | Yes      | Semantic version or commit hash                           |
+| `title`         | string   | No       | Human-readable display name                               |
+| `description`   | string   | Yes      | Summary of what the skill does                            |
+| `status`        | string   | No       | `active` (default), `deprecated`, or `archived`           |
+| `license`       | string   | No       | SPDX license identifier                                   |
+| `compatibility` | string   | No       | Environment requirements                                  |
+| `allowedTools`  | string[] | No       | Tools the skill needs (experimental)                      |
+| `packages`      | array    | No       | Distribution references (see [Packages](#packages) below) |
+| `repository`    | object   | No       | Source repository (`type` and `url`)                      |
+| `icons`         | array    | No       | Icon references (`src`, `type`, `size`, `label`)          |
+| `metadata`      | object   | No       | Skill metadata from the SKILL.md frontmatter              |
+| `_meta`         | object   | No       | Opaque extended metadata                                  |
+
+### Packages
+
+Each package entry describes where the skill artifact is distributed.
+
+| Field          | Type   | Description                                      |
+| -------------- | ------ | ------------------------------------------------ |
+| `registryType` | string | Distribution type: `oci` or `git`                |
+| `identifier`   | string | OCI identifier (e.g. `ghcr.io/user/skills/name`) |
+| `ref`          | string | Tag or branch reference                          |
+| `url`          | string | Direct URL to the package                        |
+| `commit`       | string | Git commit SHA                                   |
+| `subfolder`    | string | Subfolder within the repository                  |
+| `digest`       | string | Content digest for integrity verification        |
+| `mediaType`    | string | Media type of the package                        |
+
+## Delete a skill version
+
+Delete a specific version of a skill from a managed registry.
+
+```bash
+curl -X DELETE "https://REGISTRY_URL/registry/REGISTRY_NAME/v0.1/x/dev.toolhive/skills/NAMESPACE/SKILL_NAME/versions/VERSION" \
+  -H "Authorization: Bearer TOKEN"
+```
+
+A successful delete returns a `204 No Content` response.
+
+## Next steps
+
+- [Skills concept](../concepts/skills.mdx) — understand what skills are and how
+  they fit into the ToolHive ecosystem
+- [Registry API reference](../reference/registry-api.mdx) — full OpenAPI
+  documentation for all registry endpoints
+- [Authentication configuration](./authentication.mdx) — configure access
+  control for your registry
