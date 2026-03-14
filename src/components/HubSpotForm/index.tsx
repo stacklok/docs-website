@@ -7,6 +7,7 @@ interface HubSpotFormProps {
   portalId: string;
   formId: string;
   region: string;
+  instanceId: string;
 }
 
 const SCRIPT_SRC = '//js-na2.hsforms.net/forms/embed/v2.js';
@@ -15,9 +16,11 @@ export default function HubSpotForm({
   portalId,
   formId,
   region,
+  instanceId,
 }: HubSpotFormProps): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null);
   const [submitted, setSubmitted] = useState(false);
+  const targetId = `hubspot-form-${instanceId}`;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -27,7 +30,7 @@ export default function HubSpotForm({
         portalId,
         formId,
         region,
-        target: `#hubspot-form-${formId}`,
+        target: `#${targetId}`,
         onFormSubmitted: () => setSubmitted(true),
       });
     };
@@ -59,5 +62,5 @@ export default function HubSpotForm({
     );
   }
 
-  return <div id={`hubspot-form-${formId}`} ref={containerRef} />;
+  return <div id={targetId} ref={containerRef} />;
 }
