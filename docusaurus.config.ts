@@ -292,7 +292,7 @@ const config: Config = {
           position: 'left',
         },
         {
-          href: 'https://stacklok.com/platform/',
+          to: '/toolhive/enterprise',
           label: 'Enterprise',
           position: 'left',
         },
