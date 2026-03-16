@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+# SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
 # This script installs the ToolHive CLI (thv) in a portable way that works
