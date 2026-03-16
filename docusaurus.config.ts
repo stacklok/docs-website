@@ -292,7 +292,7 @@ const config: Config = {
           position: 'left',
         },
         {
-          to: '/toolhive/enterprise',
+          to: 'toolhive/enterprise',
           label: 'Enterprise',
           position: 'left',
         },
