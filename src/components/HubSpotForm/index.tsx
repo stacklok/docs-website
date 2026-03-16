@@ -57,7 +57,7 @@ export default function HubSpotForm({
   if (submitted) {
     return (
       <div style={{textAlign: 'center', padding: '2rem'}}>
-        {/* <p>We will be in touch by email within one business day to schedule your demo.</p> */}
+        {/* This div is intentionally empty to trigger HubSpot form confirmation message */}
       </div>
     );
   }
