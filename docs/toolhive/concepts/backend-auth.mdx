@@ -2,13 +2,14 @@
 title: Backend authentication
 description:
   Understanding how MCP servers authenticate to external services using
-  ToolHive's token exchange framework.
+  ToolHive's backend authentication patterns, including static credentials,
+  token exchange, and the embedded authorization server.
 ---
 
 This document explains how ToolHive helps MCP servers authenticate to
 third-party APIs and backend services exposed through the MCP servers. You'll
-learn about the backend authentication patterns ToolHive supports, why its
-approach improves security and multi-tenancy, and how it simplifies MCP server
+learn about the backend authentication patterns ToolHive supports, why they
+improve security and multi-tenancy, and how they simplify MCP server
 development.
 
 :::info[Scope of this documentation]
@@ -40,40 +41,51 @@ authentication code. This creates several problems:
 - **Multi-tenancy complexity:** Supporting multiple tenants with isolated
   credentials requires significant custom code
 
-ToolHive addresses these challenges by implementing several authentication
-patterns such as token exchange and federated identity that provide MCP servers
-with properly scoped, short-lived access tokens instead of requiring embedded
-secrets.
+ToolHive addresses these challenges with three backend authentication patterns:
+static credentials for services that don't support OAuth, token exchange for
+services in the same or federated trust domain, and the embedded authorization
+server for OAuth-based external APIs where no federation exists.
 
-## Managing third-party service tokens
+## How ToolHive handles backend authentication
 
-The key insight is that ToolHive already implements authentication and
-authorization for the MCP server—it helps the client authenticate and obtain an
-access token scoped for the MCP server. ToolHive can leverage this existing
-token to obtain a token for the backend service and pass it to the MCP server.
+ToolHive sits between clients and MCP servers, and can acquire backend
+credentials on behalf of the MCP server. Depending on the pattern, it might
+exchange the client's token, run an OAuth flow against an external provider, or
+inject static credentials. In each case, the MCP server receives ready-to-use
+credentials—via an `Authorization: Bearer` header, another header, or
+environment variables, depending on the pattern—without needing to implement
+custom authentication logic or manage secrets directly.
 
-This means the MCP server receives a properly scoped token for the external
-service as part of the standard MCP protocol call, typically in the
-`Authorization: Bearer` header. This simplifies MCP server implementation
-because:
+## Backend authentication patterns
 
-- No long-lived tokens need to be stored
-- No custom authentication code is required
-- The MCP server can focus on its business logic
-- Each request is attributed to the individual user making it
+ToolHive supports three patterns for backend authentication. Which one you use
+depends on the relationship between your identity provider (IdP) and the backend
+service.
 
-## Methods for acquiring external access tokens
+### Static credentials and API keys
 
-ToolHive supports multiple patterns for obtaining external access tokens,
-depending on the relationship between your identity provider (IdP) and the
-external service. All patterns assume OAuth-based authentication. For services
-using other authentication methods (such as database connections with static
-credentials), consider integrations with secret management systems like
-[HashiCorp Vault](../integrations/vault.mdx).
+When a backend service requires API keys, database passwords, or other static
+credentials, you can configure them directly in ToolHive as environment
+variables, secret files, or injected headers.
 
-ToolHive implements two main patterns:
+This is the simplest pattern, but it provides the least security and
+auditability. Static credentials are long-lived and shared across all users, so
+there is no per-user attribution in audit logs.
 
-### Same IdP with token exchange
+When using static credentials, consider integrating with a secret management
+system like [HashiCorp Vault](../integrations/vault.mdx) for secure storage and
+rotation.
+
+### Token exchange
+
+When the backend service trusts the same IdP as your MCP clients—or federation
+is configured between the two IdPs—ToolHive can exchange the client's token for
+one scoped to the backend service using RFC 8693 token exchange. This preserves
+the user's identity across services and provides short-lived, narrowly scoped
+tokens. Because the trust relationship is pre-configured at the IdP, the
+exchange is transparent to the end user—no consent screen required.
+
+#### Same IdP with token exchange
 
 When both the MCP server and the backend service trust the same IdP, and that
 IdP supports [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) token
@@ -106,7 +118,7 @@ flowchart LR
 4. ToolHive passes this access token to the MCP server
 5. The MCP server uses the access token to call the upstream service
 
-### Federated IdPs with identity mapping
+#### Federated IdPs with identity mapping
 
 When the backend service trusts a different IdP, but federation is configured
 between the two IdPs, ToolHive can use the federated identity service to issue
@@ -141,7 +153,159 @@ flowchart LR
 4. ToolHive passes token_B to the MCP server
 5. The MCP server uses token_B to call the upstream service
 
-## Token exchange implementation
+### Embedded authorization server
+
+When the MCP server needs to call an external API where no federation
+relationship exists—such as GitHub, Google Workspace, or Atlassian APIs—the
+embedded authorization server handles the full OAuth web flow against the
+external provider. The proxy redirects the user to authenticate directly with
+the external service, obtains tokens on behalf of the user, and passes the
+upstream token to the MCP server.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Proxy as ToolHive Proxy
+    participant ExtProvider as External Provider
+
+    User->>Proxy: Connect
+    Proxy-->>User: Redirect to login
+    User->>ExtProvider: Authenticate
+    ExtProvider->>Proxy: Authorization code
+    Proxy->>ExtProvider: Exchange code for token
+    ExtProvider->>Proxy: Upstream tokens
+    Proxy->>User: Issue JWT
+```
+
+On subsequent MCP requests, ToolHive uses the JWT to retrieve the stored
+upstream tokens and forward them to the MCP server. For details on this
+mechanism, see [Token storage and forwarding](#token-storage-and-forwarding).
+
+The embedded authorization server runs in-process within the ToolHive proxy—no
+separate infrastructure is needed. It supports Dynamic Client Registration
+(DCR), so MCP clients can register automatically with ToolHive—no manual client
+configuration in ToolHive is required.
+
+:::note
+
+The embedded authorization server is currently available only for Kubernetes
+deployments using the ToolHive Operator.
+
+:::
+
+#### Key characteristics
+
+- **In-process execution:** The authorization server runs within the ToolHive
+  proxy—no separate infrastructure or sidecar containers needed.
+- **Configurable signing keys:** JWTs are signed with keys you provide,
+  supporting key rotation for zero-downtime updates.
+- **Flexible upstream providers:** Supports both OIDC providers (with automatic
+  endpoint discovery) and OAuth 2.0 providers (with explicit endpoint
+  configuration).
+- **Configurable token lifespans:** Access tokens, refresh tokens, and
+  authorization codes have configurable durations with sensible defaults.
+- **Dynamic Client Registration (DCR):** Supports OAuth 2.0 Dynamic Client
+  Registration (RFC 7591), allowing MCP clients to register automatically with
+  ToolHive's authorization server—no manual client registration in ToolHive is
+  required.
+- **Direct upstream redirect:** The embedded authorization server redirects
+  clients directly to the upstream provider for authentication (for example,
+  GitHub or Atlassian).
+- **Single upstream provider:** Currently supports one upstream identity
+  provider per configuration.
+
+:::info[Chained authentication not yet supported]
+
+The embedded authorization server redirects clients directly to the upstream
+provider. This means the upstream provider must be the service whose API the MCP
+server calls. Chained authentication—where a client authenticates with a
+corporate IdP like Okta, which then federates to an external provider like
+GitHub—is not yet supported. If your deployment requires this pattern, consider
+using [token exchange](#same-idp-with-token-exchange) with a federated identity
+provider instead.
+
+:::
+
+#### Token storage and forwarding
+
+The embedded authorization server stores upstream tokens (access tokens, refresh
+tokens, and ID tokens from external providers) in session storage. When the
+OAuth flow completes, the server generates a unique session ID and stores the
+upstream tokens keyed by this ID. The JWT issued to the client contains a `tsid`
+(Token Session ID) claim that references this session.
+
+When a client makes an MCP request with this JWT:
+
+1. The ToolHive proxy validates the JWT signature and extracts the `tsid` claim
+2. It retrieves the upstream tokens from session storage using the `tsid`
+3. The proxy replaces the `Authorization` header with the upstream access token
+4. The request is forwarded to the MCP server with the external provider's token
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Proxy as ToolHive Proxy
+    participant Store as Session Storage
+    participant MCP as MCP Server
+    participant API as External API
+
+    Note over Client,Store: Initial OAuth flow
+    Proxy->>Store: Store upstream tokens<br/>keyed by session ID
+    Proxy-->>Client: Issue JWT with tsid claim
+
+    Note over Client,API: Subsequent MCP requests
+    Client->>Proxy: MCP request with JWT
+    Proxy->>Proxy: Validate JWT signature
+    Proxy->>Store: Look up upstream token<br/>using tsid from JWT
+    Store-->>Proxy: Return upstream access token
+    Proxy->>MCP: Forward request with<br/>upstream access token
+    MCP->>API: Call external API
+    API-->>MCP: Response
+    MCP-->>Proxy: Response
+    Proxy-->>Client: Response
+```
+
+This mechanism allows MCP servers to call external APIs with the user's actual
+credentials from the upstream provider, while the client only needs to manage a
+single ToolHive-issued JWT.
+
+#### Automatic token refresh
+
+Upstream access tokens have their own expiration, independent of the ToolHive
+JWT lifespan. When the stored upstream access token has expired, ToolHive
+automatically refreshes it using the stored refresh token before forwarding the
+request — your MCP session continues without re-authentication.
+
+If the refresh token is also expired or has been revoked by the upstream
+provider, ToolHive returns a `401` response, prompting you to re-authenticate
+through the OAuth flow.
+
+:::warning[Session storage limitations]
+
+By default, session storage is in-memory only. Upstream tokens are lost when
+pods restart, requiring users to re-authenticate. For production deployments,
+configure Redis Sentinel as the storage backend for persistent, highly available
+session storage. See
+[Configure session storage](../guides-k8s/auth-k8s.mdx#configure-session-storage)
+for a quick setup, or the full
+[Redis Sentinel session storage](../guides-k8s/redis-session-storage.mdx)
+tutorial for an end-to-end walkthrough.
+
+:::
+
+For the client-facing OAuth flow, see
+[Embedded authorization server](./auth-framework.mdx#embedded-authorization-server).
+For Kubernetes setup instructions, see
+[Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication).
+
+## Token exchange in depth
+
+This section provides implementation details for the token exchange patterns
+described above. For setup instructions, see
+[Configure token exchange](../guides-cli/token-exchange.mdx) (CLI) or
+[Configure token exchange in Kubernetes](../guides-k8s/token-exchange-k8s.mdx).
+
+### Same IdP with token exchange
 
 The token exchange flow demonstrates how ToolHive transforms user identity
 tokens into properly scoped service tokens.
@@ -165,8 +329,6 @@ sequenceDiagram
     MCP Server-->>ToolHive: Response
     ToolHive-->>Client: Response
 ```
-
-### Token transformation
 
 When a client authenticates to ToolHive, it receives a token scoped for the MCP
 server:
@@ -196,13 +358,11 @@ Notice how the audience (`aud`) and scopes (`scp`) change while preserving the
 user's identity (`sub`). This exchanged token is then injected into the
 `Authorization: Bearer` HTTP header and passed to the MCP server.
 
-## Token exchange with federation
+### Federated IdPs with identity mapping
 
 When using federated identity providers, ToolHive can map your corporate
 identity to an external service identity. This is particularly useful for
 accessing cloud services like Google Cloud Platform.
-
-### Federation flow
 
 The client authenticates with your corporate IdP and receives a token:
 
@@ -253,9 +413,8 @@ and passed to the MCP server. The MCP server uses this token to make upstream
 API calls, with each request attributed to the individual user's federated
 identity rather than a shared service account.
 
-### Key differences from standard token exchange
-
-Federation-based token exchange has several important characteristics:
+Federation-based token exchange has several important characteristics that
+distinguish it from standard token exchange:
 
 1. **No client authentication required:** The external STS endpoint doesn't
    require `client_id` or `client_secret`. The OAuth JWT itself serves as proof
@@ -269,7 +428,8 @@ Federation-based token exchange has several important characteristics:
 
 ## Security and operational benefits
 
-ToolHive's token exchange approach provides several key advantages:
+ToolHive's token-based authentication patterns (token exchange and the embedded
+authorization server) provide several key advantages over static credentials:
 
 - **Secure:** MCP servers receive short-lived, properly scoped access tokens
   instead of embedding long-lived secrets
@@ -284,28 +444,14 @@ ToolHive's token exchange approach provides several key advantages:
 - **Consistent:** The same pattern works across different backend services and
   identity providers
 
-## Choosing the right backend authentication model
+## Choosing the right backend authentication pattern
 
-How you configure backend authentication depends on what the MCP server needs to
-call and how that backend service accepts credentials:
-
-- **Static credentials or API keys:** If the MCP server only supports static
-  credentials or API keys, configure them in ToolHive directly—either as
-  environment variables, secrets, or injected headers. No token exchange or
-  embedded authorization server is needed.
-- **Token exchange:** If the MCP server makes authenticated API calls to a
-  backend service in the same trust domain as your corporate identity provider
-  (for example, an internal API that accepts tokens from your Okta or Entra ID
-  tenant), or federation exists between the two, token exchange is a good fit.
-  ToolHive exchanges the client's token for a backend-scoped token using RFC
-  8693, preserving the user's identity across services.
-- **Embedded authorization server:** If the MCP server needs to call an external
-  API where no federation relationship exists—such as GitHub, Google, or
-  Atlassian APIs—the
-  [embedded authorization server](./auth-framework.mdx#embedded-authorization-server)
-  is a good fit. It runs the full OAuth web flow against the external provider,
-  obtaining tokens that the MCP server can use to access those APIs on behalf of
-  the user.
+| Scenario                                                            | Pattern                                                              | Why                                                               |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Backend only accepts API keys or static credentials                 | [Static credentials](#static-credentials-and-api-keys)               | No OAuth support; configure credentials directly in ToolHive      |
+| Backend trusts the same IdP as your clients                         | [Token exchange (same IdP)](#same-idp-with-token-exchange)           | Exchange the client token for a backend-scoped token via RFC 8693 |
+| Backend trusts a federated IdP (for example, Google Cloud)          | [Token exchange (federation)](#federated-idps-with-identity-mapping) | Map your corporate identity to the federated service              |
+| Backend is an external API with no federation (for example, GitHub) | [Embedded authorization server](#embedded-authorization-server)      | Run the full OAuth flow against the external provider             |
 
 ### Built-in AWS STS support
 
@@ -323,4 +469,9 @@ setup guide.
   [Authentication and authorization](./auth-framework.mdx)
 - For the embedded authorization server, see
   [Embedded authorization server](./auth-framework.mdx#embedded-authorization-server)
+- For configuring the embedded authorization server in Kubernetes, see
+  [Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
+- For configuring token exchange, see
+  [Configure token exchange](../guides-cli/token-exchange.mdx) (CLI) or
+  [Configure token exchange in Kubernetes](../guides-k8s/token-exchange-k8s.mdx)
 - For policy configuration, see [Cedar policies](./cedar-policies.mdx)
