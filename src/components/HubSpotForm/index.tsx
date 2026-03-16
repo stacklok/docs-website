@@ -61,7 +61,7 @@ export default function HubSpotForm({
   }, [portalId, formId, region]);
 
   const formContent = submitted ? (
-    <div style={{textAlign: 'center', padding: '2rem'}}>
+    <div style={{ textAlign: 'center', padding: '2rem' }}>
       {/* This div is intentionally empty to trigger HubSpot form confirmation message */}
     </div>
   ) : (
@@ -70,7 +70,7 @@ export default function HubSpotForm({
 
   if (title) {
     return (
-      <div style={{textAlign: 'center'}}>
+      <div style={{ textAlign: 'center' }}>
         <div
           id={anchorId}
           style={{
@@ -84,7 +84,9 @@ export default function HubSpotForm({
             scrollMarginTop: anchorId ? '7rem' : undefined,
           }}
         >
-          <span style={{display: 'block', fontWeight: '700', fontSize: '1.25rem'}}>
+          <span
+            style={{ display: 'block', fontWeight: '700', fontSize: '1.25rem' }}
+          >
             {title}
           </span>
           {subtitle && (
@@ -99,7 +101,13 @@ export default function HubSpotForm({
               {subtitle}
             </span>
           )}
-          <div style={{maxWidth: '480px', margin: '1rem auto 0', textAlign: 'left'}}>
+          <div
+            style={{
+              maxWidth: '480px',
+              margin: '1rem auto 0',
+              textAlign: 'left',
+            }}
+          >
             {formContent}
           </div>
         </div>
