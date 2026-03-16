@@ -1,7 +1,21 @@
-// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/*
+ * Renders an embedded HubSpot form using the HubSpot Forms API. The embed
+ * script is loaded lazily on mount and shared across multiple instances on the
+ * same page. Tracks submission state to trigger HubSpot's own confirmation
+ * message in place of the form.
+ *
+ * When `title` is provided, the form is wrapped in a branded card with an
+ * optional `subtitle`. Supply `anchorId` to make the title a named anchor
+ * target for in-page links (e.g. a CTA linking to "#schedule-a-demo").
+ * The title renders as a `<Heading>` so Docusaurus recognizes the anchor
+ * during its build-time link validation.
+ */
+
 import React, { useEffect, useRef, useState } from 'react';
+import Heading from '@theme/Heading';
 
 interface HubSpotFormProps {
   portalId: string;
@@ -72,7 +86,6 @@ export default function HubSpotForm({
     return (
       <div style={{ textAlign: 'center' }}>
         <div
-          id={anchorId}
           style={{
             textAlign: 'center',
             backgroundColor: 'var(--stacklok-green-leaf)',
@@ -81,14 +94,21 @@ export default function HubSpotForm({
             borderRadius: '24px',
             display: 'inline-block',
             width: 'auto',
-            scrollMarginTop: anchorId ? '7rem' : undefined,
           }}
         >
-          <span
-            style={{ display: 'block', fontWeight: '700', fontSize: '1.25rem' }}
+          <Heading
+            as='h2'
+            id={anchorId}
+            style={{
+              display: 'block',
+              fontWeight: '700',
+              fontSize: '1.25rem',
+              color: 'inherit',
+              scrollMarginTop: anchorId ? '9rem' : undefined,
+            }}
           >
             {title}
-          </span>
+          </Heading>
           {subtitle && (
             <span
               style={{
