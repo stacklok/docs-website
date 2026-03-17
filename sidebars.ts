@@ -150,6 +150,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/connect-clients',
         'toolhive/guides-k8s/customize-tools',
         'toolhive/guides-k8s/auth-k8s',
+        'toolhive/guides-k8s/redis-session-storage',
         'toolhive/guides-k8s/token-exchange-k8s',
         'toolhive/guides-k8s/telemetry-and-metrics',
         'toolhive/guides-k8s/logging',
@@ -186,7 +187,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Registry Server',
       description:
-        'How to deploy and use the ToolHive Registry server to discover and access MCP servers',
+        'How to deploy and use the ToolHive Registry server to discover and access MCP servers and skills',
       link: {
         type: 'doc',
         id: 'toolhive/guides-registry/index',
@@ -199,6 +200,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-registry/configuration',
         'toolhive/guides-registry/authentication',
         'toolhive/guides-registry/database',
+        'toolhive/guides-registry/skills',
         'toolhive/guides-registry/telemetry-metrics',
         'toolhive/reference/registry-api',
         'toolhive/reference/registry-schema-upstream',
@@ -226,6 +228,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/concepts/cedar-policies',
         'toolhive/concepts/backend-auth',
         'toolhive/concepts/vmcp',
+        'toolhive/concepts/skills',
       ],
     },
 
@@ -282,6 +285,7 @@ const sidebars: SidebarsConfig = {
     'toolhive/reference/client-compatibility',
     'toolhive/reference/index',
     'toolhive/faq',
+    'toolhive/enterprise',
     'toolhive/support',
     'toolhive/contributing',
   ],
