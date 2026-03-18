@@ -193,27 +193,9 @@ export default function Home(): ReactNode {
           </ProductCard>
         </ProductGrid>
 
-        <h1 className='text--center'>Other MCP Projects</h1>
+        <h1 className='text--center'>Other MCP projects</h1>
 
         <ProductGrid layout='fixed-3' spacing='spacious'>
-          <ProductCard
-            contentType='text'
-            href='/toolhive/tutorials/mcp-optimizer'
-            title='MCP Optimizer'
-            linkText='Read the docs'
-            icon={{
-              src: '/img/mcp-servers/stacklok-website-icons-efficiency-dark-green.svg',
-              srcDark:
-                '/img/mcp-servers/stacklok-website-icons-efficiency-light-green.svg',
-              alt: 'Stacklok efficiency icon',
-              width: '80px',
-              style: { marginLeft: '1.5rem', marginBottom: '0.5rem' },
-            }}
-          >
-            MCP Optimizer discovers the tools from your MCP servers in ToolHive
-            and optimizes token usage by intelligently filtering based on the
-            task at hand.
-          </ProductCard>
           <ProductCard
             contentType='text'
             href='https://stacklok.com/blog/policy-control-for-mcp-servers-in-claude-code-with-stacklok/'
@@ -243,6 +225,33 @@ export default function Home(): ReactNode {
             The Cursor Hook restricts MCP tool calls to servers that are managed
             by ToolHive, enabling governance on MCP server usage at execution
             time.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='https://github.com/stacklok/brood-box'
+            title='Brood Box'
+            linkText='Go to project'
+          >
+            Run coding agents in hardware-isolated microVMs. Review every change
+            before it touches your workspace.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='/toolhive/tutorials/mcp-optimizer'
+            title='MCP Optimizer'
+            linkText='Read the docs'
+            icon={{
+              src: '/img/mcp-servers/stacklok-website-icons-efficiency-dark-green.svg',
+              srcDark:
+                '/img/mcp-servers/stacklok-website-icons-efficiency-light-green.svg',
+              alt: 'Stacklok efficiency icon',
+              width: '80px',
+              style: { marginLeft: '1.5rem', marginBottom: '0.5rem' },
+            }}
+          >
+            MCP Optimizer discovers the tools from your MCP servers in ToolHive
+            and optimizes token usage by intelligently filtering based on the
+            task at hand.
           </ProductCard>
           <ProductCard
             contentType='text'
