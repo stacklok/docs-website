@@ -93,8 +93,13 @@ const config: Config = {
               `<!-- Google Tag Manager (noscript) --><noscript><iframe src="https://mm.stacklok.com/ns.html?id=GTM-W9MXGTF9" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript><!-- End Google Tag Manager (noscript) -->`,
             ],
             postBodyTags: [
-              // Thred AI Search Signals script
-              '<script src="https://cdn.thred.dev/thred-track.js?browserKey=8516ce3e-18ef-4f7f-be44-2bf408657d14"></script>',
+              {
+                // Thred AI Search Signals script
+                tagName: 'script',
+                attributes: {
+                  src: 'https://cdn.thred.dev/thred-track.js?browserKey=8516ce3e-18ef-4f7f-be44-2bf408657d14',
+                },
+              },
             ],
           };
         },
