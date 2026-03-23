@@ -96,6 +96,23 @@ const config: Config = {
         },
       };
     },
+    function thredSearchSignals() {
+      return {
+        name: 'thred-search-signals',
+        injectHtmlTags() {
+          return {
+            postBodyTags: [
+              {
+                tagName: 'script',
+                attributes: {
+                  src: 'https://cdn.thred.dev/thred-track.js?browserKey=8516ce3e-18ef-4f7f-be44-2bf408657d14',
+                },
+              },
+            ],
+          };
+        },
+      };
+    },
   ],
 
   // Set the production url of your site here
