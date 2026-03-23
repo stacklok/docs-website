@@ -92,9 +92,17 @@ const config: Config = {
               // Server-side GTM noscript fallback.
               `<!-- Google Tag Manager (noscript) --><noscript><iframe src="https://mm.stacklok.com/ns.html?id=GTM-W9MXGTF9" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript><!-- End Google Tag Manager (noscript) -->`,
             ],
+          };
+        },
+      };
+    },
+    function thredSearchSignals() {
+      return {
+        name: 'thred-search-signals',
+        injectHtmlTags() {
+          return {
             postBodyTags: [
               {
-                // Thred AI Search Signals script
                 tagName: 'script',
                 attributes: {
                   src: 'https://cdn.thred.dev/thred-track.js?browserKey=8516ce3e-18ef-4f7f-be44-2bf408657d14',
