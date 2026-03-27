@@ -155,6 +155,44 @@ Considerations for screenshots and other images:
 - Use the primary brand colors (`#2D684B` on light backgrounds, `#BDDFC2` on
   dark backgrounds) for annotations like callouts and highlight boxes.
 
+## Page structure
+
+Every how-to guide and tutorial page follows a consistent structure. This
+ensures readers always know what to expect and never hit dead ends.
+
+### Front matter
+
+Every page must have front matter with at least a `title` and `description`.
+
+### Next steps
+
+Every how-to guide and tutorial page ends with a `## Next steps` section
+containing 1-3 links to the next logical pages. These follow the journey phases:
+install, use, secure, operate, optimize. Example:
+
+```mdx
+## Next steps
+
+- [Run MCP servers](./run-mcp-servers.mdx) to deploy your first server.
+- [Client configuration](./client-configuration.mdx) to connect your IDE.
+```
+
+### Introduction pages
+
+Each product section (UI, CLI, K8s, vMCP, Registry Server) has an Introduction
+page as its first sidebar child. This page explains what the component is, who
+it's for, and where to start. It is an explicit child item in the sidebar - not
+a hidden category-link page.
+
+### Cross-references
+
+Link to related content in other sections where it adds value. Key patterns:
+
+- Product section auth pages link to the Concepts auth framework page.
+- Product section telemetry pages link to the Integrations OpenTelemetry guide.
+- The Registry Server introduction disambiguates from the built-in registry.
+- The UI "Access the CLI" page links to the CLI section.
+
 ## Markdown style
 
 Just like a consistent writing style is critical to clarity and messaging,

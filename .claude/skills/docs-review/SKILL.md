@@ -63,6 +63,18 @@ Watch for these telltale signs of AI-generated docs that need human intervention
 | Over-explaining | Verbose descriptions of obvious things | Trust the reader; cut aggressively |
 | Hedging language | "may," "might," "could potentially" | Be direct or remove |
 
+### Section Structure and Navigation
+
+The docs follow a product-area-based information architecture. Check:
+
+- **Self-contained sections**: Product-specific content belongs in its product section (`guides-ui/`, `guides-cli/`, `guides-k8s/`, `guides-vmcp/`, `guides-registry/`), not in a shared section.
+- **Quickstarts in product sections**: Quickstarts live inside their product section, not in a separate top-level section.
+- **Integration placement**: Third-party integration guides (ngrok, Vault, OpenTelemetry, Okta, etc.) belong in `integrations/`, not in a product section.
+- **Next steps section**: Every how-to guide and tutorial page must end with a "Next steps" section containing 1-3 forward links. Missing "Next steps" is a primary issue.
+- **Introduction pages**: Each product section should have an Introduction as the first sidebar child. New sections must follow this pattern.
+- **Progressive disclosure**: Core workflows should appear before advanced topics. Check that advanced content isn't mixed in with beginner-facing pages.
+- **Forward navigation path**: A reader should be able to follow "Next steps" links from the quickstart through core workflows without relying on the sidebar.
+
 ### Clarity and Readability
 
 - **Passive voice**: "Backend discovery occurs" → "vMCP discovers backends"
@@ -113,6 +125,8 @@ Structure your review as:
 **Primary issues** (address before merge):
 
 - Information architecture: content in wrong document, cross-document duplication
+- Content placed in the wrong section (e.g., product-specific content in Concepts, integration content in a product section)
+- Missing "Next steps" section on how-to guides and tutorials
 - Structure problems that harm navigation
 - Missing explanations for confusing design decisions
 - Significantly buried or redundant content
