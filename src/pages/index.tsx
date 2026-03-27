@@ -107,6 +107,27 @@ export default function Home(): ReactNode {
             security. It&apos;s available as a standalone tool or as a
             Kubernetes operator, making it versatile for various environments.
           </ProductCard>
+          <ProductCard
+            contentType='logo'
+            href='/toolhive/enterprise'
+            logo='/img/logos/stacklok-default-black.svg'
+            logoDark='/img/logos/stacklok-default-white.svg'
+            logoAlt='Stacklok logo'
+            logoTitle='Stacklok logo'
+            linkText='Learn more'
+            icon={{
+              src: '/img/logos/stacklok-symbol-black.svg',
+              srcDark: '/img/logos/stacklok-symbol-white.svg',
+              alt: 'Stacklok symbol',
+              width: '120px',
+              style: { marginLeft: '1.5rem' },
+            }}
+          >
+            Stacklok Enterprise provides a fully managed, enterprise-grade
+            platform built on ToolHive, with advanced security, compliance, and
+            governance features for organizations deploying MCP servers at
+            scale.
+          </ProductCard>
         </ProductGrid>
 
         <h1 className='text--center'>Open source MCP servers</h1>
