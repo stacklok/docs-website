@@ -441,6 +441,41 @@ For more details about a specific MCP server:
 kubectl -n <NAMESPACE> describe mcpserver <NAME>
 ```
 
+## Horizontal scaling
+
+MCPServer creates two separate Deployments: one for the proxy runner and one for
+the MCP server backend. You can scale each independently:
+
+- `spec.replicas` controls the proxy runner pod count
+- `spec.backendReplicas` controls the backend MCP server pod count
+
+```yaml title="MCPServer resource"
+spec:
+  replicas: 2
+  backendReplicas: 3
+  sessionStorage:
+    provider: redis
+    address: redis-master.toolhive-system.svc.cluster.local:6379
+    db: 0
+    keyPrefix: mcp-sessions
+    passwordRef:
+      name: redis-secret
+      key: password
+```
+
+When running multiple replicas, configure
+[Redis session storage](./redis-session-storage.mdx) so that sessions are shared
+across pods. If you omit `replicas` or `backendReplicas`, the operator defers
+replica management to an HPA or other external controller.
+
+:::warning[Stdio transport limitation]
+
+Backends using the `stdio` transport are limited to a single replica. The
+operator rejects configurations with `backendReplicas` greater than 1 for stdio
+backends.
+
+:::
+
 ## Next steps
 
 - [Connect clients to your MCP servers](./connect-clients.mdx) from outside the
@@ -457,6 +492,8 @@ kubectl -n <NAMESPACE> describe mcpserver <NAME>
 
 - [Kubernetes CRD reference](../reference/crd-spec.md#apiv1alpha1mcpserver) -
   Reference for the `MCPServer` Custom Resource Definition (CRD)
+- [vMCP scaling and performance](../guides-vmcp/scaling-and-performance.mdx) -
+  Scale Virtual MCP Server deployments
 - [Deploy the operator](./deploy-operator.mdx) - Install the ToolHive operator
 - [Build MCP containers](../guides-cli/build-containers.mdx) - Create custom MCP
   server container images
