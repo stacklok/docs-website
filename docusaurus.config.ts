@@ -315,19 +315,19 @@ const config: Config = {
         },
         {
           href: 'https://github.com/stacklok',
-          className: 'fa-brands fa-github fa-lg',
+          className: 'navbar-icon-link fa-brands fa-github fa-lg',
           position: 'right',
           'aria-label': 'Stacklok on GitHub',
         },
         {
           href: 'https://discord.gg/stacklok',
-          className: 'fa-brands fa-discord fa-lg',
+          className: 'navbar-icon-link fa-brands fa-discord fa-lg',
           position: 'right',
           'aria-label': 'Join Stacklok on Discord',
         },
         {
           href: 'https://youtube.com/@stacklok',
-          className: 'fa-brands fa-youtube fa-lg',
+          className: 'navbar-icon-link fa-brands fa-youtube fa-lg',
           position: 'right',
           'aria-label': 'Stacklok on YouTube',
         },
