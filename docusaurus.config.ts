@@ -290,16 +290,16 @@ const config: Config = {
               to: 'toolhive/reference/crd-spec',
             },
             {
-              label: 'ToolHive Registry schema',
+              label: 'ToolHive Registry Server API',
+              to: 'toolhive/reference/registry-api',
+            },
+            {
+              label: 'ToolHive registry schema',
               to: 'toolhive/reference/registry-schema-toolhive',
             },
             {
-              label: 'Upstream Registry schema',
+              label: 'Upstream registry schema',
               to: 'toolhive/reference/registry-schema-upstream',
-            },
-            {
-              label: 'ToolHive Registry API',
-              to: 'toolhive/reference/registry-api',
             },
           ],
         },
