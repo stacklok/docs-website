@@ -17,11 +17,23 @@ function HomepageHeader() {
   const { siteConfig } = useDocusaurusContext();
   return (
     <header className={clsx('hero hero--primary', styles.heroBanner)}>
-      <div className='container'>
-        <Heading as='h1' className='hero__title'>
-          {siteConfig.title}
-        </Heading>
-        <p className='hero__subtitle'>{siteConfig.tagline}</p>
+      <div className={clsx('container', styles.heroContainer)}>
+        <div className={styles.heroText}>
+          <Heading as='h1' className={styles.heroTitle}>
+            {siteConfig.title}
+          </Heading>
+          <p className={styles.heroSubtitle}>{siteConfig.tagline}</p>
+        </div>
+        <div className={styles.heroImageWrapper}>
+          <img
+            src='/img/stacklok-websitehero.webp'
+            alt=''
+            aria-hidden='true'
+            className={styles.heroImage}
+            width={2560}
+            height={1763}
+          />
+        </div>
       </div>
     </header>
   );
@@ -106,6 +118,27 @@ export default function Home(): ReactNode {
             Protocol (MCP) servers, ensuring ease of use, consistency, and
             security. It&apos;s available as a standalone tool or as a
             Kubernetes operator, making it versatile for various environments.
+          </ProductCard>
+          <ProductCard
+            contentType='logo'
+            href='/toolhive/enterprise'
+            logo='/img/logos/stacklok-default-black.svg'
+            logoDark='/img/logos/stacklok-default-white.svg'
+            logoAlt='Stacklok logo'
+            logoTitle='Stacklok logo'
+            linkText='Learn more'
+            icon={{
+              src: '/img/logos/stacklok-symbol-black.svg',
+              srcDark: '/img/logos/stacklok-symbol-white.svg',
+              alt: 'Stacklok symbol',
+              width: '120px',
+              style: { marginLeft: '1.5rem' },
+            }}
+          >
+            Stacklok Enterprise provides a fully managed, enterprise-grade
+            platform built on ToolHive, with advanced security, compliance, and
+            governance features for organizations deploying MCP servers at
+            scale.
           </ProductCard>
         </ProductGrid>
 

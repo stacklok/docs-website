@@ -290,16 +290,16 @@ const config: Config = {
               to: 'toolhive/reference/crd-spec',
             },
             {
-              label: 'ToolHive Registry schema',
+              label: 'ToolHive Registry Server API',
+              to: 'toolhive/reference/registry-api',
+            },
+            {
+              label: 'ToolHive registry schema',
               to: 'toolhive/reference/registry-schema-toolhive',
             },
             {
-              label: 'Upstream Registry schema',
+              label: 'Upstream registry schema',
               to: 'toolhive/reference/registry-schema-upstream',
-            },
-            {
-              label: 'ToolHive Registry API',
-              to: 'toolhive/reference/registry-api',
             },
           ],
         },
@@ -315,19 +315,19 @@ const config: Config = {
         },
         {
           href: 'https://github.com/stacklok',
-          className: 'fa-brands fa-github fa-lg',
+          className: 'navbar-icon-link fa-brands fa-github fa-lg',
           position: 'right',
           'aria-label': 'Stacklok on GitHub',
         },
         {
           href: 'https://discord.gg/stacklok',
-          className: 'fa-brands fa-discord fa-lg',
+          className: 'navbar-icon-link fa-brands fa-discord fa-lg',
           position: 'right',
           'aria-label': 'Join Stacklok on Discord',
         },
         {
           href: 'https://youtube.com/@stacklok',
-          className: 'fa-brands fa-youtube fa-lg',
+          className: 'navbar-icon-link fa-brands fa-youtube fa-lg',
           position: 'right',
           'aria-label': 'Stacklok on YouTube',
         },
