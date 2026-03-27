@@ -19,12 +19,10 @@ function HomepageHeader() {
     <header className={clsx('hero hero--primary', styles.heroBanner)}>
       <div className={clsx('container', styles.heroContainer)}>
         <div className={styles.heroText}>
-          <Heading as='h1' className={clsx('hero__title', styles.heroTitle)}>
+          <Heading as='h1' className={styles.heroTitle}>
             {siteConfig.title}
           </Heading>
-          <p className={clsx('hero__subtitle', styles.heroSubtitle)}>
-            {siteConfig.tagline}
-          </p>
+          <p className={styles.heroSubtitle}>{siteConfig.tagline}</p>
         </div>
         <div className={styles.heroImageWrapper}>
           <img
@@ -32,6 +30,8 @@ function HomepageHeader() {
             alt=''
             aria-hidden='true'
             className={styles.heroImage}
+            width={2560}
+            height={1763}
           />
         </div>
       </div>
