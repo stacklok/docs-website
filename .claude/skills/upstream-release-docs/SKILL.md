@@ -124,6 +124,14 @@ Apply the approved changes:
 
 2. **Create new pages** for new features that lack existing documentation. Default to documenting new features rather than skipping them:
 
+   **Page placement** — the docs are organized by product area under `docs/toolhive/`. Place new content in the correct section:
+   - **Product-specific guides** go in the relevant product section (`docs/toolhive/guides-ui/`, `guides-cli/`, `guides-k8s/`, `guides-vmcp/`, `guides-registry/`).
+   - **Third-party integration guides** go in `docs/toolhive/integrations/`.
+   - **Cross-cutting concepts** go in `docs/toolhive/concepts/`.
+   - **Per-MCP-server usage guides** go in `docs/toolhive/guides-mcp/`.
+   - **Reference material** goes in `docs/toolhive/reference/`.
+   - Check the project's CLAUDE.md "Information architecture" section for the full placement rules.
+
    **Diataxis separation** — create separate pages per document type, not one combined page:
    - **Concept page** (explanation): What is this feature, why does it exist, when would you use it? Lead with concrete scenarios and user personas ("If you maintain a shared MCP registry and want to let teams publish reusable tool bundles..."). Explain relationships to existing features.
    - **Guide page** (how-to): Task-oriented, organized by user goals — not by API endpoint order. Include practical examples: realistic `curl` commands, sample payloads with plausible values, expected responses, and error cases. If a feature has both producer and consumer sides, document both workflows.
@@ -145,9 +153,10 @@ Apply the approved changes:
    **Naming conventions** — when the feature introduces naming rules (e.g., kebab-case identifiers, camelCase config keys), call these out explicitly with examples of valid and invalid names.
 
    **Page mechanics:**
-   - Place each page in the appropriate directory
-   - Update sidebar/navigation configuration
+   - Place each page in the appropriate product section directory (see "Page placement" above)
+   - Update sidebar/navigation configuration in `sidebars.ts`
    - Update frontmatter descriptions on all new and modified pages
+   - Add a "Next steps" section at the end of every how-to guide and tutorial page with 1-3 forward links
    - Only skip creating a page that would duplicate auto-generated reference content (e.g., don't manually list API endpoints that are already in a swagger-rendered page)
 
 3. **Add cross-references** — link new content from related existing pages and vice versa.

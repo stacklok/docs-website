@@ -80,23 +80,69 @@ The documentation should be accessible to a wide range of technical users, inclu
 
 ## Information architecture
 
-This project follows the [Diataxis framework](https://diataxis.fr/) for documentation organization. Diataxis divides documentation into four types based on user needs:
+This project follows the [Diataxis framework](https://diataxis.fr/) for documentation authoring - each page is a tutorial, how-to guide, reference, or explanation. The site is organized by **product area**, with each section self-contained so a reader can complete their journey without leaving it. Cross-cutting content lives in dedicated shared sections.
 
-1. **Tutorials** (`/docs/toolhive/tutorials/`) - Learning-oriented, step-by-step lessons that guide users through completing a project or learning a concept.
-2. **How-to guides** (`/docs/toolhive/guides-*/`) - Task-oriented, practical guides that show how to solve specific problems or accomplish specific tasks.
-3. **Reference** (`/docs/toolhive/reference/`) - Information-oriented, technical descriptions of the machinery and how to operate it (API docs, CLI commands, configuration options).
-4. **Explanation/Concepts** (`/docs/toolhive/concepts/`) - Understanding-oriented, explanations that clarify and illuminate topics, provide background and context.
+All documentation lives under `docs/toolhive/`. Folder paths below are relative to that root.
 
-### When to create new pages
+### Design principles
 
-Create a new documentation page when:
+1. **Route readers to value fast.** The home page helps a reader figure out where to go within 10 seconds.
+2. **Each section is self-contained.** A reader in the CLI section shouldn't need to leave it to complete their task. Quickstarts, guides, and relevant reference material live together.
+3. **Forward momentum on every page.** Every page ends with a "Next steps" section linking to the next logical page.
+4. **Consistent structure across sections.** Each product area follows the same pattern: Introduction, Quickstart, how-to guides.
+5. **Progressive disclosure.** Core workflows first, advanced topics grouped separately.
 
-- The content addresses a distinct task, concept, or reference topic that doesn't fit within existing pages.
-- An existing page would become too long or cover too many disparate topics.
-- The information architecture requires it (e.g., a new MCP server guide, a new tutorial).
-- The content belongs to a different Diataxis category than existing content.
+### Top-level sections
 
-Always consider where the new page fits in the Diataxis framework and place it in the appropriate directory. Update `/sidebars.ts` to include the new page in the navigation.
+| Section | Folder | What belongs here |
+| --- | --- | --- |
+| ToolHive UI | `guides-ui/` | Desktop app guides, quickstart, and reference |
+| ToolHive CLI | `guides-cli/` | CLI guides, quickstart, command reference, API reference |
+| Kubernetes Operator | `guides-k8s/` | K8s deployment, operation, auth, telemetry, CRD reference |
+| Virtual MCP Server | `guides-vmcp/` | Gateway/aggregation guides, quickstart, optimizer |
+| Registry Server | `guides-registry/` | Registry Server deployment, config, auth, API reference |
+| Integrations | `integrations/` | Cross-cutting third-party integration guides (ngrok, Vault, OpenTelemetry, Okta, etc.) |
+| Concepts | `concepts/` | Cross-cutting explanations (MCP primer, groups, auth framework, observability, etc.) |
+| MCP server guides | `guides-mcp/` | Per-server usage guides (auto-generated index) |
+| Reference | `reference/` | Client compatibility, CLI commands, API specs, CRD specs, registry schemas |
+| Tutorials | `tutorials/` | End-to-end tutorials that span multiple components (kept small; most tutorials moved to product sections or Integrations) |
+
+### Section skeleton
+
+Each product section follows this pattern:
+
+```text
+[Product Area]           (category label)
+├── Introduction         (what it is, who it's for, where to start)
+├── Quickstart           (hands-on in <10 minutes)
+├── [How-to guides]      (organized by journey phase)
+│   ├── Install / Deploy
+│   ├── Use
+│   ├── Secure
+│   ├── Operate
+│   └── Optimize
+└── [Reference]          (inline where relevant)
+```
+
+Not every section needs every phase. The Introduction is an explicit first sidebar child, not a hidden category-link page.
+
+### Where to place new content
+
+- **Product-specific content** goes in the relevant product section (`guides-ui/`, `guides-cli/`, `guides-k8s/`, `guides-vmcp/`, `guides-registry/`).
+- **Quickstarts** live inside their product section, not in a separate top-level section.
+- **Third-party integration guides** (connecting ToolHive with external tools/services) go in `integrations/`.
+- **Cross-cutting concepts** (applicable to multiple product areas) go in `concepts/`.
+- **Per-MCP-server usage guides** go in `guides-mcp/`.
+- **Reference material** (specs, schemas, compatibility matrices) goes in `reference/`, with cross-links from the relevant product section.
+- Update `/sidebars.ts` to include any new page in the navigation.
+
+### Page requirements
+
+Every how-to guide and tutorial page must include:
+
+- Front matter with `title` and `description`.
+- A "Next steps" section at the end with 1-3 links to the next logical pages, following the journey phases (install, use, secure, operate, optimize).
+- Cross-links to related content in other sections where relevant.
 
 ## Review process
 
