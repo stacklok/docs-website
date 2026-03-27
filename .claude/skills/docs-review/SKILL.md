@@ -65,9 +65,9 @@ Watch for these telltale signs of AI-generated docs that need human intervention
 
 ### Section Structure and Navigation
 
-The docs follow a product-area-based information architecture. Check:
+The docs follow a product-area-based information architecture under `docs/toolhive/`. Check:
 
-- **Self-contained sections**: Product-specific content belongs in its product section (`guides-ui/`, `guides-cli/`, `guides-k8s/`, `guides-vmcp/`, `guides-registry/`), not in a shared section.
+- **Self-contained sections**: Product-specific content belongs in its product section (`docs/toolhive/guides-ui/`, `guides-cli/`, `guides-k8s/`, `guides-vmcp/`, `guides-registry/`), not in a shared section.
 - **Quickstarts in product sections**: Quickstarts live inside their product section, not in a separate top-level section.
 - **Integration placement**: Third-party integration guides (ngrok, Vault, OpenTelemetry, Okta, etc.) belong in `integrations/`, not in a product section.
 - **Next steps section**: Every how-to guide and tutorial page must end with a "Next steps" section containing 1-3 forward links. Missing "Next steps" is a primary issue.

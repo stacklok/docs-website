@@ -80,7 +80,9 @@ The documentation should be accessible to a wide range of technical users, inclu
 
 ## Information architecture
 
-The docs are organized by **product area**, with each section self-contained so a reader can complete their journey without leaving it. Cross-cutting content lives in dedicated shared sections. The authoritative restructuring plan is in `/docs-restructuring/1-docs-restructuring-plan.md`.
+This project follows the [Diataxis framework](https://diataxis.fr/) for documentation authoring - each page is a tutorial, how-to guide, reference, or explanation. The site is organized by **product area**, with each section self-contained so a reader can complete their journey without leaving it. Cross-cutting content lives in dedicated shared sections.
+
+All documentation lives under `docs/toolhive/`. Folder paths below are relative to that root.
 
 ### Design principles
 

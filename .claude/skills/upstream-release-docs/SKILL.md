@@ -124,12 +124,12 @@ Apply the approved changes:
 
 2. **Create new pages** for new features that lack existing documentation. Default to documenting new features rather than skipping them:
 
-   **Page placement** — the docs are organized by product area. Place new content in the correct section:
-   - **Product-specific guides** go in the relevant product section (`guides-ui/`, `guides-cli/`, `guides-k8s/`, `guides-vmcp/`, `guides-registry/`).
-   - **Third-party integration guides** go in `integrations/`.
-   - **Cross-cutting concepts** go in `concepts/`.
-   - **Per-MCP-server usage guides** go in `guides-mcp/`.
-   - **Reference material** goes in `reference/`.
+   **Page placement** — the docs are organized by product area under `docs/toolhive/`. Place new content in the correct section:
+   - **Product-specific guides** go in the relevant product section (`docs/toolhive/guides-ui/`, `guides-cli/`, `guides-k8s/`, `guides-vmcp/`, `guides-registry/`).
+   - **Third-party integration guides** go in `docs/toolhive/integrations/`.
+   - **Cross-cutting concepts** go in `docs/toolhive/concepts/`.
+   - **Per-MCP-server usage guides** go in `docs/toolhive/guides-mcp/`.
+   - **Reference material** goes in `docs/toolhive/reference/`.
    - Check the project's CLAUDE.md "Information architecture" section for the full placement rules.
 
    **Diataxis separation** — create separate pages per document type, not one combined page:
