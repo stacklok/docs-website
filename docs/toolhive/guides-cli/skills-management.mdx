@@ -10,9 +10,10 @@ scripts, and resources that teach AI agents how to perform specific tasks. While
 MCP servers provide **tools** (the raw capabilities an agent can call), skills
 provide the **knowledge** of when, why, and how to use those tools effectively.
 
-ToolHive lets you install skills from the
-[ToolHive Registry](../guides-registry/skills.mdx), OCI registries, or Git
-repositories, and manages their lifecycle across multiple AI clients.
+ToolHive lets you install skills from a
+[ToolHive Registry Server](../guides-registry/skills.mdx) (by name), OCI
+registries (by reference), or Git repositories (by URL), and manages their
+lifecycle across multiple AI clients.
 
 :::tip[New to skills?]
 
@@ -23,23 +24,28 @@ If you're not sure what skills are or how they relate to MCP servers, see
 
 ## Prerequisites
 
-- The [ToolHive API server](./api-server.mdx) must be running. Start it with:
+- The [ToolHive API server](./api-server.mdx) must be running. Start it in a
+  separate terminal window (the command blocks while running):
 
   ```bash
   thv serve
   ```
 
-- A supported AI client installed (such as Claude Code, OpenCode, or Codex)
+  The server must remain running while you use `thv skill` commands.
+
+- A supported AI client installed. See the
+  [client compatibility reference](../reference/client-compatibility.mdx) for
+  which clients support skills.
 
 ## Install a skill
 
-You can install skills from several sources: the ToolHive Registry (by name), an
-OCI registry (by reference), or a Git repository (by URL).
+You can install skills from a ToolHive Registry Server (by name), an OCI
+registry (by reference), or a Git repository (by URL).
 
 ### Install from the registry
 
 The simplest way to install a skill is by name. ToolHive looks up the skill in
-the configured registry and installs it automatically:
+the configured Registry Server and installs it automatically:
 
 ```bash
 thv skill install <SKILL_NAME>
@@ -57,7 +63,7 @@ To install a specific version of a skill from an OCI registry, provide the full
 OCI reference:
 
 ```bash
-thv skill install ghcr.io/stacklok/skills/toolhive-cli-user:v0.3.0
+thv skill install ghcr.io/<OWNER>/skills/<SKILL_NAME>:<TAG>
 ```
 
 ### Install from a Git repository
@@ -65,8 +71,11 @@ thv skill install ghcr.io/stacklok/skills/toolhive-cli-user:v0.3.0
 To install a skill directly from a Git repository:
 
 ```bash
-thv skill install git://github.com/example/my-skills@main#my-skill
+thv skill install git://github.com/anthropics/skills@main#skills/webapp-testing
 ```
+
+The URL format is `git://host/owner/repo[@ref][#path/to/skill]`, where `@ref` is
+a branch, tag, or commit hash, and `#path` points to the skill subdirectory.
 
 :::info[What's happening?]
 
@@ -102,11 +111,13 @@ first one it detects. To control which client receives the skill, use the
 thv skill install my-skill --client claude-code
 ```
 
-Supported clients include `claude-code`, `opencode`, and `codex`.
+See the [client compatibility reference](../reference/client-compatibility.mdx)
+for the full list of clients that support skills.
 
 ### Add a skill to a group
 
-You can organize skills into groups, just like MCP servers:
+You can organize skills into groups, just like MCP servers. Skills in a group
+are automatically installed to clients registered with that group:
 
 ```bash
 thv skill install my-skill --group development
@@ -201,10 +212,38 @@ thv skill uninstall my-skill --scope project --project-root /path/to/project
 This removes the skill files from all associated client directories and deletes
 the database record.
 
+## Create a skill
+
+Every skill requires a `SKILL.md` file at the root of its directory. At a
+minimum, the file needs `name` and `description` fields in YAML frontmatter,
+followed by Markdown instructions for the agent:
+
+```yaml title="my-skill/SKILL.md"
+---
+name: my-skill
+description: >-
+  What this skill does and when to use it. Include keywords that help agents
+  identify relevant tasks.
+---
+# Instructions
+
+Step-by-step instructions for the agent...
+```
+
+The `name` must be lowercase alphanumeric with hyphens, must match the directory
+name, and must not start or end with a hyphen.
+
+You can also add optional files in `scripts/`, `references/`, and `assets/`
+subdirectories for executable code, documentation, and static resources.
+
+For the full list of frontmatter fields (version, license, allowed-tools, and
+more) and directory structure details, see
+[Understanding skills](../concepts/skills.mdx#skill-structure).
+
 ## Build and publish skills
 
-If you've created your own skill, you can package it as an OCI artifact and
-publish it to a registry for others to install.
+Once you've created a skill, you can package it as an OCI artifact and publish
+it to a registry for others to install.
 
 ### Validate a skill
 
@@ -254,38 +293,10 @@ authenticated before pushing.
 
 :::
 
-## Create a skill
-
-Every skill requires a `SKILL.md` file at the root of its directory. At a
-minimum, the file needs `name` and `description` fields in YAML frontmatter,
-followed by Markdown instructions for the agent:
-
-```yaml title="my-skill/SKILL.md"
----
-name: my-skill
-description: >-
-  What this skill does and when to use it. Include keywords that help agents
-  identify relevant tasks.
----
-# Instructions
-
-Step-by-step instructions for the agent...
-```
-
-The `name` must be lowercase alphanumeric with hyphens, must match the directory
-name, and must not start or end with a hyphen.
-
-You can also add optional files in `scripts/`, `references/`, and `assets/`
-subdirectories for executable code, documentation, and static resources.
-
-For the full list of frontmatter fields (version, license, allowed-tools, and
-more) and directory structure details, see
-[Understanding skills](../concepts/skills.mdx#skill-structure).
-
 ## Next steps
 
-- [Configure your AI client](./client-configuration.mdx) to connect to your
-  servers and skills
+- [Configure your AI client](./client-configuration.mdx) to register clients
+  with ToolHive for automatic MCP server and skill configuration
 - [Manage skills in the registry](../guides-registry/skills.mdx) to publish
   skills for your team
 
