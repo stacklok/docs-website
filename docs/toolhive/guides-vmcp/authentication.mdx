@@ -375,6 +375,31 @@ spec:
         oidcConfig: { ... }
 ```
 
+:::warning[Signing keys and HMAC secrets]
+
+`signingKeySecretRefs` and `hmacSecretRefs` are technically optional. When
+omitted, the auth server auto-generates ephemeral keys on startup. This is
+convenient for development, but **tokens become invalid after pod restart** —
+JWTs can no longer be verified (signing keys) and authorization codes and
+refresh tokens can no longer be decoded (HMAC secrets), forcing all users to
+re-authenticate. Always configure persistent keys for production. See
+[Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
+for key generation steps.
+
+:::
+
+If the browser-facing authorization endpoint needs to be on a different host
+than the issuer (for example, behind an ingress that rewrites paths), set
+`authorizationEndpointBaseUrl` to override the `authorization_endpoint` in the
+OAuth discovery document. All other endpoints remain derived from `issuer`:
+
+```yaml
+spec:
+  authServerConfig:
+    issuer: https://auth.internal.example.com
+    authorizationEndpointBaseUrl: https://auth.example.com
+```
+
 Each upstream provider `name` must be a valid DNS label (lowercase alphanumeric
 and hyphens, max 63 characters). This name is what
 [upstream token injection](#upstream-token-injection) and
@@ -384,6 +409,17 @@ providers, see
 [Using an OAuth 2.0 upstream provider](../guides-k8s/auth-k8s.mdx#using-an-oauth-20-upstream-provider).
 The [complete example](#complete-example) below shows full provider
 configurations.
+
+:::tip[Non-standard token responses]
+
+Some OAuth 2.0 providers nest tokens under non-standard paths instead of
+returning them at the top level (for example, GovSlack returns the access token
+at `authed_user.access_token`). Add a `tokenResponseMapping` block to the
+`oauth2Config` with dot-notation paths for `accessTokenPath`, `scopePath`,
+`refreshTokenPath`, and `expiresInPath`. See the
+[CRD reference](../reference/crd-spec.md) for field details.
+
+:::
 
 ### Incoming auth with the embedded auth server
 
