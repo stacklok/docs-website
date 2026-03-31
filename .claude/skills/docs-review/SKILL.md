@@ -70,7 +70,8 @@ The docs follow a product-area-based information architecture under `docs/toolhi
 - **Self-contained sections**: Product-specific content belongs in its product section (`docs/toolhive/guides-ui/`, `guides-cli/`, `guides-k8s/`, `guides-vmcp/`, `guides-registry/`), not in a shared section.
 - **Quickstarts in product sections**: Quickstarts live inside their product section, not in a separate top-level section.
 - **Integration placement**: Third-party integration guides (ngrok, Vault, OpenTelemetry, Okta, etc.) belong in `integrations/`, not in a product section.
-- **Next steps section**: Every how-to guide and tutorial page must end with a "Next steps" section containing 1-3 forward links. Missing "Next steps" is a primary issue.
+- **Page ending pattern**: How-to guides and tutorials follow this closing pattern: Next steps > Related information > Troubleshooting (if applicable). "Next steps" contains 1-3 forward links to the next logical pages. Missing "Next steps" is a primary issue.
+- **Inbound link coverage for new pages**: When a PR adds a new page, check that it is reachable beyond just the sidebar. New pages need inbound links from related pages (overviews, intros, feature lists, related how-to guides). A page with no inbound links is isolated in the user journey. For major new features, also check whether top-level intro/overview pages should mention the capability.
 - **Introduction pages**: Each product section should have an Introduction as the first sidebar child. New sections must follow this pattern.
 - **Progressive disclosure**: Core workflows should appear before advanced topics. Check that advanced content isn't mixed in with beginner-facing pages.
 - **Forward navigation path**: A reader should be able to follow "Next steps" links from the quickstart through core workflows without relying on the sidebar.
@@ -147,6 +148,7 @@ Structure your review as:
 Before finalizing your review, verify:
 
 - [ ] Did you check related documents for duplication or misplaced content?
+- [ ] For new pages: did you check for sufficient inbound links from related pages (intros, overviews, feature lists)?
 - [ ] Did you verify content belongs in the right document?
 - [ ] Did you check for a project style guide?
 - [ ] Are your recommendations actionable (not just "this is bad")?
