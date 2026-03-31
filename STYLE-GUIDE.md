@@ -164,17 +164,37 @@ ensures readers always know what to expect and never hit dead ends.
 
 Every page must have front matter with at least a `title` and `description`.
 
-### Next steps
+### Closing sections
 
-Every how-to guide and tutorial page ends with a `## Next steps` section
-containing 1-3 links to the next logical pages. These follow the journey phases:
-install, use, secure, operate, optimize. Example:
+Every how-to guide and tutorial page ends with closing sections in this order:
+
+1. `## Next steps` (required) - 1-3 links to the next logical pages, following
+   the journey phases: install, use, secure, operate, optimize.
+2. `## Related information` (optional) - links to background reading, reference
+   docs, or external resources that don't represent a next action.
+3. `## Troubleshooting` (optional) - common issues and solutions, typically
+   using collapsible `<details>` blocks.
+
+Example:
 
 ```mdx
 ## Next steps
 
 - [Run MCP servers](./run-mcp-servers.mdx) to deploy your first server.
 - [Client configuration](./client-configuration.mdx) to connect your IDE.
+
+## Related information
+
+- [Understanding MCP](../concepts/mcp.mdx) for background on the protocol.
+
+## Troubleshooting
+
+<details>
+<summary>Server fails to start</summary>
+
+Check that the container runtime is running...
+
+</details>
 ```
 
 ### Introduction pages

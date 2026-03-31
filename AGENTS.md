@@ -141,8 +141,14 @@ Not every section needs every phase. The Introduction is an explicit first sideb
 Every how-to guide and tutorial page must include:
 
 - Front matter with `title` and `description`.
-- A "Next steps" section at the end with 1-3 links to the next logical pages, following the journey phases (install, use, secure, operate, optimize).
+- A "Next steps" section with 1-3 links to the next logical pages, following the journey phases (install, use, secure, operate, optimize).
 - Cross-links to related content in other sections where relevant.
+
+Pages that include closing sections must use this ordering:
+
+1. **Next steps** (required for how-to guides and tutorials)
+2. **Related information** (if applicable)
+3. **Troubleshooting** (if applicable)
 
 ## Review process
 

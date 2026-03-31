@@ -13,10 +13,12 @@ Perform critical editorial reviews as a tech writer / copyeditor, focusing on cl
 1. **Read the document(s) fully** before making observations
 2. **Check related documents** if reviewing changes to existing docs or new docs in a doc set
 3. **Check for a project style guide** (STYLE-GUIDE.md, CLAUDE.md, or similar)
-4. **Assess information architecture** - document placement, scope, cross-document duplication
-5. **Assess overall structure** - TOC length, information flow, Diataxis alignment
-6. **Identify specific issues** with concrete examples and line numbers
-7. **Provide actionable recommendations** - not just problems, but solutions
+4. **Verify claims against authoritative sources** - cross-check documented behavior against CLI reference docs, API specs, auto-generated references, and upstream specifications. Note: docs may be drafted ahead of a release, so auto-generated references may lag behind - flag contradictions, not just absences
+5. **Walk through as the reader** - mentally follow the page as a user doing the task for the first time. Are prerequisites complete? Can you follow each step in order? Would you have the knowledge needed at each point, or does the page assume something it hasn't established?
+6. **Assess information architecture** - document placement, scope, cross-document duplication
+7. **Assess overall structure** - TOC length, information flow, Diataxis alignment
+8. **Identify specific issues** with concrete examples and line numbers
+9. **Provide actionable recommendations** - not just problems, but solutions
 
 ## Primary Review Criteria
 
@@ -62,6 +64,9 @@ Watch for these telltale signs of AI-generated docs that need human intervention
 | Repetitive content | Same info in multiple sections | Deduplicate; single source of truth |
 | Over-explaining | Verbose descriptions of obvious things | Trust the reader; cut aggressively |
 | Hedging language | "may," "might," "could potentially" | Be direct or remove |
+| Hedged lists | "such as," "including," "clients include" when listing supported items | Be definitive: state the full list, or link to a canonical reference |
+| Placeholder examples | `my-skill`, `example-org`, `my-app` instead of real values | Use real, working examples from the actual product |
+| Features without context | Introduces a flag/option without explaining why a reader would use it | Explain the user benefit and how it connects to concepts the reader already knows |
 
 ### Section Structure and Navigation
 
@@ -82,7 +87,18 @@ The docs follow a product-area-based information architecture under `docs/toolhi
 - **Redundant phrasing**: "uses discovered mode to automatically discover" → "automatically discovers"
 - **Unexplained design decisions**: If something seems non-obvious (e.g., why a field is named counterintuitively), the doc should explain it
 - **Inconsistent terminology**: Pick one term and use it consistently throughout
-- **Missing cross-references**: Related docs should link to each other
+- **Ambiguous product terms**: When a product has components with overlapping names (e.g., "Registry" could mean a built-in registry or a Registry Server instance), docs must disambiguate. Readers at different points in their journey have different mental models
+- **Prerequisites lacking operational context**: Don't just say "X must be running" - explain practical implications (is it a blocking command that needs a separate terminal? does it need to stay running persistently, or only during specific operations?)
+- **Missing cross-references**: Related docs should link to each other. When a how-to page lists supported items (clients, platforms, etc.), link to the canonical reference rather than maintaining an inline list that can drift
+
+### Accuracy and Trustworthiness
+
+Docs that readers can't trust are worse than no docs. Actively verify:
+
+- **Cross-check against reference material**: Does the prose contradict the auto-generated CLI reference, the API spec, or the upstream project's docs? Flag contradictions. Note: docs are often drafted before a release, so auto-generated references may not yet include new features - absence from the reference is not the same as a contradiction. But if an existing reference explicitly describes different behavior (e.g., "by name or OCI reference" when the prose also claims Git support), that's a real conflict to flag
+- **Code examples must work**: Could a reader copy-paste this and get the described result? Check for correct syntax, realistic flag combinations, and valid argument values. Placeholder examples (`my-skill`, `example.com`) should be replaced with real, working values wherever possible
+- **Feature coverage completeness**: When documenting a new feature, check that the full surface area is covered. Are all subcommands/endpoints mentioned? Are common error states addressed? A how-to that covers the happy path but ignores the most likely failure mode will generate support questions
+- **Consistency across the doc set**: Do the same terms, flag names, and behaviors described here match how they're described in related pages? Cross-document inconsistencies (e.g., one page says "space-delimited," another uses comma-separated) erode trust
 
 ### Accessibility and Formatting
 
@@ -125,6 +141,8 @@ Structure your review as:
 
 **Primary issues** (address before merge):
 
+- Accuracy: documented behavior contradicts CLI reference, API spec, or upstream source
+- Accuracy: code examples that won't work if copy-pasted (wrong syntax, nonexistent flags, invalid arguments)
 - Information architecture: content in wrong document, cross-document duplication
 - Content placed in the wrong section (e.g., product-specific content in Concepts, integration content in a product section)
 - Missing "Next steps" section on how-to guides and tutorials
@@ -147,6 +165,9 @@ Structure your review as:
 
 Before finalizing your review, verify:
 
+- [ ] Did you cross-check documented behavior against CLI references, API specs, and upstream sources?
+- [ ] Did you walk through the page as a first-time user - can you follow every step in order?
+- [ ] Did you verify code examples use correct syntax, valid flags, and real values?
 - [ ] Did you check related documents for duplication or misplaced content?
 - [ ] For new pages: did you check for sufficient inbound links from related pages (intros, overviews, feature lists)?
 - [ ] Did you verify content belongs in the right document?
