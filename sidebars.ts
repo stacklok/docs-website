@@ -82,6 +82,7 @@ const sidebars: SidebarsConfig = {
           ],
         },
         'toolhive/guides-cli/client-configuration',
+        'toolhive/guides-cli/skills-management',
         {
           type: 'category',
           label: 'Permissions and security',
