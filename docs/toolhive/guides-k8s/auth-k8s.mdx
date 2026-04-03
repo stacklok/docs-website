@@ -33,7 +33,7 @@ You'll need:
 
 ## Choose your authentication approach
 
-There are four main ways to authenticate with MCP servers running in Kubernetes:
+There are several ways to authenticate with MCP servers running in Kubernetes:
 
 ### Approach 1: External identity provider authentication
 
@@ -44,18 +44,30 @@ providers like Google, GitHub, Microsoft Entra ID, Okta, or Auth0.
 
 <OidcPrerequisites />
 
-### Approach 2: Shared OIDC configuration with ConfigMap
+### Approach 2: Shared OIDC configuration with MCPOIDCConfig
 
 Use this when you want to share the same OIDC configuration across multiple
-MCPServers. This is ideal for managing multiple servers with the same external
-identity provider.
+MCPServers or VirtualMCPServers. The `MCPOIDCConfig` CRD provides a dedicated,
+validated resource for managing shared OIDC settings at the platform level.
 
 **Prerequisites for shared OIDC:**
 
 - External identity provider configured (same as Approach 1)
-- Understanding of Kubernetes ConfigMaps
 
-### Approach 3: Kubernetes service-to-service authentication
+### Approach 3: Shared OIDC configuration with ConfigMap (legacy)
+
+:::warning[Prefer MCPOIDCConfig]
+
+For new deployments, use Approach 2 (`MCPOIDCConfig`) instead of a ConfigMap.
+`MCPOIDCConfig` provides built-in validation, status tracking, and lifecycle
+management.
+
+:::
+
+This approach predates MCPOIDCConfig and remains supported. Use this when you
+want to share OIDC configuration via a ConfigMap.
+
+### Approach 4: Kubernetes service-to-service authentication
 
 Use this when you have client applications running in the same Kubernetes
 cluster that need to call MCP servers. This approach uses Kubernetes service
@@ -66,7 +78,7 @@ account tokens for authentication.
 - Client applications running in Kubernetes pods
 - Understanding of Kubernetes service accounts and RBAC
 
-### Approach 4: Embedded authorization server authentication
+### Approach 5: Embedded authorization server authentication
 
 Use this when you want ToolHive to handle the full OAuth flow, including
 redirecting users to an upstream identity provider for authentication. This
@@ -82,7 +94,130 @@ For conceptual background, see
 - A registered OAuth application/client with your upstream provider
 - Client ID and client secret from your upstream provider
 
+## Set up shared OIDC configuration with MCPOIDCConfig
+
+The `MCPOIDCConfig` CRD lets you define OIDC provider settings once and
+reference them from multiple MCPServer or VirtualMCPServer resources. Each
+server specifies its own `audience` (and optionally `scopes`) to maintain token
+isolation.
+
+**Step 1: Create an MCPOIDCConfig resource**
+
+<Tabs groupId="oidc-type">
+<TabItem value="inline" label="External IdP" default>
+
+```yaml title="shared-oidc-config.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPOIDCConfig
+metadata:
+  name: production-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: 'https://auth.example.com'
+    clientId: 'your-client-id'
+    clientSecretRef:
+      name: oidc-secret
+      key: client-secret
+    jwksUrl: 'https://auth.example.com/.well-known/jwks.json'
+```
+
+</TabItem>
+<TabItem value="k8s" label="Kubernetes service account">
+
+```yaml title="k8s-oidc-config.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPOIDCConfig
+metadata:
+  name: k8s-sa-oidc
+  namespace: toolhive-system
+spec:
+  type: kubernetesServiceAccount
+  kubernetesServiceAccount:
+    serviceAccount: mcp-client
+    namespace: client-apps
+```
+
+</TabItem>
+</Tabs>
+
+Apply the resource:
+
+```bash
+kubectl apply -f <YOUR_OIDC_CONFIG_FILE>.yaml
+```
+
+**Step 2: Reference MCPOIDCConfig from an MCPServer**
+
+Use `oidcConfigRef` instead of inline `oidcConfig`. Each server must set a
+unique `audience` to prevent token replay across servers:
+
+```yaml title="mcp-server-shared-oidc.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: weather-server
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: streamable-http
+  proxyPort: 8080
+  permissionProfile:
+    type: builtin
+    name: network
+  # highlight-start
+  oidcConfigRef:
+    name: production-oidc
+    audience: weather-server
+    scopes:
+      - openid
+  # highlight-end
+```
+
+```bash
+kubectl apply -f mcp-server-shared-oidc.yaml
+```
+
+**Step 3: Verify**
+
+Check the MCPOIDCConfig status:
+
+```bash
+kubectl get mcpoidc -n toolhive-system
+```
+
+The `REFERENCES` column shows which workloads use this config. The `READY`
+column confirms validation passed.
+
+### Benefits of MCPOIDCConfig
+
+- **Centralized management**: update provider settings in one place for all
+  servers
+- **Built-in validation**: CEL rules catch misconfiguration at admission time
+- **Status tracking**: see which workloads reference the config and whether it
+  is valid
+- **Lifecycle management**: deletion is blocked while workloads reference the
+  config
+
+:::info[Inline oidcConfig deprecation]
+
+The inline `spec.oidcConfig` field on MCPServer is deprecated and will be
+removed in `v1beta1`. Use `oidcConfigRef` to reference a shared MCPOIDCConfig
+resource instead. You cannot set both fields on the same MCPServer.
+
+:::
+
 ## Set up external identity provider authentication
+
+:::note[Consider MCPOIDCConfig]
+
+For new deployments, consider using `oidcConfigRef` with a shared MCPOIDCConfig
+resource instead of inline `oidcConfig`. See
+[Set up shared OIDC configuration](#set-up-shared-oidc-configuration-with-mcpoidcconfig)
+above.
+
+:::
 
 **Step 1: Create an MCPServer with external OIDC**
 
@@ -99,7 +234,7 @@ metadata:
 spec:
   image: ghcr.io/stackloklabs/weather-mcp/server
   transport: sse
-  port: 8080
+  proxyPort: 8080
   permissionProfile:
     type: builtin
     name: network
@@ -185,7 +320,7 @@ metadata:
 spec:
   image: ghcr.io/stackloklabs/weather-mcp/server
   transport: sse
-  port: 8080
+  proxyPort: 8080
   permissionProfile:
     type: builtin
     name: network
@@ -249,7 +384,7 @@ metadata:
 spec:
   image: ghcr.io/stackloklabs/weather-mcp/server
   transport: sse
-  port: 8080
+  proxyPort: 8080
   permissionProfile:
     type: builtin
     name: network
@@ -629,7 +764,11 @@ standard `name` field.
 ## Set up authorization
 
 All authentication approaches can use the same authorization configuration using
-Cedar policies.
+Cedar policies. When using the embedded authorization server (Approach 5), Cedar
+policies can also evaluate upstream identity provider claims such as group
+membership. See
+[Upstream identity provider claims](../concepts/cedar-policies.mdx#upstream-identity-provider-claims)
+for details.
 
 **Step 1: Create authorization configuration**
 
@@ -678,7 +817,7 @@ metadata:
 spec:
   image: ghcr.io/stackloklabs/weather-mcp/server
   transport: sse
-  port: 8080
+  proxyPort: 8080
   permissionProfile:
     type: builtin
     name: network
