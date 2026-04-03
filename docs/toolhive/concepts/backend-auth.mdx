@@ -159,32 +159,18 @@ When the MCP server needs to call an external API where no federation
 relationship exists—such as GitHub, Google Workspace, or Atlassian APIs—the
 embedded authorization server handles the full OAuth web flow against the
 external provider. The proxy redirects the user to authenticate directly with
-the external service, obtains tokens on behalf of the user, and passes the
-upstream token to the MCP server.
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Proxy as ToolHive Proxy
-    participant ExtProvider as External Provider
-
-    User->>Proxy: Connect
-    Proxy-->>User: Redirect to login
-    User->>ExtProvider: Authenticate
-    ExtProvider->>Proxy: Authorization code
-    Proxy->>ExtProvider: Exchange code for token
-    ExtProvider->>Proxy: Upstream tokens
-    Proxy->>User: Issue JWT
-```
-
-On subsequent MCP requests, ToolHive uses the JWT to retrieve the stored
-upstream tokens and forward them to the MCP server. For details on this
-mechanism, see [Token storage and forwarding](#token-storage-and-forwarding).
+the external service, obtains tokens on behalf of the user, and automatically
+forwards the upstream token to the MCP server on each subsequent request.
 
 The embedded authorization server runs in-process within the ToolHive proxy—no
 separate infrastructure is needed. It supports Dynamic Client Registration
 (DCR), so MCP clients can register automatically with ToolHive—no manual client
 configuration in ToolHive is required.
+
+For a full explanation of how the OAuth flow works, token storage and
+forwarding, automatic token refresh, session storage options, and differences
+between MCPServer and VirtualMCPServer deployments, see
+[Embedded authorization server](./embedded-auth-server.mdx).
 
 :::note
 
@@ -192,103 +178,6 @@ The embedded authorization server is currently available only for Kubernetes
 deployments using the ToolHive Operator.
 
 :::
-
-#### Key characteristics
-
-- **In-process execution:** The authorization server runs within the ToolHive
-  proxy—no separate infrastructure or sidecar containers needed.
-- **Configurable signing keys:** JWTs are signed with keys you provide,
-  supporting key rotation for zero-downtime updates.
-- **Flexible upstream providers:** Supports both OIDC providers (with automatic
-  endpoint discovery) and OAuth 2.0 providers (with explicit endpoint
-  configuration).
-- **Configurable token lifespans:** Access tokens, refresh tokens, and
-  authorization codes have configurable durations with sensible defaults.
-- **Dynamic Client Registration (DCR):** Supports OAuth 2.0 Dynamic Client
-  Registration (RFC 7591), allowing MCP clients to register automatically with
-  ToolHive's authorization server—no manual client registration in ToolHive is
-  required.
-- **Direct upstream redirect:** The embedded authorization server redirects
-  clients directly to the upstream provider for authentication (for example,
-  GitHub or Atlassian).
-- **Single upstream provider per MCPServer:** Individual MCPServer resources
-  support one upstream identity provider per configuration. For multiple
-  upstream providers with sequential authorization chaining, use a
-  [VirtualMCPServer with the embedded auth server](../guides-vmcp/authentication.mdx#embedded-authorization-server).
-
-#### Token storage and forwarding
-
-The embedded authorization server stores upstream tokens (access tokens, refresh
-tokens, and ID tokens from external providers) in session storage. When the
-OAuth flow completes, the server generates a unique session ID and stores the
-upstream tokens keyed by this ID. The JWT issued to the client contains a `tsid`
-(Token Session ID) claim that references this session.
-
-When a client makes an MCP request with this JWT:
-
-1. The ToolHive proxy validates the JWT signature and extracts the `tsid` claim
-2. It retrieves the upstream tokens from session storage using the `tsid`
-3. The proxy replaces the `Authorization` header with the upstream access token
-4. The request is forwarded to the MCP server with the external provider's token
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Proxy as ToolHive Proxy
-    participant Store as Session Storage
-    participant MCP as MCP Server
-    participant API as External API
-
-    Note over Client,Store: Initial OAuth flow
-    Proxy->>Store: Store upstream tokens<br/>keyed by session ID
-    Proxy-->>Client: Issue JWT with tsid claim
-
-    Note over Client,API: Subsequent MCP requests
-    Client->>Proxy: MCP request with JWT
-    Proxy->>Proxy: Validate JWT signature
-    Proxy->>Store: Look up upstream token<br/>using tsid from JWT
-    Store-->>Proxy: Return upstream access token
-    Proxy->>MCP: Forward request with<br/>upstream access token
-    MCP->>API: Call external API
-    API-->>MCP: Response
-    MCP-->>Proxy: Response
-    Proxy-->>Client: Response
-```
-
-This mechanism allows MCP servers to call external APIs with the user's actual
-credentials from the upstream provider, while the client only needs to manage a
-single ToolHive-issued JWT.
-
-#### Automatic token refresh
-
-Upstream access tokens have their own expiration, independent of the ToolHive
-JWT lifespan. When the stored upstream access token has expired, ToolHive
-automatically refreshes it using the stored refresh token before forwarding the
-request — your MCP session continues without re-authentication.
-
-If the refresh token is also expired or has been revoked by the upstream
-provider, ToolHive returns a `401` response, prompting you to re-authenticate
-through the OAuth flow.
-
-:::warning[Session storage limitations]
-
-By default, session storage is in-memory only. Upstream tokens are lost when
-pods restart, requiring users to re-authenticate. For production deployments,
-configure Redis Sentinel as the storage backend for persistent, highly available
-session storage. See
-[Configure session storage](../guides-k8s/auth-k8s.mdx#configure-session-storage)
-for a quick setup, or the full
-[Redis Sentinel session storage](../guides-k8s/redis-session-storage.mdx)
-tutorial for an end-to-end walkthrough.
-
-:::
-
-For the client-facing OAuth flow, see
-[Embedded authorization server](./auth-framework.mdx#embedded-authorization-server).
-For Kubernetes setup instructions, see
-[Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication).
-For multi-upstream provider support with vMCP, see
-[vMCP embedded authorization server](../guides-vmcp/authentication.mdx#embedded-authorization-server).
 
 ## Token exchange in depth
 
@@ -459,8 +348,8 @@ setup guide.
 
 - For client authentication concepts, see
   [Authentication and authorization](./auth-framework.mdx)
-- For the embedded authorization server, see
-  [Embedded authorization server](./auth-framework.mdx#embedded-authorization-server)
+- For a deep dive into the embedded authorization server, see
+  [Embedded authorization server](./embedded-auth-server.mdx)
 - For configuring the embedded authorization server in Kubernetes, see
   [Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
 - For configuring token exchange, see
