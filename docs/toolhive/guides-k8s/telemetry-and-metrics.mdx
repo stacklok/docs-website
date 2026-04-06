@@ -20,8 +20,97 @@ the [observability overview](../concepts/observability.mdx).
 
 ## Enable telemetry
 
-You can enable telemetry when deploying an MCP server by specifying Telemetry
-configuration in the MCPServer or MCPRemoteProxy custom resource.
+There are two ways to configure telemetry: a shared `MCPTelemetryConfig`
+resource (recommended) or inline `spec.telemetry` on each MCPServer.
+
+### Shared telemetry configuration (recommended)
+
+The `MCPTelemetryConfig` CRD lets you define telemetry settings once and
+reference them from multiple MCPServer resources. Each server can override its
+`serviceName` for distinct identity in your observability backend.
+
+**Step 1: Create an MCPTelemetryConfig resource**
+
+```yaml title="shared-otel-config.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPTelemetryConfig
+metadata:
+  name: shared-otel
+  namespace: toolhive-system
+spec:
+  openTelemetry:
+    enabled: true
+    endpoint: otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4318
+    insecure: true
+    metrics:
+      enabled: true
+    tracing:
+      enabled: true
+      samplingRate: '0.05'
+    sensitiveHeaders:
+      - name: Authorization
+        secretKeyRef:
+          name: otel-auth-secret
+          key: api-key
+  prometheus:
+    enabled: true
+```
+
+```bash
+kubectl apply -f shared-otel-config.yaml
+```
+
+**Step 2: Reference from an MCPServer**
+
+```yaml {10-12} title="mcpserver-with-shared-otel.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: gofetch
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/gofetch/server
+  transport: streamable-http
+  proxyPort: 8080
+  telemetryConfigRef:
+    name: shared-otel
+    serviceName: mcp-fetch-server
+```
+
+```bash
+kubectl apply -f mcpserver-with-shared-otel.yaml
+```
+
+**Step 3: Verify**
+
+```bash
+kubectl get mcpotel -n toolhive-system
+```
+
+The `REFERENCES` column shows which workloads use this config. The `READY`
+column confirms validation passed.
+
+:::tip[Sensitive headers]
+
+Use `sensitiveHeaders` to pass API keys or tokens to your OTLP endpoint via
+Kubernetes Secrets, instead of storing credentials in plain text. A header name
+cannot appear in both `headers` and `sensitiveHeaders`.
+
+:::
+
+### Inline telemetry configuration
+
+:::warning[Deprecated]
+
+The inline `spec.telemetry` field on MCPServer is deprecated and will be removed
+in a future release. Use `telemetryConfigRef` to reference a shared
+MCPTelemetryConfig resource instead. You cannot set both fields on the same
+MCPServer.
+
+:::
+
+You can enable telemetry inline when deploying an MCP server by specifying
+telemetry configuration in the MCPServer or MCPRemoteProxy custom resource.
 
 This example runs the Fetch MCP server and exports traces to a deployed instance
 of the [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/):
@@ -108,7 +197,8 @@ for traffic.
 You can export to both an OTLP endpoint and expose Prometheus metrics
 simultaneously.
 
-The `MCPServer` example at the top of this page has dual export enabled.
+The shared `MCPTelemetryConfig` example and the inline `MCPServer` example above
+both have dual export enabled.
 
 ## Observability backends
 
@@ -116,6 +206,14 @@ ToolHive can export telemetry data to many different observability backends. It
 supports exporting traces and metrics to any backend that implements the OTLP
 protocol. Some common examples are listed below, but specific configurations
 will vary based on your environment and requirements.
+
+:::note
+
+The backend examples below show inline `spec.telemetry` configuration. The same
+endpoint and settings apply when using a shared `MCPTelemetryConfig` resource
+via `telemetryConfigRef`.
+
+:::
 
 ### OpenTelemetry Collector (recommended)
 

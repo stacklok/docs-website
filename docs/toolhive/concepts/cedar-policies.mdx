@@ -236,6 +236,100 @@ permit(principal, action == Action::"call_tool", resource == Tool::"weather");
 
 Then `tools/list` will only show the "weather" tool for that user.
 
+## Optimizer meta-tool enforcement
+
+When the [optimizer](../guides-vmcp/optimizer.mdx) is enabled alongside Cedar
+authorization, Cedar policies cover the optimizer's `find_tool` and `call_tool`
+meta-tools:
+
+- **`tools/list`**: The meta-tools (`find_tool`, `call_tool`) pass through Cedar
+  filtering. Real backend tools are filtered as before.
+- **`tools/call` with `call_tool`**: Cedar extracts the inner `tool_name`
+  argument and authorizes the actual backend tool before execution. Your
+  existing per-tool policies apply transparently.
+- **`tools/call` with `find_tool`**: The response is filtered through Cedar so
+  clients cannot discover unauthorized tools via search.
+
+You don't need to write separate policies for the meta-tools themselves. Your
+existing `call_tool` policies on backend tools are enforced automatically when
+the optimizer routes calls.
+
+:::warning[Review policies when enabling Cedar with the optimizer]
+
+If you enable Cedar on a deployment that already uses the optimizer, ensure your
+backend tool policies are comprehensive. Previously unchecked operations are now
+subject to default-deny authorization. Tools that were accessible without
+policies before may now be denied.
+
+:::
+
+## Upstream identity provider claims
+
+When using the
+[embedded authorization server](./auth-framework.mdx#embedded-authorization-server),
+Cedar policies can reference claims from the upstream identity provider token
+(for example, GitHub `login` or Okta `groups`). This enables group-based
+authorization using your organization's existing identity provider groups.
+
+### Group-based authorization
+
+The Cedar authorizer extracts group membership from upstream tokens using
+configurable claim names. By default, it looks for `groups`, `roles`, and
+`cognito:groups` claims. Groups are mapped to `THVGroup` parent entities, so you
+can write policies like:
+
+```text
+permit(
+  principal in THVGroup::"engineering",
+  action == Action::"call_tool",
+  resource
+);
+```
+
+This permits any user in the "engineering" group to call any tool.
+
+### Custom group claim names
+
+If your identity provider uses a non-standard claim name for groups (for
+example, Auth0 and Okta often use URI-style claims like
+`https://example.com/groups`), set the `group_claim_name` option in your Cedar
+configuration:
+
+```json
+{
+  "version": "1.0",
+  "type": "cedarv1",
+  "cedar": {
+    "policies": [
+      "permit(principal in THVGroup::\"engineering\", action, resource);"
+    ],
+    "entities_json": "[]",
+    "group_claim_name": "https://example.com/groups"
+  }
+}
+```
+
+When `group_claim_name` is set, it takes priority over the well-known defaults.
+When it is empty (the default), ToolHive checks `groups`, `roles`, and
+`cognito:groups` in order.
+
+### How it works
+
+1. The embedded authorization server authenticates the user with your upstream
+   identity provider and issues a ToolHive JWT.
+2. The Cedar authorizer reads claims from the upstream token (not just the
+   ToolHive-issued JWT).
+3. Group claims are extracted and used to build `THVGroup` parent entities for
+   the principal.
+4. Policies using `principal in THVGroup::"<group>"` evaluate correctly.
+
+:::note
+
+If the upstream token is opaque (not a JWT), the authorizer denies the request.
+There is no silent fallback to ToolHive-issued claims only.
+
+:::
+
 ## Policy evaluation and secure defaults
 
 Understanding how Cedar evaluates policies helps you write more effective and
