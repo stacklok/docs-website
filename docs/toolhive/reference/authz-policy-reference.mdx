@@ -19,15 +19,15 @@ Every Cedar authorization request involves three entity types: a principal, an
 action, and a resource. ToolHive maps MCP concepts to these Cedar entities
 automatically.
 
-| Entity type   | Format                        | Description                                                                                                             |
-| ------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `Client`      | `Client::"<sub_claim>"`       | The authenticated user, identified by the `sub` claim from the access token                                             |
-| `Action`      | `Action::"<action_id>"`       | The MCP operation being performed                                                                                       |
-| `Tool`        | `Tool::"<tool_name>"`         | A tool resource (used for `tools/call`)                                                                                 |
-| `Prompt`      | `Prompt::"<prompt_name>"`     | A prompt resource (used for `prompts/get`)                                                                              |
-| `Resource`    | `Resource::"<sanitized_uri>"` | A data resource (used for `resources/read`). The URI is [sanitized](#resource-uri-sanitization) for Cedar compatibility |
-| `FeatureType` | `FeatureType::"<feature>"`    | A feature category (used for list operations). Values: `tool`, `prompt`, `resource`                                     |
-| `THVGroup`    | `THVGroup::"<group_name>"`    | A group membership entity. Used with Cedar's `in` operator for [group-based policies](#group-membership)                |
+| Entity type   | Format                        | Description                                                                                                                                                                            |
+| ------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Client`      | `Client::"<sub_claim>"`       | The authenticated user, identified by the `sub` claim from the access token                                                                                                            |
+| `Action`      | `Action::"<action_id>"`       | The MCP operation being performed                                                                                                                                                      |
+| `Tool`        | `Tool::"<tool_name>"`         | A tool resource (used for `tools/call`)                                                                                                                                                |
+| `Prompt`      | `Prompt::"<prompt_name>"`     | A prompt resource (used for `prompts/get`)                                                                                                                                             |
+| `Resource`    | `Resource::"<sanitized_uri>"` | A data resource (used for `resources/read`). The URI is [sanitized](#resource-uri-sanitization) for Cedar compatibility                                                                |
+| `FeatureType` | `FeatureType::"<feature>"`    | A feature category entity. Values: `tool`, `prompt`, `resource`. Not currently used for authorization; list operations are handled via [response filtering](#list-operation-filtering) |
+| `THVGroup`    | `THVGroup::"<group_name>"`    | A group membership entity. Used with Cedar's `in` operator for [group-based policies](#group-membership)                                                                               |
 
 ## Cedar actions
 
@@ -38,14 +38,19 @@ specific MCP operation.
 
 These actions are evaluated against your Cedar policies:
 
-| Action                     | MCP method       | Description                                                              |
-| -------------------------- | ---------------- | ------------------------------------------------------------------------ |
-| `Action::"call_tool"`      | `tools/call`     | Call a specific tool                                                     |
-| `Action::"get_prompt"`     | `prompts/get`    | Retrieve a specific prompt                                               |
-| `Action::"read_resource"`  | `resources/read` | Read a specific data resource                                            |
-| `Action::"list_tools"`     | `tools/list`     | List available tools (response is [filtered](#list-operation-filtering)) |
-| `Action::"list_prompts"`   | `prompts/list`   | List available prompts (response is filtered)                            |
-| `Action::"list_resources"` | `resources/list` | List available resources (response is filtered)                          |
+| Action                    | MCP method       | Description                   |
+| ------------------------- | ---------------- | ----------------------------- |
+| `Action::"call_tool"`     | `tools/call`     | Call a specific tool          |
+| `Action::"get_prompt"`    | `prompts/get`    | Retrieve a specific prompt    |
+| `Action::"read_resource"` | `resources/read` | Read a specific data resource |
+
+### List operations
+
+List methods (`tools/list`, `prompts/list`, `resources/list`) bypass
+request-level authorization entirely. ToolHive allows the list request through
+and filters the response to include only items the caller is authorized to
+access using the individual-access actions above. See
+[List operation filtering](#list-operation-filtering) for details.
 
 ### Always-allowed MCP methods
 
@@ -155,8 +160,18 @@ these attributes:
 
 ### Feature list attributes (list operations)
 
-When a client lists tools, prompts, or resources, the resource entity
-(`FeatureType::`) has these attributes:
+:::info[Not currently used]
+
+The `FeatureType` entity and its attributes are defined in the Cedar authorizer
+but are not evaluated during normal request processing. List operations bypass
+request-level authorization and use
+[response filtering](#list-operation-filtering) instead. This section is
+included for completeness.
+
+:::
+
+When a client lists tools, prompts, or resources, the `FeatureType::` entity has
+these attributes:
 
 | Attribute   | Type   | Description                                             |
 | ----------- | ------ | ------------------------------------------------------- |
@@ -358,29 +373,33 @@ permit(
 
 ## List operation filtering
 
-List operations (`tools/list`, `prompts/list`, `resources/list`) work
-differently from other operations. ToolHive always allows the list request
-itself, but filters the response to include only items the caller is authorized
-to access.
+List operations (`tools/list`, `prompts/list`, `resources/list`) bypass
+request-level authorization entirely. ToolHive forwards the list request to the
+MCP server, then filters the response to include only items the caller is
+authorized to access.
 
 For each item in the list response, ToolHive runs a policy check using the
-corresponding action:
+corresponding individual-access action:
 
-| List method      | Per-item check uses                                        |
-| ---------------- | ---------------------------------------------------------- |
-| `tools/list`     | `Action::"call_tool"` against each `Tool::"<name>"`        |
-| `prompts/list`   | `Action::"get_prompt"` against each `Prompt::"<name>"`     |
-| `resources/list` | `Action::"read_resource"` against each `Resource::"<uri>"` |
+| List method      | Per-item check uses                                                  |
+| ---------------- | -------------------------------------------------------------------- |
+| `tools/list`     | `Action::"call_tool"` against each `Tool::"<name>"`                  |
+| `prompts/list`   | `Action::"get_prompt"` against each `Prompt::"<name>"`               |
+| `resources/list` | `Action::"read_resource"` against each `Resource::"<sanitized_uri>"` |
 
 This means you don't need separate list policies. Your `call_tool`,
 `get_prompt`, and `read_resource` policies automatically control what appears in
-list responses.
+list responses. For resources, the per-item check uses the
+[sanitized](#resource-uri-sanitization) entity ID, while the original URI
+remains available via the `resource.uri` attribute.
 
 :::note
 
-If you want explicit control over list operations (for example, to allow listing
-but deny individual access), you can write policies using the `list_tools`,
-`list_prompts`, or `list_resources` actions against `FeatureType::` entities.
+Because list responses are filtered using `call_tool`, `get_prompt`, and
+`read_resource` policies, an item only appears in a list response when the
+corresponding individual-access policy permits it. For example, if no
+`call_tool` policy permits a given tool, that tool won't appear in `tools/list`
+responses.
 
 :::
 

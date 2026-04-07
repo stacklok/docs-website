@@ -52,7 +52,6 @@ The operation being performed on an MCP feature:
   - `Action::"call_tool"`: Call a tool
   - `Action::"get_prompt"`: Get a prompt
   - `Action::"read_resource"`: Read a resource
-  - `Action::"list_tools"`: List available tools
 
 ### Resource
 
@@ -290,23 +289,30 @@ restrictive to least restrictive.
 
 ### Observe profile (read-only)
 
-Allow listing and reading MCP capabilities, but block all tool calls:
+Allow reading prompts and resources, but block all tool calls:
 
 ```yaml title="authz-observe.yaml"
 version: '1.0'
 type: cedarv1
 cedar:
   policies:
-    - 'permit(principal, action == Action::"list_tools", resource);'
-    - 'permit(principal, action == Action::"list_prompts", resource);'
-    - 'permit(principal, action == Action::"list_resources", resource);'
     - 'permit(principal, action == Action::"get_prompt", resource);'
     - 'permit(principal, action == Action::"read_resource", resource);'
   entities_json: '[]'
 ```
 
-This profile is useful for monitoring or auditing scenarios where you want
-clients to see what's available without executing any tools.
+This profile is useful for monitoring or auditing scenarios where clients need
+access to prompts and data resources without executing any tools.
+
+:::note
+
+Because `tools/list` responses are
+[filtered](../reference/authz-policy-reference.mdx#list-operation-filtering)
+based on `call_tool` policies, tools won't appear in list responses under this
+profile. Prompts and resources appear normally because `get_prompt` and
+`read_resource` policies are present.
+
+:::
 
 ### Safe tools profile
 
@@ -319,10 +325,7 @@ version: '1.0'
 type: cedarv1
 cedar:
   policies:
-    # List and read operations
-    - 'permit(principal, action == Action::"list_tools", resource);'
-    - 'permit(principal, action == Action::"list_prompts", resource);'
-    - 'permit(principal, action == Action::"list_resources", resource);'
+    # Prompt and resource access
     - 'permit(principal, action == Action::"get_prompt", resource);'
     - 'permit(principal, action == Action::"read_resource", resource);'
     # Read-only tools
@@ -355,9 +358,6 @@ version: '1.0'
 type: cedarv1
 cedar:
   policies:
-    - 'permit(principal, action == Action::"list_tools", resource);'
-    - 'permit(principal, action == Action::"list_prompts", resource);'
-    - 'permit(principal, action == Action::"list_resources", resource);'
     - 'permit(principal, action == Action::"get_prompt", resource);'
     - 'permit(principal, action == Action::"read_resource", resource);'
     - 'permit(principal, action == Action::"call_tool", resource ==
@@ -379,10 +379,7 @@ version: '1.0'
 type: cedarv1
 cedar:
   policies:
-    # Everyone can list and read
-    - 'permit(principal, action == Action::"list_tools", resource);'
-    - 'permit(principal, action == Action::"list_prompts", resource);'
-    - 'permit(principal, action == Action::"list_resources", resource);'
+    # Everyone can read prompts and resources
     - 'permit(principal, action == Action::"get_prompt", resource);'
     - 'permit(principal, action == Action::"read_resource", resource);'
     # Admins can call any tool
@@ -446,9 +443,10 @@ how you can control access based on request parameters.
 
 ## List operations and filtering
 
-List operations (`tools/list`, `prompts/list`, `resources/list`) work
-differently from other operations. They're always allowed, but the response is
-automatically filtered based on what the user can actually access:
+List operations (`tools/list`, `prompts/list`, `resources/list`) bypass
+request-level authorization entirely. ToolHive forwards the list request to the
+MCP server, then automatically filters the response based on what the caller is
+authorized to access:
 
 - `tools/list` shows only tools the user can call (based on `call_tool`
   policies)
