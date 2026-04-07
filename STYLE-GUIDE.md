@@ -164,6 +164,35 @@ ensures readers always know what to expect and never hit dead ends.
 
 Every page must have front matter with at least a `title` and `description`.
 
+#### Descriptions
+
+The `description` field serves double duty: it appears in DocCard index pages
+(truncated at roughly 70-75 characters) and as the page's `<meta>` description
+for search engines (ideally 80-150 characters total).
+
+Write descriptions to work at both lengths:
+
+- **Front-load the value.** The first 70 characters must stand alone as a useful
+  summary, because that's all a DocCard shows before cutting off.
+- **Add SEO detail after the natural break.** Use the remaining characters for
+  keywords and context that help search engines.
+- **Lead with the action or topic, not filler.** Avoid openers like "Learn how
+  to," "Understanding," "A guide to," or "This page describes."
+- **Avoid special YAML characters in unquoted values.** Colons (`:`) inside a
+  description can break YAML parsing. Either rephrase, use a comma, or wrap the
+  value in quotes.
+
+Examples:
+
+:white_check_mark:
+`Install the ToolHive CLI and run your first MCP server in minutes.`\
+:x: `A step-by-step guide to installing the ToolHive CLI and running your first MCP server.`
+
+:white_check_mark:
+`Groups organize MCP servers into logical sets and control which clients can access them.`\
+:x:
+`Understanding when and why to use groups for organizing MCP servers and controlling client access.`
+
 ### Closing sections
 
 Every how-to guide and tutorial page ends with closing sections in this order:
