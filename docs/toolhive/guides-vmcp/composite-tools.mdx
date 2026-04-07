@@ -396,10 +396,37 @@ spec:
 | `step`          | Inner step definition (tool call to execute per item) | —       |
 | `onError`       | Error handling: `abort` (stop) or `continue` (skip)   | abort   |
 
+:::note
+
+`forEach` does not support `onError.action: retry`. Use `retry` on regular tool
+steps. The `maxParallel` cap of 50 is enforced at runtime regardless of the
+configured value.
+
+:::
+
 Access the current item inside the inner step using
 `{{.forEach.<itemVar>.<field>}}`. In the example above, `{{.forEach.repo.name}}`
 accesses the `name` field of the current repository. You can also use
 `{{.forEach.index}}` to access the zero-based iteration index.
+
+`maxParallel` controls how many iterations run concurrently **on the pod that
+received the composite tool request**. Iterations are not distributed across
+vMCP replicas — all parallel backend calls originate from a single pod
+regardless of `spec.replicas`. When sizing your deployment, account for the
+per-pod fan-out: a `maxParallel: 50` forEach step can open up to 50 simultaneous
+connections to backend MCP servers from one pod. Ensure both the vMCP pod
+resources and the backend MCP servers can handle that per-pod concurrency.
+
+:::tip[Plan your workflow timeouts]
+
+With `maxIterations: 1000` and `maxParallel: 10` (the defaults), a forEach loop
+runs up to 100 serial batches. If each backend call takes a few seconds, the
+total duration can easily exceed a workflow-level timeout. Set the workflow
+`timeout` to at least
+`ceil(maxIterations / maxParallel) × expected step duration` to avoid silent
+truncation.
+
+:::
 
 ### Error handling
 

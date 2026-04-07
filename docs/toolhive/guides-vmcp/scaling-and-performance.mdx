@@ -89,8 +89,10 @@ for a complete Redis deployment guide.
 :::warning
 
 If you configure multiple replicas without session storage, the operator sets a
-`SessionStorageMissingForReplicas` status condition on the resource. Ensure
-Redis is available before scaling beyond a single replica.
+`SessionStorageWarning` status condition on the resource but **still applies the
+replica count**. Pods will start, but requests routed to a replica that did not
+establish the session will fail. Ensure Redis is available before scaling beyond
+a single replica.
 
 :::
 
@@ -115,6 +117,22 @@ same pod:
 spec:
   sessionAffinity: ClientIP # default
 ```
+
+:::warning[ClientIP affinity is unreliable behind NAT or shared egress IPs]
+
+`ClientIP` affinity relies on the source IP reaching kube-proxy. When clients
+sit behind a NAT gateway, corporate proxy, or cloud load balancer (common in
+EKS, GKE, and AKS), all traffic appears to originate from the same IP — routing
+every client to the same pod and eliminating the benefit of horizontal scaling.
+This fails silently: the deployment appears healthy but only one pod handles all
+load.
+
+For stateless backends, set `sessionAffinity: None` so the Service load-balances
+freely. For stateful backends where true per-session routing is required,
+`ClientIP` affinity is a best-effort mechanism only. Prefer vertical scaling or
+a dedicated vMCP instance per team instead.
+
+:::
 
 For stateful backends, vertical scaling or dedicated instances per team/use case
 are recommended instead of horizontal scaling.

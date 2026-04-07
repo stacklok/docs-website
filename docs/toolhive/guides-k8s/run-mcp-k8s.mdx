@@ -443,11 +443,27 @@ kubectl -n <NAMESPACE> describe mcpserver <NAME>
 
 ## Horizontal scaling
 
-MCPServer creates two separate Deployments: one for the proxy runner and one for
-the MCP server backend. You can scale each independently:
+MCPServer creates two separate workloads: a proxy runner Deployment and a
+backend MCP server StatefulSet. You can scale each independently:
 
 - `spec.replicas` controls the proxy runner pod count
 - `spec.backendReplicas` controls the backend MCP server pod count
+
+The proxy runner handles authentication, MCP protocol framing, and session
+management; it is stateless with respect to tool execution. The backend runs the
+actual MCP server and executes tools.
+
+Common configurations:
+
+- **Scale only the proxy** (`replicas: N`, omit `backendReplicas`): useful when
+  auth and connection overhead is the bottleneck with a single backend.
+- **Scale only the backend** (omit `replicas`, `backendReplicas: M`): useful
+  when tool execution is CPU/memory-bound and the proxy is not a bottleneck. The
+  backend StatefulSet uses client-IP session affinity to route repeated
+  connections to the same pod — subject to the same NAT limitations as
+  proxy-level affinity.
+- **Scale both** (`replicas: N`, `backendReplicas: M`): full horizontal scale.
+  Redis session storage is required when `replicas > 1`.
 
 ```yaml title="MCPServer resource"
 spec:
@@ -455,7 +471,7 @@ spec:
   backendReplicas: 3
   sessionStorage:
     provider: redis
-    address: redis-master.toolhive-system.svc.cluster.local:6379
+    address: redis-master.toolhive-system.svc.cluster.local:6379 # Update to match your Redis Service location
     db: 0
     keyPrefix: mcp-sessions
     passwordRef:
@@ -467,6 +483,35 @@ When running multiple replicas, configure
 [Redis session storage](./redis-session-storage.mdx) so that sessions are shared
 across pods. If you omit `replicas` or `backendReplicas`, the operator defers
 replica management to an HPA or other external controller.
+
+:::note The `SessionStorageWarning` condition fires only when
+`spec.replicas > 1`. Scaling only the backend (`backendReplicas > 1`) does not
+trigger a warning, but backend client-IP affinity is still unreliable behind NAT
+or shared egress IPs. :::
+
+:::note[Connection draining on scale-down]
+
+When a proxy runner pod is terminated (scale-in, rolling update, or node
+eviction), Kubernetes sends SIGTERM and the proxy drains in-flight requests for
+up to 30 seconds before force-closing connections. The grace period and drain
+timeout are both 30 seconds with no headroom, so long-lived SSE or streaming
+connections may be dropped if they exceed the drain window.
+
+No preStop hook is injected by the operator. If your workload requires
+additional time — for example, to let kube-proxy propagate endpoint removal
+before the pod stops accepting traffic — override
+`terminationGracePeriodSeconds` via `podTemplateSpec`:
+
+```yaml
+spec:
+  podTemplateSpec:
+    spec:
+      terminationGracePeriodSeconds: 60
+```
+
+The same 30-second default applies to the backend StatefulSet.
+
+:::
 
 :::warning[Stdio transport limitation]
 
