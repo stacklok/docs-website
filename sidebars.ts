@@ -286,6 +286,7 @@ const sidebars: SidebarsConfig = {
 
     'toolhive/reference/client-compatibility',
     'toolhive/reference/index',
+    'toolhive/reference/authz-policy-reference',
     'toolhive/faq',
     'toolhive/enterprise',
     'toolhive/support',
