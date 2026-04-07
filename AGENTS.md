@@ -144,6 +144,10 @@ Every how-to guide and tutorial page must include:
 - A "Next steps" section with 1-3 links to the next logical pages, following the journey phases (install, use, secure, operate, optimize).
 - Cross-links to related content in other sections where relevant.
 
+#### Description field guidelines
+
+The `description` serves as both the DocCard preview (truncated at ~70-75 characters) and the page's `<meta>` description for SEO (ideally 80-150 characters total). Write descriptions so the first 70 characters stand alone as a useful summary. Lead with the action or topic, not filler like "Learn how to," "Understanding," or "A guide to." Avoid unquoted colons in YAML description values.
+
 Pages that include closing sections must use this ordering:
 
 1. **Next steps** (required for how-to guides and tutorials)
