@@ -169,6 +169,9 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           // Remove this to remove the "edit this page" links.
           editUrl: 'https://github.com/stacklok/docs-website/tree/main/',
+          // Populate lastUpdatedAt metadata for JSON-LD structured data.
+          // The rendered timestamp is hidden via CSS (.theme-last-updated).
+          showLastUpdateTime: true,
         },
         blog: {
           blogTitle: 'ToolHive Updates and Announcements',
