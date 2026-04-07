@@ -8,6 +8,12 @@ import PrismDark from './src/utils/prismDark';
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
+// Only load tracking/analytics scripts in Vercel production deployments.
+// This keeps HubSpot, GTM/Stape, and Thred disabled during local development
+// (`npm run start`) and on Vercel preview deployments, avoiding cookie banners,
+// chatbot widgets, and polluted analytics data.
+const isProductionDeploy = process.env.VERCEL_ENV === 'production';
+
 const config: Config = {
   title: 'Stacklok Docs',
   tagline: 'Put MCP into production',
@@ -76,6 +82,7 @@ const config: Config = {
       return {
         name: 'google-tag-manager',
         injectHtmlTags() {
+          if (!isProductionDeploy) return {};
           return {
             headTags: [
               {
@@ -100,6 +107,7 @@ const config: Config = {
       return {
         name: 'thred-search-signals',
         injectHtmlTags() {
+          if (!isProductionDeploy) return {};
           return {
             postBodyTags: [
               {
@@ -206,14 +214,18 @@ const config: Config = {
   ],
 
   scripts: [
-    // HubSpot tracking script
-    {
-      id: 'hs-script-loader',
-      type: 'text/javascript',
-      src: '//js-na2.hs-scripts.com/42544743.js',
-      async: true,
-      defer: true,
-    },
+    // HubSpot tracking script (production only)
+    ...(isProductionDeploy
+      ? [
+          {
+            id: 'hs-script-loader',
+            type: 'text/javascript',
+            src: '//js-na2.hs-scripts.com/42544743.js',
+            async: true,
+            defer: true,
+          },
+        ]
+      : []),
   ],
 
   themeConfig: {
