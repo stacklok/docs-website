@@ -18,8 +18,11 @@ flowchart LR
     end
 
     subgraph vMCP["Virtual MCP Server (vMCP)"]
-        Auth[Token validation]
-        Backend[Backend auth]
+        direction TB
+        Auth["Token validation<br>(issuer, audience, expiry)"]
+        Authz["Authorization<br>(Cedar policies)"]
+        Proxy[Backend proxy]
+        Auth --> Authz --> Proxy
     end
 
     subgraph Boundary2[" "]
@@ -30,19 +33,24 @@ flowchart LR
     end
 
     Client -->|"vMCP-scoped<br>token"| Auth
-    Auth --> Backend
-    Backend -->|"Backend-scoped<br>token"| GitHub
-    Backend -->|"Backend-scoped<br>token"| Jira
+    Proxy -->|"Backend-scoped<br>token"| GitHub
+    Proxy -->|"Backend-scoped<br>token"| Jira
 ```
 
 **Boundary 1 (Incoming):** Clients authenticate to vMCP using OAuth 2.1
 authorization as defined in the
 [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
-This is your organization's identity layer.
+The vMCP validates the token — checking issuer, audience, expiry, and signature
+for JWTs, or using token introspection for opaque tokens — and then evaluates
+Cedar policies before forwarding the request. This all happens inside the single
+`vmcp` process, unlike a plain MCPServer deployment where a separate ToolHive
+proxy handles this step. The audience value must be explicitly set in
+`incomingAuth` (see [OIDC authentication](#oidc-authentication) below).
 
-**Boundary 2 (Outgoing):** vMCP obtains appropriate credentials for each
-backend. Each backend API receives a token or credential scoped to its
-requirements.
+**Boundary 2 (Outgoing):** vMCP obtains credentials for each backend API using
+the configured outgoing auth strategy. See
+[Outgoing authentication](#outgoing-authentication) for the available
+strategies.
 
 ## Incoming authentication
 
