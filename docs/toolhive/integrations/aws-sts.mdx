@@ -375,7 +375,8 @@ spec:
   oidcConfig:
     type: inline
     # Public URL of this proxy's MCP endpoint, advertised to clients
-    # via WWW-Authenticate so they can discover your OIDC provider
+    # via WWW-Authenticate so they can discover your OIDC provider.
+    # Must match the hostname you configure in Step 5.
     resourceUrl: https://<YOUR_DOMAIN>/mcp
     inline:
       issuer: https://<YOUR_OIDC_ISSUER>
@@ -521,11 +522,19 @@ TOKEN=$(oauth2c https://<YOUR_OIDC_ISSUER> \
   --response-types code \
   --pkce | jq -r '.access_token')
 
-# This should return a list of tools
+# Step 1: initialize the MCP session and capture the session ID
+SESSION=$(curl -si -X POST http://localhost:8080/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl-test","version":"1.0"}}}' \
+  | grep -i "^mcp-session-id:" | awk '{print $2}' | tr -d '\r')
+
+# Step 2: list available tools using the session ID
 curl -X POST http://localhost:8080/mcp \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+  -H "Mcp-Session-Id: $SESSION" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 ```
 
 Check the proxy logs to confirm role selection is working:
@@ -631,7 +640,7 @@ aws iam delete-open-id-connect-provider \
   arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:oidc-provider/<YOUR_OIDC_ISSUER>
 ```
 
-## What's next?
+## Next steps
 
 - Learn about the concepts behind
   [backend authentication](../concepts/backend-auth.mdx) and
