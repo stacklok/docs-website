@@ -141,13 +141,11 @@ Structure your review as:
 | Issue | Recommendation |
 | ----- | -------------- |
 | ...   | ...            |
-
-## Inline Suggestions
-
-[Note any specific line-level edits to suggest]
 ```
 
 ## Severity Guidelines
+
+Before including any finding, apply the **independent reviewer test**: would a different competent tech writer independently flag the same issue? If two phrasings are equally clear and correct, don't flag one as better. The goal is a stable review - running the skill twice on the same document should produce essentially the same findings.
 
 **Primary issues** (address before merge):
 
@@ -159,17 +157,20 @@ Structure your review as:
 - Structure problems that harm navigation
 - Missing explanations for confusing design decisions
 - Significantly buried or redundant content
+- Grammatical errors (sentence fragments, missing articles, subject-verb disagreement)
 
-**Secondary issues** (nice to have):
+**Secondary issues** (worth fixing but not blocking):
 
-- Minor wording improvements
-- Small redundancies within a document
-- Style guide adherence
+- Wording that is genuinely confusing, ambiguous, or likely to mislead - not merely "could be rephrased"
+- Style guide violations (terminology, capitalization, voice)
+- Missing context that forces the reader to leave the page to understand a step
 
 **Skip entirely**:
 
 - Formatting/syntax (let linters handle this)
-- Subjective preferences without clear benefit
+- Style-neutral alternatives where the current version is clear (e.g., "this sentence could be split in two," "this transition could be cut," imperative vs. declarative phrasing)
+- Thin but useful sections - a short section that orients the reader is better than no section; don't flag brevity alone
+- Cosmetic rewording that doesn't change clarity or correctness
 
 ## Review Checklist
 
