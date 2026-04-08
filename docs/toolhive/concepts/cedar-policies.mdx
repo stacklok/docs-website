@@ -4,14 +4,16 @@ description:
   Writing and configuring Cedar policies for MCP server authorization.
 ---
 
-This document provides detailed guidance on writing and configuring Cedar
-policies for MCP server authorization. You'll learn how to create effective
-policies, configure authorization settings, and troubleshoot common issues.
+Cedar policies control which authenticated clients can access which tools,
+prompts, and resources on your MCP servers. ToolHive evaluates these policies on
+every request, denying anything not explicitly permitted.
 
 :::info
 
 For the conceptual overview of authentication and authorization, see
-[Authentication and authorization framework](./auth-framework.mdx).
+[Authentication and authorization framework](./auth-framework.mdx). For the
+complete dictionary of entity types, actions, and attributes, see
+[Authorization policy reference](../reference/authz-policy-reference.mdx).
 
 :::
 
@@ -50,7 +52,6 @@ The operation being performed on an MCP feature:
   - `Action::"call_tool"`: Call a tool
   - `Action::"get_prompt"`: Get a prompt
   - `Action::"read_resource"`: Read a resource
-  - `Action::"list_tools"`: List available tools
 
 ### Resource
 
@@ -107,12 +108,13 @@ cedar:
 - `cedar`: The Cedar-specific configuration
   - `policies`: An array of Cedar policy strings
   - `entities_json`: A JSON string representing Cedar entities
+  - `group_claim_name`: Optional custom JWT claim name for group membership (for
+    example, `https://example.com/groups`)
 
 ## Writing effective policies
 
-Understanding how to write Cedar policies is crucial for securing your MCP
-servers effectively. This section provides practical guidance for creating
-policies that match your security requirements.
+This section covers common policy patterns, from simple tool-level permits to
+role-based and attribute-based access control.
 
 ### Basic policy patterns
 
@@ -149,6 +151,38 @@ permit(principal, action == Action::"call_tool", resource) when {
 This policy allows clients with the "admin" role to call any tool. RBAC is
 effective when you have well-defined roles in your organization.
 
+### Group-based access control
+
+If your identity provider includes group claims in JWT tokens (for example,
+`groups`, `roles`, or `cognito:groups`), ToolHive automatically creates
+`THVGroup` entities that you can use with Cedar's `in` operator:
+
+```text
+permit(
+  principal in THVGroup::"engineering",
+  action == Action::"call_tool",
+  resource
+);
+```
+
+This policy allows any member of the "engineering" group to call any tool.
+Group-based policies are useful when your identity provider manages group
+memberships centrally.
+
+You can combine group membership with other conditions:
+
+```text
+permit(
+  principal in THVGroup::"data-science",
+  action == Action::"call_tool",
+  resource == Tool::"query_database"
+);
+```
+
+For details on how groups are resolved from JWT claims, see
+[Group membership](../reference/authz-policy-reference.mdx#group-membership) in
+the policy reference.
+
 ### Attribute-based access control (ABAC)
 
 ABAC policies use multiple attributes to make fine-grained decisions:
@@ -163,6 +197,162 @@ permit(principal, action == Action::"call_tool", resource == Tool::"sensitive_da
 This policy allows data analysts to access sensitive data, but only if their
 clearance level is sufficient. ABAC provides the most flexibility for complex
 security requirements.
+
+## Tool annotation policies
+
+MCP servers can declare behavioral hints on their tools using
+[annotations](https://modelcontextprotocol.io/docs/specification/2025-06-18/server/tools#annotations).
+ToolHive makes these annotations available as resource attributes during
+`tools/call` authorization, letting you write policies based on what a tool
+**does** rather than what it's **named**.
+
+Not all MCP servers set all annotation fields. Always use Cedar's `has` operator
+to check for an annotation before accessing it, otherwise a missing attribute
+causes a Cedar evaluation error that ToolHive treats as a deny. For the full
+list of annotation attributes and detailed `has` operator guidance, see
+[Tool annotation attributes](../reference/authz-policy-reference.mdx#tool-annotation-attributes).
+
+### Annotation policy examples
+
+#### Allow non-destructive, closed-world tools
+
+This pattern is useful when you want to allow tools that are both safe to run
+and operate within a controlled environment:
+
+```text
+permit(
+  principal,
+  action == Action::"call_tool",
+  resource
+) when {
+  resource has destructiveHint && resource.destructiveHint == false &&
+  resource has openWorldHint && resource.openWorldHint == false
+};
+```
+
+#### Block destructive tools for non-admin users
+
+```text
+forbid(
+  principal,
+  action == Action::"call_tool",
+  resource
+) when {
+  resource has destructiveHint && resource.destructiveHint == true &&
+  !(principal.claim_roles.contains("admin"))
+};
+```
+
+## Real-world policy profiles
+
+These profiles represent common authorization patterns. They progress from most
+restrictive to least restrictive.
+
+### Observe profile (read-only)
+
+Allow reading prompts and resources, but block all tool calls:
+
+```yaml title="authz-observe.yaml"
+version: '1.0'
+type: cedarv1
+cedar:
+  policies:
+    - 'permit(principal, action == Action::"get_prompt", resource);'
+    - 'permit(principal, action == Action::"read_resource", resource);'
+  entities_json: '[]'
+```
+
+This profile is useful for monitoring or auditing scenarios where clients need
+access to prompts and data resources without executing any tools.
+
+:::note
+
+Because `tools/list` responses are
+[filtered](../reference/authz-policy-reference.mdx#list-operation-filtering)
+based on `call_tool` policies, tools won't appear in list responses under this
+profile. Prompts and resources appear normally because `get_prompt` and
+`read_resource` policies are present.
+
+:::
+
+### Safe tools profile
+
+Extend the observe profile to also allow tool calls for tools that MCP servers
+have annotated as safe. This allows read-only tools and non-destructive
+closed-world tools, while blocking everything else:
+
+```yaml title="authz-safe-tools.yaml"
+version: '1.0'
+type: cedarv1
+cedar:
+  policies:
+    # Prompt and resource access
+    - 'permit(principal, action == Action::"get_prompt", resource);'
+    - 'permit(principal, action == Action::"read_resource", resource);'
+    # Read-only tools
+    - >-
+      permit(principal, action == Action::"call_tool", resource) when { resource
+      has readOnlyHint && resource.readOnlyHint == true };
+    # Non-destructive AND closed-world tools
+    - >-
+      permit(principal, action == Action::"call_tool", resource) when { resource
+      has destructiveHint && resource.destructiveHint == false && resource has
+      openWorldHint && resource.openWorldHint == false };
+  entities_json: '[]'
+```
+
+:::tip
+
+Tools that omit all annotation attributes are denied under this profile,
+preserving a conservative default-deny posture. Only tools that explicitly
+declare safe annotations are allowed.
+
+:::
+
+### Tool allowlist profile
+
+Allow only specific, named tools. This is the most explicit approach and doesn't
+depend on MCP servers setting annotations correctly:
+
+```yaml title="authz-allowlist.yaml"
+version: '1.0'
+type: cedarv1
+cedar:
+  policies:
+    - 'permit(principal, action == Action::"get_prompt", resource);'
+    - 'permit(principal, action == Action::"read_resource", resource);'
+    - 'permit(principal, action == Action::"call_tool", resource ==
+      Tool::"search_code");'
+    - 'permit(principal, action == Action::"call_tool", resource ==
+      Tool::"read_file");'
+    - 'permit(principal, action == Action::"call_tool", resource ==
+      Tool::"list_repos");'
+  entities_json: '[]'
+```
+
+### RBAC with annotation guardrails
+
+Combine role-based access with annotation checks. Admins get full access, while
+regular users are restricted to safe tools:
+
+```yaml title="authz-rbac-annotations.yaml"
+version: '1.0'
+type: cedarv1
+cedar:
+  policies:
+    # Everyone can read prompts and resources
+    - 'permit(principal, action == Action::"get_prompt", resource);'
+    - 'permit(principal, action == Action::"read_resource", resource);'
+    # Admins can call any tool
+    - >-
+      permit(principal, action == Action::"call_tool", resource) when {
+      principal.claim_roles.contains("admin") };
+    # Non-admins can only call read-only tools
+    - >-
+      permit(principal, action == Action::"call_tool", resource) when { resource
+      has readOnlyHint && resource.readOnlyHint == true };
+  entities_json: '[]'
+```
 
 ## Working with JWT claims
 
@@ -214,9 +404,10 @@ how you can control access based on request parameters.
 
 ## List operations and filtering
 
-List operations (`tools/list`, `prompts/list`, `resources/list`) work
-differently from other operations. They're always allowed, but the response is
-automatically filtered based on what the user can actually access:
+List operations (`tools/list`, `prompts/list`, `resources/list`) bypass
+request-level authorization entirely. ToolHive forwards the list request to the
+MCP server, then automatically filters the response based on what the caller is
+authorized to access:
 
 - `tools/list` shows only tools the user can call (based on `call_tool`
   policies)
@@ -360,38 +551,29 @@ permissions and then trying to restrict them.
 also make your policy set harder to understand. In most cases, the default deny
 behavior is sufficient.
 
+**Guard annotation access with `has`:** Always use `resource has <attr>` before
+accessing annotation attributes. Many MCP servers only set some annotations, and
+unguarded access causes evaluation errors that result in a deny.
+
 **Test your policies:** Always test policies with real requests to ensure they
 work as expected. Pay special attention to edge cases and error conditions.
 
 ## Advanced policy examples
 
-### Combining JWT claims and tool arguments
-
-You can combine JWT claims and tool arguments in your policies to create more
-sophisticated authorization rules:
-
-```text
-permit(principal, action == Action::"call_tool", resource == Tool::"sensitive_data") when {
-  principal.claim_roles.contains("data_analyst") &&
-  resource.arg_data_level <= principal.claim_clearance_level
-};
-```
-
-This policy allows clients with the "data_analyst" role to access the
-sensitive_data tool, but only if their clearance level (from JWT claims) is
-sufficient for the requested data level (from tool arguments).
-
 ### Multi-tenant environments
 
-In multi-tenant environments, you can use policies to isolate tenants:
+In multi-tenant environments, you can use custom entity attributes in
+`entities_json` to isolate tenants:
 
 ```text
-permit(principal, action, resource) when {
-  principal.claim_tenant_id == resource.tenant_id
+permit(principal, action == Action::"call_tool", resource) when {
+  resource.tenant_id == principal.claim_tenant_id
 };
 ```
 
-This ensures that clients can only access resources belonging to their tenant.
+This ensures that clients can only access tools belonging to their tenant. You
+must define the `tenant_id` attribute on each tool entity in `entities_json` for
+this pattern to work.
 
 ### Data sensitivity levels
 
@@ -405,29 +587,18 @@ permit(principal, action == Action::"call_tool", resource == Tool::"data_access"
 
 This ensures that clients can only access data within their clearance level.
 
-### Geographic restrictions
+### Argument-scoped access
 
-For geographically restricted resources:
+Restrict a tool to specific argument values:
 
 ```text
-permit(principal, action == Action::"call_tool", resource == Tool::"geo_restricted") when {
-  principal.claim_location in ["US", "Canada", "Mexico"]
+permit(principal, action == Action::"call_tool", resource == Tool::"calculator") when {
+  resource.arg_operation == "add" || resource.arg_operation == "subtract"
 };
 ```
 
-This restricts access based on the client's location.
-
-### Time-based access
-
-For resources that should only be accessible during certain hours:
-
-```text
-permit(principal, action == Action::"call_tool", resource == Tool::"business_hours") when {
-  context.current_hour >= 9 && context.current_hour <= 17
-};
-```
-
-This restricts access to business hours only.
+This permits calling the calculator tool, but only for the "add" and "subtract"
+operations.
 
 ## Entity attributes
 
@@ -462,6 +633,26 @@ This configuration defines a custom entity for the weather tool with an `owner`
 attribute set to `user123`. The policy allows clients to call tools only if they
 own them.
 
+For the complete list of built-in attributes available on each entity type, see
+the [Authorization policy reference](../reference/authz-policy-reference.mdx).
+
+## Next steps
+
+- Look up every available entity type, action, and attribute in the
+  [Authorization policy reference](../reference/authz-policy-reference.mdx)
+- Set up authentication and authorization for
+  [CLI-managed MCP servers](../guides-cli/auth.mdx) or
+  [Kubernetes-deployed MCP servers](../guides-k8s/auth-k8s.mdx)
+- Follow the end-to-end
+  [Role-based authorization with Okta](../integrations/okta.mdx) tutorial
+
+## Related information
+
+- [Authentication and authorization framework](./auth-framework.mdx) --
+  Conceptual overview of ToolHive's auth architecture
+- [Cedar documentation](https://docs.cedarpolicy.com/) -- Official Cedar policy
+  language reference
+
 ## Troubleshooting policies
 
 When policies don't work as expected, follow this systematic approach:
@@ -472,9 +663,13 @@ When policies don't work as expected, follow this systematic approach:
    valid Cedar syntax.
 2. **Verify entity matching:** Confirm that the principal, action, and resource
    in your policies match the actual values in the request.
-3. **Test conditions:** Check that any conditions in your policies are satisfied
+3. **Check `has` guards:** If your policy references annotation attributes
+   (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`),
+   ensure you're using `resource has <attr>` before accessing them. A missing
+   attribute causes an evaluation error, which ToolHive treats as a deny.
+4. **Test conditions:** Check that any conditions in your policies are satisfied
    by the request context.
-4. **Remember default deny:** If no policy explicitly permits the request, it
+5. **Remember default deny:** If no policy explicitly permits the request, it
    will be denied.
 
 ### JWT claims are not available
@@ -494,12 +689,27 @@ When policies don't work as expected, follow this systematic approach:
    `arg_` prefix.
 3. **Verify argument names:** Confirm that the argument names in your policies
    match those in the actual requests.
+4. **Check argument types:** Complex arguments (objects, arrays) are not
+   available directly. Instead, check for `arg_<key>_present == true`.
 
-## Related information
+### Tool annotations are not available
 
-- For the conceptual overview, see
-  [Authentication and authorization framework](./auth-framework.mdx)
-- For detailed Cedar policy syntax, see
-  [Cedar documentation](https://docs.cedarpolicy.com/)
-- For a practical example of Cedar policies enforcing role-based access control,
-  see [Role-based authorization with Okta](../integrations/okta.mdx)
+1. **Check MCP server support:** Not all MCP servers set annotation hints on
+   their tools. Check the server's `tools/list` response to see which
+   annotations are present.
+2. **Use `has` guards:** Always check `resource has readOnlyHint` before
+   accessing `resource.readOnlyHint`. A missing annotation attribute is not the
+   same as `false` -- it simply doesn't exist.
+3. **Verify annotation source:** Annotations come from the MCP server's
+   `tools/list` response, not from the client's `tools/call` request. If you
+   don't see annotations, the MCP server may not be setting them.
+
+### Groups are not working
+
+1. **Check JWT claims:** Verify that your JWT token contains a group claim
+   (`groups`, `roles`, or `cognito:groups`).
+2. **Configure custom claim name:** If your identity provider uses a
+   non-standard claim name, set `group_claim_name` in the Cedar configuration.
+3. **Use correct syntax:** Use `principal in THVGroup::"group-name"` rather than
+   `principal.claim_groups.contains("group-name")`. Both evaluate correctly, but
+   the `in` syntax is the idiomatic Cedar approach for group membership.

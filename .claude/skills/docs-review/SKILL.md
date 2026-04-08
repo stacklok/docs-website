@@ -100,6 +100,16 @@ Docs that readers can't trust are worse than no docs. Actively verify:
 - **Feature coverage completeness**: When documenting a new feature, check that the full surface area is covered. Are all subcommands/endpoints mentioned? Are common error states addressed? A how-to that covers the happy path but ignores the most likely failure mode will generate support questions
 - **Consistency across the doc set**: Do the same terms, flag names, and behaviors described here match how they're described in related pages? Cross-document inconsistencies (e.g., one page says "space-delimited," another uses comma-separated) erode trust
 
+### Front Matter Descriptions
+
+The `description` field serves double duty: DocCard preview (truncated at ~70-75 characters) and `<meta>` description for SEO (ideally 80-150 characters total). Check for:
+
+- **Front-loading**: The first 70 characters must be a useful standalone summary. If the DocCard cutoff would leave a confusing fragment, the description needs rewriting
+- **Filler openers**: Flag descriptions starting with "Learn how to," "Understanding," "A guide to," "This page describes," or similar. Lead with the action or topic
+- **Too short** (under 50 characters): Misses SEO value. Expand with concrete detail about what the page covers
+- **Too long** (over 160 characters): Will be truncated in search results. Tighten
+- **YAML safety**: Unquoted colons (`:`) inside description values break YAML parsing. Flag and suggest rephrasing or quoting
+
 ### Accessibility and Formatting
 
 - **Emojis in prose**: Can cause screen reader issues; use sparingly or not at all

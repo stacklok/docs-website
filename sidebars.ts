@@ -228,6 +228,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/concepts/auth-framework',
         'toolhive/concepts/cedar-policies',
         'toolhive/concepts/backend-auth',
+        'toolhive/concepts/embedded-auth-server',
         'toolhive/concepts/vmcp',
         'toolhive/concepts/skills',
       ],
@@ -285,6 +286,7 @@ const sidebars: SidebarsConfig = {
 
     'toolhive/reference/client-compatibility',
     'toolhive/reference/index',
+    'toolhive/reference/authz-policy-reference',
     'toolhive/faq',
     'toolhive/enterprise',
     'toolhive/support',
