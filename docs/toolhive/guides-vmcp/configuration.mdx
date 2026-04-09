@@ -27,12 +27,12 @@ spec:
 ```
 
 The MCPGroup must exist in the same namespace as your VirtualMCPServer and be in
-a Ready state before the VirtualMCPServer can stafrt. Backend resources
-reference this group using the `groupRef` field in their spec.
+a Ready state before the VirtualMCPServer can start. Backend resources reference
+this group using the `groupRef` field in their spec.
 
 ## Add backends to a group
 
-vMCP supports two types of backends that can be added to an MCPGroup:
+vMCP supports three types of backends that can be added to an MCPGroup:
 
 ### MCPServer (local containers)
 
@@ -88,6 +88,73 @@ for details.
 For complete MCPRemoteProxy configuration options, see
 [Proxy remote MCP servers](../guides-k8s/remote-mcp-proxy.mdx).
 
+### MCPServerEntry (zero-infrastructure catalog entries)
+
+MCPServerEntry resources declare remote MCP servers as lightweight catalog
+entries without deploying proxy pods, services, or deployments. Use
+MCPServerEntry when you want to include a remote server in vMCP routing without
+the overhead of running a proxy.
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServerEntry
+metadata:
+  name: my-remote-tool
+  namespace: toolhive-system
+spec:
+  groupRef: my-group # Reference to the MCPGroup
+  remoteURL: https://mcp.example.com/mcp
+  transport: streamable-http
+```
+
+MCPServerEntry supports optional configuration for authentication and TLS:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServerEntry
+metadata:
+  name: internal-tool
+  namespace: toolhive-system
+spec:
+  groupRef: my-group
+  remoteURL: https://internal-mcp.corp.example.com/mcp
+  transport: streamable-http
+
+  # Optional: token exchange for authenticating to the remote server
+  externalAuthConfigRef:
+    name: my-auth-config
+    kind: MCPExternalAuthConfig
+
+  # Optional: custom CA bundle for TLS verification
+  caBundleRef:
+    configMapRef:
+      name: internal-ca-bundle
+      key: ca.crt
+
+  # Optional: inject custom headers into requests
+  headerForward:
+    headers:
+      - name: X-Custom-Header
+        value: my-value
+```
+
+**When to use MCPServerEntry vs. MCPRemoteProxy:**
+
+|                     | MCPServerEntry                                                 | MCPRemoteProxy                                                                    |
+| ------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| **Infrastructure**  | No pods, services, or deployments                              | Creates a proxy pod and service                                                   |
+| **Use case**        | Lightweight catalog entries for well-known remote servers      | When you need request transformation, caching, or the full proxy middleware chain |
+| **Discovery**       | Discovered by VirtualMCPServer through MCPGroup membership     | Discovered by VirtualMCPServer through MCPGroup membership                        |
+| **SSRF protection** | Built-in URL validation blocks internal and metadata endpoints | N/A (proxy runs inside the cluster)                                               |
+
+:::note
+
+MCPServerEntry URLs are validated against SSRF patterns. URLs targeting
+loopback, link-local, cloud metadata, and private network addresses are
+rejected.
+
+:::
+
 ## Create a VirtualMCPServer
 
 At minimum, a VirtualMCPServer requires a reference to an MCPGroup (via
@@ -108,10 +175,10 @@ spec:
 
 The MCPGroup must exist in the same namespace and be in a Ready state before the
 VirtualMCPServer can start. By default, vMCP automatically discovers and
-aggregates all MCPServer and MCPRemoteProxy resources in the referenced group.
-You can also define backends explicitly in the configuration (inline mode). See
-[Backend discovery modes](./backend-discovery.mdx) for details on both
-approaches.
+aggregates all MCPServer, MCPRemoteProxy, and MCPServerEntry resources in the
+referenced group. You can also define backends explicitly in the configuration
+(inline mode). See [Backend discovery modes](./backend-discovery.mdx) for
+details on both approaches.
 
 ## Configure authentication
 
