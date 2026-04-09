@@ -103,24 +103,6 @@ const config: Config = {
         },
       };
     },
-    function thredSearchSignals() {
-      return {
-        name: 'thred-search-signals',
-        injectHtmlTags() {
-          if (!isProductionDeploy) return {};
-          return {
-            postBodyTags: [
-              {
-                tagName: 'script',
-                attributes: {
-                  src: 'https://cdn.thred.dev/thred-track.js?browserKey=8516ce3e-18ef-4f7f-be44-2bf408657d14',
-                },
-              },
-            ],
-          };
-        },
-      };
-    },
   ],
 
   // Set the production url of your site here
@@ -214,21 +196,6 @@ const config: Config = {
         },
       },
     ],
-  ],
-
-  scripts: [
-    // HubSpot tracking script (production only)
-    ...(isProductionDeploy
-      ? [
-          {
-            id: 'hs-script-loader',
-            type: 'text/javascript',
-            src: '//js-na2.hs-scripts.com/42544743.js',
-            async: true,
-            defer: true,
-          },
-        ]
-      : []),
   ],
 
   themeConfig: {
