@@ -31,6 +31,53 @@ components:
           description: Version is the schema version of the registry
           type: string
       type: object
+    github_com_stacklok_toolhive_cmd_thv-operator_api_v1alpha1.RateLimitBucket:
+      description: |-
+        Shared defines a token bucket shared across all users for this specific tool.
+        +kubebuilder:validation:Required
+      properties:
+        maxTokens:
+          description: |-
+            MaxTokens is the maximum number of tokens (bucket capacity).
+            This is also the burst size: the maximum number of requests that can be served
+            instantaneously before the bucket is depleted.
+            +kubebuilder:validation:Required
+            +kubebuilder:validation:Minimum=1
+          type: integer
+        refillPeriod:
+          $ref: '#/components/schemas/v1.Duration'
+      type: object
+    github_com_stacklok_toolhive_cmd_thv-operator_api_v1alpha1.RateLimitConfig:
+      description: |-
+        RateLimitConfig contains the CRD rate limiting configuration.
+        When set, rate limiting middleware is added to the proxy middleware chain.
+      properties:
+        shared:
+          $ref: '#/components/schemas/github_com_stacklok_toolhive_cmd_thv-operator_api_v1alpha1.RateLimitBucket'
+        tools:
+          description: |-
+            Tools defines per-tool rate limit overrides.
+            Each entry applies additional rate limits to calls targeting a specific tool name.
+            A request must pass both the server-level limit and the per-tool limit.
+            +listType=map
+            +listMapKey=name
+            +optional
+          items:
+            $ref: '#/components/schemas/github_com_stacklok_toolhive_cmd_thv-operator_api_v1alpha1.ToolRateLimitConfig'
+          type: array
+          uniqueItems: false
+      type: object
+    github_com_stacklok_toolhive_cmd_thv-operator_api_v1alpha1.ToolRateLimitConfig:
+      properties:
+        name:
+          description: |-
+            Name is the MCP tool name this limit applies to.
+            +kubebuilder:validation:Required
+            +kubebuilder:validation:MinLength=1
+          type: string
+        shared:
+          $ref: '#/components/schemas/github_com_stacklok_toolhive_cmd_thv-operator_api_v1alpha1.RateLimitBucket'
+      type: object
     github_com_stacklok_toolhive_pkg_audit.Config:
       description: |-
         DEPRECATED: Middleware configuration.
@@ -788,6 +835,10 @@ components:
           description: Registered indicates whether the client is registered in the
             ToolHive configuration
           type: boolean
+        supports_skills:
+          description: SupportsSkills indicates whether ToolHive can install skills
+            for this client
+          type: boolean
       type: object
     github_com_stacklok_toolhive_pkg_client.RegisteredClient:
       properties:
@@ -1086,6 +1137,14 @@ components:
             $ref: '#/components/schemas/github_com_stacklok_toolhive_pkg_transport_types.MiddlewareConfig'
           type: array
           uniqueItems: false
+        mutating_webhooks:
+          description: |-
+            MutatingWebhooks contains the configuration for mutating webhook middleware.
+            Mutating webhooks run before validating webhooks, per RFC THV-0017 ordering.
+          items:
+            $ref: '#/components/schemas/github_com_stacklok_toolhive_pkg_webhook.Config'
+          type: array
+          uniqueItems: false
         name:
           description: Name is the name of the MCP server
           type: string
@@ -1106,9 +1165,20 @@ components:
             type: string
           type: array
           uniqueItems: false
+        rate_limit_config:
+          $ref: '#/components/schemas/github_com_stacklok_toolhive_cmd_thv-operator_api_v1alpha1.RateLimitConfig'
+        rate_limit_namespace:
+          description: RateLimitNamespace is the Kubernetes namespace for Redis key
+            derivation.
+          type: string
         registry_api_url:
           description: |-
             RegistryAPIURL is the registry API URL that served this server's metadata.
+            Empty when the server was not discovered via registry lookup.
+          type: string
+        registry_server_name:
+          description: |-
+            RegistryServerName is the registry entry name used to look up this server's metadata.
             Empty when the server was not discovered via registry lookup.
           type: string
         registry_url:
@@ -1394,6 +1464,13 @@ components:
         DEPRECATED: Middleware configuration.
         TelemetryConfig contains the OpenTelemetry configuration
       properties:
+        caCertPath:
+          description: |-
+            CACertPath is the file path to a CA certificate bundle for the OTLP endpoint.
+            When set, the OTLP exporters use this CA to verify the collector's TLS certificate
+            instead of relying solely on the system CA pool.
+            +optional
+          type: string
         customAttributes:
           additionalProperties:
             type: string
@@ -2782,6 +2859,13 @@ components:
         predicate_type:
           type: string
       type: object
+    v1.Duration:
+      description: |-
+        RefillPeriod is the duration to fully refill the bucket from zero to maxTokens.
+        The effective refill rate is maxTokens / refillPeriod tokens per second.
+        Format: Go duration string (e.g., "1m0s", "30s", "1h0m0s").
+        +kubebuilder:validation:Required
+      type: object
 externalDocs:
   description: ""
   url: ""
@@ -2964,7 +3048,9 @@ paths:
       - clients
   /api/v1beta/discovery/clients:
     get:
-      description: List all clients compatible with ToolHive and their status
+      description: |-
+        List all clients compatible with ToolHive and their status.
+        Each object includes supports_skills when ToolHive can install skills for that client.
       responses:
         "200":
           content:
@@ -3151,6 +3237,12 @@ paths:
               schema:
                 type: string
           description: No Content
+        "403":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Forbidden - blocked by policy
         "404":
           content:
             application/json:
@@ -3218,6 +3310,12 @@ paths:
               schema:
                 type: string
           description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Forbidden - blocked by policy
         "404":
           content:
             application/json:
