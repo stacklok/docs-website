@@ -1,10 +1,13 @@
 ---
-title: Scaling and Performance
+title: Scaling and performance
 description:
   How to scale Virtual MCP Server deployments vertically and horizontally.
 ---
 
-This guide explains how to scale Virtual MCP Server (vMCP) deployments.
+This guide explains how to scale Virtual MCP Server (vMCP) deployments. For
+MCPServer scaling, see
+[Horizontal scaling](../guides-k8s/run-mcp-k8s.mdx#horizontal-scaling) in the
+Kubernetes operator guide.
 
 ## Vertical scaling
 
@@ -37,23 +40,61 @@ higher request volumes.
 
 ### How to scale horizontally
 
-The VirtualMCPServer CRD does not have a `replicas` field. The operator creates
-a Deployment named `vmcp-<NAME>` (where `<NAME>` is your VirtualMCPServer name)
-with 1 replica and preserves the replicas count, allowing you to manage scaling
-separately.
+Set the `replicas` field in your VirtualMCPServer spec to control the number of
+vMCP pods:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  replicas: 3
+```
+
+If you omit `replicas`, the operator defers replica management to an HPA or
+other external controller. You can also scale manually or with an HPA:
 
 **Option 1: Manual scaling**
 
 ```bash
-kubectl scale deployment vmcp-<vmcp-name> -n <NAMESPACE> --replicas=3
+kubectl scale deployment vmcp-<VMCP_NAME> -n <NAMESPACE> --replicas=3
 ```
 
 **Option 2: Autoscaling with HPA**
 
 ```bash
-kubectl autoscale deployment vmcp-<vmcp-name> -n <NAMESPACE> \
+kubectl autoscale deployment vmcp-<VMCP_NAME> -n <NAMESPACE> \
   --min=2 --max=5 --cpu-percent=70
 ```
+
+### Session storage for multi-replica deployments
+
+When running multiple replicas, configure Redis session storage so that sessions
+are shared across pods. Without session storage, a request routed to a different
+replica than the one that established the session will fail.
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  replicas: 3
+  sessionStorage:
+    provider: redis
+    address: redis-master.toolhive-system.svc.cluster.local:6379 # Update to match your Redis Service location
+    db: 0
+    keyPrefix: vmcp-sessions
+    passwordRef:
+      name: redis-secret
+      key: password
+```
+
+See [Redis Sentinel session storage](../guides-k8s/redis-session-storage.mdx)
+for a complete Redis deployment guide.
+
+:::warning
+
+If you configure multiple replicas without session storage, the operator sets a
+`SessionStorageWarning` status condition on the resource but **still applies the
+replica count**. Pods will start, but requests routed to a replica that did not
+establish the session will fail. Ensure Redis is available before scaling beyond
+a single replica.
+
+:::
 
 ### When horizontal scaling is challenging
 
@@ -63,22 +104,35 @@ read-only operations) where sessions can be resumed on any instance.
 However, **stateful backends** make horizontal scaling difficult:
 
 - **Stateful backends** (Playwright browser sessions, database connections, file
-  system operations) require requests to be routed to the same vMCP instance
-  that established the session
+  system operations) require requests to be routed to the same instance that
+  established the session
 - Session resumption may not work reliably for stateful backends
 
 The `VirtualMCPServer` CRD includes a `sessionAffinity` field that controls how
 the Kubernetes Service routes repeated client connections. By default, it uses
 `ClientIP` affinity, which routes connections from the same client IP to the
-same pod. You can configure this using the `sessionAffinity` field:
+same pod:
 
 ```yaml
 spec:
   sessionAffinity: ClientIP # default
 ```
 
-For stateful backends, vertical scaling or dedicated vMCP instances per team/use
-case are recommended instead of horizontal scaling.
+:::warning[ClientIP affinity is unreliable behind NAT or shared egress IPs]
+
+`ClientIP` affinity relies on the source IP reaching kube-proxy. When clients
+sit behind a NAT gateway, corporate proxy, or cloud load balancer (common in
+EKS, GKE, and AKS), all traffic appears to originate from the same IP - routing
+every client to the same pod and eliminating the benefit of horizontal scaling.
+This fails silently: the deployment appears healthy but only one pod handles all
+load.
+
+For stateless backends, set `sessionAffinity: None` so the Service load-balances
+freely. For stateful backends where true per-session routing is required,
+`ClientIP` affinity is a best-effort mechanism only. Prefer vertical scaling or
+a dedicated vMCP instance per team instead.
+
+:::
 
 ## Next steps
 

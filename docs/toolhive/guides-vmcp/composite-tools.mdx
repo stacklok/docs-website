@@ -19,6 +19,7 @@ backend MCP servers, handling dependencies and collecting results.
   wait for their prerequisites
 - **Template expansion**: Dynamic arguments using step outputs
 - **Elicitation**: Request user input mid-workflow (approval gates, choices)
+- **Iteration**: Loop over collections with forEach steps
 - **Error handling**: Configurable abort, continue, or retry behavior
 - **Timeouts**: Workflow and per-step timeout configuration
 
@@ -290,7 +291,7 @@ spec:
 
 ### Steps
 
-Each step can be a tool call or an elicitation:
+Each step can be a tool call, an elicitation, or a forEach loop:
 
 ```yaml title="VirtualMCPServer resource"
 spec:
@@ -343,6 +344,89 @@ spec:
                 confirm: { type: boolean }
             timeout: '5m'
 ```
+
+### forEach steps
+
+Iterate over a collection from a previous step's output and execute a tool call
+for each item:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  config:
+    compositeTools:
+      - name: scan_repositories
+        description: Check each repository for security advisories
+        parameters:
+          type: object
+          properties:
+            org:
+              type: string
+          required:
+            - org
+        steps:
+          - id: list_repos
+            tool: github_list_repos
+            arguments:
+              org: '{{.params.org}}'
+          # highlight-start
+          - id: check_advisories
+            type: forEach
+            collection: '{{json .steps.list_repos.output.repositories}}'
+            itemVar: repo
+            maxParallel: 5
+            step:
+              type: tool
+              tool: github_list_security_advisories
+              arguments:
+                repo: '{{.forEach.repo.name}}'
+            onError:
+              action: continue
+            dependsOn: [list_repos]
+          # highlight-end
+```
+
+**forEach fields:**
+
+| Field           | Description                                           | Default |
+| --------------- | ----------------------------------------------------- | ------- |
+| `collection`    | Template expression that resolves to a JSON array     | -       |
+| `itemVar`       | Variable name for the current item                    | item    |
+| `maxParallel`   | Maximum concurrent iterations (max 50)                | 10      |
+| `maxIterations` | Maximum total iterations (max 1000)                   | 100     |
+| `step`          | Inner step definition (tool call to execute per item) | -       |
+| `onError`       | Error handling: `abort` (stop) or `continue` (skip)   | abort   |
+
+:::note
+
+`forEach` does not support `onError.action: retry`. Use `retry` on regular tool
+steps. The `maxParallel` cap of 50 is enforced at runtime regardless of the
+configured value.
+
+:::
+
+Access the current item inside the inner step using
+`{{.forEach.<itemVar>.<field>}}`. In the example above, `{{.forEach.repo.name}}`
+accesses the `name` field of the current repository. You can also use
+`{{.forEach.index}}` to access the zero-based iteration index.
+
+`maxParallel` controls how many iterations run concurrently **on the pod that
+received the composite tool request**. Iterations are not distributed across
+vMCP replicas - all parallel backend calls originate from a single pod
+regardless of `spec.replicas`. When sizing your deployment, account for the
+per-pod fan-out: a `maxParallel: 50` forEach step can open up to 50 simultaneous
+connections to backend MCP servers from one pod. Ensure both the vMCP pod
+resources and the backend MCP servers can handle that per-pod concurrency.
+
+:::tip[Plan your workflow timeouts]
+
+With `maxIterations: 1000` and `maxParallel: 10` (the defaults), a forEach loop
+runs up to 100 serial batches. If each backend call takes a few seconds, the
+total duration can easily exceed a workflow-level timeout. Set the workflow
+`timeout` to at least
+`ceil(maxIterations / maxParallel) × expected step duration` to avoid silent
+truncation.
+
+:::
 
 ### Error handling
 
@@ -507,13 +591,16 @@ without defaultResults defined
 
 Access workflow context in arguments:
 
-| Template                    | Description                                |
-| --------------------------- | ------------------------------------------ |
-| `{{.params.name}}`          | Input parameter                            |
-| `{{.steps.id.output}}`      | Step output (map)                          |
-| `{{.steps.id.output.text}}` | Text content from step output              |
-| `{{.steps.id.content}}`     | Elicitation response content               |
-| `{{.steps.id.action}}`      | Elicitation action (accept/decline/cancel) |
+| Template                         | Description                                |
+| -------------------------------- | ------------------------------------------ |
+| `{{.params.name}}`               | Input parameter                            |
+| `{{.steps.id.output}}`           | Step output (map)                          |
+| `{{.steps.id.output.text}}`      | Text content from step output              |
+| `{{.steps.id.content}}`          | Elicitation response content               |
+| `{{.steps.id.action}}`           | Elicitation action (accept/decline/cancel) |
+| `{{.forEach.<itemVar>}}`         | Current forEach item                       |
+| `{{.forEach.<itemVar>.<field>}}` | Field on current forEach item              |
+| `{{.forEach.index}}`             | Zero-based iteration index                 |
 
 ### Template functions
 
