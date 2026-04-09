@@ -2,17 +2,21 @@
 title: Manage skills
 description:
   How to publish, list, retrieve, and delete skills using the ToolHive Registry
-  server extensions API.
+  server extensions API
 ---
 
 The Registry server provides an extensions API for managing
 [skills](../concepts/skills.mdx). This guide covers the full lifecycle:
 publishing, listing, retrieving, and deleting skills.
 
+Skills can come from two paths: **publishing** to a managed source via the API,
+or **syncing** from external sources (Git, API, File) that contain skills in the
+upstream registry format.
+
 ## Prerequisites
 
-- A running Registry server with at least one **managed** registry configured
-  (skills can only be published to managed registries)
+- A running Registry server with at least one **managed** source configured
+  (required for publishing; synced sources provide skills automatically)
 - `curl` or another HTTP client
 - If authentication is enabled, a valid bearer token (see
   [Authentication](./authentication.mdx))
@@ -31,43 +35,66 @@ config has `registries: [{name: my-registry, ...}]`).
 
 ## Publish a skill
 
-To publish a new skill version, send a `POST` request with the skill metadata:
+To publish a new skill version, send a `POST` request to the `/v1/entries`
+endpoint with the skill metadata wrapped in a `skill` object:
 
 ```bash title="Publish a skill"
 curl -X POST \
-  https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills \
+  https://registry.example.com/v1/entries \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <TOKEN>" \
   -d '{
-    "namespace": "io.github.acme",
-    "name": "code-review",
-    "description": "Performs structured code reviews using best practices",
-    "version": "1.0.0",
-    "status": "active",
-    "title": "Code Review Assistant",
-    "license": "Apache-2.0",
-    "packages": [
-      {
-        "registryType": "git",
+    "skill": {
+      "namespace": "io.github.acme",
+      "name": "code-review",
+      "description": "Performs structured code reviews using best practices",
+      "version": "1.0.0",
+      "status": "active",
+      "title": "Code Review Assistant",
+      "license": "Apache-2.0",
+      "packages": [
+        {
+          "registryType": "git",
+          "url": "https://github.com/acme/skills",
+          "ref": "v1.0.0",
+          "subfolder": "code-review"
+        }
+      ],
+      "repository": {
         "url": "https://github.com/acme/skills",
-        "ref": "v1.0.0",
-        "subfolder": "code-review"
+        "type": "git"
       }
-    ],
-    "repository": {
-      "url": "https://github.com/acme/skills",
-      "type": "git"
     }
   }'
 ```
 
-**Required fields:** `namespace`, `name`, `description`, `version`
+**Required fields:** `namespace`, `name`, `version`
 
 A successful response returns `201 Created` with the published skill. If the
 version already exists, the server returns `409 Conflict`.
 
 The `status` field accepts `active`, `deprecated`, or `archived` (case
 insensitive). The server normalizes status values to uppercase internally.
+
+### Claims
+
+When [authorization](./authorization.mdx) is enabled, you can attach claims to
+published skills to control visibility. Include a `claims` object in the request
+body:
+
+```json
+{
+  "namespace": "io.github.acme",
+  "name": "code-review",
+  "version": "1.0.0",
+  "claims": { "org": "acme", "team": "platform" }
+}
+```
+
+The publish claims must be a subset of your JWT claims, and all subsequent
+versions of the same skill must carry the same claims as the first version. See
+[Claims on published entries](./authorization.mdx#claims-on-published-entries)
+for details.
 
 ### Versioning behavior
 
@@ -86,12 +113,11 @@ curl https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills
 
 ### Query parameters
 
-| Parameter | Type   | Default | Description                                        |
-| --------- | ------ | ------- | -------------------------------------------------- |
-| `search`  | string | -       | Filter by name or description substring            |
-| `status`  | string | -       | Filter by status (comma-separated, e.g., `active`) |
-| `limit`   | int    | 50      | Maximum results per page (1-100)                   |
-| `cursor`  | string | -       | Pagination cursor from a previous response         |
+| Parameter | Type   | Default | Description                                |
+| --------- | ------ | ------- | ------------------------------------------ |
+| `search`  | string | -       | Filter by name or description substring    |
+| `limit`   | int    | 50      | Maximum results per page (1-100)           |
+| `cursor`  | string | -       | Pagination cursor from a previous response |
 
 ### Search example
 
@@ -158,11 +184,11 @@ curl https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills/io.gith
 
 ## Delete a skill version
 
-To delete a specific version:
+To delete a specific version, use the `/v1/entries` endpoint:
 
 ```bash title="Delete a skill version"
 curl -X DELETE \
-  https://registry.example.com/my-registry/v0.1/x/dev.toolhive/skills/io.github.acme/code-review/versions/1.0.0 \
+  https://registry.example.com/v1/entries/skill/code-review/versions/1.0.0 \
   -H "Authorization: Bearer <TOKEN>"
 ```
 
@@ -172,7 +198,8 @@ returns `404 Not Found`.
 :::warning
 
 Deleting a skill version is permanent. If the deleted version was the latest,
-the latest pointer is not automatically reassigned to a previous version.
+the server automatically reassigns the latest pointer to the next-highest
+remaining version.
 
 :::
 
@@ -184,7 +211,7 @@ The API returns standard HTTP status codes:
 | ---- | ------------------------------------------------------------- |
 | 400  | Invalid request (missing required fields, invalid parameters) |
 | 401  | Authentication required                                       |
-| 403  | Registry is not a managed registry (read-only registries)     |
+| 403  | Insufficient permissions or claims, or registry is read-only  |
 | 404  | Registry, skill, or version not found                         |
 | 409  | Version already exists                                        |
 | 500  | Internal server error                                         |
@@ -202,3 +229,5 @@ The API returns standard HTTP status codes:
   model
 - [Registry server introduction](./intro.mdx)
 - [Authentication](./authentication.mdx) - configuring API access
+- [Authorization](./authorization.mdx) - role-based access control and
+  claims-based scoping
