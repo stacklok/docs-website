@@ -1,8 +1,8 @@
 ---
 title: Rate limiting
 description:
-  How to configure per-user and shared rate limits on MCPServer resources to
-  prevent noisy neighbors and protect downstream services.
+  Configure per-user and shared rate limits on MCPServer resources to prevent
+  noisy neighbors and protect downstream services.
 ---
 
 Configure token bucket rate limits on MCPServer resources to control how many
@@ -23,8 +23,9 @@ request must pass all applicable limits to proceed.
 Before you begin, ensure you have:
 
 - A Kubernetes cluster with the ToolHive Operator installed
-- Redis deployed for session storage (rate limiting uses Redis to store token
-  bucket counters)
+- Redis deployed in your cluster — rate limiting stores token bucket counters in
+  Redis (see [Redis Sentinel session storage](./redis-session-storage.mdx) for
+  deployment instructions)
 - For per-user limits: authentication enabled on the MCPServer (`oidcConfig`,
   `oidcConfigRef`, or `externalAuthConfigRef`)
 
@@ -71,7 +72,7 @@ spec:
   transport: streamable-http
   sessionStorage:
     provider: redis
-    address: redis.default.svc.cluster.local:6379
+    address: <YOUR_REDIS_ADDRESS>
   # highlight-start
   rateLimiting:
     shared:
@@ -105,7 +106,7 @@ spec:
       audience: my-audience
   sessionStorage:
     provider: redis
-    address: redis.default.svc.cluster.local:6379
+    address: <YOUR_REDIS_ADDRESS>
   # highlight-start
   rateLimiting:
     perUser:
@@ -137,7 +138,7 @@ spec:
       audience: my-audience
   sessionStorage:
     provider: redis
-    address: redis.default.svc.cluster.local:6379
+    address: <YOUR_REDIS_ADDRESS>
   rateLimiting:
     # highlight-start
     shared:
@@ -155,7 +156,21 @@ Individual tools can have tighter limits than the server default. Per-tool
 limits are enforced **in addition to** server-level limits.
 
 ```yaml title="mcpserver-pertool-ratelimit.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: weather-server
 spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: streamable-http
+  oidcConfig:
+    type: inline
+    inline:
+      issuer: https://my-idp.example.com
+      audience: my-audience
+  sessionStorage:
+    provider: redis
+    address: <YOUR_REDIS_ADDRESS>
   rateLimiting:
     perUser:
       maxTokens: 100
@@ -182,6 +197,6 @@ In this example:
 
 ## Next steps
 
-- [Authentication and authorization](./auth-k8s.mdx) to enable per-user
-  identification
+- [Token exchange](./token-exchange-k8s.mdx) to configure token exchange for
+  upstream service authentication
 - [CRD reference](../reference/crd-spec.md) for complete field definitions
