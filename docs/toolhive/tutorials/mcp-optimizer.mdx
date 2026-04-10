@@ -73,7 +73,7 @@ flowchart TB
 - One of the following container runtimes:
   - macOS: Docker Desktop, Podman Desktop, or Rancher Desktop (using dockerd)
   - Windows: Docker Desktop or Rancher Desktop (using dockerd)
-  - Linux: Not currently supported
+  - Linux: any container runtime (see [Linux setup](#linux-setup))
 - ToolHive UI version 0.12.0 or later
 
 ## Step 1: Install MCP servers in a ToolHive group
@@ -212,7 +212,8 @@ reconnects them to the MCP Optimizer group.
 <TabItem value='cli' label='ToolHive CLI'>
 
 The ToolHive UI is the recommended way to set up MCP Optimizer, but you can also
-do it manually with the ToolHive CLI.
+do it manually with the ToolHive CLI. If you are on Linux with native
+containers, see [Linux setup](#linux-setup) instead.
 
 **Step 3.1: Run the API server**
 
@@ -312,6 +313,64 @@ quality.
 To check your token savings, you can ask the optimizer:
 
 - "How many tokens did I save using MCP Optimizer?"
+
+## Linux setup
+
+The setup depends on which type of container runtime you are using.
+
+### VM-based container runtimes
+
+If you are using a container runtime that runs containers inside a virtual
+machine (such as Docker Desktop for Linux), the setup is the same as on macOS
+and Windows. No additional configuration is needed — follow the UI or CLI tabs
+in the steps above.
+
+### Native containers (Docker, Podman, Rancher Desktop, and others)
+
+Before running the commands below, complete
+[Step 1](#step-1-install-mcp-servers-in-a-toolhive-group) and
+[Step 2](#step-2-connect-your-ai-client) using the CLI tabs.
+
+:::note
+
+Follow the CLI tab in [Step 3](#step-3-enable-mcp-optimizer) first — it covers
+starting the API server, creating the optimizer group, and reconfiguring your
+client. When you reach the `thv run mcp-optimizer` command, use the
+Linux-specific command below instead.
+
+:::
+
+Most Linux container runtimes run containers natively on the host kernel.
+Because containers run directly on the host kernel, `host.docker.internal` is
+not automatically configured — unlike on macOS and Windows, where Docker Desktop
+sets it up to let containers reach the host from inside a virtual machine.
+Instead, you need to use the CLI and pass a couple of extra flags:
+
+```bash
+# Run mcp-optimizer with host networking
+thv run --group optimizer --network host \
+  -e TOOLHIVE_HOST=127.0.0.1 \
+  -e ALLOWED_GROUPS=default \
+  mcp-optimizer
+```
+
+- `--network host` lets the container reach the host directly, achieving the
+  same result as the automatic bridge Docker Desktop sets up on macOS and
+  Windows.
+- `TOOLHIVE_HOST` tells `mcp-optimizer` to connect to `127.0.0.1` instead of
+  `host.docker.internal`.
+- `ALLOWED_GROUPS` tells the optimizer which group's MCP servers to discover,
+  index, and route requests to. Replace `default` with the name of the group you
+  want to optimize.
+
+To change which groups MCP Optimizer can optimize after initial setup, remove
+the workload and run the command again with the updated `ALLOWED_GROUPS` value
+(see [Remove a server](../guides-cli/manage-mcp-servers.mdx#remove-a-server)),
+or edit the configuration directly via the ToolHive UI (see
+[Manage MCP servers](../guides-ui/run-mcp-servers.mdx#manage-mcp-servers)).
+
+Scroll up to [Step 4: Sample prompts](#step-4-sample-prompts) to see how to
+verify the setup.
 
 ## What's next?
 
