@@ -85,7 +85,9 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
    - Do not attempt to fabricate the "why" or consumer story from code structure alone — this produces documentation that covers the "what" and "how" but misses the perspective and voice that only comes from understanding the product intent
    - Incremental changes (new config options, default changes, annotation additions) can proceed without this step
 
-5. **Read the actual source code at the release tag** to verify every claim made in the PR description:
+5. **Check related repositories** — components often span multiple repos. For example, a server's CRD/operator may live in a different repo than the server itself. When a release changes config structures, API surfaces, or deployment models, check whether related repos (operators, CLIs, client libraries) have also released changes that affect the documentation. Ask the user which repos are related if unclear.
+
+6. **Read the actual source code at the release tag** to verify every claim made in the PR description:
 
    ```bash
    gh api repos/<OWNER>/<REPO>/contents/<PATH>?ref=<TAG>
@@ -93,9 +95,18 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 
    The response is base64-encoded; decode it to read the content.
 
-6. Note discrepancies between PR descriptions and actual code. Trust the code.
+7. Note discrepancies between PR descriptions and actual code. Trust the code.
 
-7. Identify:
+8. **Deep-verify behavioral claims** — these are the most common source of documentation inaccuracy. For each feature, verify not just struct definitions but actual runtime behavior:
+   - **API routes**: Check the actual route registration code (e.g., `r.Get`, `r.Post`, `r.Delete`), not just handler names. Docs often claim endpoints exist at paths where no handler is registered.
+   - **Required fields**: Check validation code (e.g., `if field == ""` checks), not just struct definitions. A field present in a struct is not necessarily required — only fields checked in validation logic are enforced.
+   - **Default values**: Check the actual defaulting code or fallback logic, not comments or struct tags. For example, "defaults to main" may actually mean "defaults to the remote's HEAD" in practice.
+   - **Precedence rules**: Read the actual `if/else` chain. For example, `if commit != "" { ... } else if branch != "" { ... } else if tag != "" { ... }` means commit > branch > tag, not commit > tag > branch.
+   - **Delete/cleanup behavior**: Check whether the code reassigns pointers, cascades deletes, or leaves orphans. Delete behavior is frequently mis-documented.
+   - **Query parameters**: Check whether parsed parameters are actually wired to the service layer and database queries. Parameters can be parsed from the URL but silently ignored if no service option or SQL filter exists for them.
+   - **Containment/authorization direction**: When documenting subset/superset checks, verify which argument is the caller and which is the resource. Getting the direction wrong produces examples that show the opposite of actual behavior.
+
+9. Identify:
    - **Auto-generated content** — files generated from upstream (OpenAPI specs, CLI reference docs, JSON schemas). Do not manually edit these; flag them for automated update instead. However, auto-generated reference docs (e.g., API endpoints from a swagger spec) do **not** replace the need for conceptual explanations, guide content, or cross-references in existing pages. A new feature with auto-generated API docs still needs: (1) a conceptual explanation of what it is and why it exists, (2) mentions and cross-references in related existing pages (intro pages, feature lists, related guides), and (3) guide content if the feature has non-trivial workflows. Only skip creating a **duplicate API reference page** — never skip the surrounding documentation.
    - **Hidden/experimental features** — look for indicators like `Hidden: true` in CLI command definitions, feature flags, or internal-only annotations. Do not document these unless the user explicitly asks.
 
@@ -167,7 +178,7 @@ Apply the approved changes:
 
 ## Phase 5: Validation
 
-1. **Re-verify every factual claim** against source code at the tag. This is the third verification pass (after Phase 2 and Phase 4).
+1. **Re-verify every factual claim** against source code at the tag. This is the third verification pass (after Phase 2 and Phase 4). For large doc sets, spawn parallel verification agents — one per file or topic area — to check all claims concurrently. Each agent should read the doc file and verify every factual claim (struct fields, API routes, defaults, behavioral logic) against the actual source code at the release tag. Collect and resolve any discrepancies before proceeding.
 
 2. **Build the site** — run the project's build command to check for broken links, missing references, or build errors.
 
