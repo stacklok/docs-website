@@ -50,6 +50,7 @@ Perform critical editorial reviews as a tech writer / copyeditor, focusing on cl
 - **TOC test**: If the table of contents fills a screen, the doc is likely too long
 - **Heading count**: 20+ headings signals over-segmentation; consolidate
 - **Information flow**: Conceptual content (trade-offs, when to use) should come before implementation details, not after
+- **Admonition weight**: Tips, notes, and warnings should be supplementary. If an admonition contains primary feature documentation (full YAML examples, the only explanation of a field or concept), it should be promoted to a proper section or its own page. A good test: if this admonition is the only place a feature is documented, it's not a tip - it's a section that needs a heading and ToC visibility.
 - **Diataxis alignment**: Don't mix tutorials, how-tos, reference, and concepts in one doc without clear separation
 
 ### LLM-Generated Content Patterns
@@ -79,6 +80,7 @@ The docs follow a product-area-based information architecture under `docs/toolhi
 - **Inbound link coverage for new pages**: When a PR adds a new page, check that it is reachable beyond just the sidebar. New pages need inbound links from related pages (overviews, intros, feature lists, related how-to guides). A page with no inbound links is isolated in the user journey. For major new features, also check whether top-level intro/overview pages should mention the capability.
 - **Introduction pages**: Each product section should have an Introduction as the first sidebar child. New sections must follow this pattern.
 - **Progressive disclosure**: Core workflows should appear before advanced topics. Check that advanced content isn't mixed in with beginner-facing pages.
+- **Pattern consistency for peer concepts**: When a PR introduces a new resource type, feature, or component that has established peers in the doc set, check whether it follows the same documentation pattern (dedicated page, equivalent depth of coverage, parallel sidebar placement). A new CRD documented only as a subsection of another page, when its peer CRDs each have their own page, is a structural gap.
 - **Forward navigation path**: A reader should be able to follow "Next steps" links from the quickstart through core workflows without relying on the sidebar.
 
 ### Clarity and Readability

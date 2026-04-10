@@ -119,20 +119,18 @@ mapping.
 
 ### Understanding the AWS MCP Server permission model
 
-AWS MCP Server authorization works in two layers:
+AWS MCP Server authorization works at the AWS service level using standard IAM
+policies. There are no separate `aws-mcp:*` actions — you grant the AWS service
+permissions you want users to have, and the AWS MCP Server enforces them.
 
-1. **MCP layer** (`aws-mcp:*` actions) - controls which categories of MCP tools
-   the user can invoke
-2. **AWS service layer** (e.g., `s3:*`, `ec2:*`) - controls what the
-   `aws___call_aws` tool can actually do when it makes AWS API calls
+Two IAM condition keys let you scope policies specifically to MCP traffic:
 
-The `aws-mcp` namespace defines three actions:
-
-- `InvokeMcp` - required to connect and discover available tools
-- `CallReadOnlyTool` - search documentation, list regions, get CLI suggestions
-  (most tools)
-- `CallReadWriteTool` - execute real AWS API calls via the `aws___call_aws` tool
-  (requires additional service permissions)
+- `aws:ViaAWSMCPService` (Bool) — `true` for any request routed through an
+  AWS-managed MCP server. Use this when you want to allow access via any AWS MCP
+  server, or to deny direct API access outside of MCP.
+- `aws:CalledViaAWSMCP` (String) — identifies the specific MCP server that
+  originated the request (for example, `aws-mcp.amazonaws.com`). Use this when
+  you want to restrict access to a particular MCP server endpoint.
 
 ### Default role
 
@@ -163,17 +161,35 @@ condition rejects tokens meant for other services:
 }
 ```
 
-The permission policy grants read-only MCP access. Users can search AWS
-documentation and get suggestions, but cannot execute AWS API calls:
+The permission policy grants minimal access. It allows `sts:GetCallerIdentity`
+as a smoke test (so you can verify the role assumption works), and includes a
+deny guardrail that prevents the credentials from being used outside of MCP:
 
 ```json title="default-mcp-permissions.json"
 {
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "AllowMinimalAccessViaMCP",
       "Effect": "Allow",
-      "Action": ["aws-mcp:InvokeMcp", "aws-mcp:CallReadOnlyTool"],
-      "Resource": "*"
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*",
+      "Condition": {
+        "Bool": {
+          "aws:ViaAWSMCPService": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyDirectAPIAccess",
+      "Effect": "Deny",
+      "Action": "*",
+      "Resource": "*",
+      "Condition": {
+        "BoolIfExists": {
+          "aws:ViaAWSMCPService": "false"
+        }
+      }
     }
   ]
 }
@@ -207,34 +223,42 @@ blast radius even if a role's identity policy is overly permissive.
 
 You can create additional roles with different permissions and map them to
 specific groups using ToolHive's role mappings. This example creates a role that
-grants `CallReadWriteTool` (so the `aws___call_aws` tool can execute API calls)
-and scopes the underlying AWS permissions to S3 read-only access:
+grants S3 read-only access when using the AWS MCP Server:
 
 ```json title="s3-readonly-permissions.json"
 {
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Effect": "Allow",
-      "Action": [
-        "aws-mcp:InvokeMcp",
-        "aws-mcp:CallReadOnlyTool",
-        "aws-mcp:CallReadWriteTool"
-      ],
-      "Resource": "*"
-    },
-    {
+      "Sid": "AllowS3ReadAccessViaMCP",
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:ListBucket"],
-      "Resource": "*"
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:CalledViaAWSMCP": "aws-mcp.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "DenyDirectAPIAccess",
+      "Effect": "Deny",
+      "Action": "*",
+      "Resource": "*",
+      "Condition": {
+        "BoolIfExists": {
+          "aws:ViaAWSMCPService": "false"
+        }
+      }
     }
   ]
 }
 ```
 
-The first statement unlocks the `aws___call_aws` tool. The second statement
-limits what that tool can actually do - in this case, only S3 read operations.
-Without the S3 permissions, API calls to other services would be denied by IAM.
+No `aws-mcp:*` actions are required — you grant only the AWS service permissions
+you need. The `aws:CalledViaAWSMCP` condition scopes access to requests
+originating from the AWS MCP Server, and the deny guardrail prevents the
+temporary credentials from being used outside of MCP.
 
 ```bash
 aws iam create-role \
@@ -262,6 +286,9 @@ spec:
   type: awsSts
   awsSts:
     region: <YOUR_AWS_REGION>
+
+    # SigV4 service name for the AWS MCP Server
+    service: aws-mcp
 
     # Default role when no role mapping matches
     fallbackRoleArn: >-
@@ -347,10 +374,13 @@ spec:
   # OIDC configuration for validating incoming client tokens
   oidcConfig:
     type: inline
+    # Public URL of this proxy's MCP endpoint, advertised to clients
+    # via WWW-Authenticate so they can discover your OIDC provider.
+    # Must match the hostname you configure in Step 5.
+    resourceUrl: https://<YOUR_DOMAIN>/mcp
     inline:
       issuer: https://<YOUR_OIDC_ISSUER>
       audience: <YOUR_OIDC_AUDIENCE>
-      clientId: <YOUR_OIDC_CLIENT_ID>
 
   proxyPort: 8080
   transport: streamable-http
@@ -492,11 +522,19 @@ TOKEN=$(oauth2c https://<YOUR_OIDC_ISSUER> \
   --response-types code \
   --pkce | jq -r '.access_token')
 
-# This should return a list of tools
+# Step 1: initialize the MCP session and capture the session ID
+SESSION=$(curl -si -X POST http://localhost:8080/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl-test","version":"1.0"}}}' \
+  | grep -i "^mcp-session-id:" | awk '{print $2}' | tr -d '\r')
+
+# Step 2: list available tools using the session ID
 curl -X POST http://localhost:8080/mcp \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
+  -H "Mcp-Session-Id: $SESSION" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 ```
 
 Check the proxy logs to confirm role selection is working:
@@ -507,6 +545,58 @@ kubectl logs -n toolhive-system \
 ```
 
 Look for log entries showing role selection and STS exchange results.
+
+## Security best practices
+
+### The deny guardrail pattern
+
+Both policy examples above include a `DenyDirectAPIAccess` statement that uses
+`BoolIfExists`:
+
+```json
+{
+  "Sid": "DenyDirectAPIAccess",
+  "Effect": "Deny",
+  "Action": "*",
+  "Resource": "*",
+  "Condition": {
+    "BoolIfExists": {
+      "aws:ViaAWSMCPService": "false"
+    }
+  }
+}
+```
+
+`BoolIfExists` is important here. Without the `IfExists` suffix, the deny would
+apply even when the condition key is absent — which would block legitimate STS
+operations like `AssumeRoleWithWebIdentity` itself. With `IfExists`, the
+condition only evaluates when the key is present:
+
+| `aws:ViaAWSMCPService` present? | Value   | Deny applies? |
+| ------------------------------- | ------- | ------------- |
+| No (key absent)                 | —       | No            |
+| Yes                             | `true`  | No            |
+| Yes                             | `false` | Yes           |
+
+This means credentials can only be used when the request flows through an AWS
+MCP server. If the temporary credentials are ever extracted and used directly
+against the AWS API, the deny fires and access is blocked.
+
+### Choosing between condition keys
+
+Use `aws:ViaAWSMCPService` when you want to:
+
+- Allow or deny access based on whether the request came through _any_
+  AWS-managed MCP server
+- Write deny guardrails that apply regardless of which MCP server is used
+
+Use `aws:CalledViaAWSMCP` when you want to:
+
+- Scope access to a _specific_ MCP server endpoint (for example,
+  `aws-mcp.amazonaws.com`)
+- Prevent credentials from being used with other MCP servers
+
+You can combine both in a single policy for the tightest scoping.
 
 ## Observability and audit
 
@@ -550,7 +640,7 @@ aws iam delete-open-id-connect-provider \
   arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:oidc-provider/<YOUR_OIDC_ISSUER>
 ```
 
-## What's next?
+## Next steps
 
 - Learn about the concepts behind
   [backend authentication](../concepts/backend-auth.mdx) and
@@ -589,19 +679,22 @@ aws iam get-role --role-name DefaultMCPRole \
 
 <details>
 <summary>Service access denied: "User is not authorized to perform
-aws-mcp:InvokeMcp"</summary>
+s3:ListBucket" (or similar)</summary>
 
-This error means the assumed role doesn't have the required permissions. Verify
-the permission policy attached to the role includes the necessary actions:
+This error means the assumed role doesn't have the required AWS service
+permissions. Authorization is now at the service level — there are no
+`aws-mcp:*` actions. Verify the permission policy attached to the role includes
+the actions the MCP tool needs:
 
 ```bash
 aws iam get-role-policy \
-  --role-name DefaultMCPRole \
-  --policy-name DefaultMCPPolicy
+  --role-name S3ReadOnlyMCPRole \
+  --policy-name S3ReadOnlyMCPPolicy
 ```
 
-Ensure the policy includes `aws-mcp:InvokeMcp` and any other actions your MCP
-tools require.
+Ensure the policy includes the relevant service actions (for example,
+`s3:GetObject`, `s3:ListBucket`) and that the `aws:CalledViaAWSMCP` or
+`aws:ViaAWSMCPService` conditions are correctly set.
 
 </details>
 
