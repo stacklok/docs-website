@@ -57,6 +57,7 @@ and connects to them directly.
 | **Authentication**  | Token exchange via `externalAuthConfigRef`                     | Full OIDC validation of incoming client requests                                            |
 | **Authorization**   | Not applicable (no proxy layer)                                | Cedar policy enforcement on every request                                                   |
 | **Audit logging**   | Not applicable (no proxy layer)                                | Structured audit logs with user identity                                                    |
+| **Telemetry**       | Not applicable (no proxy layer)                                | OpenTelemetry tracing and Prometheus metrics                                                |
 | **SSRF protection** | Built-in URL validation blocks internal and metadata endpoints | N/A (proxy runs inside the cluster)                                                         |
 
 Choose MCPServerEntry when:
@@ -118,7 +119,7 @@ When you apply an MCPServerEntry resource:
    auth or TLS resources
 3. The operator sets the entry's phase to `Valid` if all checks pass, or
    `Failed` with a descriptive condition if something is wrong
-5. When a VirtualMCPServer in
+4. When a VirtualMCPServer in
    [discovered mode](../guides-vmcp/backend-discovery.mdx) starts, it discovers
    the entry through its MCPGroup membership and connects directly to the remote
    URL
@@ -136,9 +137,9 @@ When you apply an MCPServerEntry resource:
 ## Configure authentication
 
 When the remote MCP server requires authentication, reference an
-[MCPExternalAuthConfig](./auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
-resource to configure token exchange. The MCPExternalAuthConfig must exist in
-the same namespace as the MCPServerEntry.
+[MCPExternalAuthConfig](./token-exchange-k8s.mdx) resource to configure token
+exchange. The MCPExternalAuthConfig must exist in the same namespace as the
+MCPServerEntry.
 
 ```yaml title="auth-entry.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
@@ -188,7 +189,7 @@ kubectl create configmap internal-ca-bundle \
 
 Then reference it in the MCPServerEntry:
 
-```yaml {9-12} title="tls-entry.yaml"
+```yaml title="tls-entry.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServerEntry
 metadata:
@@ -212,19 +213,6 @@ Some remote MCP servers require custom headers for tenant identification, API
 keys, or other purposes. Use the `headerForward` field to inject headers into
 requests forwarded to the remote server.
 
-```yaml {9-11} title="header-entry.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: MCPServerEntry
-metadata:
-  name: my-remote-tool
-  namespace: toolhive-system
-spec:
-  groupRef: my-group
-  remoteURL: https://mcp.example.com/mcp
-  transport: streamable-http
-  headerForward:
-    addPlaintextHeaders:
-      X-Custom-Header: my-value
 ```yaml title="header-entry.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServerEntry
@@ -235,11 +223,11 @@ spec:
   groupRef: my-group
   remoteURL: https://mcp.example.com/mcp
   transport: streamable-http
-    # highlight-start
-    headerForward:
+  # highlight-start
+  headerForward:
     addPlaintextHeaders:
       X-Custom-Header: my-value
-    # highlight-end
+  # highlight-end
 ```
 
 For sensitive values like API keys, use `addHeadersFromSecret` instead. See the
@@ -248,8 +236,9 @@ the MCPRemoteProxy guide for the full syntax, which MCPServerEntry shares.
 
 ## Complete example
 
-This example creates all the resources needed for an MCPServerEntry with
-authentication and custom TLS:
+This example creates the MCPServerEntry-related resources for authentication and
+custom TLS. If you reference a CA bundle ConfigMap such as `partner-ca-bundle`,
+it must already exist or be created separately:
 
 ```yaml title="complete-entry.yaml"
 ---
