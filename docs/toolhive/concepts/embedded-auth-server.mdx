@@ -157,16 +157,48 @@ for a quick setup, or the full
 [Redis Sentinel session storage](../guides-k8s/redis-session-storage.mdx) guide
 for an end-to-end walkthrough.
 
+## Configuring the embedded auth server with `authServerRef`
+
+On `MCPServer` and `MCPRemoteProxy` resources, use the `authServerRef` field to
+reference an `MCPExternalAuthConfig` resource that defines the embedded auth
+server. This is the preferred configuration method because it keeps the embedded
+auth server (incoming client authentication) separate from
+`externalAuthConfigRef` (outgoing backend authentication such as AWS STS or
+token exchange).
+
+```yaml
+spec:
+  authServerRef:
+    kind: MCPExternalAuthConfig
+    name: my-embedded-auth-server
+```
+
+The `authServerRef` field uses a `TypedLocalObjectReference`, so you must
+specify both `kind: MCPExternalAuthConfig` and the `name` of the resource.
+
+When you only need the embedded auth server without an outgoing auth type, you
+can use either `authServerRef` or `externalAuthConfigRef`. Both approaches work,
+but `authServerRef` is preferred for consistency. When you need both incoming
+and outgoing auth on the same resource, you must use `authServerRef` for the
+embedded auth server so that `externalAuthConfigRef` remains available for the
+outgoing auth configuration.
+
+For setup instructions, see
+[Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication).
+For the combined auth pattern with AWS STS, see
+[Combine embedded auth with AWS STS](../integrations/aws-sts.mdx#combine-embedded-auth-with-aws-sts).
+
 ## MCPServer vs. VirtualMCPServer
 
 The embedded auth server is available on both `MCPServer` and `VirtualMCPServer`
 resources, with some differences:
 
-|                        | MCPServer                                   | VirtualMCPServer                                                               |
-| ---------------------- | ------------------------------------------- | ------------------------------------------------------------------------------ |
-| Configuration location | Separate `MCPExternalAuthConfig` resource   | Inline `authServerConfig` block on the resource                                |
-| Upstream providers     | Single upstream provider                    | Multiple upstream providers with sequential authorization chaining             |
-| Token forwarding       | Automatic (single provider, single backend) | Explicit `upstreamInject` or `tokenExchange` config maps providers to backends |
+|                        | MCPServer                                                           | VirtualMCPServer                                                               |
+| ---------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Configuration location | `authServerRef` (preferred) or separate `MCPExternalAuthConfig`     | Inline `authServerConfig` block on the resource                                |
+| Upstream providers     | Single upstream provider                                            | Multiple upstream providers with sequential authorization chaining             |
+| Token forwarding       | Automatic (single provider, single backend)                         | Explicit `upstreamInject` or `tokenExchange` config maps providers to backends |
+| Combined auth          | Supports `authServerRef` + `externalAuthConfigRef` on same resource | Not applicable (uses inline config)                                            |
 
 For single-backend deployments on MCPServer, the embedded auth server
 automatically swaps the token for each request. For vMCP with multiple backends,
@@ -174,6 +206,14 @@ you configure which upstream provider's token goes to which backend using
 [upstream token injection](../guides-vmcp/authentication.mdx#upstream-token-injection)
 or
 [token exchange with upstream tokens](../guides-vmcp/authentication.mdx#token-exchange-with-upstream-tokens).
+
+:::note
+
+`VirtualMCPServer` uses an inline `authServerConfig` block, not `authServerRef`.
+The `authServerRef` field is available only on `MCPServer` and `MCPRemoteProxy`
+resources.
+
+:::
 
 ## Next steps
 
