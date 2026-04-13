@@ -9,12 +9,13 @@ pointing to a YAML configuration file.
 
 ## Configuration file structure
 
-```yaml title="config.yaml"
-# Registry name/identifier (optional, defaults to "default")
-registryName: my-registry
+The configuration file uses a v2 format that separates **data sources** (where
+registry data comes from) from **registry views** (logical registries that
+aggregate one or more sources).
 
-# Registries configuration (required, can have multiple registries)
-registries:
+```yaml title="config.yaml"
+# Data sources (required, at least one)
+sources:
   - name: toolhive
     # Data format: upstream or toolhive (see below)
     format: upstream
@@ -25,12 +26,12 @@ registries:
       branch: main
       path: pkg/catalog/toolhive/data/registry-upstream.json
 
-    # Per-registry automatic sync policy (required for synced registries)
+    # Per-source automatic sync policy (required for synced sources)
     syncPolicy:
       # Sync interval (e.g., "30m", "1h", "24h")
       interval: '30m'
 
-    # Optional: Per-registry server filtering
+    # Optional: Per-source server filtering
     filter:
       names:
         include: ['official/*']
@@ -38,6 +39,12 @@ registries:
       tags:
         include: ['production']
         exclude: ['experimental']
+
+# Registry views (required, at least one)
+# Each view references sources by name
+registries:
+  - name: default
+    sources: ['toolhive']
 
 # Authentication configuration (required)
 # See authentication.mdx for detailed configuration options
@@ -80,10 +87,11 @@ The `format` field specifies the JSON schema format for the registry data:
   [ToolHive-native format](../reference/registry-schema-toolhive.mdx), used by
   the built-in ToolHive registry.
 
-## Registries
+## Sources
 
-The server supports five registry types, each with its own configuration
-options. You can configure multiple registries in a single server instance.
+The server supports multiple source types, each with its own configuration
+options. You can configure multiple sources in a single server instance and
+aggregate them into registry views.
 
 ### Git repository source
 
@@ -99,7 +107,7 @@ on every container restart, adding startup latency and increasing network usage.
 :::
 
 ```yaml title="config-git.yaml"
-registries:
+sources:
   - name: toolhive
     format: toolhive
     git:
@@ -108,6 +116,9 @@ registries:
       path: pkg/catalog/toolhive/data/registry-legacy.json
     syncPolicy:
       interval: '30m'
+registries:
+  - name: default
+    sources: ['toolhive']
 ```
 
 **Configuration options:**
@@ -134,7 +145,7 @@ To access private Git repositories, configure the `auth` section with your
 credentials:
 
 ```yaml title="config-git-private.yaml"
-registries:
+sources:
   - name: private-registry
     format: toolhive
     git:
@@ -148,6 +159,9 @@ registries:
       # highlight-end
     syncPolicy:
       interval: '30m'
+registries:
+  - name: default
+    sources: ['private-registry']
 ```
 
 **Authentication options:**
@@ -214,13 +228,16 @@ Sync from upstream MCP Registry APIs. Supports federation and aggregation
 scenarios.
 
 ```yaml title="config-api.yaml"
-registries:
+sources:
   - name: mcp-upstream
     format: upstream
     api:
       endpoint: https://registry.modelcontextprotocol.io
     syncPolicy:
       interval: '1h'
+registries:
+  - name: default
+    sources: ['mcp-upstream']
 ```
 
 **Configuration options:**
@@ -241,19 +258,22 @@ etc.) to the endpoint URL.
 Read from filesystem. Ideal for local development and testing.
 
 ```yaml title="config-file.yaml"
-registries:
+sources:
   - name: local
     format: upstream
     file:
       path: /data/registry.json
     syncPolicy:
       interval: '15m'
+registries:
+  - name: default
+    sources: ['local']
 ```
 
 Alternatively, the source can be a custom URL.
 
-```yaml title="config-file.yaml"
-registries:
+```yaml title="config-url.yaml"
+sources:
   - name: remote
     format: upstream
     file:
@@ -261,18 +281,21 @@ registries:
       timeout: 5s
     syncPolicy:
       interval: '15m'
+registries:
+  - name: default
+    sources: ['remote']
 ```
 
-The fields `file` and `url` are mutually exclusive.
+Within the `file` block, `path` and `url` are mutually exclusive.
 
 **Configuration options:**
 
-- `path` (required): Path to the registry file on the filesystem. Mutually
-  exclusive with `url`
-- `url` (required): URL is the HTTP/HTTPS URL to fetch the registry file from.
-  Mutually exclusive with `file`
-- `timeout` (optional): The timeout for HTTP requests when using URL, defaults
-  to 30s, ignored when `file` is specified
+- `file.path` (required): Path to the registry file on the filesystem. Mutually
+  exclusive with `file.url`
+- `file.url` (required): HTTP/HTTPS URL to fetch the registry file from.
+  Mutually exclusive with `file.path`
+- `file.timeout` (optional): The timeout for HTTP requests when using `url`,
+  defaults to 30s
 
 ### Managed registry
 
@@ -280,10 +303,13 @@ API-managed registry for directly publishing and deleting MCP servers via the
 API. Does not sync from external sources.
 
 ```yaml title="config-managed.yaml"
-registries:
+sources:
   - name: internal
     format: upstream
     managed: {}
+registries:
+  - name: default
+    sources: ['internal']
 ```
 
 **Configuration options:**
@@ -307,15 +333,11 @@ endpoint documentation and request/response examples.
 Discovers MCP servers from running Kubernetes deployments. Automatically creates
 registry entries for deployed MCP servers in your cluster.
 
-:::note[Operator-managed registry]
+:::note[Operator deployments]
 
-When using the ToolHive operator, a single Kubernetes registry named `default`
-is automatically created and managed. You cannot configure additional Kubernetes
-registries through the `MCPRegistry` CR or configuration file, as only one
-Kubernetes registry instance is supported per Registry Server instance.
-
-The configuration example below is for reference when running the Registry
-Server standalone (without the operator).
+When using the ToolHive operator with the `configYAML` path, you must explicitly
+declare Kubernetes discovery sources in your configuration. Only one Kubernetes
+source is supported per Registry Server instance.
 
 :::
 
@@ -326,10 +348,13 @@ By default, the Registry server discovers resources in all namespaces
 details and RBAC requirements.
 
 ```yaml title="config-kubernetes.yaml"
+sources:
+  - name: k8s
+    format: upstream
+    kubernetes: {}
 registries:
   - name: default
-    format: toolhive
-    kubernetes: {}
+    sources: ['k8s']
 ```
 
 **Configuration options:**
@@ -431,12 +456,12 @@ resources via a Service Account, check the details in the
 
 ## Sync policy
 
-Configure automatic synchronization of registry data on a per-registry basis.
-Only applicable to synced registries (Git, API, File). Not required for managed
-or Kubernetes registries.
+Configure automatic synchronization of registry data on a per-source basis. Only
+applicable to synced sources (Git, API, File). Not required for managed or
+Kubernetes sources.
 
 ```yaml
-registries:
+sources:
   - name: toolhive
     git:
       repository: https://github.com/stacklok/toolhive-catalog.git
@@ -448,22 +473,22 @@ registries:
 ```
 
 The `interval` field specifies how often the server should fetch updates from
-the registry. Use Go duration format (e.g., `"30m"`, `"1h"`, `"24h"`).
+the source. Use Go duration format (e.g., `"30m"`, `"1h"`, `"24h"`).
 
 :::note
 
-Sync policy is per-registry and must be specified within each registry
-configuration. Managed and Kubernetes registries do not require sync policies.
+Sync policy is per-source and must be specified within each source
+configuration. Managed and Kubernetes sources do not require sync policies.
 
 :::
 
 ## Server filtering
 
-Optionally filter which servers are exposed through the API on a per-registry
-basis. Only applicable to synced registries (Git, API, File).
+Optionally filter which servers are exposed through the API on a per-source
+basis. Only applicable to synced sources (Git, API, File).
 
 ```yaml
-registries:
+sources:
   - name: toolhive
     git:
       repository: https://github.com/stacklok/toolhive-catalog.git
@@ -489,7 +514,7 @@ registries:
 
 :::note
 
-Filters are per-registry and specified within each registry configuration.
+Filters are per-source and specified within each source configuration.
 
 :::
 
