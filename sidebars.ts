@@ -108,6 +108,7 @@ const sidebars: SidebarsConfig = {
           items: [
             'toolhive/guides-cli/auth',
             'toolhive/guides-cli/token-exchange',
+            'toolhive/guides-cli/webhooks',
             'toolhive/guides-cli/telemetry-and-metrics',
             'toolhive/guides-cli/test-mcp-servers',
             'toolhive/guides-cli/build-containers',
