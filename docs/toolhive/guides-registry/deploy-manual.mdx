@@ -2,6 +2,7 @@
 title: Deploy manually
 description:
   How to deploy the ToolHive Registry Server in Kubernetes using raw manifests
+  and RBAC configuration
 ---
 
 :::info
@@ -72,6 +73,8 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+            - containerPort: 8081
+              name: internal-http
           volumeMounts:
             - name: thv
               mountPath: /thv
@@ -79,13 +82,13 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 8080
+              port: 8081
             initialDelaySeconds: 30
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /readiness
-              port: 8080
+              port: 8081
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
@@ -111,16 +114,18 @@ metadata:
   namespace: toolhive-system
 data:
   config.yaml: |
-    registryName: my-registry
-    registries:
-    - name: git-registry
-      format: toolhive
+    sources:
+    - name: toolhive
+      format: upstream
       git:
         repository: https://github.com/stacklok/toolhive-catalog.git
         branch: main
-        path: pkg/catalog/toolhive/data/registry-legacy.json
+        path: pkg/catalog/toolhive/data/registry-upstream.json
       syncPolicy:
         interval: "15m"
+    registries:
+    - name: default
+      sources: ["toolhive"]
     auth:
       mode: oauth
       oauth:
@@ -363,8 +368,10 @@ this automatically.
 
 ## Next steps
 
-- [Configure registry sources](./configuration.mdx) to set up your data sources
-  and sync policies
+- [Configure sources and registries](./configuration.mdx) to set up your data
+  sources and sync policies
 - [Set up authentication](./authentication.mdx) to secure access to your
   registry
+- [Set up authorization](./authorization.mdx) to control access with roles and
+  claims
 - [Configure telemetry](./telemetry-metrics.mdx) to monitor your deployment

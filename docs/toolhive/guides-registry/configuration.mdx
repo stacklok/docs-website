@@ -1,7 +1,8 @@
 ---
 title: Configuration
 description:
-  How to configure the ToolHive Registry Server with registry and sync policies
+  Configure the ToolHive Registry Server with sources, registries, and sync
+  policies
 ---
 
 All configuration is done via YAML files. The server requires a `--config` flag
@@ -9,29 +10,22 @@ pointing to a YAML configuration file.
 
 ## Configuration file structure
 
-The configuration file uses a v2 format that separates **data sources** (where
-registry data comes from) from **registry views** (logical registries that
-aggregate one or more sources).
+The configuration file has two main sections: **sources** (where data comes
+from) and **registries** (named API surfaces that aggregate one or more
+sources).
 
 ```yaml title="config.yaml"
-# Data sources (required, at least one)
+# Sources define where registry data comes from
 sources:
   - name: toolhive
-    # Data format: upstream or toolhive (see below)
     format: upstream
-
-    # Git repository configuration
     git:
       repository: https://github.com/stacklok/toolhive-catalog.git
       branch: main
       path: pkg/catalog/toolhive/data/registry-upstream.json
-
-    # Per-source automatic sync policy (required for synced sources)
     syncPolicy:
-      # Sync interval (e.g., "30m", "1h", "24h")
       interval: '30m'
-
-    # Optional: Per-source server filtering
+    # Optional: filter which entries are synced
     filter:
       names:
         include: ['official/*']
@@ -39,12 +33,17 @@ sources:
       tags:
         include: ['production']
         exclude: ['experimental']
+    # Optional: claims inherited by entries during sync (for authorization)
+    claims:
+      org: 'acme'
 
-# Registry views (required, at least one)
-# Each view references sources by name
+# Registries aggregate sources into named API endpoints
 registries:
   - name: default
     sources: ['toolhive']
+    # Optional: claims for access gating (caller JWT must satisfy these)
+    claims:
+      org: 'acme'
 
 # Authentication configuration (required)
 # See authentication.mdx for detailed configuration options
@@ -68,17 +67,39 @@ database:
   #     region: us-east-1
 ```
 
+### Sources vs. registries
+
+- A **source** defines where data comes from and how to sync it. Each source has
+  a type (Git, API, file, managed, or Kubernetes), sync policy, optional
+  filters, and optional claims.
+- A **registry** is a named API surface that aggregates one or more sources.
+  Clients access entries through a registry name in the URL (for example,
+  `/{registryName}/v0.1/servers`). A registry can also have claims that act as
+  an access gate — only callers whose JWT claims satisfy the registry's claims
+  can access its entries.
+
+You can create multiple registries from the same sources to serve different
+audiences. For example, a `public` registry with no claims and a `team-internal`
+registry with team-scoped claims — both backed by the same source data.
+
+Source names must be valid DNS subdomain labels: lowercase alphanumeric
+characters and hyphens, maximum 63 characters (for example, `toolhive`,
+`platform-tools`, `k8s-prod`). This is required because source names are used as
+Kubernetes lease name suffixes for leader election.
+
 ## Command-line flags
 
-| Flag          | Description                                 | Required | Default |
-| ------------- | ------------------------------------------- | -------- | ------- |
-| `--config`    | Path to YAML configuration file             | Yes      | -       |
-| `--address`   | Server listen address                       | No       | `:8080` |
-| `--auth-mode` | Override auth mode (`anonymous` or `oauth`) | No       | -       |
+| Flag                 | Description                                                        | Required | Default |
+| -------------------- | ------------------------------------------------------------------ | -------- | ------- |
+| `--config`           | Path to YAML configuration file                                    | Yes      | -       |
+| `--address`          | Server listen address for the main API                             | No       | `:8080` |
+| `--internal-address` | Listen address for internal endpoints (health, readiness, version) | No       | `:8081` |
+| `--auth-mode`        | Override auth mode (`anonymous` or `oauth`)                        | No       | -       |
 
 ## Registry data formats
 
-The `format` field specifies the JSON schema format for the registry data:
+The `format` field on a source specifies the JSON schema format for the registry
+data:
 
 - **`upstream`**: The official
   [upstream MCP registry format](../reference/registry-schema-upstream.mdx),
@@ -87,11 +108,10 @@ The `format` field specifies the JSON schema format for the registry data:
   [ToolHive-native format](../reference/registry-schema-toolhive.mdx), used by
   the built-in ToolHive registry.
 
-## Sources
+## Registry sources
 
-The server supports multiple source types, each with its own configuration
-options. You can configure multiple sources in a single server instance and
-aggregate them into registry views.
+The server supports five source types, each with its own configuration options.
+You can configure multiple sources in a single server instance.
 
 ### Git repository source
 
@@ -109,13 +129,14 @@ on every container restart, adding startup latency and increasing network usage.
 ```yaml title="config-git.yaml"
 sources:
   - name: toolhive
-    format: toolhive
+    format: upstream
     git:
       repository: https://github.com/stacklok/toolhive-catalog.git
       branch: main
-      path: pkg/catalog/toolhive/data/registry-legacy.json
+      path: pkg/catalog/toolhive/data/registry-upstream.json
     syncPolicy:
       interval: '30m'
+
 registries:
   - name: default
     sources: ['toolhive']
@@ -124,7 +145,8 @@ registries:
 **Configuration options:**
 
 - `repository` (required): Git repository URL
-- `branch` (optional): Branch name to use (defaults to `main`)
+- `branch` (optional): Branch name to use (defaults to the repository's default
+  branch)
 - `tag` (optional): Tag name to pin to a specific version
 - `commit` (optional): Commit SHA to pin to a specific commit
 - `path` (optional): Path to the registry file within the repository (defaults
@@ -134,8 +156,8 @@ registries:
 :::tip
 
 You can use `branch`, `tag`, or `commit` to pin to a specific version. If
-multiple are specified, `commit` takes precedence over `tag`, which takes
-precedence over `branch`.
+multiple are specified, `commit` takes precedence over `branch`, which takes
+precedence over `tag`.
 
 :::
 
@@ -147,7 +169,7 @@ credentials:
 ```yaml title="config-git-private.yaml"
 sources:
   - name: private-registry
-    format: toolhive
+    format: upstream
     git:
       repository: https://github.com/my-org/private-registry.git
       branch: main
@@ -159,6 +181,7 @@ sources:
       # highlight-end
     syncPolicy:
       interval: '30m'
+
 registries:
   - name: default
     sources: ['private-registry']
@@ -235,6 +258,7 @@ sources:
       endpoint: https://registry.modelcontextprotocol.io
     syncPolicy:
       interval: '1h'
+
 registries:
   - name: default
     sources: ['mcp-upstream']
@@ -244,7 +268,8 @@ registries:
 
 - `endpoint` (required): Base URL of the upstream MCP Registry API (without
   path)
-- `format` (required): Must be `upstream` for API sources
+- `format` (optional): Must be `upstream` if specified (API sources only support
+  the upstream format)
 
 :::note
 
@@ -265,6 +290,7 @@ sources:
       path: /data/registry.json
     syncPolicy:
       interval: '15m'
+
 registries:
   - name: default
     sources: ['local']
@@ -272,7 +298,7 @@ registries:
 
 Alternatively, the source can be a custom URL.
 
-```yaml title="config-url.yaml"
+```yaml title="config-file-url.yaml"
 sources:
   - name: remote
     format: upstream
@@ -281,32 +307,33 @@ sources:
       timeout: 5s
     syncPolicy:
       interval: '15m'
+
 registries:
   - name: default
     sources: ['remote']
 ```
 
-Within the `file` block, `path` and `url` are mutually exclusive.
+The fields `path` and `url` are mutually exclusive.
 
 **Configuration options:**
 
-- `file.path` (required): Path to the registry file on the filesystem. Mutually
-  exclusive with `file.url`
-- `file.url` (required): HTTP/HTTPS URL to fetch the registry file from.
-  Mutually exclusive with `file.path`
-- `file.timeout` (optional): The timeout for HTTP requests when using `url`,
-  defaults to 30s
+- `path`: Path to the registry file on the filesystem. Required when `url` is
+  not specified
+- `url`: HTTP/HTTPS URL to fetch the registry file from. Required when `path` is
+  not specified
+- `timeout` (optional): The timeout for HTTP requests when using URL, defaults
+  to 30s, ignored when `path` is specified
 
-### Managed registry
+### Managed source
 
-API-managed registry for directly publishing and deleting MCP servers via the
-API. Does not sync from external sources.
+API-managed source for directly publishing and deleting MCP servers and skills
+via the API. Does not sync from external sources.
 
 ```yaml title="config-managed.yaml"
 sources:
   - name: internal
-    format: upstream
     managed: {}
+
 registries:
   - name: default
     sources: ['internal']
@@ -314,8 +341,8 @@ registries:
 
 **Configuration options:**
 
-- `managed` (required): Empty object to indicate managed registry type
-- No sync policy required (managed registries are updated via API, not synced)
+- `managed` (required): Empty object to indicate managed source type
+- No sync policy required (managed sources are updated via API, not synced)
 
 **Supported operations:**
 
@@ -328,52 +355,86 @@ registries:
 See the [Registry API reference](../reference/registry-api.mdx) for complete
 endpoint documentation and request/response examples.
 
-### Kubernetes registry
+### Kubernetes source
 
 Discovers MCP servers from running Kubernetes deployments. Automatically creates
 registry entries for deployed MCP servers in your cluster.
 
-:::note[Operator deployments]
+:::note[Operator-managed source]
 
-When using the ToolHive operator with the `configYAML` path, you must explicitly
-declare Kubernetes discovery sources in your configuration. Only one Kubernetes
-source is supported per Registry Server instance.
+When using the ToolHive operator, a Kubernetes source named `default` is
+automatically created and managed. The configuration examples below are for
+reference when running the Registry Server standalone (without the operator).
 
 :::
 
-By default, the Registry server discovers resources in all namespaces
-(cluster-wide). You can restrict discovery to specific namespaces using the
-`THV_REGISTRY_WATCH_NAMESPACE` environment variable. See
-[Workload discovery](./deploy-manual.mdx#workload-discovery) for configuration
-details and RBAC requirements.
+You can configure multiple Kubernetes sources, each watching different
+namespaces. By default, a Kubernetes source discovers resources in all
+namespaces (cluster-wide). You can restrict discovery to specific namespaces
+using the `namespaces` field or the `THV_REGISTRY_WATCH_NAMESPACE` environment
+variable. See [Workload discovery](./deploy-manual.mdx#workload-discovery) for
+RBAC requirements.
 
 ```yaml title="config-kubernetes.yaml"
 sources:
-  - name: k8s
+  - name: default
     format: upstream
     kubernetes: {}
+
 registries:
   - name: default
-    sources: ['k8s']
+    sources: ['default']
 ```
 
 **Configuration options:**
 
-- `kubernetes` (required): Empty object to indicate Kubernetes registry type
-- No sync policy required (Kubernetes registries query live deployments
-  on-demand)
-- Only one Kubernetes registry is supported per Registry Server instance
+- `kubernetes` (required): Empty object or namespace configuration (see below)
+- `kubernetes.namespaces` (optional): List of Kubernetes namespaces to watch. If
+  empty, falls back to the `THV_REGISTRY_WATCH_NAMESPACE` environment variable,
+  or all namespaces if neither is set
+- No sync policy required (Kubernetes sources query live deployments on-demand)
 
-:::info[How does it work?]
+#### Per-entry claims via annotation
 
-Kubernetes workload discovery works by looking for annotations in a specific set
-of workloads. The types being watched are
+You can set authorization claims on individual Kubernetes workloads using the
+`toolhive.stacklok.dev/authz-claims` JSON annotation. This controls which
+authenticated callers can see each entry.
+
+```yaml title="mcp-server-with-claims.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: deploy-helper
+  annotations:
+    toolhive.stacklok.dev/registry-export: 'true'
+    toolhive.stacklok.dev/registry-url: 'https://mcp.example.com/deploy-helper'
+    toolhive.stacklok.dev/registry-description: 'Deployment assistant'
+    # highlight-next-line
+    toolhive.stacklok.dev/authz-claims: '{"org": "acme", "team": "platform"}'
+spec:
+  # ...
+```
+
+Entry claims come exclusively from the annotation — source-level claims are
+**not** inherited. Entries without the annotation have no claims, which means
+they are visible in anonymous mode and
+[auth-only mode](./authorization.mdx#auth-only-mode) but invisible when full
+authorization is configured.
+
+If the annotation contains invalid JSON or unsupported claim value types
+(anything other than strings or arrays of strings), the entry is **skipped
+entirely** and a warning is logged. The entry will not sync until the annotation
+is fixed.
+
+See [Authorization](./authorization.mdx) for how claims control entry
+visibility.
+
+#### Workload annotations
+
+Kubernetes workload discovery watches for annotations on
 [`MCPServer`](../guides-k8s/run-mcp-k8s.mdx),
 [`MCPRemoteProxy`](../guides-k8s/remote-mcp-proxy.mdx), and
-[`VirtualMCPServer`](../guides-vmcp/configuration.mdx).
-
-The Registry server will receive events when a resource among those listed above
-is annotated with the following annotations:
+[`VirtualMCPServer`](../guides-vmcp/configuration.mdx) resources.
 
 ```yaml {7-16}
 apiVersion: toolhive.stacklok.dev/v1alpha1
@@ -405,8 +466,9 @@ spec:
 | `toolhive.stacklok.dev/registry-title`       | No       | Human-friendly display name for the registry entry (overrides the generated name) |
 | `toolhive.stacklok.dev/tools`                | No       | JSON array of tool name strings (e.g., `["get_weather","get_forecast"]`)          |
 | `toolhive.stacklok.dev/tool-definitions`     | No       | JSON array of tool definitions with MCP tool metadata (name, description, schema) |
+| `toolhive.stacklok.dev/authz-claims`         | No       | JSON object of authorization claims for per-entry visibility control              |
 
-**Tool definitions format:**
+#### Tool definitions format
 
 The `tool-definitions` annotation accepts a JSON array containing tool metadata
 that follows the MCP specification. Each tool definition can include:
@@ -443,10 +505,8 @@ The registry URL from the `registry-url` annotation becomes a key in the JSON
 structure.
 
 This feature requires the Registry server to be granted access to those
-resources via a Service Account, check the details in the
-[deployment section](./deploy-manual.mdx#workload-discovery).
-
-:::
+resources via a Service Account. See the
+[deployment section](./deploy-manual.mdx#workload-discovery) for details.
 
 **Use cases:**
 
@@ -463,10 +523,11 @@ Kubernetes sources.
 ```yaml
 sources:
   - name: toolhive
+    format: upstream
     git:
       repository: https://github.com/stacklok/toolhive-catalog.git
       branch: main
-      path: pkg/catalog/toolhive/data/registry-legacy.json
+      path: pkg/catalog/toolhive/data/registry-upstream.json
     syncPolicy:
       # Sync interval (e.g., "30m", "1h", "24h")
       interval: '30m'
@@ -475,6 +536,10 @@ sources:
 The `interval` field specifies how often the server should fetch updates from
 the source. Use Go duration format (e.g., `"30m"`, `"1h"`, `"24h"`).
 
+The server also triggers a sync when filter configuration changes, even if the
+upstream data has not changed. This ensures that updated filter rules take
+effect without waiting for the next scheduled sync.
+
 :::note
 
 Sync policy is per-source and must be specified within each source
@@ -482,18 +547,21 @@ configuration. Managed and Kubernetes sources do not require sync policies.
 
 :::
 
-## Server filtering
+## Entry filtering
 
-Optionally filter which servers are exposed through the API on a per-source
-basis. Only applicable to synced sources (Git, API, File).
+Optionally filter which entries are exposed through the API on a per-source
+basis. Only applicable to synced sources (Git, API, File). Filters apply to both
+MCP servers and skills — skills are matched using `namespace/name` against the
+name patterns.
 
 ```yaml
 sources:
   - name: toolhive
+    format: upstream
     git:
       repository: https://github.com/stacklok/toolhive-catalog.git
       branch: main
-      path: pkg/catalog/toolhive/data/registry-legacy.json
+      path: pkg/catalog/toolhive/data/registry-upstream.json
     syncPolicy:
       interval: '30m'
     filter:
@@ -518,6 +586,50 @@ Filters are per-source and specified within each source configuration.
 
 :::
 
+## Multiple sources and registries
+
+You can configure multiple sources and combine them into one or more registries.
+This enables scenarios like aggregating data from different upstream registries,
+or serving different audiences from the same data with different access
+controls.
+
+```yaml title="config-multi-source.yaml"
+sources:
+  - name: toolhive-catalog
+    format: upstream
+    git:
+      repository: https://github.com/stacklok/toolhive-catalog.git
+      branch: main
+      path: pkg/catalog/toolhive/data/registry-upstream.json
+    syncPolicy:
+      interval: '30m'
+
+  - name: upstream-mcp
+    format: upstream
+    api:
+      endpoint: https://registry.modelcontextprotocol.io
+    syncPolicy:
+      interval: '1h'
+
+  - name: internal
+    managed: {}
+
+registries:
+  # Public registry with all sources
+  - name: public
+    sources: ['toolhive-catalog', 'upstream-mcp', 'internal']
+
+  # Team-scoped registry with access control
+  - name: platform-team
+    sources: ['toolhive-catalog', 'internal']
+    claims:
+      org: 'acme'
+      team: 'platform'
+```
+
+When a registry aggregates multiple sources, entries from earlier sources in the
+list take precedence over entries with the same name from later sources.
+
 ## Authentication configuration
 
 The server supports multiple authentication modes to fit different deployment
@@ -532,6 +644,15 @@ Available modes:
 
 See the [Authentication configuration](./authentication.mdx) guide for detailed
 information on configuring each mode.
+
+## Authorization configuration
+
+When authentication is enabled, you can configure role-based access control
+(RBAC) and claims-based authorization to control who can manage sources,
+registries, and entries.
+
+See the [Authorization](./authorization.mdx) guide for detailed information on
+configuring roles and claims.
 
 ## Database configuration
 
@@ -549,4 +670,6 @@ distributed tracing and metrics collection. See the
 
 - [Configure authentication](./authentication.mdx) to secure access to your
   registry
+- [Set up authorization](./authorization.mdx) to control access with roles and
+  claims
 - [Set up the database](./database.mdx) for production storage
