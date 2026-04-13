@@ -111,7 +111,7 @@ authz:
 ```
 
 Claim values can be strings or arrays. When a JWT claim is an array (for
-example, `roles: ["admin", "writer"]`), the server checks whether any element
+example, `role: ["admin", "writer"]`), the server checks whether any element
 matches the required value. A rule with `role: "admin"` would match this JWT
 because `"admin"` is one of the array elements.
 
@@ -274,10 +274,34 @@ registries are also scoped by claims:
 - **Get source/registry by name**: Returns `404 Not Found` (not `403`) when the
   caller's claims don't match — this prevents information disclosure about
   resources the caller cannot access.
+- **List source/registry entries**: `GET /v1/sources/{name}/entries` and
+  `GET /v1/registries/{name}/entries` return the raw entries (servers and skills
+  with versions and claims) in a source or registry. These endpoints follow the
+  same claim scoping — the parent source or registry must be accessible to the
+  caller.
 - **Create source/registry**: The request claims must be a subset of the
   caller's JWT claims.
 - **Update/delete source/registry**: The caller's JWT claims must satisfy the
   existing resource's claims.
+
+## Auth-only mode
+
+When OAuth authentication is enabled but the `auth.authz` block is omitted from
+your configuration, the server runs in **auth-only mode**. In this mode:
+
+- Callers must still authenticate with a valid JWT token
+- All claims-based filtering is disabled — every authenticated caller sees all
+  entries regardless of source or registry claims
+- Role checks are not enforced (no roles are resolved)
+- The server logs a warning at startup:
+  `Authorization not configured, per-entry claims filtering disabled (auth-only mode)`
+
+Auth-only mode is useful when you need identity verification without
+multi-tenant visibility controls — for example, a single-team deployment where
+all authenticated users should have the same access.
+
+To enable full authorization, add the `auth.authz` block with
+[role definitions](#configure-roles).
 
 ## Anonymous mode
 
