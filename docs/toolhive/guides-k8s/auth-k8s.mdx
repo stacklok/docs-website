@@ -609,12 +609,12 @@ kubectl apply -f embedded-auth-config.yaml
 
 **Step 5: Create the MCPServer resource**
 
-The MCPServer needs two configuration references: `externalAuthConfigRef`
-enables the embedded authorization server, and `oidcConfig` validates the JWTs
-that the embedded authorization server issues. Unlike approaches 1-3 where
-`oidcConfig` points to an external identity provider, here it points to the
-embedded authorization server itself—the `oidcConfig` issuer must match the
-`issuer` in your `MCPExternalAuthConfig`.
+The MCPServer needs two configuration references: `authServerRef` enables the
+embedded authorization server, and `oidcConfig` validates the JWTs that the
+embedded authorization server issues. Unlike approaches 1-3 where `oidcConfig`
+points to an external identity provider, here it points to the embedded
+authorization server itself. The `oidcConfig` issuer must match the `issuer` in
+your `MCPExternalAuthConfig`.
 
 ```yaml title="mcp-server-embedded-auth.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
@@ -629,9 +629,12 @@ spec:
   permissionProfile:
     type: builtin
     name: network
+  # highlight-start
   # Reference the embedded authorization server configuration
-  externalAuthConfigRef:
+  authServerRef:
+    kind: MCPExternalAuthConfig
     name: embedded-auth-server
+  # highlight-end
   # Validate JWTs issued by the embedded authorization server
   oidcConfig:
     type: inline
@@ -652,33 +655,31 @@ spec:
 kubectl apply -f mcp-server-embedded-auth.yaml
 ```
 
-:::tip[Combining embedded auth with outgoing token exchange]
+The `authServerRef` field is a `TypedLocalObjectReference` that requires both
+`kind` and `name`. This field is also available on `MCPRemoteProxy` resources.
 
-If you need both an embedded auth server for incoming client authentication
-**and** an outgoing token exchange (such as AWS STS) on the same MCPServer, use
-the dedicated `authServerRef` field instead of `externalAuthConfigRef` for the
-embedded auth server. This separates the two configurations so they don't
-compete for the same field:
+:::tip[Combining embedded auth with outgoing auth]
+
+Use `authServerRef` for the embedded auth server and `externalAuthConfigRef` for
+any outgoing auth (such as AWS STS) on the same resource:
 
 ```yaml
 spec:
-  # Dedicated field for the embedded auth server
+  # Embedded auth server for incoming client authentication
   authServerRef:
     kind: MCPExternalAuthConfig
     name: embedded-auth-server
   # Outgoing token exchange (e.g., AWS STS)
   externalAuthConfigRef:
     name: aws-sts-config
-    kind: MCPExternalAuthConfig
   oidcConfig:
     type: inline
     inline:
       issuer: 'https://mcp.example.com'
 ```
 
-`authServerRef` and `externalAuthConfigRef` cannot both reference an
-`embeddedAuthServer` type. The same `authServerRef` field is available on
-MCPRemoteProxy resources.
+For a complete example, see
+[Combine embedded auth with AWS STS](../integrations/aws-sts.mdx#combine-embedded-auth-with-aws-sts).
 
 :::
 
@@ -1014,7 +1015,7 @@ kubectl logs -n toolhive-system -l app.kubernetes.io/name=weather-server-k8s
 
 - Verify the `MCPExternalAuthConfig` resource exists in the same namespace:
   `kubectl get mcpexternalauthconfig -n toolhive-system`
-- Check that the `externalAuthConfigRef.name` in your `MCPServer` matches the
+- Check that the `authServerRef.name` in your `MCPServer` matches the
   `MCPExternalAuthConfig` resource name
 - Verify the upstream provider's client ID and redirect URI are correctly
   configured in the `MCPExternalAuthConfig`
