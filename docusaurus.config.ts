@@ -171,6 +171,10 @@ const config: Config = {
           // Populate lastUpdatedAt metadata for JSON-LD structured data.
           // The rendered timestamp is hidden via CSS (.theme-last-updated).
           showLastUpdateTime: true,
+          admonitions: {
+            keywords: ['enterprise'],
+            extendDefaults: true,
+          },
         },
         blog: {
           blogTitle: 'ToolHive Updates and Announcements',
