@@ -384,17 +384,6 @@ spec:
 
   proxyPort: 8080
   transport: streamable-http
-
-  audit:
-    enabled: true
-
-  resources:
-    limits:
-      cpu: '500m'
-      memory: '512Mi'
-    requests:
-      cpu: '100m'
-      memory: '128Mi'
 ```
 
 Replace the placeholders with your OIDC provider's configuration.
@@ -415,77 +404,6 @@ When you apply this resource, the ToolHive Operator:
    credentials via STS, and forward SigV4-signed requests to the AWS MCP Server
 
 :::
-
-## Combine embedded auth with AWS STS
-
-If you want ToolHive to handle the full OAuth flow for incoming client
-authentication (instead of validating tokens from an external OIDC provider),
-you can combine the
-[embedded authorization server](../concepts/embedded-auth-server.mdx) with AWS
-STS on the same `MCPRemoteProxy`. Use `authServerRef` for the embedded auth
-server and `externalAuthConfigRef` for the AWS STS configuration.
-
-This pattern is useful when your MCP clients don't have their own OIDC tokens.
-The embedded auth server redirects users to an upstream identity provider (such
-as Okta or Google), issues its own JWTs, and ToolHive then exchanges those JWTs
-for temporary AWS credentials via STS.
-
-First, create an `MCPExternalAuthConfig` for the embedded auth server following
-the steps in
-[Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
-(steps 1 through 4). Then deploy the `MCPRemoteProxy` with both references:
-
-```yaml {10-12,14-15} title="aws-mcp-remote-proxy-combined.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: MCPRemoteProxy
-metadata:
-  name: aws-mcp-proxy
-  namespace: toolhive-system
-spec:
-  remoteURL: https://aws-mcp.us-east-1.api.aws/mcp
-
-  # Embedded auth server for incoming client authentication
-  authServerRef:
-    kind: MCPExternalAuthConfig
-    name: embedded-auth-server
-
-  # AWS STS for outgoing backend authentication
-  externalAuthConfigRef:
-    name: aws-mcp-sts-auth
-
-  # Validate JWTs issued by the embedded authorization server
-  oidcConfig:
-    type: inline
-    resourceUrl: https://<YOUR_DOMAIN>/mcp
-    inline:
-      # This must match the issuer in your embedded auth server config
-      issuer: https://<YOUR_EMBEDDED_AUTH_ISSUER>
-
-  proxyPort: 8080
-  transport: streamable-http
-
-  audit:
-    enabled: true
-
-  resources:
-    limits:
-      cpu: '500m'
-      memory: '512Mi'
-    requests:
-      cpu: '100m'
-      memory: '128Mi'
-```
-
-In this configuration:
-
-- `authServerRef` points to the `MCPExternalAuthConfig` with
-  `type: embeddedAuthServer`, which handles the OAuth flow for incoming clients.
-- `externalAuthConfigRef` points to the `MCPExternalAuthConfig` with
-  `type: awsSts`, which exchanges OIDC tokens for AWS credentials on outgoing
-  requests.
-- `oidcConfig` validates JWTs issued by the embedded auth server. The `issuer`
-  must match the `issuer` in your embedded auth server's
-  `MCPExternalAuthConfig`.
 
 ## Step 5: Expose the proxy
 
@@ -710,6 +628,78 @@ aws iam delete-open-id-connect-provider \
   --open-id-connect-provider-arn \
   arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:oidc-provider/<YOUR_OIDC_ISSUER>
 ```
+
+## Combine embedded auth with AWS STS
+
+If you want ToolHive to handle the full OAuth flow for incoming client
+authentication (instead of validating tokens from an external OIDC provider),
+you can combine the
+[embedded authorization server](../concepts/embedded-auth-server.mdx) with AWS
+STS on the same `MCPRemoteProxy`. Use `authServerRef` for the embedded auth
+server and `externalAuthConfigRef` for the AWS STS configuration.
+
+This pattern is useful when your MCP clients don't have their own OIDC tokens.
+The embedded auth server redirects users to an upstream identity provider (such
+as Okta or Google), issues its own JWTs, and ToolHive then exchanges those JWTs
+for temporary AWS credentials via STS.
+
+First, create an `MCPExternalAuthConfig` for the embedded auth server following
+the steps in
+[Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
+(steps 1 through 4). Then deploy the `MCPRemoteProxy` with both references:
+
+```yaml title="aws-mcp-remote-proxy-combined.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPRemoteProxy
+metadata:
+  name: aws-mcp-proxy
+  namespace: toolhive-system
+spec:
+  remoteURL: https://aws-mcp.us-east-1.api.aws/mcp
+
+  # Embedded auth server for incoming client authentication
+  # highlight-start
+  authServerRef:
+    kind: MCPExternalAuthConfig
+    name: embedded-auth-server
+  # highlight-end
+
+  # AWS STS for outgoing backend authentication
+  # highlight-start
+  externalAuthConfigRef:
+    name: aws-mcp-sts-auth
+  # highlight-end
+
+  # Validate JWTs issued by the embedded authorization server
+  oidcConfig:
+    type: inline
+    resourceUrl: https://<YOUR_DOMAIN>/mcp
+    inline:
+      # This must match the issuer in your embedded auth server config
+      issuer: https://<YOUR_EMBEDDED_AUTH_ISSUER>
+
+  proxyPort: 8080
+  transport: streamable-http
+```
+
+In this configuration:
+
+- `authServerRef` points to the `MCPExternalAuthConfig` with
+  `type: embeddedAuthServer`, which handles the OAuth flow for incoming clients.
+- `externalAuthConfigRef` points to the `MCPExternalAuthConfig` with
+  `type: awsSts`, which exchanges OIDC tokens for AWS credentials on outgoing
+  requests.
+- `oidcConfig` validates JWTs issued by the embedded auth server. The `issuer`
+  must match the `issuer` in your embedded auth server's
+  `MCPExternalAuthConfig`.
+
+:::info[authServerRef vs. externalAuthConfigRef]
+
+The `authServerRef` field separates embedded auth from outgoing auth concerns.
+For more details, see
+[Configuring the embedded auth server with authServerRef](../concepts/embedded-auth-server.mdx#configuring-the-embedded-auth-server-with-authserverref).
+
+:::
 
 ## Next steps
 
