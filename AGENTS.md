@@ -190,7 +190,7 @@ The project's official language is US English.
 
 - Use the Oxford comma (aka serial commas) when listing items in a series.
 - Use one space between sentences.
-- Use straight double quotes and apostrophes. Replace smart quotes (“ “) and curly apostrophes (‘ ‘) with straight quotes (“) and straight apostrophes (‘).
+- Use straight double quotes and apostrophes. Replace smart quotes (“ ”) and curly apostrophes (‘ ’) with straight quotes (") and straight apostrophes (').
 - Avoid em dashes (`—`) and en dashes (`–`). They are hard to type, easy to miss in editors, and have proliferated with AI-generated content. Instead, rephrase naturally: use commas, split into two sentences, or restructure. If a separator is truly needed, use a spaced hyphen (`-`) in list-style contexts like “Related information” entries.
 
 ### Links
