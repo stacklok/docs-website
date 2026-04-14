@@ -1,0 +1,369 @@
+---
+title: Deploy manually
+description: How to deploy the ToolHive Registry Server in Kubernetes using raw manifests
+---
+
+:::info
+
+For an alternative deployment approach using Kubernetes custom resources, see
+[Deploy with the ToolHive Operator](./deploy-operator.mdx).
+
+:::
+
+Below is an example Kubernetes Deployment configuring the ToolHive Registry
+Server to expose a single static registry based on a Git repository.
+
+This example assumes that a Postgres database is available at `db.example.com`
+and the necessary users for migration and application execution are configured
+and able to connect to a `registry` database. It also assumes that you have a
+keycloak instance configured to act as identity provider.
+
+All resources are created in the `toolhive-system` namespace. This namespace
+must exist before applying the deployment.
+
+For further details about user grants read the
+[Migration user privileges](./database.mdx#migration-user-privileges) and
+[Application user privileges](./database.mdx#application-user-privileges)
+sections.
+
+{/* prettier-ignore */}
+```yaml title="deployment.yaml"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry-api
+  namespace: toolhive-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registry-api
+  template:
+    metadata:
+      labels:
+        app: registry-api
+    spec:
+      initContainers:
+        - name: pgpass-fixer
+          image: alpine:3
+          command:
+            - /bin/sh
+            - -c
+            - cp /cfg/* /thv/ && chmod 0600 /thv/pgpass && chown 65532:65532 /thv/pgpass
+          volumeMounts:
+            - name: thv
+              mountPath: /thv
+            - name: config
+              mountPath: /cfg/config.yaml
+              subPath: config.yaml
+            - name: pgpass
+              mountPath: /cfg/pgpass
+              subPath: pgpass
+      containers:
+        - name: registry-api
+          image: ghcr.io/stacklok/thv-registry-api:latest
+          args:
+            - serve
+            - --config=/thv/config.yaml
+          env:
+            - name: PGPASSFILE
+              value: /thv/pgpass
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: thv
+              mountPath: /thv
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: thv
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: registry-api-config
+            items:
+              - key: config.yaml
+                path: config.yaml
+        - name: pgpass
+          secret:
+            secretName: registry-api-pgpass
+            items:
+              - key: pgpass
+                path: pgpass
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: registry-api-config
+  namespace: toolhive-system
+data:
+  config.yaml: |
+    registryName: my-registry
+    registries:
+    - name: git-registry
+      format: toolhive
+      git:
+        repository: https://github.com/stacklok/toolhive-catalog.git
+        branch: main
+        path: pkg/catalog/toolhive/data/registry-legacy.json
+      syncPolicy:
+        interval: "15m"
+    auth:
+      mode: oauth
+      oauth:
+        resourceUrl: https://registry.example.com
+        providers:
+          - name: keycloak
+            issuerUrl: https://keycloak.example.com/realms/mcp
+            audience: registry-api
+    database:
+      host: db.example.com
+      port: 5432
+      user: db_app
+      migrationUser: db_migrator
+      database: registry
+      sslMode: verify-full
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-api-pgpass
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  pgpass: |
+    db.example.com:5432:registry:db_app:app_password
+    db.example.com:5432:registry:db_migrator:migrator_password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry-api
+  namespace: toolhive-system
+spec:
+  selector:
+    app: registry-api
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+```
+
+Apply the deployment:
+
+```bash
+kubectl apply -f deployment.yaml
+```
+
+## Workload discovery
+
+Kubernetes workload discovery works by looking for annotations in a specific set
+of workloads. The types being watched are
+[`MCPServer`](../guides-k8s/run-mcp-k8s.mdx),
+[`MCPRemoteProxy`](../guides-k8s/remote-mcp-proxy.mdx), and
+[`VirtualMCPServer`](../guides-vmcp/configuration.mdx).
+
+By default, the Registry server discovers resources in all namespaces
+(cluster-wide). You can restrict discovery to specific namespaces by setting the
+`THV_REGISTRY_WATCH_NAMESPACE` environment variable to a comma-separated list of
+namespace names in your deployment:
+
+```yaml
+env:
+  - name: THV_REGISTRY_WATCH_NAMESPACE
+    value: toolhive-system,production
+```
+
+When `THV_REGISTRY_WATCH_NAMESPACE` is set, only resources in the specified
+namespaces are discovered. When unset, the server watches all namespaces.
+
+Both RBAC options below use the same ClusterRole for workload discovery and a
+separate namespace-scoped Role for leader election. The difference is how the
+ClusterRole is bound.
+
+### Cluster-wide discovery (default)
+
+For cluster-wide discovery, apply the following resources:
+
+{/* prettier-ignore */}
+```yaml title="registry-rbac-cluster.yaml"
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: registry-api
+  name: registry-api
+  namespace: toolhive-system
+---
+# Manager role for workload discovery (ToolHive CRDs + services)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: registry-api
+  name: registry-api-manager
+rules:
+  - apiGroups:
+      - toolhive.stacklok.dev
+    resources:
+      - mcpservers
+      - mcpremoteproxies
+      - virtualmcpservers
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+---
+# Leader election role (namespace-scoped, always required)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: registry-api
+  name: registry-api-leader-election
+  namespace: toolhive-system
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ''
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+---
+# Leader election binding (always namespace-scoped)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: registry-api
+  name: registry-api-leader-election
+  namespace: toolhive-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: registry-api-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: registry-api
+    namespace: toolhive-system
+---
+# Cluster-wide binding for the manager role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: registry-api
+  name: registry-api-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: registry-api-manager
+subjects:
+  - kind: ServiceAccount
+    name: registry-api
+    namespace: toolhive-system
+```
+
+### Namespace-scoped discovery
+
+When `THV_REGISTRY_WATCH_NAMESPACE` is set, use the same ClusterRole but bind it
+with a RoleBinding in each watched namespace instead of a ClusterRoleBinding.
+Create one RoleBinding per namespace:
+
+{/* prettier-ignore */}
+```yaml title="registry-rbac-namespace.yaml"
+# Use the same ServiceAccount, ClusterRole, and leader election
+# Role/RoleBinding from the cluster-wide example above.
+# Replace the ClusterRoleBinding with one RoleBinding per namespace:
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    toolhive.stacklok.io/registry-name: registry-api
+  name: registry-api-manager
+  namespace: toolhive-system # repeat for each watched namespace
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: registry-api-manager
+subjects:
+  - kind: ServiceAccount
+    name: registry-api
+    namespace: toolhive-system
+```
+
+### Applying the service account
+
+Apply the service account to the registry server deployment in the
+`spec.template.spec` section:
+
+```yaml
+spec:
+  template:
+    spec:
+      serviceAccountName: registry-api
+```
+
+:::tip
+
+If you run multiple Registry Server instances in the same namespace, set the
+`THV_REGISTRY_LEADER_ELECTION_ID` environment variable to a unique value for
+each instance to avoid leader election lease conflicts. The Helm chart handles
+this automatically.
+
+:::
+
+## Next steps
+
+- [Configure registry sources](./configuration.mdx) to set up your data sources
+  and sync policies
+- [Set up authentication](./authentication.mdx) to secure access to your
+  registry
+- [Configure telemetry](./telemetry-metrics.mdx) to monitor your deployment

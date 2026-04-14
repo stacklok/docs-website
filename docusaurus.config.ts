@@ -186,6 +186,24 @@ const config: Config = {
               },
             ],
           ],
+          lastVersion: 'current',
+          versions: {
+            current: {
+              label: 'Latest (OSS)',
+            },
+            '1.1': {
+              label: 'Enterprise 1.1',
+              path: 'enterprise/1.1',
+              banner: 'none',
+              noIndex: true,
+            },
+            '1.0': {
+              label: 'Enterprise 1.0',
+              path: 'enterprise/1.0',
+              banner: 'none',
+              noIndex: true,
+            },
+          },
         },
         blog: {
           blogTitle: 'ToolHive Updates and Announcements',
@@ -322,6 +340,10 @@ const config: Config = {
           to: 'toolhive/enterprise',
           label: 'Enterprise',
           position: 'left',
+        },
+        {
+          type: 'docsVersionDropdown',
+          position: 'right',
         },
         {
           href: 'https://github.com/stacklok',
