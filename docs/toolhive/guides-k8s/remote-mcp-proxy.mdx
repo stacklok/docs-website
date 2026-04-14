@@ -112,7 +112,7 @@ metadata:
   namespace: toolhive-system
 spec:
   # Remote MCP server URL
-  remoteURL: https://mcp.analytics.example.com
+  remoteUrl: https://mcp.analytics.example.com
 
   # Port to expose the proxy on
   proxyPort: 8080
@@ -203,7 +203,7 @@ providers:
 
 ```yaml {4-6}
 spec:
-  remoteURL: https://mcp.example.com
+  remoteUrl: https://mcp.example.com
 
   oidcConfig:
     type: inline
@@ -243,7 +243,7 @@ metadata:
   name: analytics-proxy
   namespace: toolhive-system
 spec:
-  remoteURL: https://mcp.analytics.example.com
+  remoteUrl: https://mcp.analytics.example.com
   oidcConfig:
     type: configMap
     configMap:
@@ -274,7 +274,7 @@ This example shows different policy patterns:
 
 ```yaml {6-9}
 spec:
-  remoteURL: https://mcp.example.com
+  remoteUrl: https://mcp.example.com
   oidcConfig:
     # ... OIDC config ...
 
@@ -369,7 +369,7 @@ metadata:
   name: analytics-proxy
   namespace: toolhive-system
 spec:
-  remoteURL: https://mcp.analytics.example.com
+  remoteUrl: https://mcp.analytics.example.com
   # ... other config ...
   toolConfigRef:
     name: analytics-tools-filter
@@ -414,7 +414,7 @@ metadata:
   name: analytics-proxy
   namespace: toolhive-system
 spec:
-  remoteURL: https://mcp.analytics.example.com
+  remoteUrl: https://mcp.analytics.example.com
   oidcConfig:
     # ... Company IDP config ...
 
@@ -447,7 +447,7 @@ For non-sensitive values like tenant IDs or correlation headers, use
 
 ```yaml {6-9}
 spec:
-  remoteURL: https://mcp.analytics.example.com
+  remoteUrl: https://mcp.analytics.example.com
   # ... other config ...
 
   headerForward:
@@ -479,7 +479,7 @@ metadata:
   name: analytics-proxy
   namespace: toolhive-system
 spec:
-  remoteURL: https://mcp.analytics.example.com
+  remoteUrl: https://mcp.analytics.example.com
   # ... other config ...
 
   headerForward:
@@ -494,7 +494,7 @@ You can combine plaintext and secret-backed headers:
 
 ```yaml {6-14}
 spec:
-  remoteURL: https://mcp.analytics.example.com
+  remoteUrl: https://mcp.analytics.example.com
   # ... other config ...
 
   headerForward:
@@ -533,7 +533,7 @@ metadata:
   name: mcp-spec-proxy
   namespace: toolhive-system
 spec:
-  remoteURL: https://modelcontextprotocol.io/mcp
+  remoteUrl: https://modelcontextprotocol.io/mcp
   proxyPort: 8080
   transport: streamable-http
 
@@ -688,40 +688,59 @@ Audit logs are structured JSON written to stdout:
 }
 ```
 
-### Prometheus metrics
+### Shared telemetry configuration
 
-Enable Prometheus metrics to monitor proxy health and usage:
+The preferred way to enable telemetry is to reference a shared
+`MCPTelemetryConfig` resource using `telemetryConfigRef`. This lets you define
+telemetry settings once and reuse them across multiple proxies and MCP servers:
 
-```yaml {6-8}
+```yaml {6-8} title="analytics-proxy.yaml"
 spec:
-  remoteURL: https://mcp.example.com
+  remoteUrl: https://mcp.example.com
   # ... other config ...
 
-  telemetry:
-    prometheus:
-      enabled: true
+  telemetryConfigRef:
+    name: shared-otel
+    serviceName: analytics-mcp-proxy
 ```
 
-Metrics are exposed at `/metrics` and include:
+The `MCPTelemetryConfig` resource is created separately. See
+[Telemetry and metrics](./telemetry-and-metrics.mdx) for the full configuration
+reference and examples.
+
+### Available Prometheus metrics
+
+When Prometheus is enabled, metrics are exposed at `/metrics` and include:
 
 - `toolhive_mcp_requests_total` - Total MCP requests
 - `toolhive_mcp_request_duration_seconds` - Request duration
 - `toolhive_mcp_tool_calls_total` - Tool call operations
 - `toolhive_mcp_active_connections` - Number of active connections
 
-### OpenTelemetry
+### Inline telemetry configuration (deprecated)
 
-For distributed tracing and metrics export:
+:::warning[Deprecated]
+
+The inline `spec.telemetry` field is deprecated and will be removed in a future
+release. Use `telemetryConfigRef` to reference a shared `MCPTelemetryConfig`
+resource instead. You cannot set both fields on the same resource.
+
+:::
+
+You can still configure telemetry inline using the `telemetry` field:
 
 ```yaml {6-15}
 spec:
-  remoteURL: https://mcp.example.com
+  remoteUrl: https://mcp.example.com
   # ... other config ...
 
   telemetry:
+    prometheus:
+      enabled: true
     openTelemetry:
       enabled: true
-      endpoint: https://otel-collector.company.com:4317
+      endpoint: otel-collector.monitoring.svc.cluster.local:4318
+      insecure: true
       serviceName: analytics-mcp-proxy
       tracing:
         enabled: true
@@ -765,7 +784,7 @@ metadata:
   namespace: toolhive-system
 spec:
   groupRef: my-group # Reference to an MCPGroup
-  remoteURL: https://mcp.context7.com/mcp
+  remoteUrl: https://mcp.context7.com/mcp
   transport: streamable-http
   proxyPort: 8080
   oidcConfig:

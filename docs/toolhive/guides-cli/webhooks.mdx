@@ -1,0 +1,243 @@
+---
+title: Delegate tool authorization with webhooks
+sidebar_label: Webhook authorization
+description:
+  Configure webhook middleware to delegate MCP tool call authorization to an
+  external HTTP service when running MCP servers with the ToolHive CLI.
+---
+
+Webhook middleware lets you delegate MCP tool call authorization to an external
+HTTP service. When a client calls an MCP tool, ToolHive sends a request to your
+webhook endpoint, which decides whether to allow or deny the call, and
+optionally modify it.
+
+Use webhooks when your authorization logic is too complex for static Cedar
+policies, or when you need to enforce rules managed by an external system (such
+as a policy engine or an OPA server).
+
+## Prerequisites
+
+- The ToolHive CLI installed. See [Install ToolHive](./install.mdx).
+- An HTTP endpoint that accepts webhook requests and returns allow/deny
+  responses in the ToolHive webhook format.
+
+## How it works
+
+When webhook middleware is active, every incoming MCP tool call passes through
+two middleware types in order:
+
+1. **Mutating webhooks** can transform the request before it reaches the MCP
+   server (for example, to add context or rewrite arguments)
+2. **Validating webhooks** accept or deny the (possibly mutated) request
+
+If a validating webhook denies the request, ToolHive returns an error to the
+client without calling the MCP server.
+
+## Create a webhook configuration file
+
+Webhook configuration is defined in a YAML or JSON file. The file has two
+top-level keys: `validating` and `mutating`. Each key maps to a list of webhook
+definitions.
+
+```yaml title="webhooks.yaml"
+validating:
+  - name: policy-check
+    url: https://policy.example.com/validate
+    failure_policy: fail
+    timeout: 5s
+    tls_config:
+      ca_bundle_path: /etc/toolhive/pki/webhook-ca.crt
+
+mutating:
+  - name: request-enricher
+    url: https://enrichment.example.com/mutate
+    failure_policy: ignore
+    # Omitting timeout uses the default of 10s.
+    tls_config:
+      insecure_skip_verify: true
+```
+
+### Webhook fields
+
+| Field             | Required | Description                                                                                                                                        |
+| ----------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`            | Yes      | Unique identifier for this webhook. Used for deduplication when merging multiple config files.                                                     |
+| `url`             | Yes      | HTTPS endpoint to call. Plain HTTP is accepted for in-cluster or development use (see `insecure_skip_verify` below).                               |
+| `failure_policy`  | Yes      | `fail` (deny the request on webhook error) or `ignore` (allow through on error).                                                                   |
+| `timeout`         | No       | Maximum wait time for a response. Accepts duration strings like `5s` or `30s`. Minimum: `1s`, maximum: `30s`. Default: `10s`.                      |
+| `tls_config`      | No       | TLS options for the webhook HTTP client (see below).                                                                                               |
+| `hmac_secret_ref` | No       | Environment variable name containing an HMAC secret for payload signing. **Not yet implemented** - accepted in config but currently has no effect. |
+
+### TLS configuration
+
+| Field                  | Description                                                                                                                                                      |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ca_bundle_path`       | Path to a CA certificate bundle for server certificate verification.                                                                                             |
+| `client_cert_path`     | Path to a client certificate for mutual TLS (mTLS).                                                                                                              |
+| `client_key_path`      | Path to the client private key for mTLS. Both `client_cert_path` and `client_key_path` must be set together.                                                     |
+| `insecure_skip_verify` | Disable TLS certificate verification for HTTPS connections, and also allow plain HTTP endpoint URLs. Use only in development or trusted in-cluster environments. |
+
+### JSON format
+
+The same configuration works in JSON format. Timeout values can be either a
+duration string (`"5s"`) or a numeric value in nanoseconds:
+
+```json title="webhooks.json"
+{
+  "validating": [
+    {
+      "name": "policy-check",
+      "url": "https://policy.example.com/validate",
+      "failure_policy": "fail",
+      "timeout": "5s",
+      "tls_config": {
+        "ca_bundle_path": "/etc/toolhive/pki/webhook-ca.crt"
+      }
+    }
+  ],
+  "mutating": [
+    {
+      "name": "request-enricher",
+      "url": "https://enrichment.example.com/mutate",
+      "failure_policy": "ignore",
+      "tls_config": {
+        "insecure_skip_verify": true
+      }
+    }
+  ]
+}
+```
+
+## Run an MCP server with webhook middleware
+
+Pass your webhook configuration file to `thv run` using the `--webhook-config`
+flag:
+
+```bash
+thv run fetch --webhook-config /path/to/webhooks.yaml
+```
+
+You can specify `--webhook-config` multiple times to merge configurations from
+several files. If two files define a webhook with the same `name`, the last file
+takes precedence:
+
+```bash
+thv run fetch \
+  --webhook-config /etc/toolhive/base-webhooks.yaml \
+  --webhook-config /etc/toolhive/team-webhooks.yaml
+```
+
+ToolHive validates all webhook configurations at startup and exits with an error
+if any are invalid, so configuration problems surface before the server starts.
+
+## Failure policies
+
+The `failure_policy` field controls what happens when ToolHive cannot reach the
+webhook endpoint:
+
+- `fail` denies the MCP tool call. Use this when your webhook is authoritative
+  and a connectivity failure should be treated as a security event.
+- `ignore` allows the tool call through. Use this for non-critical webhooks like
+  logging or enrichment, where availability is not a hard requirement.
+
+:::warning
+
+A `422 Unprocessable Entity` response from a webhook is always treated as a
+deny, regardless of the `failure_policy`. This prevents malformed payloads from
+accidentally being allowed through.
+
+:::
+
+## Webhook request format
+
+ToolHive sends a JSON `POST` request to your webhook URL with this structure:
+
+```json
+{
+  "version": "v0.1.0",
+  "uid": "550e8400-e29b-41d4-a716-446655440000",
+  "timestamp": "2025-04-13T10:15:30.123Z",
+  "principal": {
+    "sub": "user@example.com",
+    "email": "user@example.com"
+  },
+  "mcp_request": { ... },
+  "context": {
+    "server_name": "fetch",
+    "source_ip": "127.0.0.1",
+    "transport": "streamable-http"
+  }
+}
+```
+
+## Validating webhook response format
+
+Your validating webhook must respond with HTTP 200 and a JSON body:
+
+```json
+{
+  "version": "v0.1.0",
+  "uid": "550e8400-e29b-41d4-a716-446655440000",
+  "allowed": true
+}
+```
+
+To deny a request, set `"allowed": false` and optionally include a `message` and
+`reason`:
+
+```json
+{
+  "version": "v0.1.0",
+  "uid": "550e8400-e29b-41d4-a716-446655440000",
+  "allowed": false,
+  "message": "Tool call denied by policy",
+  "reason": "insufficient_permissions"
+}
+```
+
+## Mutating webhook response format
+
+Your mutating webhook must respond with HTTP 200. To pass the request through
+unchanged, return an allow response with no patch:
+
+```json
+{
+  "version": "v0.1.0",
+  "uid": "550e8400-e29b-41d4-a716-446655440000",
+  "allowed": true
+}
+```
+
+To modify the request, include a `patch_type` and a `patch` containing
+[JSON Patch](https://jsonpatch.com/) operations. All patch paths must be
+prefixed with `/mcp_request/` because the middleware wraps the MCP body in an
+envelope before applying patches:
+
+```json
+{
+  "version": "v0.1.0",
+  "uid": "550e8400-e29b-41d4-a716-446655440000",
+  "allowed": true,
+  "patch_type": "json_patch",
+  "patch": [
+    {
+      "op": "add",
+      "path": "/mcp_request/params/context",
+      "value": "injected-by-webhook"
+    }
+  ]
+}
+```
+
+A mutating webhook can also deny a request by setting `"allowed": false`, in
+which case `patch_type` and `patch` are ignored.
+
+## Next steps
+
+- [Custom permissions](./custom-permissions.mdx) for Cedar-based authorization
+  policies for MCP servers
+- [Authentication](./auth.mdx) to set up OIDC authentication for MCP servers
+
+## Related information
+
+- [`thv run` command reference](../reference/cli/thv_run.md)
