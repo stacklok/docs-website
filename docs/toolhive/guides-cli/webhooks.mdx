@@ -8,7 +8,7 @@ description:
 
 Webhook middleware lets you delegate MCP tool call authorization to an external
 HTTP service. When a client calls an MCP tool, ToolHive sends a request to your
-webhook endpoint, which decides whether to allow or deny the call — and
+webhook endpoint, which decides whether to allow or deny the call, and
 optionally modify it.
 
 Use webhooks when your authorization logic is too complex for static Cedar
@@ -26,9 +26,9 @@ as a policy engine or an OPA server).
 When webhook middleware is active, every incoming MCP tool call passes through
 two middleware types in order:
 
-1. **Mutating webhooks** — can transform the request before it reaches the MCP
+1. **Mutating webhooks** can transform the request before it reaches the MCP
    server (for example, to add context or rewrite arguments)
-2. **Validating webhooks** — accept or deny the (possibly mutated) request
+2. **Validating webhooks** accept or deny the (possibly mutated) request
 
 If a validating webhook denies the request, ToolHive returns an error to the
 client without calling the MCP server.
@@ -135,10 +135,10 @@ if any are invalid, so configuration problems surface before the server starts.
 The `failure_policy` field controls what happens when ToolHive cannot reach the
 webhook endpoint:
 
-- `fail` — denies the MCP tool call. Use this when your webhook is authoritative
+- `fail` denies the MCP tool call. Use this when your webhook is authoritative
   and a connectivity failure should be treated as a security event.
-- `ignore` — allows the tool call through. Use this for non-critical webhooks
-  like logging or enrichment, where availability is not a hard requirement.
+- `ignore` allows the tool call through. Use this for non-critical webhooks like
+  logging or enrichment, where availability is not a hard requirement.
 
 :::warning
 
@@ -195,11 +195,43 @@ To deny a request, set `"allowed": false` and optionally include a `message` and
 }
 ```
 
+## Mutating webhook response format
+
+Your mutating webhook must respond with HTTP 200. To pass the request through
+unchanged, return an allow response with no patch:
+
+```json
+{
+  "version": "v0.1.0",
+  "uid": "550e8400-e29b-41d4-a716-446655440000",
+  "allowed": true
+}
+```
+
+To modify the request, include a `patch_type` and a `patch` containing
+[JSON Patch](https://jsonpatch.com/) operations that will be applied to the
+`mcp_request`:
+
+```json
+{
+  "version": "v0.1.0",
+  "uid": "550e8400-e29b-41d4-a716-446655440000",
+  "allowed": true,
+  "patch_type": "json_patch",
+  "patch": [
+    { "op": "add", "path": "/params/context", "value": "injected-by-webhook" }
+  ]
+}
+```
+
+A mutating webhook can also deny a request by setting `"allowed": false`, in
+which case `patch_type` and `patch` are ignored.
+
 ## Next steps
 
-- [Custom permissions](./custom-permissions.mdx) — configure Cedar-based
-  authorization policies for MCP servers
-- [Authentication](./auth.mdx) — set up OIDC authentication for MCP servers
+- [Custom permissions](./custom-permissions.mdx) for Cedar-based authorization
+  policies for MCP servers
+- [Authentication](./auth.mdx) to set up OIDC authentication for MCP servers
 
 ## Related information
 
