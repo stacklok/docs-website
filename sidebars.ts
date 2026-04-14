@@ -291,11 +291,7 @@ const sidebars: SidebarsConfig = {
     'toolhive/reference/index',
     'toolhive/reference/authz-policy-reference',
     'toolhive/faq',
-    {
-      type: 'doc',
-      id: 'toolhive/enterprise',
-      className: 'enterprise-only',
-    },
+    'toolhive/enterprise',
     'toolhive/support',
     'toolhive/contributing',
   ],
