@@ -51,6 +51,7 @@ Perform critical editorial reviews as a tech writer / copyeditor, focusing on cl
 - **Heading count**: 20+ headings signals over-segmentation; consolidate
 - **Information flow**: Conceptual content (trade-offs, when to use) should come before implementation details, not after
 - **Admonition weight**: Tips, notes, and warnings should be supplementary. If an admonition contains primary feature documentation (full YAML examples, the only explanation of a field or concept), it should be promoted to a proper section or its own page. A good test: if this admonition is the only place a feature is documented, it's not a tip - it's a section that needs a heading and ToC visibility.
+- **Enterprise construct usage**: Three constructs exist for enterprise content - check they're used correctly. `:::enterprise` admonitions are for callout blocks (2-4 sentences, max 1-2 per page). `<EnterpriseBadge />` is for inline feature labels next to headings or list items. `className: 'enterprise-only'` in the sidebar is for enterprise-only pages. Flag misuse: enterprise admonitions used for single-feature labels (use `<EnterpriseBadge />` instead), badge used on entire page descriptions (use the admonition instead), or excessive enterprise admonitions on a single page.
 - **Diataxis alignment**: Don't mix tutorials, how-tos, reference, and concepts in one doc without clear separation
 
 ### LLM-Generated Content Patterns

@@ -263,7 +263,43 @@ This website is built using Docusaurus, which has some specific requirements and
   - Titles are added using the `title="..."` attribute in the opening code fence.
   - Line highlights are added using comma-separated `{number}` or `{start-end}` ranges in the opening code fence, or `highlight-next-line`, `highlight-start`, and `highlight-end` comments within the code block.
 - Use admonitions for notes, tips, warnings, and other annotations. This provides a consistent look and feel across the site.
-  - Use the `:::type` syntax to define the admonition type: `note`, `tip`, `info`, `warning`, or `danger`. Use square brackets to add a custom title, e.g. `:::info[Title]`. Add empty lines around the start and end directives.
+  - Use the `:::type` syntax to define the admonition type: `note`, `tip`, `info`, `warning`, `danger`, or `enterprise`. Use square brackets to add a custom title, e.g. `:::info[Title]`. Add empty lines around the start and end directives.
+  - The `:::enterprise` admonition is for Stacklok Enterprise content only - see "Enterprise content constructs" below.
 - Place images in `static/img` using WebP, PNG, or SVG format.
 - Use the `ThemedImage` component to provide both light and dark mode screenshots for apps/UIs that support both. Typically used with the `useBaseUrl` hook to construct the image paths. Both require import statements.
 - Use the `Tabs` and `TabItem` components to create tabbed content sections. These are in the global scope and do not require imports.
+- Use the `EnterpriseBadge` component to label individual features or capabilities as enterprise-only. This is in the global scope and does not require imports. See "Enterprise content constructs" below.
+
+### Enterprise content constructs
+
+Three constructs are available for presenting Stacklok Enterprise content inline with OSS documentation. Use the right one for the context:
+
+**`:::enterprise` admonition** - for callout content within OSS pages, typically 2-4 sentences describing an Enterprise capability with a link to the Enterprise landing page. Use when Enterprise adds a meaningful capability to the topic being documented. Don't overuse - one per page is typical, two is the practical maximum.
+
+```mdx
+:::enterprise
+
+Stacklok Enterprise includes turnkey integrations for common identity providers. Instead of manually configuring OIDC, use the built-in Okta or Entra ID integration to map IdP groups directly to ToolHive roles and policy sets.
+
+[Learn more about Stacklok Enterprise](/toolhive/enterprise).
+
+:::
+```
+
+**`<EnterpriseBadge />`** - inline label for tagging individual features, capabilities, or configuration options as enterprise-only. Works next to headings, in lists, or inline with text. Use when a specific feature within a broader page is enterprise-only.
+
+```mdx
+### Session pinning <EnterpriseBadge />
+
+- **Automatic failover** <EnterpriseBadge /> - connections are automatically rerouted when a node becomes unavailable.
+```
+
+**`className: 'enterprise-only'` sidebar badge** - for marking enterprise-only pages in the sidebar navigation. Applied in `sidebars.ts`, not in the page itself. Renders a small "ENT" pill badge with a tooltip on hover.
+
+```ts title="sidebars.ts"
+{
+  type: 'doc',
+  id: 'toolhive/guides-enterprise/config-server',
+  className: 'enterprise-only',
+}
+```
