@@ -49,8 +49,8 @@ avoid overly complex jargon to make content accessible to a wide audience.
 ### Tone and voice
 
 Strive for a casual and conversational tone without becoming overly informal. We
-aim to be friendly and relatable while retaining credibility and professionalism
-– approachable yet polished.
+aim to be friendly and relatable while retaining credibility and
+professionalism, approachable yet polished.
 
 #### Active voice
 
@@ -101,6 +101,12 @@ a series.
 quotes" or "smart quotes" (the default in document editors like Word/Docs). This
 is especially important in code examples where smart quotes often cause syntax
 errors.
+
+**Dashes**: avoid em dashes (`—`) and en dashes (`–`). They are hard to type,
+easy to miss in editors, and have proliferated with AI-generated content.
+Instead, rephrase naturally: use commas, split into two sentences, or
+restructure. If a separator is truly needed (for example, between a link and its
+description in a list), use a spaced hyphen (`-`).
 
 Tip: if you are drafting in Google Docs, disable the "Use smart quotes" setting
 in the Tools → Preferences menu to avoid inadvertently copying smart quotes into
