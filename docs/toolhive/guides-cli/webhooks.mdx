@@ -59,14 +59,14 @@ mutating:
 
 ### Webhook fields
 
-| Field             | Required | Description                                                                                                                   |
-| ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `name`            | Yes      | Unique identifier for this webhook. Used for deduplication when merging multiple config files.                                |
-| `url`             | Yes      | HTTPS endpoint to call. Plain HTTP is accepted for in-cluster or development use (see `insecure_skip_verify` below).          |
-| `failure_policy`  | Yes      | `fail` (deny the request on webhook error) or `ignore` (allow through on error).                                              |
-| `timeout`         | No       | Maximum wait time for a response. Accepts duration strings like `5s` or `30s`. Minimum: `1s`, maximum: `30s`. Default: `10s`. |
-| `tls_config`      | No       | TLS options for the webhook HTTP client (see below).                                                                          |
-| `hmac_secret_ref` | No       | Environment variable name containing an HMAC secret for payload signing.                                                      |
+| Field             | Required | Description                                                                                                                                        |
+| ----------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`            | Yes      | Unique identifier for this webhook. Used for deduplication when merging multiple config files.                                                     |
+| `url`             | Yes      | HTTPS endpoint to call. Plain HTTP is accepted for in-cluster or development use (see `insecure_skip_verify` below).                               |
+| `failure_policy`  | Yes      | `fail` (deny the request on webhook error) or `ignore` (allow through on error).                                                                   |
+| `timeout`         | No       | Maximum wait time for a response. Accepts duration strings like `5s` or `30s`. Minimum: `1s`, maximum: `30s`. Default: `10s`.                      |
+| `tls_config`      | No       | TLS options for the webhook HTTP client (see below).                                                                                               |
+| `hmac_secret_ref` | No       | Environment variable name containing an HMAC secret for payload signing. **Not yet implemented** - accepted in config but currently has no effect. |
 
 ### TLS configuration
 
@@ -209,8 +209,9 @@ unchanged, return an allow response with no patch:
 ```
 
 To modify the request, include a `patch_type` and a `patch` containing
-[JSON Patch](https://jsonpatch.com/) operations that will be applied to the
-`mcp_request`:
+[JSON Patch](https://jsonpatch.com/) operations. All patch paths must be
+prefixed with `/mcp_request/` because the middleware wraps the MCP body in an
+envelope before applying patches:
 
 ```json
 {
@@ -219,7 +220,11 @@ To modify the request, include a `patch_type` and a `patch` containing
   "allowed": true,
   "patch_type": "json_patch",
   "patch": [
-    { "op": "add", "path": "/params/context", "value": "injected-by-webhook" }
+    {
+      "op": "add",
+      "path": "/mcp_request/params/context",
+      "value": "injected-by-webhook"
+    }
   ]
 }
 ```
