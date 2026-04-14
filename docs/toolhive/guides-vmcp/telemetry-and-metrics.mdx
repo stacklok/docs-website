@@ -22,7 +22,75 @@ metrics, see the [observability overview](../concepts/observability.mdx).
 
 ## Enable telemetry
 
-Configure telemetry in the VirtualMCPServer resource using the
+There are two ways to configure telemetry for a VirtualMCPServer:
+
+- **Shared config reference (recommended)**: Reference a shared
+  MCPTelemetryConfig resource using `spec.telemetryConfigRef`. This enables
+  reuse across multiple resources, Kubernetes-native secret references for OTLP
+  auth headers, CA bundle ConfigMap references, and per-server `serviceName`
+  overrides.
+- **Inline config**: Define telemetry settings directly in
+  `spec.config.telemetry`. This approach is deprecated in favor of the shared
+  config reference.
+
+:::warning
+
+You cannot use both `spec.telemetryConfigRef` and `spec.config.telemetry` on the
+same VirtualMCPServer. CEL validation enforces mutual exclusivity.
+
+:::
+
+### Shared telemetry config reference (recommended)
+
+Create a shared MCPTelemetryConfig resource, then reference it from your
+VirtualMCPServer:
+
+```yaml title="telemetry-config.yaml"
+apiVersion: toolhive.stacklok.com/v1alpha1
+kind: MCPTelemetryConfig
+metadata:
+  name: shared-otel
+  namespace: toolhive-system
+spec:
+  endpoint: https://otel-collector.monitoring:4318
+  serviceName: my-vmcp
+  tracingEnabled: true
+  metricsEnabled: true
+  samplingRate: '0.05'
+```
+
+```yaml title="virtualmcpserver.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: my-vmcp
+  namespace: toolhive-system
+spec:
+  groupRef:
+    name: my-group
+  # highlight-start
+  telemetryConfigRef:
+    name: shared-otel
+  # highlight-end
+  incomingAuth:
+    type: anonymous
+```
+
+When you update the MCPTelemetryConfig resource, the operator automatically
+detects the change via `TelemetryConfigHash` in the status and triggers a
+rolling update of affected VirtualMCPServer deployments.
+
+### Inline telemetry config (deprecated)
+
+:::warning
+
+Inline telemetry configuration via `spec.config.telemetry` is deprecated. Use
+`spec.telemetryConfigRef` instead for Kubernetes-native secret references and
+shared configuration across resources.
+
+:::
+
+Configure telemetry directly in the VirtualMCPServer resource using the
 [`spec.config.telemetry` field](../reference/crd-spec.md#toolhivestacklokdevtelemetry):
 
 ```yaml
@@ -32,8 +100,9 @@ metadata:
   name: my-vmcp
   namespace: toolhive-system
 spec:
+  groupRef:
+    name: my-group
   config:
-    groupRef: my-group
     # highlight-start
     telemetry:
       endpoint: 'otel-collector:4318'

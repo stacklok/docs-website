@@ -1,0 +1,123 @@
+---
+title:
+  Stateless remote servers, shared telemetry config, and expanded skills support
+sidebar_label: 'Apr 14: Stateless servers, telemetry config, and skills'
+description:
+  ToolHive v0.20.0 adds stateless streamable-HTTP remote server support,
+  non-standard OAuth scope parameters, shared telemetry config references for
+  vMCP, a breaking GroupRef struct change across all CRDs, new MCP clients, and
+  expanded skills support for 12+ AI coding agents.
+---
+
+ToolHive v0.20.0 introduces stateless remote server support for POST-only MCP
+endpoints, shared telemetry configuration for vMCP, non-standard OAuth scope
+parameter handling, and expands skills support to over a dozen AI coding agents.
+This release also includes a breaking change to the `groupRef` field format
+across all CRD types.
+
+{/* truncate */}
+
+## Breaking change: GroupRef struct format
+
+The `groupRef` field on MCPServer, MCPRemoteProxy, MCPServerEntry, and
+VirtualMCPServer CRDs changed from a bare string to a typed struct:
+
+```yaml
+# Before (v0.19.0)
+groupRef: my-group
+
+# After (v0.20.0)
+groupRef:
+  name: my-group
+```
+
+Existing resources with the old format will fail validation after upgrading. See
+the
+[v0.20.0 release notes](https://github.com/stacklok/toolhive/releases/tag/v0.20.0)
+for the full migration guide.
+
+For VirtualMCPServer, `spec.config.groupRef` is deprecated in favor of the
+top-level `spec.groupRef` struct field. The deprecated path still works but
+should be migrated.
+
+## Stateless streamable-HTTP remote servers
+
+ToolHive now supports proxying MCP servers that only accept POST requests and
+don't use SSE streams. The new `--stateless` flag configures the proxy to block
+GET, HEAD, and DELETE requests at the proxy layer and use POST-based JSON-RPC
+pings for health checks.
+
+```bash
+thv run https://example.com/mcp --name my-server --transport streamable-http --stateless
+```
+
+See
+[Run remote MCP servers](/toolhive/guides-cli/run-mcp-servers#stateless-remote-servers)
+for details.
+
+## Non-standard OAuth scope parameter support
+
+Some OAuth providers like Slack use non-standard query parameter names for
+scopes in the authorization URL. The new `--remote-auth-scope-param-name` flag
+lets you override the parameter name:
+
+```bash
+thv run https://mcp.slack.com/mcp \
+  --name slack \
+  --transport streamable-http \
+  --remote-auth-scope-param-name user_scope
+```
+
+See
+[OAuth scopes and parameters](/toolhive/guides-cli/run-mcp-servers#non-standard-oauth-scope-parameter-name)
+for the full example.
+
+## Shared telemetry config for vMCP
+
+VirtualMCPServer now supports `spec.telemetryConfigRef` to reference shared
+MCPTelemetryConfig resources, consistent with MCPServer and MCPRemoteProxy. This
+enables Kubernetes-native secret references for OTLP auth headers, CA bundle
+ConfigMap references, and automatic rolling updates when the config changes.
+Inline `spec.config.telemetry` is deprecated in favor of this approach.
+
+See
+[Telemetry and metrics](/toolhive/guides-vmcp/telemetry-and-metrics#shared-telemetry-config-reference-recommended)
+for configuration details.
+
+## New MCP clients and expanded skills support
+
+Two new MCP clients are supported: **Kimi Code CLI** and **Factory.ai (Droid)**.
+
+Skills support has been expanded to 12+ additional AI coding agents including
+GitHub Copilot (VS Code and Insiders), Goose, Gemini CLI, Sourcegraph Amp CLI,
+Kiro, Cline, Roo Code, Windsurf, Mistral Vibe, Trae, and Google Antigravity. See
+the [client compatibility table](/toolhive/reference/client-compatibility) for
+the full list.
+
+## Bug fixes
+
+- **VirtualMCPServer token validation**: VirtualMCPServer no longer rejects
+  tokens from its own embedded auth server when clients omit the optional RFC
+  8707 `resource` parameter.
+- **Private IP field separation**: `protectedResourceAllowPrivateIP` and
+  `jwksAllowPrivateIP` are now independent fields. Previously,
+  `jwksAllowPrivateIP` unintentionally also enabled private IPs for the
+  protected resource endpoint.
+- **Skill install deduplication**: Installing skills no longer fails when
+  multiple clients share the same directory (e.g., VS Code and VS Code
+  Insiders).
+- **Health check timeout**: The health check ping timeout is no longer silently
+  capped at 5 seconds.
+
+## Getting started
+
+For detailed release notes, check the project repositories:
+
+- [ToolHive Runtimes](https://github.com/stacklok/toolhive/releases) (CLI and
+  Kubernetes Operator)
+- [ToolHive Desktop UI](https://github.com/stacklok/toolhive-studio/releases)
+- [ToolHive Cloud UI](https://github.com/stacklok/toolhive-cloud-ui/releases)
+- [ToolHive Registry Server](https://github.com/stacklok/toolhive-registry-server/releases)
+
+You can find all ToolHive documentation on the
+[Stacklok documentation site](/toolhive).
