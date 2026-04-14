@@ -42,21 +42,35 @@ same VirtualMCPServer. CEL validation enforces mutual exclusivity.
 
 ### Shared telemetry config reference (recommended)
 
+:::info
+
+`spec.telemetryConfigRef` on VirtualMCPServer is a v0.20.0 feature. The
+[CRD reference](../reference/crd-spec.md) will be updated with the v0.20.0
+operator release.
+
+:::
+
 Create a shared MCPTelemetryConfig resource, then reference it from your
 VirtualMCPServer:
 
 ```yaml title="telemetry-config.yaml"
-apiVersion: toolhive.stacklok.com/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPTelemetryConfig
 metadata:
   name: shared-otel
   namespace: toolhive-system
 spec:
-  endpoint: https://otel-collector.monitoring:4318
-  serviceName: my-vmcp
-  tracingEnabled: true
-  metricsEnabled: true
-  samplingRate: '0.05'
+  openTelemetry:
+    enabled: true
+    endpoint: otel-collector.monitoring:4318
+    insecure: true
+    tracing:
+      enabled: true
+      samplingRate: '0.05'
+    metrics:
+      enabled: true
+  prometheus:
+    enabled: true
 ```
 
 ```yaml title="virtualmcpserver.yaml"
@@ -71,14 +85,19 @@ spec:
   # highlight-start
   telemetryConfigRef:
     name: shared-otel
+    serviceName: my-vmcp
   # highlight-end
   incomingAuth:
     type: anonymous
 ```
 
-When you update the MCPTelemetryConfig resource, the operator automatically
-detects the change via `TelemetryConfigHash` in the status and triggers a
-rolling update of affected VirtualMCPServer deployments.
+The `serviceName` field on `telemetryConfigRef` overrides the telemetry service
+name for this specific VirtualMCPServer, giving it a distinct identity in your
+observability backend. If omitted, it defaults to the server name with a `thv-`
+prefix.
+
+When you update the MCPTelemetryConfig resource, the operator detects the change
+and triggers a rolling update of affected deployments.
 
 ### Inline telemetry config (deprecated)
 
