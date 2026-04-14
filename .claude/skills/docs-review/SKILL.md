@@ -65,6 +65,7 @@ Watch for these telltale signs of AI-generated docs that need human intervention
 | Repetitive content | Same info in multiple sections | Deduplicate; single source of truth |
 | Over-explaining | Verbose descriptions of obvious things | Trust the reader; cut aggressively |
 | Hedging language | "may," "might," "could potentially" | Be direct or remove |
+| Em/en dashes | `—` or `–` used as inline separators | Rephrase naturally: use commas, split sentences, or restructure. Use spaced hyphens (`-`) only in list-style contexts |
 | Hedged lists | "such as," "including," "clients include" when listing supported items | Be definitive: state the full list, or link to a canonical reference |
 | Placeholder examples | `my-skill`, `example-org`, `my-app` instead of real values | Use real, working examples from the actual product |
 | Features without context | Introduces a flag/option without explaining why a reader would use it | Explain the user benefit and how it connects to concepts the reader already knows |
