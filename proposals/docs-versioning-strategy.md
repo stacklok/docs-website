@@ -315,3 +315,11 @@ copy of the docs directory.
   it be gated behind authentication?~~ **Decision: no gating.** All
   documentation, including Enterprise-specific content, is public.
   No plans for gated material on the docs site.
+- **Version persistence across non-docs pages:** Docusaurus version
+  context is purely URL-based. When an Enterprise user navigates to
+  a non-docs page (blog, external link) and returns, their version
+  resets to Latest (OSS). A localStorage or cookie-based solution
+  could remember the last-viewed version and restore it on return.
+  The version dropdown is hidden on non-docs pages (e.g., blog) via
+  CSS to avoid confusion, but the context loss on return is still a
+  UX papercut.
