@@ -29,24 +29,30 @@ fi
 # Check cluster connectivity
 echo ""
 echo "--- Kubernetes cluster ---"
+CLUSTER_REACHABLE=false
 if kubectl cluster-info &>/dev/null; then
     CONTEXT=$(kubectl config current-context 2>/dev/null || echo "unknown")
     echo -e "${GREEN}[OK]${NC} Cluster reachable (context: $CONTEXT)"
+    CLUSTER_REACHABLE=true
 else
     echo -e "${RED}[MISSING]${NC} No Kubernetes cluster reachable"
     ERRORS=$((ERRORS + 1))
 fi
 
-# Check ToolHive CRDs installed
+# Check ToolHive CRDs installed (only if cluster is reachable)
 echo ""
 echo "--- ToolHive CRDs ---"
-CRD_COUNT=$(kubectl get crd 2>/dev/null | grep -c toolhive.stacklok.dev || true)
-if [ "$CRD_COUNT" -gt 0 ]; then
-    echo -e "${GREEN}[OK]${NC} $CRD_COUNT ToolHive CRDs installed"
+if [ "$CLUSTER_REACHABLE" = true ]; then
+    CRD_COUNT=$(kubectl get crd 2>/dev/null | grep -c toolhive.stacklok.dev || true)
+    if [ "$CRD_COUNT" -gt 0 ]; then
+        echo -e "${GREEN}[OK]${NC} $CRD_COUNT ToolHive CRDs installed"
+    else
+        echo -e "${RED}[MISSING]${NC} No ToolHive CRDs found"
+        echo "       Install with: helm upgrade --install toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds -n toolhive-system --create-namespace"
+        ERRORS=$((ERRORS + 1))
+    fi
 else
-    echo -e "${RED}[MISSING]${NC} No ToolHive CRDs found"
-    echo "       Install with: helm upgrade --install toolhive-operator-crds oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds -n toolhive-system --create-namespace"
-    ERRORS=$((ERRORS + 1))
+    echo -e "${YELLOW}[SKIPPED]${NC} Cannot check CRDs (cluster unreachable)"
 fi
 
 # Check python3 for extraction script

@@ -30,7 +30,7 @@ import sys
 
 def extract_yaml_blocks(filepath):
     """Extract YAML blocks containing toolhive apiVersion from an mdx file."""
-    with open(filepath) as f:
+    with open(filepath, encoding="utf-8") as f:
         content = f.read()
 
     # Match ```yaml or ```yml code blocks (with optional metadata after yaml/yml)
@@ -77,13 +77,13 @@ def main():
 
     filepath = args[0]
     output_dir = args[1]
-    basename = os.path.basename(filepath).replace(".mdx", "")
+    basename, _ = os.path.splitext(os.path.basename(filepath))
 
     blocks = extract_yaml_blocks(filepath)
 
     for i, block in enumerate(blocks):
         outfile = os.path.join(output_dir, f"{prefix}{basename}_{i}.yaml")
-        with open(outfile, "w") as f:
+        with open(outfile, "w", encoding="utf-8") as f:
             f.write(block + "\n")
 
     print(f"  {prefix}{basename}: {len(blocks)} blocks")
