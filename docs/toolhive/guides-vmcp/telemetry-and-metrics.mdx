@@ -22,43 +22,68 @@ metrics, see the [observability overview](../concepts/observability.mdx).
 
 ## Enable telemetry
 
-Configure telemetry in the VirtualMCPServer resource using the
-[`spec.config.telemetry` field](../reference/crd-spec.md#toolhivestacklokdevtelemetry):
+Configure telemetry by creating a shared MCPTelemetryConfig resource, then
+referencing it from your VirtualMCPServer. This enables reuse across multiple
+resources, Kubernetes-native secret references for OTLP auth headers, CA bundle
+ConfigMap references, and per-server `serviceName` overrides.
 
-```yaml
+```yaml title="telemetry-config.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPTelemetryConfig
+metadata:
+  name: shared-otel
+  namespace: toolhive-system
+spec:
+  openTelemetry:
+    enabled: true
+    endpoint: otel-collector.monitoring:4318
+    insecure: true
+    tracing:
+      enabled: true
+      samplingRate: '0.05'
+    metrics:
+      enabled: true
+  prometheus:
+    enabled: true
+```
+
+```yaml title="virtualmcpserver.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: VirtualMCPServer
 metadata:
   name: my-vmcp
   namespace: toolhive-system
 spec:
-  config:
-    groupRef: my-group
-    # highlight-start
-    telemetry:
-      endpoint: 'otel-collector:4318'
-      serviceName: 'my-vmcp'
-      insecure: true
-      tracingEnabled: true
-      samplingRate: '0.05'
-      metricsEnabled: true
-      enablePrometheusMetricsPath: true
-    # highlight-end
+  groupRef:
+    name: my-group
+  # highlight-start
+  telemetryConfigRef:
+    name: shared-otel
+    serviceName: my-vmcp
+  # highlight-end
   incomingAuth:
     type: anonymous
 ```
 
-### Configuration options
+The `serviceName` field on `telemetryConfigRef` overrides the telemetry service
+name for this specific VirtualMCPServer, giving it a distinct identity in your
+observability backend. If omitted, it defaults to the server name with a `thv-`
+prefix.
 
-| Field                         | Description                             | Default               |
-| ----------------------------- | --------------------------------------- | --------------------- |
-| `endpoint`                    | OTLP collector endpoint (hostname:port) | -                     |
-| `serviceName`                 | Service name in traces and metrics      | VirtualMCPServer name |
-| `tracingEnabled`              | Enable tracing                          | `false`               |
-| `metricsEnabled`              | Enable OTLP metrics export              | `false`               |
-| `samplingRate`                | Trace sampling rate (0.0-1.0)           | `"0.05"`              |
-| `insecure`                    | Use HTTP instead of HTTPS               | `false`               |
-| `enablePrometheusMetricsPath` | Expose `/metrics` endpoint              | `false`               |
+When you update the MCPTelemetryConfig resource, the operator detects the change
+and triggers a rolling update of affected deployments.
+
+### MCPTelemetryConfig fields
+
+| Field                                     | Description                             | Default  |
+| ----------------------------------------- | --------------------------------------- | -------- |
+| `spec.openTelemetry.enabled`              | Enable OpenTelemetry export             | `false`  |
+| `spec.openTelemetry.endpoint`             | OTLP collector endpoint (hostname:port) | -        |
+| `spec.openTelemetry.insecure`             | Use HTTP instead of HTTPS               | `false`  |
+| `spec.openTelemetry.tracing.enabled`      | Enable tracing                          | `false`  |
+| `spec.openTelemetry.tracing.samplingRate` | Trace sampling rate (0.0-1.0)           | `"0.05"` |
+| `spec.openTelemetry.metrics.enabled`      | Enable OTLP metrics export              | `false`  |
+| `spec.prometheus.enabled`                 | Expose `/metrics` endpoint              | `false`  |
 
 ## Export to observability backends
 
@@ -92,26 +117,32 @@ service:
       exporters: [otlp/jaeger]
 ```
 
-Then configure vMCP to send telemetry to the collector:
+Then create an MCPTelemetryConfig resource that points to the collector:
 
 ```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPTelemetryConfig
+metadata:
+  name: jaeger-otel
+  namespace: toolhive-system
 spec:
-  config:
-    telemetry:
-      endpoint: 'otel-collector:4318'
-      serviceName: 'production-vmcp'
-      tracingEnabled: true
-      metricsEnabled: true
-      insecure: true
+  openTelemetry:
+    enabled: true
+    endpoint: otel-collector:4318
+    insecure: true
+    tracing:
+      enabled: true
+    metrics:
+      enabled: true
 ```
 
 ## Metrics collection
 
 vMCP supports two methods for collecting metrics:
 
-- **Push via OpenTelemetry**: Set `metricsEnabled: true` to push metrics to your
-  OTel Collector via OTLP
-- **Pull via Prometheus**: Set `enablePrometheusMetricsPath: true` to expose a
+- **Push via OpenTelemetry**: Set `spec.openTelemetry.metrics.enabled: true` to
+  push metrics to your OTel Collector via OTLP
+- **Pull via Prometheus**: Set `spec.prometheus.enabled: true` to expose a
   `/metrics` endpoint on the vMCP service port (4483) for Prometheus to scrape
 
 ### Backend metrics
