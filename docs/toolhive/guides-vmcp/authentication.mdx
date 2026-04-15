@@ -427,7 +427,8 @@ at `authed_user.access_token`). Add a `tokenResponseMapping` block to the
 ### Incoming auth with the embedded auth server
 
 When using the embedded auth server, configure `incomingAuth` to validate the
-JWTs it issues. The `issuer` must match `authServerConfig.issuer`. Note that
+JWTs it issues. Create an `MCPOIDCConfig` resource whose `issuer` matches
+`authServerConfig.issuer`, then reference it with `oidcConfigRef`. Note that
 `jwksAllowPrivateIP: true` is no longer needed when using the embedded auth
 server because JWKS retrieval is done in-process.
 
@@ -435,17 +436,12 @@ server because JWKS retrieval is done in-process.
 spec:
   incomingAuth:
     type: oidc
-    resourceUrl: https://mcp.example.com/mcp
-    oidcConfig:
-      type: inline
-      inline:
-        issuer: https://auth.example.com
-        audience: https://mcp.example.com/mcp
+    # highlight-start
+    oidcConfigRef:
+      name: my-oidc-config
+      audience: https://mcp.example.com/mcp
+    # highlight-end
 ```
-
-The `resourceUrl` is the externally reachable URL of the MCP endpoint. MCP
-clients use this for [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728)
-protected resource metadata discovery to find the authorization server.
 
 ### Session storage
 
@@ -468,7 +464,7 @@ provider credentials following the steps in
 You need: `auth-signing-key`, `auth-hmac-key`, `github-client-secret`, and
 `google-client-secret`.
 
-**Step 1:** Create an MCPGroup and deploy the backend MCP server:
+**Step 1:** Create an MCPGroup, OIDC config, and deploy the backend MCP server:
 
 ```yaml title="backends.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
@@ -476,6 +472,18 @@ kind: MCPGroup
 metadata:
   name: my-backends
   namespace: toolhive-system
+---
+# highlight-start
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPOIDCConfig
+metadata:
+  name: my-oidc-config
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: https://auth.example.com
+# highlight-end
 ---
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
@@ -485,7 +493,10 @@ metadata:
 spec:
   image: ghcr.io/github/github-mcp-server
   transport: streamable-http
-  groupRef: my-backends
+  # highlight-start
+  groupRef:
+    name: my-backends
+  # highlight-end
 ```
 
 **Step 2:** Create the upstream token injection config:
@@ -567,12 +578,11 @@ spec:
   # highlight-end
   incomingAuth:
     type: oidc
-    resourceUrl: https://mcp.example.com/mcp
-    oidcConfig:
-      type: inline
-      inline:
-        issuer: https://auth.example.com
-        audience: https://mcp.example.com/mcp
+    # highlight-start
+    oidcConfigRef:
+      name: my-oidc-config
+      audience: https://mcp.example.com/mcp
+    # highlight-end
   outgoingAuth:
     source: inline
     backends:
