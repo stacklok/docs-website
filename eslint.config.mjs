@@ -45,6 +45,7 @@ export default [
         Tabs: 'readonly',
         TabItem: 'readonly',
         MCPMetadata: 'readonly',
+        EnterpriseBadge: 'readonly',
       },
     },
   },
