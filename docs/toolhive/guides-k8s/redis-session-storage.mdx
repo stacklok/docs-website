@@ -1,23 +1,22 @@
 ---
 title: Redis session storage
 description:
-  How to deploy Redis Sentinel with persistent storage for the ToolHive embedded
-  authorization server, and a standalone Redis instance for horizontal scaling
-  of MCPServer and VirtualMCPServer.
+  Deploy Redis Sentinel for the ToolHive embedded auth server, or a standalone
+  Redis instance for MCPServer and VirtualMCPServer horizontal scaling.
 ---
 
-ToolHive uses Redis in several places. Two of them use different configuration
-models and are covered on this page:
+ToolHive uses Redis for several purposes. This page covers two that require
+different configuration:
 
-- **Embedded authorization server sessions** — stores upstream tokens so users
+- **Embedded authorization server sessions** - stores upstream tokens so users
   don't need to re-authenticate after pod restarts. Uses Redis Sentinel with
   ACL-based authentication and a fixed `thv:auth:*` key pattern. See
   [Embedded auth server session storage](#embedded-auth-server-session-storage).
 
-- **MCPServer and VirtualMCPServer horizontal scaling** — shares MCP session
+- **MCPServer and VirtualMCPServer horizontal scaling** - shares MCP session
   state across pod replicas so any pod can handle any request. Uses a standalone
-  Redis instance with a simple password. Session data is not persisted to disk;
-  if the Redis pod restarts, active sessions are lost and clients must
+  Redis instance with a simple password. Session data is not persisted to disk.
+  If the Redis pod restarts, active sessions are lost and clients must
   reconnect. See
   [Horizontal scaling session storage](#horizontal-scaling-session-storage).
 
@@ -25,7 +24,7 @@ Redis is also required for [rate limiting](./rate-limiting.mdx), which stores
 token bucket counters independently of session data.
 
 You can reuse the same Redis instance for all three purposes by using different
-`keyPrefix` values or different databases — see
+`keyPrefix` values or different databases - see
 [Sharing a Redis instance](#sharing-a-redis-instance) for details.
 
 ---
@@ -631,7 +630,7 @@ session storage is working correctly.
 When you run multiple replicas of an `MCPServer` proxy runner or a
 `VirtualMCPServer`, MCP sessions must be shared across pods so that any replica
 can handle any client request. ToolHive stores this session state in Redis using
-a simple password — no ACL user, no Sentinel.
+a simple password. No ACL user configuration or Sentinel is required.
 
 ### Deploy a standalone Redis instance
 
@@ -641,9 +640,10 @@ across replicas during normal operation. The manifests below create Redis in the
 
 :::note[Session durability]
 
-This deployment keeps session state in memory only. If the Redis pod restarts or
-is rescheduled, all active sessions are lost and MCP clients must reconnect. For
-production deployments where session continuity across Redis restarts is
+This deployment uses ephemeral storage with no PVC. If the Redis pod is
+rescheduled to another node, all active sessions are lost and MCP clients must
+reconnect. Sessions may also be lost on pod restart depending on Redis
+persistence settings. For production deployments where session continuity is
 required, replace the `Deployment` with a `StatefulSet` and add a
 `volumeClaimTemplates` entry to persist Redis data to a PVC.
 
@@ -800,8 +800,8 @@ successfully.
 kubectl describe mcpserver my-server -n toolhive-system
 ```
 
-When Redis is properly configured, the `SessionStorageWarning` condition is
-absent or set to `False`:
+When Redis is properly configured, the `SessionStorageWarning` condition is set
+to `False`:
 
 ```
 Conditions:
@@ -826,9 +826,9 @@ kubectl logs -n toolhive-system \
 
 Scale down to one replica and connect an MCP client to establish a session. Then
 scale back up and delete the original pod. Deleting the pod terminates the TCP
-connection, so your client will need to reconnect — but if Redis session storage
-is working, the session state is preserved in Redis and the client can resume
-making requests without reinitializing.
+connection, so your client will need to reconnect. If Redis session storage is
+working, the session state is preserved and the client can resume making
+requests without reinitializing.
 
 :::note
 
@@ -852,7 +852,9 @@ kubectl delete pod -n toolhive-system \
 # Reconnect your MCP client — it should resume the session without reinitializing
 ```
 
-### Sharing a Redis instance
+---
+
+## Sharing a Redis instance
 
 You can reuse the same Redis instance for embedded auth server sessions,
 MCPServer scaling, and VirtualMCPServer scaling by using different `keyPrefix`
@@ -871,17 +873,17 @@ your scaling workloads:
 | MCPServer scaling        | `mcp-sessions`                      |
 | VirtualMCPServer scaling | `vmcp-sessions`                     |
 
-Alternatively, use separate `db` values (Redis databases 0–15) to provide hard
+Alternatively, use separate `db` values (Redis databases 0-15) to provide hard
 namespace isolation without requiring separate Redis instances.
 
-### ACL configuration for a shared instance
+#### ACL configuration for a shared instance
 
 The two use cases authenticate differently and require separate ACL entries:
 
 - The **embedded auth server** connects as the `toolhive-auth` ACL user,
   restricted to the `~thv:auth:*` key pattern.
 - The **scaling use case** (`SessionStorageConfig`) only supports a
-  `passwordRef` — no username field — so it always authenticates as the
+  `passwordRef` with no username field, so it always authenticates as the
   **default** Redis user.
 
 To satisfy both on one instance, enable the default user with a password and
@@ -896,11 +898,23 @@ Replace `YOUR_SCALING_PASSWORD` with the password you put in the
 `redis-password` Secret, and adjust the key patterns to match your `keyPrefix`
 values.
 
-:::note
+:::warning
 
-`SessionStorageConfig` does not support Sentinel — it uses a direct Redis
-address. Point `sessionStorage.address` at the Redis master pod directly rather
-than the Sentinel service:
+`SessionStorageConfig` does not support Sentinel. It requires a direct Redis
+address and cannot follow a Sentinel-managed master if failover promotes a new
+master. If your Sentinel cluster has replicas and failover enabled, hardcoding a
+pod DNS (`redis-0.redis...`) will break session storage if that pod is no longer
+the master.
+
+For this reason, the recommended approach is to run a **separate standalone
+Redis instance** (the `Deployment` from the
+[scaling section](#deploy-a-standalone-redis-instance)) for scaling workloads,
+rather than sharing the Sentinel instance. If you do share the instance, disable
+Redis replication so there is only ever one master and Sentinel cannot trigger
+failover.
+
+If you share the Sentinel instance with replication disabled, point
+`sessionStorage.address` at the master pod directly:
 
 ```yaml
 sessionStorage:
