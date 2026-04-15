@@ -158,6 +158,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/token-exchange-k8s',
         'toolhive/guides-k8s/telemetry-and-metrics',
         'toolhive/guides-k8s/logging',
+        'toolhive/guides-k8s/migrate-to-v1beta1',
         'toolhive/reference/crd-spec',
       ],
     },

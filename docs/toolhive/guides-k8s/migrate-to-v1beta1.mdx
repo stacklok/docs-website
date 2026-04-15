@@ -1,0 +1,537 @@
+---
+title: Migrate to v1beta1
+description:
+  Breaking changes and migration steps for the CRD API stabilization track from
+  v0.15.0 through v0.20.0
+---
+
+The ToolHive Kubernetes Operator has undergone a series of CRD API changes in
+preparation for the `v1beta1` API version promotion. These changes span releases
+v0.15.0 through v0.20.0, each introducing breaking changes that require manifest
+and tooling updates.
+
+This guide covers every breaking change in order, so you can start from
+whichever version you are currently running and work forward.
+
+## Change summary
+
+The table below lists every breaking CRD change across the stabilization track.
+Find your current version in the **Version** column and review everything from
+that point forward.
+
+| Version | Change                                                                                    | Affected resources                                                            | Impact                                                                                                                              |
+| ------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| v0.15.0 | [Deprecated fields removed](#removed-deprecated-crd-fields)                               | MCPServer, MCPRemoteProxy, VirtualMCPServer                                   | Manifests using `spec.port`, `spec.targetPort`, inline `spec.tools`, plaintext `clientSecret`, or `thvCABundlePath` fail validation |
+| v0.15.0 | [`referencingServers` replaced](#referencingservers-replaced-with-referencingworkloads)   | MCPOIDCConfig, MCPToolConfig, MCPExternalAuthConfig, MCPTelemetryConfig       | Status field changed from `[]string` to structured `[]{kind, name}`                                                                 |
+| v0.15.0 | [Cedar policy scope expanded](#expanded-cedar-policy-enforcement)                         | All workloads with Cedar enabled                                              | Previously unchecked operations may now be denied                                                                                   |
+| v0.16.0 | [MCPOIDCConfig condition renamed](#mcpoidcconfig-condition-type-renamed)                  | MCPOIDCConfig                                                                 | `Ready` condition renamed to `Valid`                                                                                                |
+| v0.16.0 | [Integer fields narrowed to `int32`](#crd-integer-fields-changed-to-int32)                | VirtualMCPServerStatus, MCPGroupStatus, MCPRegistryDatabaseConfig, SyncStatus | Typed clients must be regenerated                                                                                                   |
+| v0.16.0 | [SSA list-type annotations added](#server-side-apply-list-type-annotations)               | All CRDs (approx. 40 slice fields)                                            | Duplicate list keys rejected at admission                                                                                           |
+| v0.16.0 | [Helm `operator.env` type changed](#helm-operatorenv-type-changed)                        | Helm values                                                                   | Map syntax (`MY_VAR: value`) must become list syntax                                                                                |
+| v0.17.0 | [Phase value standardized to `Ready`](#phase-value-standardized-to-ready)                 | MCPServer, EmbeddingServer, MCPRegistry                                       | Scripts checking `.status.phase == "Running"` must update                                                                           |
+| v0.17.0 | [MCPRegistry spec restructured](#mcpregistry-spec-restructured)                           | MCPRegistry                                                                   | Flat `registries[]` replaced with `sources[]` / `registries[]` split                                                                |
+| v0.17.0 | [MCPRegistry status simplified](#mcpregistry-status-simplified)                           | MCPRegistry                                                                   | `syncStatus` / `apiStatus` replaced with `phase` + `Ready` condition                                                                |
+| v0.18.0 | [MCPRegistry legacy fields removed](#mcpregistry-legacy-fields-removed)                   | MCPRegistry                                                                   | `configYAML` is now required; typed fields removed                                                                                  |
+| v0.19.0 | [`remoteURL` / `externalURL` renamed](#remoteurl--externalurl-renamed-to-camelcase)       | MCPRemoteProxy, MCPServerEntry                                                | JSON tags changed to camelCase; existing etcd data silently lost                                                                    |
+| v0.19.0 | [`enforceServers` removed](#enforceservers-removed)                                       | MCPRegistry                                                                   | Field removed from schema; manifests with it fail validation                                                                        |
+| v0.20.0 | [`groupRef` changed to typed struct](#groupref-changed-to-typed-struct)                   | MCPServer, MCPRemoteProxy, MCPServerEntry, VirtualMCPServer                   | Bare string `groupRef: name` must become `groupRef: { name: name }`                                                                 |
+| v0.20.0 | [`protectedResourceAllowPrivateIP` separated](#protectedresourceallowprivateip-separated) | VirtualMCPServer (OIDC config)                                                | Must be set explicitly; no longer inherited from `jwksAllowPrivateIP`                                                               |
+
+### Deprecations not yet removed
+
+These fields still work but will be removed at or after the `v1beta1` promotion.
+Migrate when convenient.
+
+| Deprecated field                            | Replacement                                    | Affected resources          | Deprecated in |
+| ------------------------------------------- | ---------------------------------------------- | --------------------------- | ------------- |
+| `spec.oidcConfig` (inline)                  | `spec.oidcConfigRef` (MCPOIDCConfig)           | MCPServer, VirtualMCPServer | v0.15.0       |
+| `spec.telemetry` (inline)                   | `spec.telemetryConfigRef` (MCPTelemetryConfig) | MCPServer                   | v0.15.0       |
+| `spec.telemetry` (inline)                   | `spec.telemetryConfigRef` (MCPTelemetryConfig) | MCPRemoteProxy              | v0.19.0       |
+| `backendAuthType: external_auth_config_ref` | `externalAuthConfigRef`                        | VirtualMCPServer            | v0.19.0       |
+| `spec.config.groupRef`                      | `spec.groupRef` (typed struct)                 | VirtualMCPServer            | v0.20.0       |
+| `spec.config.telemetry`                     | `spec.telemetryConfigRef`                      | VirtualMCPServer            | v0.20.0       |
+
+## General upgrade procedure
+
+For each version upgrade:
+
+1. **Back up existing resources** before applying CRD changes:
+
+   ```bash
+   kubectl get toolhive -A -o yaml > toolhive-backup.yaml
+   ```
+
+2. **Apply updated CRDs** with server-side apply:
+
+   ```bash
+   kubectl apply --server-side \
+     -f deploy/charts/toolhive-operator/files/crds/
+   ```
+
+3. **Update manifests** according to the version-specific instructions below.
+
+4. **Upgrade the operator** via Helm:
+
+   ```bash
+   helm upgrade toolhive-operator \
+     oci://ghcr.io/stacklok/toolhive/toolhive-operator \
+     -n toolhive-system -f your-values.yaml
+   ```
+
+5. **Validate** that resources reconcile correctly:
+
+   ```bash
+   kubectl get toolhive -A
+   ```
+
+## v0.15.0
+
+### Removed deprecated CRD fields
+
+Six deprecated fields have been removed from `MCPServer` and `MCPRemoteProxy`.
+Manifests using any of these fields fail validation after upgrading.
+
+| Removed field                            | Replacement                                                 | Resources                                   |
+| ---------------------------------------- | ----------------------------------------------------------- | ------------------------------------------- |
+| `spec.port`                              | `spec.proxyPort`                                            | MCPServer, MCPRemoteProxy                   |
+| `spec.targetPort`                        | `spec.mcpPort`                                              | MCPServer                                   |
+| `spec.tools` (inline ToolsFilter)        | `spec.toolConfigRef` referencing an MCPToolConfig           | MCPServer                                   |
+| `spec.oidcConfig.inline.clientSecret`    | `spec.oidcConfig.inline.clientSecretRef` (Secret reference) | MCPServer, MCPRemoteProxy, VirtualMCPServer |
+| `spec.oidcConfig.inline.thvCABundlePath` | `spec.oidcConfig.inline.caBundleRef` (ConfigMap reference)  | MCPServer, MCPRemoteProxy, VirtualMCPServer |
+
+**Port fields** - direct rename:
+
+```yaml
+# Before
+spec:
+  port: 9090
+  targetPort: 3000
+
+# After
+spec:
+  proxyPort: 9090
+  mcpPort: 3000
+```
+
+**Tools filter** - create a separate MCPToolConfig resource and reference it:
+
+```yaml
+# Before
+spec:
+  tools:
+    - name: allowed-tool
+
+# After (create the MCPToolConfig resource, then reference it)
+spec:
+  toolConfigRef:
+    name: my-tool-config
+```
+
+**Client secret** - move the plaintext value into a Kubernetes Secret:
+
+```yaml
+# Before
+spec:
+  oidcConfig:
+    inline:
+      clientSecret: my-secret-value
+
+# After
+spec:
+  oidcConfig:
+    inline:
+      clientSecretRef:
+        name: oidc-secret
+        key: client-secret
+```
+
+**CA bundle path** - store the certificate in a ConfigMap:
+
+```yaml
+# Before
+spec:
+  oidcConfig:
+    inline:
+      thvCABundlePath: /path/to/ca.crt
+
+# After
+spec:
+  oidcConfig:
+    inline:
+      caBundleRef:
+        configMapRef:
+          name: ca-bundle
+          key: ca.crt
+```
+
+### `referencingServers` replaced with `referencingWorkloads`
+
+The `status.referencingServers` field (a plain `[]string`) has been replaced
+with `status.referencingWorkloads` (an array of `{kind, name}` objects) on four
+shared configuration CRDs: MCPOIDCConfig, MCPToolConfig, MCPExternalAuthConfig,
+and MCPTelemetryConfig.
+
+```yaml
+# Before
+status:
+  referencingServers:
+    - "my-server"
+    - "my-other-server"
+
+# After
+status:
+  referencingWorkloads:
+    - kind: MCPServer
+      name: my-server
+    - kind: VirtualMCPServer
+      name: my-other-server
+```
+
+Update any scripts, monitoring, or tooling that reads
+`.status.referencingServers` to read `.status.referencingWorkloads[].name` (and
+optionally `.kind`).
+
+### Expanded Cedar policy enforcement
+
+Cedar authorization now covers optimizer meta-tools (`find_tool`, `call_tool`)
+and upstream IDP token claims. If you have Cedar policies enabled, review your
+policy sets - operations that were previously unchecked may now be denied.
+
+Specifically:
+
+- **Optimizer meta-tools**: `find_tool` and `call_tool` are now filtered and
+  authorized by Cedar. If your policies don't permit these tools, clients will
+  see zero tools when the optimizer is enabled.
+- **Upstream IDP claims**: Cedar policies can now evaluate claims from upstream
+  identity provider tokens (e.g., GitHub `login`, Okta `groups`). If the
+  upstream token is opaque (non-JWT), the authorizer denies the request.
+
+## v0.16.0
+
+### MCPOIDCConfig condition type renamed
+
+The status condition type on MCPOIDCConfig has been renamed from `Ready` to
+`Valid`, aligning it with MCPExternalAuthConfig, MCPTelemetryConfig, and
+MCPToolConfig.
+
+Update any automation, alerts, or scripts that watch this condition:
+
+```bash
+# Find references to the old condition name
+grep -r '"Ready"' --include="*.yaml" | grep -i oidc
+```
+
+Replace `type: Ready` with `type: Valid` on any MCPOIDCConfig status condition
+references.
+
+### CRD integer fields changed to `int32`
+
+Eight CRD fields previously typed as `int64` are now `int32`:
+
+| CRD                       | Fields                                 |
+| ------------------------- | -------------------------------------- |
+| VirtualMCPServerStatus    | `BackendCount`                         |
+| MCPGroupStatus            | `ServerCount`, `RemoteProxyCount`      |
+| MCPRegistryDatabaseConfig | `Port`, `MaxOpenConns`, `MaxIdleConns` |
+| SyncStatus                | `AttemptCount`, `ServerCount`          |
+
+**YAML manifests are not affected** - the values themselves are unchanged. If
+you have typed Go, Python, or other language clients generated from the previous
+CRD schema, regenerate them after applying the updated CRDs.
+
+### Server-side apply list-type annotations
+
+All CRD slice fields now carry `x-kubernetes-list-type` annotations, activating
+correct Server-Side Apply merge semantics. This affects approximately 40 slice
+fields across all 11 CRD types.
+
+If you use GitOps tools with server-side apply (Flux, Argo CD), this change
+enforces list-key uniqueness at admission. **Manifests with duplicate keys in
+list fields will be rejected.**
+
+Before upgrading, review your manifests for duplicate keys (e.g., two env
+entries with the same `name`).
+
+### Helm `operator.env` type changed
+
+The `operator.env` Helm value was changed from map syntax to list syntax:
+
+```yaml
+# Before (invalid)
+operator:
+  env:
+    MY_VAR: my-value
+
+# After (correct)
+operator:
+  env:
+    - name: MY_VAR
+      value: my-value
+```
+
+## v0.17.0
+
+### Phase value standardized to `Ready`
+
+MCPServer, EmbeddingServer, and MCPRegistry previously reported `Running` as
+their healthy phase value. All workload CRDs now consistently use `Ready`.
+
+Update any scripts, monitoring alerts, Helm hooks, or CI pipelines:
+
+```bash
+# Find references to the old phase value
+grep -rn '"Running"' --include="*.yaml" --include="*.sh"
+```
+
+Replace `.status.phase == "Running"` with `.status.phase == "Ready"`.
+
+### MCPRegistry spec restructured
+
+The MCPRegistry CRD spec has been restructured to align with the registry server
+v2 config format. The flat `registries[]` with inline source configs has been
+replaced with separate top-level `sources[]` and `registries[]` fields.
+
+Key changes:
+
+- PVC-based registry sources have been removed entirely.
+- Auto-injection of a default Kubernetes source has been removed - you must
+  explicitly declare all sources.
+- A new `configYAML` escape hatch is available as an alternative to the typed
+  fields.
+
+:::warning
+
+The typed spec fields (`sources`, `registries`, `databaseConfig`, `authConfig`,
+`telemetryConfig`) were deprecated in v0.17.0 and **removed in v0.18.0**. If you
+are migrating across multiple versions, skip directly to the
+[`configYAML` format required in v0.18.0](#mcpregistry-legacy-fields-removed).
+
+:::
+
+### MCPRegistry status simplified
+
+MCPRegistryStatus has been flattened from a three-phase model (`SyncStatus` +
+`APIStatus` + `DeriveOverallPhase`) to the standard Kubernetes workload pattern:
+`Phase` + `Ready` condition + `ReadyReplicas` + `URL`.
+
+If you read `.status.syncStatus` or `.status.apiStatus`, switch to
+`.status.phase` and `.status.conditions` (type `Ready`).
+`kubectl wait --for=condition=Ready` now works consistently for MCPRegistry.
+
+## v0.18.0
+
+### MCPRegistry legacy fields removed
+
+The `spec.configYAML` field is now required. The five legacy typed fields
+(`sources`, `registries`, `databaseConfig`, `authConfig`, `telemetryConfig`)
+have been removed from the schema.
+
+```yaml
+# Before (legacy typed fields)
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPRegistry
+metadata:
+  name: my-registry
+spec:
+  sources:
+    - name: production
+      format: toolhive
+      configMapRef:
+        name: prod-registry
+        key: registry.json
+      syncPolicy:
+        interval: "1h"
+  registries:
+    - name: default
+      sources: ["production"]
+  databaseConfig:
+    host: postgres
+    port: 5432
+    user: db_app
+    database: registry
+    sslMode: require
+    dbAppUserPasswordSecretRef:
+      name: db-credentials
+      key: app_password
+  authConfig:
+    mode: anonymous
+
+# After (configYAML)
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPRegistry
+metadata:
+  name: my-registry
+spec:
+  configYAML: |
+    sources:
+      - name: production
+        format: toolhive
+        file:
+          path: /config/registry/production/registry.json
+        syncPolicy:
+          interval: 1h
+    registries:
+      - name: default
+        sources: ["production"]
+    database:
+      host: postgres
+      port: 5432
+      user: db_app
+      database: registry
+      sslMode: require
+    auth:
+      mode: anonymous
+  volumes:
+    - name: registry-data
+      configMap:
+        name: prod-registry
+        items:
+          - key: registry.json
+            path: registry.json
+  volumeMounts:
+    - name: registry-data
+      mountPath: /config/registry/production
+      readOnly: true
+  pgpassSecretRef:
+    name: my-pgpass-secret
+    key: .pgpass
+```
+
+Migration steps:
+
+1. Add `spec.configYAML` with your registry server config in the registry
+   server's native `config.yaml` format.
+2. Move ConfigMap, PVC, and Secret references to `spec.volumes` and
+   `spec.volumeMounts` with explicit mount paths matching the file paths in
+   `configYAML`.
+3. If using `databaseConfig`, create a pgpass-formatted Secret and reference it
+   via `spec.pgpassSecretRef`. The operator handles the init container and file
+   permissions automatically.
+4. Do not inline credentials in `configYAML` - it is stored in a ConfigMap, not
+   a Secret. Mount actual secrets using `volumes`/`volumeMounts`.
+5. Remove the legacy typed fields from your manifests.
+
+## v0.19.0
+
+### `remoteURL` / `externalURL` renamed to camelCase
+
+The JSON tags for URL fields on MCPRemoteProxy and MCPServerEntry have been
+renamed to standard camelCase.
+
+| CRD                      | Old field     | New field     |
+| ------------------------ | ------------- | ------------- |
+| MCPRemoteProxy `.spec`   | `remoteURL`   | `remoteUrl`   |
+| MCPRemoteProxy `.status` | `externalURL` | `externalUrl` |
+| MCPServerEntry `.spec`   | `remoteURL`   | `remoteUrl`   |
+
+:::danger[Risk: silent data loss]
+
+This is a high-risk change. After the CRD upgrade, existing resources stored in
+etcd still contain the old `remoteURL` key. The controller deserializes this as
+an empty string, causing reconciliation to fail. You **must** re-apply all
+affected resources after updating the CRD.
+
+:::
+
+Migration steps:
+
+1. Update the CRD manifests.
+2. Find and replace `remoteURL:` with `remoteUrl:` in all MCPRemoteProxy and
+   MCPServerEntry manifests.
+3. **Re-apply every affected resource** to rewrite the etcd data. Waiting for
+   reconciliation alone will not help.
+4. Update any JSONPath queries or tooling (e.g.,
+   `kubectl get mcprp -o jsonpath='{.spec.remoteUrl}'`).
+
+```yaml
+# Before
+spec:
+  remoteURL: https://mcp.example.com
+
+# After
+spec:
+  remoteUrl: https://mcp.example.com
+```
+
+### `enforceServers` removed
+
+The `enforceServers` field has been removed from the MCPRegistry schema.
+Manifests that include it will fail validation.
+
+This feature was non-functional since v0.6.0, so removing it has no behavioral
+effect. Delete `enforceServers` from all MCPRegistry manifests.
+
+## v0.20.0
+
+### `groupRef` changed to typed struct
+
+The `groupRef` field on MCPServer, MCPRemoteProxy, MCPServerEntry, and
+VirtualMCPServer has changed from a bare string to a typed struct.
+
+```yaml
+# Before
+spec:
+  groupRef: my-group
+
+# After
+spec:
+  groupRef:
+    name: my-group
+```
+
+For VirtualMCPServer, also move `spec.config.groupRef` to `spec.groupRef` (the
+old path still works but is deprecated).
+
+:::warning
+
+Existing resources in etcd have the old string format and will fail
+re-validation. You must delete and re-create affected resources, or use
+`kubectl replace` after updating your manifests.
+
+:::
+
+Migration steps:
+
+1. Update all YAML manifests, GitOps pipelines, and Helm values to use the
+   struct format.
+2. Apply the new CRDs.
+3. Back up, delete, and re-create affected resources:
+
+   ```bash
+   # Back up
+   kubectl get mcpservers -A -o yaml > mcpservers-backup.yaml
+   # Edit backup to use new format, then:
+   kubectl delete mcpservers --all -A
+   kubectl apply -f mcpservers-backup.yaml
+   # Repeat for mcpremoteproxies, mcpserverentries, virtualmcpservers
+   ```
+
+### `protectedResourceAllowPrivateIP` separated
+
+The `protectedResourceAllowPrivateIP` field on VirtualMCPServer's OIDC
+configuration is no longer derived from `jwksAllowPrivateIP`. If your protected
+resource endpoint is on a private IP, you must set both fields explicitly.
+
+```yaml
+# Before (protectedResourceAllowPrivateIP was silently
+# inherited from jwksAllowPrivateIP)
+spec:
+  config:
+    incomingAuth:
+      oidc:
+        jwksAllowPrivateIP: true
+
+# After (both fields must be set explicitly)
+spec:
+  config:
+    incomingAuth:
+      oidc:
+        jwksAllowPrivateIP: true
+        protectedResourceAllowPrivateIP: true
+```
+
+## Next steps
+
+- [Deploy the ToolHive operator](./deploy-operator.mdx)
+- [Run MCP servers in Kubernetes](./run-mcp-k8s.mdx)
+- [CRD specification reference](../reference/crd-spec.md)
