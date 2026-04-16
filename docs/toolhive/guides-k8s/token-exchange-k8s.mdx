@@ -116,9 +116,21 @@ receives a fresh, properly scoped token for every call.
 
 ## Deploy an MCP server with token exchange
 
-Create an `MCPServer` resource that references the token exchange configuration:
+Create an `MCPOIDCConfig` resource and an `MCPServer` resource that references
+both the OIDC configuration and the token exchange configuration:
 
 ```yaml title="mcpserver-token-exchange.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPOIDCConfig
+metadata:
+  name: token-exchange-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: '<YOUR_OIDC_ISSUER>'
+    jwksUrl: '<YOUR_JWKS_URL>'
+---
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
@@ -132,12 +144,9 @@ spec:
   externalAuthConfigRef:
     name: backend-token-exchange
   # OIDC configuration for validating incoming client tokens
-  oidcConfig:
-    type: inline
-    inline:
-      issuer: '<YOUR_OIDC_ISSUER>'
-      audience: '<YOUR_MCP_AUDIENCE>'
-      jwksUrl: '<YOUR_JWKS_URL>'
+  oidcConfigRef:
+    name: token-exchange-oidc
+    audience: '<YOUR_MCP_AUDIENCE>'
 ```
 
 ```bash
@@ -145,7 +154,7 @@ kubectl apply -f mcpserver-token-exchange.yaml
 ```
 
 The `externalAuthConfigRef` tells ToolHive to use the token exchange
-configuration you created earlier. The `oidcConfig` validates incoming client
+configuration you created earlier. The `oidcConfigRef` validates incoming client
 tokens before performing the exchange.
 
 ## Verify the configuration
@@ -213,9 +222,20 @@ spec:
       - 'api:write'
 ```
 
-### MCPServer
+### MCPOIDCConfig and MCPServer
 
 ```yaml title="mcpserver-okta.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPOIDCConfig
+metadata:
+  name: okta-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: 'https://dev-123456.okta.com/oauth2/aus1234567890'
+    jwksUrl: 'https://dev-123456.okta.com/oauth2/aus1234567890/v1/keys'
+---
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
@@ -227,22 +247,19 @@ spec:
   proxyPort: 8080
   externalAuthConfigRef:
     name: okta-backend-exchange
-  oidcConfig:
-    type: inline
+  oidcConfigRef:
+    name: okta-oidc
     # Set resourceUrl to the external URL if exposing outside the cluster
     resourceUrl: 'https://my-backend-server.example.com'
-    inline:
-      issuer: 'https://dev-123456.okta.com/oauth2/aus1234567890'
-      audience: 'mcp-server'
-      jwksUrl: 'https://dev-123456.okta.com/oauth2/aus1234567890/v1/keys'
+    audience: 'mcp-server'
 ```
 
 Key points in this example:
 
-- **Two authorization servers**: The `issuer` in `oidcConfig` (`aus1234567890`)
-  validates incoming client tokens. The `tokenUrl` in `MCPExternalAuthConfig`
-  uses a different authorization server (`aus9876543210`) that issues tokens for
-  the backend API.
+- **Two authorization servers**: The `issuer` in `MCPOIDCConfig`
+  (`aus1234567890`) validates incoming client tokens. The `tokenUrl` in
+  `MCPExternalAuthConfig` uses a different authorization server
+  (`aus9876543210`) that issues tokens for the backend API.
 - **Audience transformation**: Client tokens arrive with audience `mcp-server`.
   ToolHive exchanges them for tokens with audience `backend-api`, which the
   backend service expects.

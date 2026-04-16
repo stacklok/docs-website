@@ -200,32 +200,42 @@ column confirms validation passed.
 - **Lifecycle management**: deletion is blocked while workloads reference the
   config
 
-:::info[Inline oidcConfig deprecation]
+:::warning[Inline oidcConfig removed]
 
-The inline `spec.oidcConfig` field on MCPServer is deprecated and will be
-removed in `v1beta1`. Use `oidcConfigRef` to reference a shared MCPOIDCConfig
-resource instead. You cannot set both fields on the same MCPServer.
+The inline `spec.oidcConfig` field on MCPServer was removed in v0.21.0. Use
+`oidcConfigRef` to reference a shared MCPOIDCConfig resource instead.
 
 :::
 
 ## Set up external identity provider authentication
 
-:::note[Consider MCPOIDCConfig]
+:::info
 
-For new deployments, consider using `oidcConfigRef` with a shared MCPOIDCConfig
-resource instead of inline `oidcConfig`. See
+Create an MCPOIDCConfig resource and reference it with `oidcConfigRef`. See
 [Set up shared OIDC configuration](#set-up-shared-oidc-configuration-with-mcpoidcconfig)
 above.
 
 :::
 
-**Step 1: Create an MCPServer with external OIDC**
+**Step 1: Create an MCPOIDCConfig and MCPServer with external OIDC**
 
-Create an `MCPServer` resource configured to accept tokens from your external
-identity provider. The ToolHive proxy will handle authentication before
-forwarding requests to the MCP server.
+Create an `MCPOIDCConfig` resource with your external identity provider
+settings, and an `MCPServer` resource that references it. The ToolHive proxy
+handles authentication before forwarding requests to the MCP server.
 
 ```yaml title="mcp-server-external-auth.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPOIDCConfig
+metadata:
+  name: external-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: 'https://your-oidc-issuer.com'
+    clientId: 'your-client-id'
+    jwksUrl: 'https://your-oidc-issuer.com/path/to/jwks'
+---
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
@@ -239,13 +249,9 @@ spec:
     type: builtin
     name: network
   # Authentication configuration for external IdP
-  oidcConfig:
-    type: inline
-    inline:
-      issuer: 'https://your-oidc-issuer.com'
-      audience: 'your-audience'
-      clientId: 'your-client-id'
-      jwksUrl: 'https://your-oidc-issuer.com/path/to/jwks'
+  oidcConfigRef:
+    name: external-oidc
+    audience: 'your-audience'
   resources:
     limits:
       cpu: '100m'
@@ -257,7 +263,7 @@ spec:
 
 Replace the OIDC placeholders with your actual identity provider configuration.
 
-**Step 2: Apply the MCPServer resource**
+**Step 2: Apply the resources**
 
 ```bash
 kubectl apply -f mcp-server-external-auth.yaml
@@ -284,34 +290,32 @@ For Kubernetes service accounts, tokens are automatically mounted at
 
 :::
 
-## Set up shared OIDC configuration with ConfigMap
+## Set up shared OIDC configuration
 
-**Step 1: Create OIDC ConfigMap**
-
-Create a ConfigMap containing the OIDC configuration:
+Create an MCPOIDCConfig resource to share OIDC settings across multiple
+MCPServer resources:
 
 ```yaml title="shared-oidc-config.yaml"
-apiVersion: v1
-kind: ConfigMap
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPOIDCConfig
 metadata:
-  name: shared-oidc-config
+  name: shared-oidc
   namespace: toolhive-system
-data:
-  issuer: 'https://auth.example.com'
-  audience: 'https://mcp.example.com'
-  clientId: 'shared-client-id'
-  jwksUrl: 'https://auth.example.com/.well-known/jwks.json'
+spec:
+  type: inline
+  inline:
+    issuer: 'https://auth.example.com'
+    clientId: 'shared-client-id'
+    jwksUrl: 'https://auth.example.com/.well-known/jwks.json'
 ```
 
 ```bash
 kubectl apply -f shared-oidc-config.yaml
 ```
 
-**Step 2: Reference ConfigMap in MCPServer**
+Reference the MCPOIDCConfig in your MCPServer resources:
 
-Create MCPServer resources that reference the shared configuration:
-
-```yaml title="mcp-server-with-configmap-oidc.yaml"
+```yaml title="mcp-server-with-shared-oidc.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
@@ -324,11 +328,9 @@ spec:
   permissionProfile:
     type: builtin
     name: network
-  # Reference shared OIDC configuration
-  oidcConfig:
-    type: configMap
-    configMap:
-      name: shared-oidc-config
+  oidcConfigRef:
+    name: shared-oidc
+    audience: 'https://mcp.example.com'
   resources:
     limits:
       cpu: '100m'
@@ -339,15 +341,16 @@ spec:
 ```
 
 ```bash
-kubectl apply -f mcp-server-with-configmap-oidc.yaml
+kubectl apply -f mcp-server-with-shared-oidc.yaml
 ```
 
-### Benefits of ConfigMap approach
+### Benefits of shared MCPOIDCConfig
 
-- **Centralized management**: Update OIDC settings in one place
-- **Consistency**: Ensure all MCPServers use identical authentication config
-- **GitOps friendly**: Manage configuration separately from MCPServer resources
-- **Multi-server deployments**: Deploy multiple servers with same auth easily
+- **Centralized management**: update OIDC settings in one place
+- **Consistency**: ensure all MCPServers use identical authentication config
+- **Built-in validation**: CEL rules catch misconfiguration at admission time
+- **Status tracking**: see which workloads reference the config
+- **Lifecycle management**: deletion is blocked while workloads reference it
 
 ## Set up Kubernetes service-to-service authentication
 
@@ -370,12 +373,23 @@ metadata:
 kubectl apply -f client-service-account.yaml
 ```
 
-**Step 2: Create MCPServer for service-to-service auth**
+**Step 2: Create MCPOIDCConfig and MCPServer for service-to-service auth**
 
-Create an `MCPServer` resource configured to accept Kubernetes service account
-tokens:
+Create an `MCPOIDCConfig` resource for Kubernetes service account authentication
+and an `MCPServer` that references it:
 
 ```yaml title="mcp-server-k8s-auth.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPOIDCConfig
+metadata:
+  name: k8s-sa-oidc
+  namespace: toolhive-system
+spec:
+  type: kubernetesServiceAccount
+  kubernetesServiceAccount:
+    serviceAccount: 'mcp-client'
+    namespace: 'client-apps'
+---
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
@@ -389,14 +403,9 @@ spec:
     type: builtin
     name: network
   # Authentication configuration for Kubernetes service accounts
-  oidcConfig:
-    type: kubernetes
-    kubernetes:
-      serviceAccount: 'mcp-client'
-      namespace: 'client-apps'
-      audience: 'toolhive'
-      issuer: 'https://kubernetes.default.svc'
-      jwksUrl: 'https://kubernetes.default.svc/openid/v1/jwks'
+  oidcConfigRef:
+    name: k8s-sa-oidc
+    audience: 'toolhive'
   resources:
     limits:
       cpu: '100m'
@@ -607,16 +616,27 @@ kubectl apply -f embedded-auth-config.yaml
 | `tokenLifespans`       | Configurable durations for access tokens (default: 1h), refresh tokens (default: 168h), and auth codes (default: 10m).                                                        |
 | `upstreamProviders`    | Configuration for upstream identity providers. MCPServer and MCPRemoteProxy support one provider; VirtualMCPServer supports multiple providers for sequential authentication. |
 
-**Step 5: Create the MCPServer resource**
+**Step 5: Create the MCPOIDCConfig and MCPServer resources**
 
 The MCPServer needs two configuration references: `authServerRef` enables the
-embedded authorization server, and `oidcConfig` validates the JWTs that the
-embedded authorization server issues. Unlike approaches 1-3 where `oidcConfig`
-points to an external identity provider, here it points to the embedded
-authorization server itself. The `oidcConfig` issuer must match the `issuer` in
+embedded authorization server, and `oidcConfigRef` validates the JWTs that the
+embedded authorization server issues. Unlike approaches 1-3 where the OIDC
+config points to an external identity provider, here it points to the embedded
+authorization server itself. The MCPOIDCConfig issuer must match the `issuer` in
 your `MCPExternalAuthConfig`.
 
 ```yaml title="mcp-server-embedded-auth.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPOIDCConfig
+metadata:
+  name: embedded-auth-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    # This must match the embedded authorization server issuer url
+    issuer: 'https://mcp.example.com'
+---
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
@@ -636,12 +656,9 @@ spec:
     name: embedded-auth-server
   # highlight-end
   # Validate JWTs issued by the embedded authorization server
-  oidcConfig:
-    type: inline
+  oidcConfigRef:
+    name: embedded-auth-oidc
     resourceUrl: 'https://mcp.example.com/mcp'
-    inline:
-      # This must match the embedded authorization server issuer url
-      issuer: 'https://mcp.example.com'
   resources:
     limits:
       cpu: '100m'
@@ -672,10 +689,8 @@ spec:
   # Outgoing token exchange (e.g., AWS STS)
   externalAuthConfigRef:
     name: aws-sts-config
-  oidcConfig:
-    type: inline
-    inline:
-      issuer: 'https://mcp.example.com'
+  oidcConfigRef:
+    name: embedded-auth-oidc
 ```
 
 For a complete example, see
@@ -685,11 +700,11 @@ For a complete example, see
 
 :::note
 
-The `oidcConfig` issuer must match the `issuer` in your `MCPExternalAuthConfig`.
-The embedded authorization server exposes a JWKS endpoint that the proxy uses to
-validate the JWTs it issues. The proxy also exposes OAuth discovery endpoints
-(`/.well-known/oauth-authorization-server`) so MCP clients can discover the
-authorization endpoints automatically.
+The MCPOIDCConfig issuer must match the `issuer` in your
+`MCPExternalAuthConfig`. The embedded authorization server exposes a JWKS
+endpoint that the proxy uses to validate the JWTs it issues. The proxy also
+exposes OAuth discovery endpoints (`/.well-known/oauth-authorization-server`) so
+MCP clients can discover the authorization endpoints automatically.
 
 :::
 
@@ -841,6 +856,17 @@ Add the authorization configuration to your `MCPServer` resources:
 
 ```yaml title="mcp-server-with-authz.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPOIDCConfig
+metadata:
+  name: k8s-sa-authz-oidc
+  namespace: toolhive-system
+spec:
+  type: kubernetesServiceAccount
+  kubernetesServiceAccount:
+    serviceAccount: 'mcp-client'
+    namespace: 'client-apps'
+---
+apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
   name: weather-server-with-authz
@@ -853,14 +879,9 @@ spec:
     type: builtin
     name: network
   # Authentication configuration
-  oidcConfig:
-    type: kubernetes
-    kubernetes:
-      serviceAccount: 'mcp-client'
-      namespace: 'client-apps'
-      audience: 'toolhive'
-      issuer: 'https://kubernetes.default.svc'
-      jwksUrl: 'https://kubernetes.default.svc/openid/v1/jwks'
+  oidcConfigRef:
+    name: k8s-sa-authz-oidc
+    audience: 'toolhive'
   # Authorization configuration
   authzConfig:
     type: configMap
@@ -992,6 +1013,8 @@ kubectl logs -n toolhive-system -l app.kubernetes.io/name=weather-server-k8s
 - For external IdP: Ensure the issuer URL is accessible from within the cluster
 - For Kubernetes auth: Ensure the Kubernetes API server has OIDC enabled
 - Check that the JWKS URL returns valid keys
+- Verify the MCPOIDCConfig resource is valid:
+  `kubectl get mcpoidc -n toolhive-system`
 
 **Network connectivity:**
 
@@ -1047,9 +1070,9 @@ kubectl logs -n toolhive-system -l app.kubernetes.io/name=weather-server-k8s
 
 **OIDC configuration mismatch:**
 
-- Ensure the `oidcConfig.inline.issuer` on your `MCPServer` matches the `issuer`
-  in your `MCPExternalAuthConfig`
-- Verify the `resourceUrl` in `oidcConfig` matches the external URL of the MCP
-  server
+- Ensure the MCPOIDCConfig issuer matches the `issuer` in your
+  `MCPExternalAuthConfig`
+- Verify the `resourceUrl` in `oidcConfigRef` matches the external URL of the
+  MCP server
 
 </details>
