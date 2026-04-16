@@ -10,9 +10,9 @@ number of tools exposed to clients can grow quickly. The optimizer addresses
 this by filtering tools per request, reducing token usage and improving tool
 selection accuracy.
 
-For the desktop/CLI approach using the MCP Optimizer container, see the
+For a step-by-step tutorial that walks through the full setup, see the
 [MCP Optimizer tutorial](../tutorials/mcp-optimizer.mdx). This guide covers the
-Kubernetes operator approach using VirtualMCPServer and EmbeddingServer CRDs.
+configuration details for the VirtualMCPServer and EmbeddingServer CRDs.
 
 ## Benefits
 
@@ -146,27 +146,10 @@ are:
 For the complete field reference, see the
 [EmbeddingServer CRD specification](../reference/crd-spec.md#apiv1alpha1embeddingserver).
 
-:::warning[ARM64 compatibility]
+:::tip[ARM64 support]
 
-The default TEI CPU images depend on Intel MKL, which is x86_64-only. No
-official ARM64 images exist yet. On ARM64 nodes (including Apple Silicon with
-kind), you can run the amd64 image under emulation as a workaround.
-
-First, pull the amd64 image and load it into your cluster:
-
-```bash
-docker pull --platform linux/amd64 \
-  ghcr.io/huggingface/text-embeddings-inference:cpu-1.7
-kind load docker-image \
-  ghcr.io/huggingface/text-embeddings-inference:cpu-1.7
-```
-
-The `kind load` command is specific to kind. For other cluster distributions,
-use the equivalent image-loading mechanism (for example, `ctr images import` for
-containerd, or push the image to a registry your cluster can pull from).
-
-Then, pin the image in your EmbeddingServer so the operator uses the pre-pulled
-tag instead of the default `cpu-latest`:
+The default TEI image (`cpu-latest`) is x86_64-only. If you are running on ARM64
+nodes (for example, Apple Silicon), override the image in your EmbeddingServer:
 
 ```yaml title="embedding-server.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
@@ -175,12 +158,8 @@ metadata:
   name: my-embedding
   namespace: toolhive-system
 spec:
-  image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7
+  image: ghcr.io/huggingface/text-embeddings-inference:cpu-arm64-latest
 ```
-
-Native ARM64 support is in progress upstream. Track the
-[TEI GitHub repository](https://github.com/huggingface/text-embeddings-inference)
-for updates.
 
 :::
 
@@ -288,6 +267,8 @@ metadata:
   name: full-vmcp
   namespace: toolhive-system
 spec:
+  groupRef:
+    name: my-tools
   embeddingServerRef:
     name: full-embedding
   groupRef:
@@ -314,7 +295,8 @@ spec:
 
 ## Related information
 
-- [MCP Optimizer tutorial](../tutorials/mcp-optimizer.mdx) - desktop/CLI setup
+- [MCP Optimizer tutorial](../tutorials/mcp-optimizer.mdx) - end-to-end
+  Kubernetes setup
 - [Optimizing LLM context](../concepts/tool-optimization.mdx) - background on
   tool filtering and context pollution
 - [Configure vMCP servers](./configuration.mdx)
