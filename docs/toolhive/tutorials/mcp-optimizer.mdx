@@ -31,9 +31,8 @@ Server (vMCP) and an EmbeddingServer for semantic tool search.
 - How to create an MCPGroup with multiple backend MCP servers
 - How to deploy an EmbeddingServer for semantic search
 - How to create a VirtualMCPServer with the optimizer enabled
-- How to connect your AI client to the optimized endpoint
-- How to verify the optimizer reduces the visible toolset to `find_tool` and
-  `call_tool`
+- How to connect your AI client to the optimized endpoint and verify it exposes
+  only `find_tool` and `call_tool`
 
 ## About MCP Optimizer
 
@@ -94,10 +93,12 @@ Before starting this tutorial, make sure you have:
 :::warning[ARM64 compatibility]
 
 The default text embeddings inference (TEI) images depend on Intel MKL, which is
-x86_64-only. If you are using Apple Silicon or any other ARM64 node (including
-kind on macOS), you need to pre-pull the amd64 image before proceeding. See
-[ARM64 compatibility](../guides-vmcp/optimizer.mdx#arm64-compatibility) for the
-workaround steps.
+x86_64-only. Native ARM64 support has been merged upstream but is not yet
+included in a published release. If you are using Apple Silicon or any other
+ARM64 nodes (including kind on macOS), you can run the amd64 image under
+emulation as a workaround. See the
+[EmbeddingServer resource](../guides-vmcp/optimizer.mdx#embeddingserver-resource)
+section for the required steps, including a Docker Desktop configuration change.
 
 :::
 
@@ -125,7 +126,7 @@ kubectl apply -f mcpgroup.yaml
 Next, deploy two MCP servers in the group. Both reference `optimizer-demo` in
 the `groupRef` field:
 
-```yaml {11,30} title="mcpservers.yaml"
+```yaml {11-12,31-32} title="mcpservers.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPServer
 metadata:
@@ -136,7 +137,8 @@ spec:
   transport: streamable-http
   proxyPort: 8080
   mcpPort: 8080
-  groupRef: optimizer-demo
+  groupRef:
+    name: optimizer-demo
   resources:
     limits:
       cpu: '100m'
@@ -155,7 +157,8 @@ spec:
   transport: streamable-http
   proxyPort: 8080
   mcpPort: 8080
-  groupRef: optimizer-demo
+  groupRef:
+    name: optimizer-demo
   resources:
     limits:
       cpu: '100m'
@@ -234,7 +237,7 @@ Create a VirtualMCPServer that aggregates the backend servers and enables the
 optimizer. Adding `embeddingServerRef` is the only change needed to enable the
 optimizer - sensible defaults are applied automatically:
 
-```yaml {8-9} title="virtualmcpserver.yaml"
+```yaml title="virtualmcpserver.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: VirtualMCPServer
 metadata:
@@ -249,7 +252,8 @@ spec:
     type: anonymous
   serviceType: ClusterIP
   config:
-    groupRef: optimizer-demo
+    groupRef:
+      name: optimizer-demo
     aggregation:
       conflictResolution: prefix
       conflictResolutionConfig:
@@ -348,9 +352,10 @@ To check your token savings, send this prompt to your AI client:
 
 ## Clean up
 
-Delete the resources when you're done:
+Remove the local workload and delete the Kubernetes resources when you're done:
 
 ```bash
+thv rm optimizer-vmcp
 kubectl delete virtualmcpserver optimizer-vmcp -n toolhive-system
 kubectl delete embeddingserver optimizer-embedding -n toolhive-system
 kubectl delete mcpserver fetch osv -n toolhive-system
@@ -363,18 +368,7 @@ To tear down the entire kind cluster from the K8s Quickstart:
 kind delete cluster --name toolhive
 ```
 
-:::note[Legacy: standalone MCP Optimizer]
-
-The standalone `mcp-optimizer` container can also run alongside ToolHive on
-desktop (macOS, Windows, Linux) without Kubernetes. This approach is being
-replaced by the Kubernetes-based optimizer described above. For the standalone
-setup, see the [MCP Optimizer UI guide](../guides-ui/mcp-optimizer.mdx).
-
-:::
-
 ## Next steps
-
-Now that you've set up the MCP Optimizer, consider exploring these next steps:
 
 - [Tune the optimizer](../guides-vmcp/optimizer.mdx#tune-the-optimizer) to
   adjust search parameters for your workload
@@ -396,6 +390,6 @@ Now that you've set up the MCP Optimizer, consider exploring these next steps:
 - [Virtual MCP Server overview](../concepts/vmcp.mdx) - conceptual overview of
   vMCP
 - [MCP Optimizer UI guide](../guides-ui/mcp-optimizer.mdx) - standalone desktop
-  approach (legacy)
+  approach without Kubernetes (legacy, being replaced by the vMCP path)
 - [Quickstart: Kubernetes Operator](../guides-k8s/quickstart.mdx) - prerequisite
   tutorial
