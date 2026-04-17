@@ -2,12 +2,12 @@
 title: Migrate to v1beta1
 description:
   Breaking changes and migration steps for the CRD API stabilization track from
-  v0.15.0 through v0.20.0
+  v0.15.0 through v0.21.0
 ---
 
 The ToolHive Kubernetes Operator has undergone a series of CRD API changes in
 preparation for the `v1beta1` API version promotion. These changes span releases
-v0.15.0 through v0.20.0, each introducing breaking changes that require manifest
+v0.15.0 through v0.21.0, each introducing breaking changes that require manifest
 and tooling updates.
 
 This guide covers every breaking change in order, so you can start from
@@ -46,20 +46,12 @@ that point forward.
 | v0.19.0 | [`enforceServers` removed](#enforceservers-removed)                                       | MCPRegistry                                                                   | Field removed from schema; manifests with it fail validation                                                                        |
 | v0.20.0 | [`groupRef` changed to typed struct](#groupref-changed-to-typed-struct)                   | MCPServer, MCPRemoteProxy, MCPServerEntry, VirtualMCPServer                   | Bare string `groupRef: name` must become `groupRef: { name: name }`                                                                 |
 | v0.20.0 | [`protectedResourceAllowPrivateIP` separated](#protectedresourceallowprivateip-separated) | VirtualMCPServer (OIDC config)                                                | Must be set explicitly; no longer inherited from `jwksAllowPrivateIP`                                                               |
-
-### Deprecations not yet removed
-
-These fields still work but will be removed at or after the `v1beta1` promotion.
-Migrate when convenient.
-
-| Deprecated field                            | Replacement                                    | Affected resources          | Deprecated in |
-| ------------------------------------------- | ---------------------------------------------- | --------------------------- | ------------- |
-| `spec.oidcConfig` (inline)                  | `spec.oidcConfigRef` (MCPOIDCConfig)           | MCPServer, VirtualMCPServer | v0.15.0       |
-| `spec.telemetry` (inline)                   | `spec.telemetryConfigRef` (MCPTelemetryConfig) | MCPServer                   | v0.15.0       |
-| `spec.telemetry` (inline)                   | `spec.telemetryConfigRef` (MCPTelemetryConfig) | MCPRemoteProxy              | v0.19.0       |
-| `backendAuthType: external_auth_config_ref` | `externalAuthConfigRef`                        | VirtualMCPServer            | v0.19.0       |
-| `spec.config.groupRef`                      | `spec.groupRef` (typed struct)                 | VirtualMCPServer            | v0.20.0       |
-| `spec.config.telemetry`                     | `spec.telemetryConfigRef`                      | VirtualMCPServer            | v0.20.0       |
+| v0.21.0 | [Inline `oidcConfig` removed](#inline-oidcconfig-removed)                                 | MCPServer, MCPRemoteProxy                                                     | `spec.oidcConfig` removed; use `oidcConfigRef` with MCPOIDCConfig                                                                   |
+| v0.21.0 | [Inline `telemetry` removed](#inline-telemetry-removed)                                   | MCPServer, MCPRemoteProxy                                                     | `spec.telemetry` removed; use `telemetryConfigRef` with MCPTelemetryConfig                                                          |
+| v0.21.0 | [Inline vMCP `oidcConfig` removed](#inline-vmcp-oidcconfig-removed)                       | VirtualMCPServer                                                              | `incomingAuth.oidcConfig` removed; use `oidcConfigRef`                                                                              |
+| v0.21.0 | [`config.groupRef` fallback removed](#configgroupref-fallback-removed)                    | VirtualMCPServer                                                              | `spec.config.groupRef` removed; use `spec.groupRef`                                                                                 |
+| v0.21.0 | [`external_auth_config_ref` enum removed](#external_auth_config_ref-enum-removed)         | VirtualMCPServer                                                              | Snake_case enum value removed; use `externalAuthConfigRef`                                                                          |
+| v0.21.0 | [Inline vMCP `telemetry` removed](#inline-vmcp-telemetry-removed)                         | VirtualMCPServer                                                              | `spec.config.telemetry` removed; use `spec.telemetryConfigRef`                                                                      |
 
 ## General upgrade procedure
 
@@ -562,6 +554,152 @@ spec:
         jwksAllowPrivateIP: true
         protectedResourceAllowPrivateIP: true
 ```
+
+## v0.21.0
+
+[Full release notes](https://github.com/stacklok/toolhive/releases/tag/v0.21.0)
+
+### Inline `oidcConfig` removed
+
+The inline `spec.oidcConfig` field has been removed from MCPServer and
+MCPRemoteProxy. Create an MCPOIDCConfig resource and reference it with
+`oidcConfigRef`.
+
+```yaml
+# Before (no longer accepted)
+spec:
+  oidcConfig:
+    type: inline
+    inline:
+      issuer: "https://idp.example.com"
+      audience: "my-audience"
+
+# After
+spec:
+  oidcConfigRef:
+    name: my-oidc-config
+    audience: "my-audience"
+```
+
+Create a shared MCPOIDCConfig resource:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPOIDCConfig
+metadata:
+  name: my-oidc-config
+spec:
+  type: inline
+  inline:
+    issuer: 'https://idp.example.com'
+```
+
+### Inline `telemetry` removed
+
+The inline `spec.telemetry` field has been removed from MCPServer and
+MCPRemoteProxy. Create an MCPTelemetryConfig resource and reference it with
+`telemetryConfigRef`.
+
+```yaml
+# Before (no longer accepted)
+spec:
+  telemetry:
+    openTelemetry:
+      enabled: true
+      endpoint: "http://otel-collector:4318"
+      serviceName: "my-server"
+
+# After
+spec:
+  telemetryConfigRef:
+    name: my-telemetry
+    serviceName: "my-server"
+```
+
+Create a shared MCPTelemetryConfig resource:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPTelemetryConfig
+metadata:
+  name: my-telemetry
+spec:
+  openTelemetry:
+    enabled: true
+    endpoint: 'http://otel-collector:4318'
+```
+
+### Inline vMCP `oidcConfig` removed
+
+The inline `spec.incomingAuth.oidcConfig` field has been removed from
+VirtualMCPServer. Use `oidcConfigRef` to reference a shared MCPOIDCConfig
+resource.
+
+```yaml
+# Before (no longer accepted)
+spec:
+  incomingAuth:
+    type: oidc
+    oidcConfig:
+      type: kubernetes
+      kubernetes:
+        audience: "toolhive"
+
+# After
+spec:
+  incomingAuth:
+    type: oidc
+    oidcConfigRef:
+      name: my-oidc-config
+      audience: "toolhive"
+```
+
+### `config.groupRef` fallback removed
+
+The `spec.config.groupRef` fallback path on VirtualMCPServer has been removed.
+Use `spec.groupRef` directly.
+
+```yaml
+# Before (no longer accepted)
+spec:
+  config:
+    groupRef:
+      name: my-group
+
+# After
+spec:
+  groupRef:
+    name: my-group
+```
+
+### `external_auth_config_ref` enum removed
+
+The snake_case `external_auth_config_ref` enum value in
+`outgoingAuth.backends[*].type` has been removed. Use the camelCase
+`externalAuthConfigRef` value.
+
+```yaml
+# Before (no longer accepted)
+outgoingAuth:
+  backends:
+    github-mcp:
+      type: external_auth_config_ref
+      externalAuthConfigRef:
+        name: github-token-config
+
+# After
+outgoingAuth:
+  backends:
+    github-mcp:
+      type: externalAuthConfigRef
+      externalAuthConfigRef:
+        name: github-token-config
+```
+
+### Inline vMCP `telemetry` removed
+
+The inline `spec.config.telemetry` field on VirtualMCPServer has been removed.
+Use `spec.telemetryConfigRef` to reference a shared MCPTelemetryConfig resource.
 
 ## Next steps
 

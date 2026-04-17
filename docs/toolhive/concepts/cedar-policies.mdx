@@ -110,6 +110,10 @@ cedar:
   - `entities_json`: A JSON string representing Cedar entities
   - `group_claim_name`: Optional custom JWT claim name for group membership (for
     example, `https://example.com/groups`)
+  - `role_claim_name`: Optional custom JWT claim name for role membership,
+    separate from group claims. Use this when your identity provider provides
+    roles in a different claim than groups (for example, Entra ID `roles`
+    claim). If not set, roles are extracted from the same claims as groups.
 
 ## Writing effective policies
 
@@ -182,6 +186,35 @@ permit(
 For details on how groups are resolved from JWT claims, see
 [Group membership](../reference/authz-policy-reference.mdx#group-membership) in
 the policy reference.
+
+### Server-scoped policies
+
+The Cedar authorizer automatically sets the server name for each MCP server,
+enabling policies that apply only to specific servers. Use the `MCP` entity type
+with the server name to scope policies:
+
+```text
+// Only allow the "data-team" group to call tools on the analytics server
+permit(
+  principal in THVGroup::"data-team",
+  action == Action::"call_tool",
+  resource in MCP::"analytics-server"
+);
+```
+
+```text
+// Deny all tool calls on the production server except for admins
+forbid(
+  principal,
+  action == Action::"call_tool",
+  resource in MCP::"production-server"
+) unless {
+  principal in THVGroup::"admins"
+};
+```
+
+Server-scoped policies are useful when a single Cedar policy set is shared
+across multiple MCP servers but you need different access levels per server.
 
 ### Attribute-based access control (ABAC)
 
@@ -503,6 +536,33 @@ configuration:
 When `group_claim_name` is set, it takes priority over the well-known defaults.
 When it is empty (the default), ToolHive checks `groups`, `roles`, and
 `cognito:groups` in order.
+
+### Configuring a custom role claim
+
+If your identity provider issues role claims in a separate JWT field from group
+claims, configure the `role_claim_name` field. This is common with providers
+like Microsoft Entra ID, which uses a dedicated `roles` claim for application
+roles:
+
+```json
+{
+  "version": "1.0",
+  "type": "cedarv1",
+  "cedar": {
+    "policies": [
+      "permit(principal in THVGroup::\"tool-users\", action, resource);"
+    ],
+    "entities_json": "[]",
+    "group_claim_name": "groups",
+    "role_claim_name": "roles"
+  }
+}
+```
+
+With both fields configured, ToolHive extracts group membership from the
+`groups` claim and role membership from the `roles` claim. Both are mapped to
+`THVGroup` parent entities, so you can write policies that reference either
+groups or roles using the same `principal in THVGroup::"..."` syntax.
 
 ### How it works
 

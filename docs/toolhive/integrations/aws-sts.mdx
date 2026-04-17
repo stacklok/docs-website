@@ -358,6 +358,22 @@ roleMappings:
 Create an `MCPRemoteProxy` resource that points to the AWS MCP Server endpoint
 and references the authentication configuration from the previous step.
 
+First, create an MCPOIDCConfig resource with your identity provider settings:
+
+```yaml title="aws-mcp-oidc.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPOIDCConfig
+metadata:
+  name: aws-mcp-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: https://<YOUR_OIDC_ISSUER>
+```
+
+Then create the MCPRemoteProxy:
+
 ```yaml {7,10-11,14-19} title="aws-mcp-remote-proxy.yaml"
 apiVersion: toolhive.stacklok.dev/v1alpha1
 kind: MCPRemoteProxy
@@ -372,15 +388,13 @@ spec:
     name: aws-mcp-sts-auth
 
   # OIDC configuration for validating incoming client tokens
-  oidcConfig:
-    type: inline
+  oidcConfigRef:
+    name: aws-mcp-oidc
+    audience: <YOUR_OIDC_AUDIENCE>
     # Public URL of this proxy's MCP endpoint, advertised to clients
     # via WWW-Authenticate so they can discover your OIDC provider.
     # Must match the hostname you configure in Step 5.
     resourceUrl: https://<YOUR_DOMAIN>/mcp
-    inline:
-      issuer: https://<YOUR_OIDC_ISSUER>
-      audience: <YOUR_OIDC_AUDIENCE>
 
   proxyPort: 8080
   transport: streamable-http
@@ -671,12 +685,9 @@ spec:
   # highlight-end
 
   # Validate JWTs issued by the embedded authorization server
-  oidcConfig:
-    type: inline
+  oidcConfigRef:
+    name: embedded-auth-oidc
     resourceUrl: https://<YOUR_DOMAIN>/mcp
-    inline:
-      # This must match the issuer in your embedded auth server config
-      issuer: https://<YOUR_EMBEDDED_AUTH_ISSUER>
 
   proxyPort: 8080
   transport: streamable-http
@@ -689,8 +700,8 @@ In this configuration:
 - `externalAuthConfigRef` points to the `MCPExternalAuthConfig` with
   `type: awsSts`, which exchanges OIDC tokens for AWS credentials on outgoing
   requests.
-- `oidcConfig` validates JWTs issued by the embedded auth server. The `issuer`
-  must match the `issuer` in your embedded auth server's
+- `oidcConfigRef` validates JWTs issued by the embedded auth server. Create an
+  MCPOIDCConfig whose `issuer` matches the embedded auth server's
   `MCPExternalAuthConfig`.
 
 :::info[authServerRef vs. externalAuthConfigRef]
@@ -801,7 +812,7 @@ kubectl logs -n toolhive-system \
 
 If clients receive 401 errors, the OIDC token validation is failing. Verify:
 
-- The `issuer` in `oidcConfig` matches the `iss` claim in your token.
+- The `issuer` in your MCPOIDCConfig matches the `iss` claim in your token.
 - The `audience` matches the `aud` claim.
 - The token hasn't expired (check the `exp` claim).
 - The proxy can reach your OIDC provider's JWKS endpoint from within the
