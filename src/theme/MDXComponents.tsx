@@ -11,6 +11,7 @@ import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import MCPMetadata from '@site/src/components/MCPMetadata';
 import EnterpriseBadge from '@site/src/components/EnterpriseBadge';
+import { CRDFields, CRDBackLink } from '@site/src/components/CRDReference';
 
 export default {
   // Reusing the default mapping
@@ -20,4 +21,6 @@ export default {
   TabItem,
   MCPMetadata,
   EnterpriseBadge,
+  CRDFields,
+  CRDBackLink,
 };
