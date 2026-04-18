@@ -17,6 +17,12 @@ aim to deliver clear, concise, and valuable information to project users.
   - [Links](#links)
   - [Formatting](#formatting)
 - [Screenshots and images](#screenshots-and-images)
+- [Page structure](#page-structure)
+  - [Front matter](#front-matter)
+    - [Descriptions](#descriptions)
+  - [Closing sections](#closing-sections)
+  - [Introduction pages](#introduction-pages)
+  - [Cross-references](#cross-references)
 - [Markdown style](#markdown-style)
 - [Projects](#projects)
 - [Word list \& glossary](#word-list--glossary)
@@ -264,7 +270,7 @@ Our preferred style elements include:
   Heading 2, and so on); use unique headings within a document
 - Unordered lists: use hyphens (`-`), not asterisks (`*`)
 - Ordered lists: use lazy numbering (`1.` for every item and let Markdown render
-  the final order – this is more maintainable when inserting new items)
+  the final order. This is more maintainable when inserting new items)
   - Note: this is a "soft" recommendation. It is also intended only for Markdown
     documents that are read through a rendering engine. If the Markdown will be
     consumed in raw form, use real numbering.
