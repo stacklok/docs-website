@@ -1,0 +1,174 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MCPRegistry",
+  "description": "MCPRegistry is the Schema for the mcpregistries API",
+  "x-kubernetes-group": "toolhive.stacklok.dev",
+  "x-kubernetes-kind": "MCPRegistry",
+  "x-kubernetes-version": "v1alpha1",
+  "x-kubernetes-plural": "mcpregistries",
+  "x-kubernetes-short-names": [
+    "mcpreg",
+    "registry"
+  ],
+  "x-kubernetes-scope": "Namespaced",
+  "properties": {
+    "spec": {
+      "description": "MCPRegistrySpec defines the desired state of MCPRegistry",
+      "properties": {
+        "configYAML": {
+          "description": "ConfigYAML is the complete registry server config.yaml content.\nThe operator creates a ConfigMap from this string and mounts it\nat /config/config.yaml in the registry-api container.\nThe operator does NOT parse, validate, or transform this content —\nconfiguration validation is the registry server's responsibility.\n\nSecurity note: this content is stored in a ConfigMap, not a Secret.\nDo not inline credentials (passwords, tokens, client secrets) in this\nfield. Instead, reference credentials via file paths and mount the\nactual secrets using the Volumes and VolumeMounts fields. For database\npasswords, use PGPassSecretRef.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "displayName": {
+          "description": "DisplayName is a human-readable name for the registry.",
+          "type": "string"
+        },
+        "pgpassSecretRef": {
+          "description": "PGPassSecretRef references a Secret containing a pre-created pgpass file.\n\nWhy this is a dedicated field instead of a regular volume/volumeMount:\nPostgreSQL's libpq rejects pgpass files that aren't mode 0600. Kubernetes\nsecret volumes mount files as root-owned, and the registry-api container\nruns as non-root (UID 65532). A root-owned 0600 file is unreadable by\nUID 65532, and using fsGroup changes permissions to 0640 which libpq also\nrejects. The only solution is an init container that copies the file to an\nemptyDir as the app user and runs chmod 0600. This cannot be expressed\nthrough volumes/volumeMounts alone -- it requires an init container, two\nextra volumes (secret + emptyDir), a subPath mount, and an environment\nvariable, all wired together correctly.\n\nWhen specified, the operator generates all of that plumbing invisibly.\nThe user creates the Secret with pgpass-formatted content; the operator\nhandles only the Kubernetes permission mechanics.\n\nExample Secret:\n\n\tapiVersion: v1\n\tkind: Secret\n\tmetadata:\n\t  name: my-pgpass\n\tstringData:\n\t  .pgpass: |\n\t    postgres:5432:registry:db_app:mypassword\n\t    postgres:5432:registry:db_migrator:otherpassword\n\nThen reference it:\n\n\tpgpassSecretRef:\n\t  name: my-pgpass\n\t  key: .pgpass",
+          "properties": {
+            "key": {
+              "description": "The key of the secret to select from.  Must be a valid secret key.",
+              "type": "string"
+            },
+            "name": {
+              "default": "",
+              "description": "Name of the referent.\nThis field is effectively required, but due to backwards compatibility is\nallowed to be empty. Instances of this type with an empty value here are\nalmost certainly wrong.\nMore info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names",
+              "type": "string"
+            },
+            "optional": {
+              "description": "Specify whether the Secret or its key must be defined",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "key"
+          ],
+          "type": "object",
+          "x-kubernetes-map-type": "atomic"
+        },
+        "podTemplateSpec": {
+          "description": "PodTemplateSpec defines the pod template to use for the registry API server.\nThis allows for customizing the pod configuration beyond what is provided by the other fields.\nNote that to modify the specific container the registry API server runs in, you must specify\nthe `registry-api` container name in the PodTemplateSpec.\nThis field accepts a PodTemplateSpec object as JSON/YAML.",
+          "type": "object",
+          "x-kubernetes-preserve-unknown-fields": true
+        },
+        "volumeMounts": {
+          "description": "VolumeMounts defines additional volume mounts for the registry-api container.\nEach entry is a standard Kubernetes VolumeMount object (JSON/YAML).\nThe operator appends them to the container's volume mounts alongside the config mount.\n\nMount paths must match the file paths referenced in configYAML.\nFor example, if configYAML references passwordFile: /secrets/git-creds/token,\na corresponding volume mount must exist with mountPath: /secrets/git-creds.",
+          "items": {
+            "x-kubernetes-preserve-unknown-fields": true
+          },
+          "type": "array",
+          "x-kubernetes-list-type": "atomic",
+          "x-kubernetes-preserve-unknown-fields": true
+        },
+        "volumes": {
+          "description": "Volumes defines additional volumes to add to the registry API pod.\nEach entry is a standard Kubernetes Volume object (JSON/YAML).\nThe operator appends them to the pod spec alongside its own config volume.\n\nUse these to mount:\n  - Secrets (git auth tokens, OAuth client secrets, CA certs)\n  - ConfigMaps (registry data files)\n  - PersistentVolumeClaims (registry data on persistent storage)\n  - Any other volume type the registry server needs",
+          "items": {
+            "x-kubernetes-preserve-unknown-fields": true
+          },
+          "type": "array",
+          "x-kubernetes-list-type": "atomic",
+          "x-kubernetes-preserve-unknown-fields": true
+        }
+      },
+      "required": [
+        "configYAML"
+      ],
+      "type": "object"
+    },
+    "status": {
+      "description": "MCPRegistryStatus defines the observed state of MCPRegistry",
+      "properties": {
+        "conditions": {
+          "description": "Conditions represent the latest available observations of the MCPRegistry's state",
+          "items": {
+            "description": "Condition contains details for one aspect of the current state of this API Resource.",
+            "properties": {
+              "lastTransitionTime": {
+                "description": "lastTransitionTime is the last time the condition transitioned from one status to another.\nThis should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "message": {
+                "description": "message is a human readable message indicating details about the transition.\nThis may be an empty string.",
+                "maxLength": 32768,
+                "type": "string"
+              },
+              "observedGeneration": {
+                "description": "observedGeneration represents the .metadata.generation that the condition was set based upon.\nFor instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date\nwith respect to the current state of the instance.",
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "reason": {
+                "description": "reason contains a programmatic identifier indicating the reason for the condition's last transition.\nProducers of specific condition types may define expected values and meanings for this field,\nand whether the values are considered a guaranteed API.\nThe value should be a CamelCase string.\nThis field may not be empty.",
+                "maxLength": 1024,
+                "minLength": 1,
+                "pattern": "^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$",
+                "type": "string"
+              },
+              "status": {
+                "description": "status of the condition, one of True, False, Unknown.",
+                "enum": [
+                  "True",
+                  "False",
+                  "Unknown"
+                ],
+                "type": "string"
+              },
+              "type": {
+                "description": "type of condition in CamelCase or in foo.example.com/CamelCase.",
+                "maxLength": 316,
+                "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "lastTransitionTime",
+              "message",
+              "reason",
+              "status",
+              "type"
+            ],
+            "type": "object"
+          },
+          "type": "array",
+          "x-kubernetes-list-map-keys": [
+            "type"
+          ],
+          "x-kubernetes-list-type": "map"
+        },
+        "message": {
+          "description": "Message provides additional information about the current phase",
+          "type": "string"
+        },
+        "observedGeneration": {
+          "description": "ObservedGeneration reflects the generation most recently observed by the controller",
+          "format": "int64",
+          "type": "integer"
+        },
+        "phase": {
+          "description": "Phase represents the current overall phase of the MCPRegistry",
+          "enum": [
+            "Pending",
+            "Ready",
+            "Failed",
+            "Terminating"
+          ],
+          "type": "string"
+        },
+        "readyReplicas": {
+          "description": "ReadyReplicas is the number of ready registry API replicas",
+          "format": "int32",
+          "type": "integer"
+        },
+        "url": {
+          "description": "URL is the URL where the registry API can be accessed",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "type": "object"
+}
