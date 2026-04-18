@@ -176,6 +176,32 @@ Apply the approved changes:
 
 5. Do not edit auto-generated files. If they need updating, note this for the user.
 
+6. **CRD reference updates**: the Kubernetes CRD reference is partially auto-generated. If the release touches CRDs, know the split:
+
+   **Fully auto-generated** (do not hand-edit):
+   - `static/api-specs/crds/*.schema.json` - extracted JSON Schema per CRD
+   - `static/api-specs/crds/*.example.yaml` - minimal required-fields YAML example
+   - `static/api-specs/crds/index.json` - metadata + cross-reference graph
+   - `static/api-specs/crds/sidebar.json` - sidebar fragment consumed by `sidebars.ts`
+   - `docs/toolhive/reference/crds/*.mdx` - per-CRD pages (including the landing `index.mdx`)
+
+   These come from `scripts/extract-crd-schemas.mjs` + `scripts/generate-crd-pages.mjs`, run by `scripts/update-toolhive-reference.sh`. Regenerating just means re-running the script; do not edit the MDX directly.
+
+   **Human-authored, single source of truth** (`scripts/lib/crd-intros.mjs`): one object per CRD Kind with:
+   - `slug`: URL segment and MDX filename
+   - `group`: `'core'` or `'shared'` (drives landing-page and sidebar grouping)
+   - `summary`: one-sentence DocCard description
+   - `description`: SEO meta description (80-150 chars)
+   - `intro`: markdown prose at the top of the page, with inline cross-links to sibling CRDs using `[Kind](./slug.mdx)` form
+
+   **When the release adds a new CRD**:
+   - The release workflow flags this case with a `[!WARNING]` block in the PR body and a `needs-manual-intros` label. It detects a new CRD as any newly-added `static/api-specs/crds/*.schema.json` whose `x-kubernetes-kind` does not appear as a key in `crd-intros.mjs`.
+   - Add an entry to `crd-intros.mjs` for each missing Kind. Entries are emitted in declaration order within each group, so place the new entry deliberately (primary resources first, then auth, observability/config, optimizer, discovery).
+   - Re-run `node scripts/generate-crd-pages.mjs`. This writes the new MDX page, regenerates the landing page and sidebar to include the new CRD, and updates cross-CRD links on other pages if the new CRD is referenced by or references existing ones.
+   - Commit the intros change plus the regenerated outputs.
+
+   **When the release modifies an existing CRD**: the schema/example regenerate automatically. You do not need to touch `crd-intros.mjs` unless the intro prose is now wrong (e.g. the CRD's role shifted). If the upstream schema change adds a field that materially changes the CRD's story, update the `intro` prose accordingly.
+
 ## Phase 5: Validation
 
 1. **Re-verify every factual claim** against source code at the tag. This is the third verification pass (after Phase 2 and Phase 4). For large doc sets, spawn parallel verification agents (one per file or topic area) to check all claims concurrently. Each agent should read the doc file and verify every factual claim (struct fields, API routes, defaults, behavioral logic) against the actual source code at the release tag. Collect and resolve any discrepancies before proceeding.
