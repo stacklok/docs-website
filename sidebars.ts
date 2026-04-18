@@ -1,5 +1,6 @@
 import type { SidebarsConfig } from '@docusaurus/plugin-content-docs';
 import { buildCliReferenceSidebar } from './src/utils/buildHierarchicalSidebar';
+import crdSidebar from './static/api-specs/crds/sidebar.json';
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
@@ -159,7 +160,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/telemetry-and-metrics',
         'toolhive/guides-k8s/logging',
         'toolhive/guides-k8s/migrate-to-v1beta1',
-        'toolhive/reference/crd-spec',
+        crdSidebar,
       ],
     },
 
