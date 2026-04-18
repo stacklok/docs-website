@@ -1,23 +1,42 @@
 ---
-title: Redis Sentinel session storage
+title: Redis session storage
 description:
-  How to deploy Redis Sentinel and configure persistent session storage for the
-  ToolHive embedded authorization server and horizontal scaling.
+  Deploy Redis Sentinel for the ToolHive embedded auth server, or a standalone
+  Redis instance for MCPServer and VirtualMCPServer horizontal scaling.
 ---
 
-Deploy Redis Sentinel and configure it as the session storage backend for the
-ToolHive [embedded authorization server](../concepts/embedded-auth-server.mdx).
-By default, sessions are stored in memory, which means upstream tokens are lost
+ToolHive uses Redis for several purposes. This page covers two that require
+different configuration:
+
+- **Embedded authorization server sessions** - stores upstream tokens so users
+  don't need to re-authenticate after pod restarts. Uses Redis Sentinel with
+  ACL-based authentication and a fixed `thv:auth:*` key pattern. See
+  [Embedded auth server session storage](#embedded-auth-server-session-storage).
+
+- **MCPServer and VirtualMCPServer horizontal scaling** - shares MCP session
+  state across pod replicas so any pod can handle any request. Uses a standalone
+  Redis instance with a simple password. Session data is not persisted to disk.
+  If the Redis pod restarts, active sessions are lost and clients must
+  reconnect. See
+  [Horizontal scaling session storage](#horizontal-scaling-session-storage).
+
+Redis is also required for [rate limiting](./rate-limiting.mdx), which stores
+token bucket counters independently of session data.
+
+You can reuse the same Redis instance for all three purposes by using different
+`keyPrefix` values or different databases - see
+[Sharing a Redis instance](#sharing-a-redis-instance) for details.
+
+---
+
+## Embedded auth server session storage
+
+Configure Redis Sentinel as the session storage backend for the ToolHive
+[embedded authorization server](../concepts/embedded-auth-server.mdx). By
+default, sessions are stored in memory, which means upstream tokens are lost
 when pods restart and users must re-authenticate. Redis Sentinel provides
 persistent storage with automatic master discovery, ACL-based access control,
 and optional failover when replicas are configured.
-
-Redis is also required as the backend for [rate limiting](./rate-limiting.mdx),
-which stores token bucket counters in Redis independently of session data. It is
-also required for horizontal scaling when running multiple
-[MCPServer](./run-mcp-k8s.mdx#horizontal-scaling) or
-[VirtualMCPServer](../guides-vmcp/scaling-and-performance.mdx#session-storage-for-multi-replica-deployments)
-replicas, so that sessions are shared across pods.
 
 :::info[Prerequisites]
 
@@ -604,6 +623,321 @@ session storage is working correctly.
 
 </details>
 
+---
+
+## Horizontal scaling session storage
+
+When you run multiple replicas of an `MCPServer` proxy runner or a
+`VirtualMCPServer`, MCP sessions must be shared across pods so that any replica
+can handle any client request. ToolHive stores this session state in Redis using
+a simple password. No ACL user configuration or Sentinel is required.
+
+### Deploy a standalone Redis instance
+
+A single Redis pod with a password is sufficient for sharing session state
+across replicas during normal operation. The manifests below create Redis in the
+`toolhive-system` namespace alongside your ToolHive workloads.
+
+:::note[Session durability]
+
+This deployment uses ephemeral storage with no PVC. If the Redis pod is
+rescheduled to another node, all active sessions are lost and MCP clients must
+reconnect. Sessions may also be lost on pod restart depending on Redis
+persistence settings. For production deployments where session continuity is
+required, replace the `Deployment` with a `StatefulSet` and add a
+`volumeClaimTemplates` entry to persist Redis data to a PVC.
+
+:::
+
+:::tip[Generate a strong password]
+
+```bash
+openssl rand -base64 32
+```
+
+:::
+
+```yaml title="redis-scaling.yaml"
+# --- Redis password Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-password
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  # highlight-next-line
+  password: YOUR_REDIS_PASSWORD
+---
+# --- Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: toolhive-system
+spec:
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+# --- Redis Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: toolhive-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args:
+            - redis-server
+            - --requirepass
+            - $(REDIS_PASSWORD)
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-password
+                  key: password
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ['sh', '-c', 'redis-cli -a "$REDIS_PASSWORD" PING']
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+```
+
+Apply the manifests:
+
+```bash
+kubectl apply -f redis-scaling.yaml
+kubectl wait --for=condition=available deployment/redis \
+  --namespace toolhive-system --timeout=120s
+```
+
+### Configure MCPServer session storage
+
+Reference the Redis Service and Secret in your `MCPServer` spec:
+
+```yaml title="mcp-server-with-redis.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: my-server
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/example/my-mcp-server:latest
+  # highlight-start
+  replicas: 2
+  sessionStorage:
+    provider: redis
+    address: redis.toolhive-system.svc.cluster.local:6379
+    db: 0
+    keyPrefix: mcp-sessions
+    passwordRef:
+      name: redis-password
+      key: password
+  # highlight-end
+```
+
+### Configure VirtualMCPServer session storage
+
+The `sessionStorage` field is identical for `VirtualMCPServer`:
+
+```yaml title="vmcp-with-redis.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: VirtualMCPServer
+metadata:
+  name: my-vmcp
+  namespace: toolhive-system
+spec:
+  # highlight-start
+  replicas: 2
+  sessionStorage:
+    provider: redis
+    address: redis.toolhive-system.svc.cluster.local:6379
+    db: 0
+    keyPrefix: vmcp-sessions
+    passwordRef:
+      name: redis-password
+      key: password
+  # highlight-end
+  config:
+    groupRef: my-group
+  incomingAuth:
+    type: anonymous
+```
+
+### Verify session storage is working
+
+After applying your configuration, check that ToolHive has connected to Redis
+successfully.
+
+**Check the `SessionStorageWarning` condition:**
+
+```bash
+kubectl describe mcpserver my-server -n toolhive-system
+```
+
+When Redis is properly configured, the `SessionStorageWarning` condition is set
+to `False`:
+
+```
+Conditions:
+  Type:               Ready
+  Status:             True
+  ...
+  Type:               SessionStorageWarning
+  Status:             False
+  Reason:             SessionStorageConfigured
+```
+
+If `SessionStorageWarning` is `True`, Redis is not configured or the
+configuration is invalid. Check the proxy runner pod logs:
+
+```bash
+kubectl logs -n toolhive-system \
+  -l app.kubernetes.io/name=my-server \
+  | grep -i "redis\|session"
+```
+
+**Test cross-pod session reconstruction:**
+
+Scale down to one replica and connect an MCP client to establish a session. Then
+scale back up and delete the original pod. Deleting the pod terminates the TCP
+connection, so your client will need to reconnect. If Redis session storage is
+working, the session state is preserved and the client can resume making
+requests without reinitializing.
+
+:::note
+
+If the Service has `sessionAffinity: ClientIP` configured, the load balancer may
+route your reconnect back to the same pod. Delete the original pod first to
+force traffic to the new replica.
+
+:::
+
+```bash
+# Start with 1 replica
+kubectl scale deployment vmcp-my-vmcp -n toolhive-system --replicas=1
+
+# Connect your MCP client and establish a session, then scale up:
+kubectl scale deployment vmcp-my-vmcp -n toolhive-system --replicas=2
+
+# Delete the original pod to force routing to the new replica
+kubectl delete pod -n toolhive-system \
+  -l app.kubernetes.io/name=my-vmcp --field-selector='status.podIP=<ORIGINAL_POD_IP>'
+
+# Reconnect your MCP client — it should resume the session without reinitializing
+```
+
+---
+
+## Sharing a Redis instance
+
+You can reuse the same Redis instance for embedded auth server sessions,
+MCPServer scaling, and VirtualMCPServer scaling by using different `keyPrefix`
+values per use case. If you share an instance, use the Redis Sentinel
+StatefulSet from the [embedded auth server section](#deploy-redis-sentinel),
+which has persistent storage. The standalone `Deployment` from the scaling
+section is not suitable as a shared instance because it has no persistent
+storage.
+
+The embedded auth server uses `thv:auth:*` by default; set distinct prefixes for
+your scaling workloads:
+
+| Use case                 | Suggested `keyPrefix`               |
+| ------------------------ | ----------------------------------- |
+| Embedded auth server     | `thv:auth` (fixed, set by ToolHive) |
+| MCPServer scaling        | `mcp-sessions`                      |
+| VirtualMCPServer scaling | `vmcp-sessions`                     |
+
+Alternatively, use separate `db` values (Redis databases 0-15) to provide hard
+namespace isolation without requiring separate Redis instances.
+
+#### ACL configuration for a shared instance
+
+The two use cases authenticate differently and require separate ACL entries:
+
+- The **embedded auth server** connects as the `toolhive-auth` ACL user,
+  restricted to the `~thv:auth:*` key pattern.
+- The **scaling use case** (`SessionStorageConfig`) only supports a
+  `passwordRef` with no username field, so it always authenticates as the
+  **default** Redis user.
+
+To satisfy both on one instance, enable the default user with a password and
+restrict it to the scaling key patterns. Add this line to the `users.acl` entry
+in the `redis-acl` Secret alongside the existing `toolhive-auth` entry:
+
+```
+user default on >YOUR_SCALING_PASSWORD ~mcp-sessions:* ~vmcp-sessions:* &* +@all -@dangerous
+```
+
+Replace `YOUR_SCALING_PASSWORD` with the password you put in the
+`redis-password` Secret, and adjust the key patterns to match your `keyPrefix`
+values.
+
+:::warning
+
+`SessionStorageConfig` does not support Sentinel. It requires a direct Redis
+address and cannot follow a Sentinel-managed master if failover promotes a new
+master. If your Sentinel cluster has replicas and failover enabled, hardcoding a
+pod DNS (`redis-0.redis...`) will break session storage if that pod is no longer
+the master.
+
+For this reason, the recommended approach is to run a **separate standalone
+Redis instance** (the `Deployment` from the
+[scaling section](#deploy-a-standalone-redis-instance)) for scaling workloads,
+rather than sharing the Sentinel instance. If you do share the instance, disable
+Redis replication so there is only ever one master and Sentinel cannot trigger
+failover.
+
+If you share the Sentinel instance with replication disabled, point
+`sessionStorage.address` at the master pod directly:
+
+```yaml
+sessionStorage:
+  provider: redis
+  address: redis-0.redis.redis.svc.cluster.local:6379
+  passwordRef:
+    name: redis-password
+    key: password
+```
+
+:::
+
+:::warning
+
+Restricting the default user to specific key patterns (as shown above) prevents
+scaling workloads from accidentally reading or writing auth session keys. If you
+omit the key restriction, the default user has full access to the entire
+keyspace, including `thv:auth:*` tokens.
+
+:::
+
+---
+
 ## Next steps
 
 - [Configure token exchange](./token-exchange-k8s.mdx) to let MCP servers
@@ -614,5 +948,8 @@ session storage is working correctly.
 ## Related information
 
 - [Set up embedded authorization server authentication](./auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
+- [Horizontal scaling for MCPServer](./run-mcp-k8s.mdx#horizontal-scaling)
+- [Horizontal scaling for VirtualMCPServer](../guides-vmcp/scaling-and-performance.mdx#session-storage-for-multi-replica-deployments)
 - [Backend authentication](../concepts/backend-auth.mdx)
-- [Kubernetes CRD reference](../reference/crd-spec.md#apiv1alpha1authserverstorageconfig)
+- [Kubernetes CRD reference — SessionStorageConfig](../reference/crd-spec.md#apiv1alpha1sessionstorageconfig)
+- [Kubernetes CRD reference — auth server storage](../reference/crd-spec.md#apiv1alpha1authserverstorageconfig)

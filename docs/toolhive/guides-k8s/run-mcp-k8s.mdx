@@ -453,17 +453,40 @@ The proxy runner handles authentication, MCP protocol framing, and session
 management; it is stateless with respect to tool execution. The backend runs the
 actual MCP server and executes tools.
 
+### Session routing for backend replicas
+
+MCP connections are stateful: once a client establishes a session with a
+specific backend pod, all subsequent requests in that session must reach the
+same pod. When `backendReplicas > 1`, the proxy runner uses Redis to store a
+session-to-pod mapping so every proxy runner replica knows which backend pod
+owns each session.
+
+Without Redis, the proxy runner falls back to Kubernetes client-IP session
+affinity on the backend Service, which is unreliable behind NAT or shared egress
+IPs. If a backend pod is restarted or replaced, its entry in the Redis routing
+table is invalidated and the next request reconnects to an available pod —
+sessions are not automatically migrated between pods.
+
+:::note
+
+The `SessionStorageWarning` condition only fires when `spec.replicas > 1`
+(multiple proxy runner pods). It does not fire when only `backendReplicas > 1`,
+but Redis session storage is still strongly recommended in that case to ensure
+reliable per-session pod routing.
+
+:::
+
 Common configurations:
 
 - **Scale only the proxy** (`replicas: N`, omit `backendReplicas`): useful when
   auth and connection overhead is the bottleneck with a single backend.
 - **Scale only the backend** (omit `replicas`, `backendReplicas: M`): useful
-  when tool execution is CPU/memory-bound and the proxy is not a bottleneck. The
-  backend Deployment uses client-IP session affinity to route repeated
-  connections to the same pod - subject to the same NAT limitations as
-  proxy-level affinity.
+  when tool execution is CPU/memory-bound and the proxy is not a bottleneck.
+  Configure Redis session storage so the proxy runner can route requests to the
+  correct backend pod.
 - **Scale both** (`replicas: N`, `backendReplicas: M`): full horizontal scale.
-  Redis session storage is required when `replicas > 1`.
+  Redis session storage is required for reliable operation when `replicas > 1`,
+  and strongly recommended when `backendReplicas > 1`.
 
 ```yaml title="MCPServer resource"
 spec:
@@ -471,26 +494,22 @@ spec:
   backendReplicas: 3
   sessionStorage:
     provider: redis
-    address: redis-master.toolhive-system.svc.cluster.local:6379 # Update to match your Redis Service location
+    address: redis.toolhive-system.svc.cluster.local:6379
     db: 0
     keyPrefix: mcp-sessions
     passwordRef:
-      name: redis-secret
+      name: redis-password
       key: password
 ```
 
 When running multiple replicas, configure
-[Redis session storage](./redis-session-storage.mdx) so that sessions are shared
-across pods. If you omit `replicas` or `backendReplicas`, the operator defers
-replica management to an HPA or other external controller.
-
-:::note
-
-The `SessionStorageWarning` condition fires only when `spec.replicas > 1`.
-Scaling only the backend (`backendReplicas > 1`) does not trigger a warning, but
-backend client-IP affinity is still unreliable behind NAT or shared egress IPs.
-
-:::
+[Redis session storage](./redis-session-storage.mdx#horizontal-scaling-session-storage)
+so that sessions are shared across pods. The example above assumes you have
+deployed Redis using the manifests in that guide, which create a Service named
+`redis` and a Secret named `redis-password` in the `toolhive-system` namespace.
+Update `address` and `passwordRef.name` if your Redis deployment uses different
+names. If you omit `replicas` or `backendReplicas`, the operator defers replica
+management to an HPA or other external controller.
 
 :::note[Connection draining on scale-down]
 
