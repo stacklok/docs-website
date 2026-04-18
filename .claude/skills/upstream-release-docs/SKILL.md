@@ -183,6 +183,7 @@ Apply the approved changes:
    - `static/api-specs/crds/*.example.yaml` - minimal required-fields YAML example
    - `static/api-specs/crds/index.json` - metadata + cross-reference graph
    - `static/api-specs/crds/sidebar.json` - sidebar fragment consumed by `sidebars.ts`
+   - `src/components/CRDReference/schemas.ts` - Kind -> schema index imported by the `<CRDFields>` component
    - `docs/toolhive/reference/crds/*.mdx` - per-CRD pages (including the landing `index.mdx`)
 
    These come from `scripts/extract-crd-schemas.mjs` + `scripts/generate-crd-pages.mjs`, run by `scripts/update-toolhive-reference.sh`. Regenerating just means re-running the script; do not edit the MDX directly.
