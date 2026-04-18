@@ -82,6 +82,49 @@ jobs:
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Detect new CRDs without intros
+        id: new-crds
+        if: steps.git-diff.outputs.changed == 'true'
+        run: |
+          # A new upstream CRD results in an added *.schema.json under
+          # static/api-specs/crds/. For each one, check whether its Kind has
+          # a matching entry in scripts/lib/crd-intros.mjs - if not, a human
+          # still needs to write the intro before the CRD appears in the
+          # sidebar, landing page, or as its own MDX page.
+          MISSING=()
+          while IFS= read -r schema_file; do
+            [ -z "$schema_file" ] && continue
+            kind=$(jq -r '."x-kubernetes-kind"' "$schema_file")
+            if ! grep -q "^  ${kind}: {$" scripts/lib/crd-intros.mjs; then
+              MISSING+=("$kind")
+            fi
+          done < <(git diff --cached --name-only --diff-filter=A -- 'static/api-specs/crds/*.schema.json')
+
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "has_missing=true" >> $GITHUB_OUTPUT
+            {
+              echo "warning_block<<EOF"
+              echo ""
+              echo "> [!WARNING]"
+              echo "> **New CRD(s) detected without intro metadata.** This release"
+              echo "> adds the following Kind(s) to the ToolHive CRDs, but they are"
+              echo "> not yet listed in \`scripts/lib/crd-intros.mjs\`:"
+              echo ">"
+              for kind in "${MISSING[@]}"; do
+                echo "> - \`$kind\`"
+              done
+              echo ">"
+              echo "> Until an entry is added, the schema and example are checked"
+              echo "> in but the CRD has no MDX page, sidebar entry, or DocCard."
+              echo "> Add each Kind to \`scripts/lib/crd-intros.mjs\` and push the"
+              echo "> update to this branch before merging."
+              echo "EOF"
+            } >> $GITHUB_OUTPUT
+          else
+            echo "has_missing=false" >> $GITHUB_OUTPUT
+            echo "warning_block=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create Pull Request
         if: steps.git-diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
@@ -91,6 +134,7 @@ jobs:
             Update ToolHive reference docs for ${{ steps.imports.outputs.version }}
           body: |
             This PR was auto-generated from ToolHive release **${{ steps.imports.outputs.version }}**.${{ steps.get-reviewer.outputs.assign_to != '' && format(' @{0} is tagged as the person who cut this release.', steps.get-reviewer.outputs.assign_to) || '' }}
+            ${{ steps.new-crds.outputs.warning_block }}
 
             ## What's in this PR
 
@@ -98,7 +142,7 @@ jobs:
 
             - **CLI reference** (`docs/toolhive/reference/cli/`) - help text for every `thv` command
             - **REST API spec** (`static/api-specs/toolhive-api.yaml`) - OpenAPI/Swagger spec
-            - **CRD API spec** (`docs/toolhive/reference/crd-spec.md`) - Kubernetes CRD reference
+            - **CRD reference** (`docs/toolhive/reference/crds/`, `static/api-specs/crds/`) - per-CRD MDX pages, extracted JSON schemas, and YAML examples
             - **Registry JSON schemas** (`static/api-specs/*.schema.json`) - registry validation schemas
 
             ## What's NOT in this PR
@@ -115,3 +159,11 @@ jobs:
           reviewers: ${{ steps.get-reviewer.outputs.assign_to }}
           delete-branch: true
           sign-commits: true
+
+      - name: Label PR when new CRDs need intros
+        if: steps.git-diff.outputs.changed == 'true' && steps.new-crds.outputs.has_missing == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr edit "update-toolhive-reference-${{ steps.imports.outputs.version }}" \
+            --add-label needs-manual-intros

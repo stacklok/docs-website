@@ -15,8 +15,6 @@ API_SPEC_DST="${STATIC_DIR}/api-specs/toolhive-api.yaml"
 REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/toolhive-legacy-registry.schema.json"
 UPSTREAM_REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/upstream-registry.schema.json"
 REGISTRY_META_SCHEMA_DST="${STATIC_DIR}/api-specs/publisher-provided.schema.json"
-CRD_API_DST="${DOCS_DIR}/toolhive/reference/crd-spec.md"
-CRD_API_FRONTMATTER="${REPO_ROOT}/scripts/crd-ref-frontmatter.txt"
 
 if [ ! -d "$DOCS_DIR" ]; then
     echo "Docs directory does not exist: $DOCS_DIR"
@@ -59,7 +57,6 @@ gh release download "$VERSION" \
     --repo stacklok/toolhive \
     --pattern "thv-cli-docs.tar.gz" \
     --pattern "swagger.yaml" \
-    --pattern "crd-api.md" \
     --dir "$DOWNLOAD_DIR"
 
 ## CLI reference
@@ -75,9 +72,21 @@ cp "${DOWNLOAD_DIR}/swagger.yaml" "${API_SPEC_DST}"
 echo "API reference updated successfully"
 
 ## CRD API reference
-echo "Updating ToolHive CRD API reference at ${CRD_API_DST}"
-# Prepend frontmatter and strip the h1 title (Docusaurus uses title from front matter)
-{ cat "${CRD_API_FRONTMATTER}"; sed '1{/^# /d;}' "${DOWNLOAD_DIR}/crd-api.md"; } > "${CRD_API_DST}"
+# Fetch the CRD manifests for this release and generate per-CRD schema files
+# and MDX pages. CRDs live in the operator Helm chart inside the repo, so we
+# clone the tag shallowly rather than using release assets.
+echo "Fetching ToolHive CRD manifests for ${VERSION}..."
+TOOLHIVE_CLONE_DIR="${DOWNLOAD_DIR}/toolhive"
+git clone --depth 1 --branch "$VERSION" \
+    https://github.com/stacklok/toolhive.git \
+    "$TOOLHIVE_CLONE_DIR"
+CRD_SRC="${TOOLHIVE_CLONE_DIR}/deploy/charts/operator-crds/files/crds"
+
+echo "Extracting CRD schemas and examples..."
+TOOLHIVE_CRD_DIR="$CRD_SRC" node "${REPO_ROOT}/scripts/extract-crd-schemas.mjs"
+
+echo "Generating CRD reference pages..."
+node "${REPO_ROOT}/scripts/generate-crd-pages.mjs"
 echo "CRD API reference updated successfully"
 
 ## Derive toolhive-core version from go.mod at the tagged commit
