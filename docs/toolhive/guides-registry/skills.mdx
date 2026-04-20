@@ -38,6 +38,14 @@ config has `registries: [{name: my-registry, ...}]`).
 To publish a new skill version, send a `POST` request to the `/v1/entries`
 endpoint with the skill metadata wrapped in a `skill` object:
 
+:::note
+
+The example below shows the request shape without claims. When authentication is
+enabled, the body must also include a `claims` object at the top level or the
+server returns `400 Bad Request`. See [Claims](#claims) below.
+
+:::
+
 ```bash title="Publish a skill"
 curl -X POST \
   https://registry.example.com/v1/entries \
@@ -68,7 +76,7 @@ curl -X POST \
   }'
 ```
 
-**Required fields:** `namespace`, `name`, `version`
+**Required fields in the `skill` object:** `namespace`, `name`, `version`
 
 A successful response returns `201 Created` with the published skill. If the
 version already exists, the server returns `409 Conflict`.
@@ -78,15 +86,17 @@ insensitive). The server normalizes status values to uppercase internally.
 
 ### Claims
 
-When [authorization](./authorization.mdx) is enabled, you can attach claims to
-published skills to control visibility. Include a `claims` object in the request
-body:
+When [authentication](./authentication.mdx) is enabled, publish requests must
+include a `claims` object. Skipping it returns `400 Bad Request`. Attach claims
+at the top level of the request body, alongside the `skill` object:
 
 ```json
 {
-  "namespace": "io.github.acme",
-  "name": "code-review",
-  "version": "1.0.0",
+  "skill": {
+    "namespace": "io.github.acme",
+    "name": "code-review",
+    "version": "1.0.0"
+  },
   "claims": { "org": "acme", "team": "platform" }
 }
 ```
@@ -189,9 +199,12 @@ To delete a specific version, use the `/v1/entries` endpoint:
 
 ```bash title="Delete a skill version"
 curl -X DELETE \
-  https://registry.example.com/v1/entries/skill/code-review/versions/1.0.0 \
+  "https://registry.example.com/v1/entries/skill/io.github.acme%2Fcode-review/versions/1.0.0" \
   -H "Authorization: Bearer <TOKEN>"
 ```
+
+The skill name includes the namespace prefix. URL-encode the slash as `%2F` so
+the full `namespace/name` is captured as a single `{name}` path parameter.
 
 A successful delete returns `204 No Content`. Deleting a non-existent version
 returns `404 Not Found`.
