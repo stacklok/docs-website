@@ -1,0 +1,93 @@
+---
+title: Registry hardening, horizontal scaling, and production readiness
+sidebar_label: 'Apr 20: Registry v1.2.0 and horizontal scaling'
+description:
+  Registry Server v1.2.0 adds claims management for published entries and
+  drops the legacy registry format. New docs cover horizontal scaling for
+  vMCP and MCPServer with Redis-backed session routing.
+---
+
+This week brings Registry Server v1.2.0 with stronger access control over
+published entries and a clean break to the upstream MCP registry format. New
+documentation also covers horizontal scaling for both vMCP and MCPServer,
+with guidance on Redis-backed session routing and what to watch for in
+multi-replica deployments.
+
+{/* truncate */}
+
+## Registry Server: Claims control and format standardization
+
+**The ToolHive Registry Server** v1.2.0 tightens access control on published
+entries and simplifies the configuration surface:
+
+- **Claims management for published entries** adds a new API endpoint for
+  updating the claims on an already-published entry. Authorization is
+  JWT-enforced: your token must cover both the existing and new claim sets,
+  so you can't accidentally expand access beyond what you already own.
+  Super-admins can bypass this check when needed.
+- **Enforced claims on publish** closes a gap where publishing without claims
+  while authenticated would silently create entries invisible to everyone.
+  Publishing now returns a clear error when a JWT is present and no claims
+  are provided, instead of creating an inaccessible entry.
+- **MCP registry format only** drops the legacy ToolHive-native registry
+  format. Only the upstream MCP registry format is supported going forward,
+  improving interoperability with other tools in the MCP ecosystem. Update
+  any clients or tooling that relied on the old format before upgrading.
+- **Database password via config and environment variables** adds support for
+  setting the database password through configuration files and environment
+  variables, not just connection strings - making it easier to integrate with
+  secret management tools without embedding credentials in URLs.
+- **Single managed source enforcement** rejects configurations with more than
+  one managed source, preventing a class of misconfiguration that could cause
+  inconsistent registry state.
+
+## Virtual MCP Server: Horizontal scaling
+
+**vMCP** now has
+[documented horizontal scaling support](/toolhive/guides-vmcp/scaling-and-performance)
+covering how to run multiple replicas and keep sessions consistent across pods:
+
+- **Multi-replica deployments** are controlled by setting `replicas` in your
+  `VirtualMCPServer` spec. Omit the field to defer replica management to an
+  HPA or other external controller.
+- **Redis session storage** is required when running more than one replica.
+  Without it, requests routed to a different pod than the one that established
+  the session will fail. The operator sets a `SessionStorageWarning` condition
+  if you configure multiple replicas without Redis, but still applies the
+  replica count.
+- **Session affinity considerations** - the default `ClientIP` affinity works
+  for stateful backends like browser sessions or database connections, but is
+  unreliable behind NAT or shared egress IPs (common in EKS, GKE, and AKS).
+  For stateless backends, set `sessionAffinity: None` to let the Service
+  load-balance freely.
+
+## Kubernetes Operator: Horizontal scaling for MCPServer
+
+**MCPServer** supports scaling the proxy runner and backend server
+independently, giving you more control over where to add resources:
+
+- **Independent proxy and backend scaling** via `spec.replicas` (proxy runner)
+  and `spec.backendReplicas` (backend MCP server) lets you target whichever
+  tier is the actual bottleneck - connection handling or tool execution.
+- **Redis-backed session routing** stores a session-to-pod mapping so every
+  proxy runner knows which backend pod owns each active session. Without Redis,
+  the proxy falls back to Kubernetes client-IP session affinity on the backend
+  Service, which is unreliable behind NAT and shared egress IPs.
+- **Connection draining on scale-down** gives terminating proxy pods 30
+  seconds to finish in-flight requests. Long-lived SSE or streaming connections
+  may be dropped if they exceed this window. Override
+  `terminationGracePeriodSeconds` via `podTemplateSpec` if your workload needs
+  a longer drain period.
+
+## Getting started
+
+For detailed release notes, check the project repositories:
+
+- [ToolHive Runtimes](https://github.com/stacklok/toolhive/releases) (CLI and
+  Kubernetes Operator)
+- [ToolHive Desktop UI](https://github.com/stacklok/toolhive-studio/releases)
+- [ToolHive Cloud UI](https://github.com/stacklok/toolhive-cloud-ui/releases)
+- [ToolHive Registry Server](https://github.com/stacklok/toolhive-registry-server/releases)
+
+You can find all ToolHive documentation on the
+[Stacklok documentation site](/toolhive).
