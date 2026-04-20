@@ -264,6 +264,7 @@ for (const crd of crds) {
     version,
     shortNames,
     scope,
+    description: schema.description || '',
     references: [...refByTarget.entries()]
       .map(([targetKind, paths]) => ({
         targetKind,

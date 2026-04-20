@@ -1,23 +1,27 @@
-// Single source of truth for per-CRD metadata that is not derivable from
-// the upstream schema.
+// Hand-written overrides for per-CRD metadata. Every CRD in
+// static/api-specs/crds/index.json is published automatically; entries here
+// are improvements over schema-derived defaults, not prerequisites.
 //
-// To add a new CRD after upstream ships it:
-//   1. Add an entry here keyed by its Kind.
-//   2. Run `node scripts/generate-crd-pages.mjs` (or let the release workflow
-//      do it). The MDX page, sidebar entry, and landing page DocCard are all
-//      derived from this file, so you should not need to edit anything else.
+// To improve a CRD's page (or intentionally position a new one on the
+// landing page), add or update its entry and run
+// `node scripts/generate-crd-pages.mjs`.
 //
-// Entries are emitted in declaration order within each group, so order this
-// file intentionally - most-important resource first.
+// Within each group, overridden entries render in this file's declaration
+// order, then any defaults-only CRDs follow alphabetically by Kind.
 //
-// Fields:
-//   slug        - URL segment and MDX filename (without extension).
-//   group       - Section on the landing page and in the sidebar.
-//   summary     - One-sentence pitch used on DocCards and in the sidebar.
-//   description - SEO meta description (frontmatter). 80-150 chars ideal.
-//   intro       - Opening prose rendered at the top of the MDX page.
-//                 Markdown allowed; cross-CRD links should use relative
-//                 paths like [MCPGroup](./mcpgroup.mdx).
+// All fields are optional. Omit any field to inherit the schema-derived
+// default:
+//   slug        - URL segment and MDX filename. Default: Kind.toLowerCase().
+//   group       - Landing-page/sidebar section. Default: 'shared'.
+//   summary     - One-sentence DocCard pitch. Default: first sentence of
+//                 the upstream schema description with the "Foo is the
+//                 Schema for the foos API" boilerplate stripped.
+//   description - SEO meta description (80-150 chars ideal).
+//                 Default: "Schema reference for <Kind>."
+//   intro       - Opening prose at the top of the page. Markdown allowed;
+//                 cross-CRD links should use [Kind](./slug.mdx) form.
+//                 Default: cleaned upstream schema description, or a
+//                 generic fallback if only boilerplate is present upstream.
 
 export const groupLabels = {
   core: 'Core workloads',

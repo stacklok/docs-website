@@ -188,20 +188,19 @@ Apply the approved changes:
 
    These come from `scripts/extract-crd-schemas.mjs` + `scripts/generate-crd-pages.mjs`, run by `scripts/update-toolhive-reference.sh`. Regenerating just means re-running the script; do not edit the MDX directly.
 
-   **Human-authored, single source of truth** (`scripts/lib/crd-intros.mjs`): one object per CRD Kind with:
-   - `slug`: URL segment and MDX filename
-   - `group`: `'core'` or `'shared'` (drives landing-page and sidebar grouping)
-   - `summary`: one-sentence DocCard description
-   - `description`: SEO meta description (80-150 chars)
-   - `intro`: markdown prose at the top of the page, with inline cross-links to sibling CRDs using `[Kind](./slug.mdx)` form
+   **Hand-written overrides** (`scripts/lib/crd-intros.mjs`): every CRD in `index.json` publishes automatically using schema-derived defaults. Entries in this file override those defaults to polish a page. All fields are optional:
+   - `slug`: URL segment and MDX filename. Default: `Kind.toLowerCase()`.
+   - `group`: `'core'` or `'shared'`. Default: `'shared'`.
+   - `summary`: one-sentence DocCard pitch. Default: first sentence of the cleaned upstream schema description.
+   - `description`: SEO meta description (80-150 chars). Default: `"Schema reference for <Kind>."`.
+   - `intro`: markdown prose at the top of the page, with inline cross-links using `[Kind](./slug.mdx)` form. Default: the cleaned upstream schema description.
 
    **When the release adds a new CRD**:
-   - The release workflow flags this case with a `[!WARNING]` block in the PR body and a `needs-manual-intros` label. It detects a new CRD as any newly-added `static/api-specs/crds/*.schema.json` whose `x-kubernetes-kind` does not appear as a key in `crd-intros.mjs`.
-   - Add an entry to `crd-intros.mjs` for each missing Kind. Entries are emitted in declaration order within each group, so place the new entry deliberately (primary resources first, then auth, observability/config, optimizer, discovery).
-   - Re-run `node scripts/generate-crd-pages.mjs`. This writes the new MDX page, regenerates the landing page and sidebar to include the new CRD, and updates cross-CRD links on other pages if the new CRD is referenced by or references existing ones.
-   - Commit the intros change plus the regenerated outputs.
+   - The release PR auto-publishes the new CRD with schema-derived defaults and flags it in a `[!NOTE]` block. No blocker.
+   - Review the generated page. If the upstream kubebuilder description is thin or the CRD should live in the `core` group or appear higher on the landing page, add an override entry for that Kind to `crd-intros.mjs` and re-run `node scripts/generate-crd-pages.mjs`. Overridden entries render before defaults-only entries within each group, in the order they are declared in the file.
+   - Commit the intros change plus the regenerated outputs. You can also land this as a follow-up PR after the release PR merges.
 
-   **When the release modifies an existing CRD**: the schema/example regenerate automatically. You do not need to touch `crd-intros.mjs` unless the intro prose is now wrong (e.g. the CRD's role shifted). If the upstream schema change adds a field that materially changes the CRD's story, update the `intro` prose accordingly.
+   **When the release modifies an existing CRD**: the schema/example regenerate automatically. If the CRD has no override entry, the intro prose will track the upstream description automatically. If it does have an override entry, update the `intro` only if the CRD's role materially shifted.
 
 ## Phase 5: Validation
 
