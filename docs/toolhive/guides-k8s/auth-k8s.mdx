@@ -527,10 +527,15 @@ spec:
           clientSecretRef:
             name: upstream-idp-secret
             key: client-secret
+          # Scopes must be set explicitly when using access_type=offline, to avoid
+          # sending the default offline_access scope alongside Google's
+          # access_type=offline mechanism (they serve the same purpose).
           scopes:
             - openid
-            - profile
             - email
+            - profile
+          additionalAuthorizationParams:
+            access_type: 'offline'
 ```
 
 ```bash
@@ -738,6 +743,50 @@ user identity fields. For example, GitHub returns `login` instead of the
 standard `name` field.
 
 :::
+
+### Upstream-specific authorization parameters
+
+Some identity providers require custom query parameters on the authorization URL
+that aren't part of the standard OAuth 2.0 or OIDC specs. The most common case
+is Google, which issues refresh tokens only when the authorization request
+includes `access_type=offline` - Google's non-standard alternative to the
+`offline_access` scope.
+
+To pass these parameters, set `additionalAuthorizationParams` on the
+`oidcConfig` or `oauth2Config` of an upstream provider:
+
+```yaml title="upstreamProviders configuration block"
+upstreamProviders:
+  - name: google
+    type: oidc
+    oidcConfig:
+      issuerUrl: 'https://accounts.google.com'
+      clientId: '<YOUR_GOOGLE_CLIENT_ID>'
+      clientSecretRef:
+        name: upstream-idp-secret
+        key: client-secret
+      scopes:
+        - openid
+        - email
+        - profile
+      additionalAuthorizationParams:
+        access_type: 'offline'
+```
+
+**Scope interaction:** When an OIDC upstream does not specify `scopes`
+explicitly, ToolHive sends the default `["openid", "offline_access"]`. If you're
+using `access_type=offline` for a provider that does not understand
+`offline_access` (such as Google), set `scopes` explicitly so the two mechanisms
+don't conflict.
+
+**First consent only:** Google only issues a refresh token on the user's first
+consent. If users previously authorized the app without `access_type=offline`,
+they won't receive a refresh token until their current access token expires and
+they sign in again. To force re-consent immediately (for example, after losing
+refresh-token state), add `prompt: 'consent'` alongside `access_type: 'offline'`
+
+- Google then shows the consent screen on every login and re-issues a refresh
+  token each time.
 
 ## Set up authorization
 
