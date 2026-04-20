@@ -5,6 +5,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 import PrismLight from './src/utils/prismLight';
 import PrismDark from './src/utils/prismDark';
+import crdReferenceRemark from './plugins/crd-reference-remark/index.mjs';
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
@@ -175,6 +176,16 @@ const config: Config = {
             keywords: ['enterprise'],
             extendDefaults: true,
           },
+          // Must run before Docusaurus's default TOC extractor so the
+          // headings injected for <CRDReference> make it into the TOC.
+          beforeDefaultRemarkPlugins: [
+            [
+              crdReferenceRemark,
+              {
+                schemaDir: path.join(__dirname, 'static', 'api-specs', 'crds'),
+              },
+            ],
+          ],
         },
         blog: {
           blogTitle: 'ToolHive Updates and Announcements',
@@ -290,7 +301,7 @@ const config: Config = {
             },
             {
               label: 'ToolHive Operator CRD',
-              to: 'toolhive/reference/crd-spec',
+              to: 'toolhive/reference/crds',
             },
             {
               label: 'ToolHive Registry Server API',

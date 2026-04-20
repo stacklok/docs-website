@@ -176,6 +176,32 @@ Apply the approved changes:
 
 5. Do not edit auto-generated files. If they need updating, note this for the user.
 
+6. **CRD reference updates**: the Kubernetes CRD reference is partially auto-generated. If the release touches CRDs, know the split:
+
+   **Fully auto-generated** (do not hand-edit):
+   - `static/api-specs/crds/*.schema.json` - extracted JSON Schema per CRD
+   - `static/api-specs/crds/*.example.yaml` - minimal required-fields YAML example
+   - `static/api-specs/crds/index.json` - metadata + cross-reference graph
+   - `static/api-specs/crds/sidebar.json` - sidebar fragment consumed by `sidebars.ts`
+   - `src/components/CRDReference/schemas.ts` - Kind -> schema index imported by the `<CRDFields>` component
+   - `docs/toolhive/reference/crds/*.mdx` - per-CRD pages (including the landing `index.mdx`)
+
+   These come from `scripts/extract-crd-schemas.mjs` + `scripts/generate-crd-pages.mjs`, run by `scripts/update-toolhive-reference.sh`. Regenerating just means re-running the script; do not edit the MDX directly.
+
+   **Hand-written overrides** (`scripts/lib/crd-intros.mjs`): every CRD in `index.json` publishes automatically using schema-derived defaults. Entries in this file override those defaults to polish a page. All fields are optional:
+   - `slug`: URL segment and MDX filename. Default: `Kind.toLowerCase()`.
+   - `group`: `'core'` or `'shared'`. Default: `'shared'`.
+   - `summary`: one-sentence DocCard pitch. Default: first sentence of the cleaned upstream schema description.
+   - `description`: SEO meta description (80-150 chars). Default: `"Schema reference for <Kind>."`.
+   - `intro`: markdown prose at the top of the page, with inline cross-links using `[Kind](./slug.mdx)` form. Default: the cleaned upstream schema description.
+
+   **When the release adds a new CRD**:
+   - The release PR auto-publishes the new CRD with schema-derived defaults and flags it in a `[!NOTE]` block. No blocker.
+   - Review the generated page. If the upstream kubebuilder description is thin or the CRD should live in the `core` group or appear higher on the landing page, add an override entry for that Kind to `crd-intros.mjs` and re-run `node scripts/generate-crd-pages.mjs`. Overridden entries render before defaults-only entries within each group, in the order they are declared in the file.
+   - Commit the intros change plus the regenerated outputs. You can also land this as a follow-up PR after the release PR merges.
+
+   **When the release modifies an existing CRD**: the schema/example regenerate automatically. If the CRD has no override entry, the intro prose will track the upstream description automatically. If it does have an override entry, update the `intro` only if the CRD's role materially shifted.
+
 ## Phase 5: Validation
 
 1. **Re-verify every factual claim** against source code at the tag. This is the third verification pass (after Phase 2 and Phase 4). For large doc sets, spawn parallel verification agents (one per file or topic area) to check all claims concurrently. Each agent should read the doc file and verify every factual claim (struct fields, API routes, defaults, behavioral logic) against the actual source code at the release tag. Collect and resolve any discrepancies before proceeding.

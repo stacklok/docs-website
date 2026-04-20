@@ -82,6 +82,44 @@ jobs:
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Detect newly added CRDs
+        id: new-crds
+        if: steps.git-diff.outputs.changed == 'true'
+        run: |
+          # A new upstream CRD results in an added *.schema.json under
+          # static/api-specs/crds/. New CRDs publish automatically with
+          # schema-derived prose; flag them so reviewers can decide whether
+          # to add a hand-written override in scripts/lib/crd-intros.mjs.
+          NEW=()
+          while IFS= read -r schema_file; do
+            [ -z "$schema_file" ] && continue
+            kind=$(jq -r '."x-kubernetes-kind"' "$schema_file")
+            NEW+=("$kind")
+          done < <(git diff --cached --name-only --diff-filter=A -- 'static/api-specs/crds/*.schema.json')
+
+          if [ ${#NEW[@]} -gt 0 ]; then
+            {
+              echo "note_block<<EOF"
+              echo ""
+              echo "> [!NOTE]"
+              echo "> **New CRD(s) in this release.** The following Kind(s) were"
+              echo "> added upstream and have been auto-published with"
+              echo "> schema-derived prose:"
+              echo ">"
+              for kind in "${NEW[@]}"; do
+                echo "> - \`$kind\`"
+              done
+              echo ">"
+              echo "> This does not block the release. To polish the page(s),"
+              echo "> add an override entry in \`scripts/lib/crd-intros.mjs\`"
+              echo "> (all fields optional) and push to this branch, or land a"
+              echo "> follow-up PR after merge."
+              echo "EOF"
+            } >> $GITHUB_OUTPUT
+          else
+            echo "note_block=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create Pull Request
         if: steps.git-diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
@@ -91,6 +129,7 @@ jobs:
             Update ToolHive reference docs for ${{ steps.imports.outputs.version }}
           body: |
             This PR was auto-generated from ToolHive release **${{ steps.imports.outputs.version }}**.${{ steps.get-reviewer.outputs.assign_to != '' && format(' @{0} is tagged as the person who cut this release.', steps.get-reviewer.outputs.assign_to) || '' }}
+            ${{ steps.new-crds.outputs.note_block }}
 
             ## What's in this PR
 
@@ -98,7 +137,7 @@ jobs:
 
             - **CLI reference** (`docs/toolhive/reference/cli/`) - help text for every `thv` command
             - **REST API spec** (`static/api-specs/toolhive-api.yaml`) - OpenAPI/Swagger spec
-            - **CRD API spec** (`docs/toolhive/reference/crd-spec.md`) - Kubernetes CRD reference
+            - **CRD reference** (`docs/toolhive/reference/crds/`, `static/api-specs/crds/`) - per-CRD MDX pages, extracted JSON schemas, and YAML examples
             - **Registry JSON schemas** (`static/api-specs/*.schema.json`) - registry validation schemas
 
             ## What's NOT in this PR
