@@ -41,41 +41,29 @@ entries and simplifies the configuration surface:
   one managed source, preventing a class of misconfiguration that could cause
   inconsistent registry state.
 
-## Virtual MCP Server: Horizontal scaling
+## Horizontal scaling for vMCP and MCPServer
 
-**vMCP** now has
-[documented horizontal scaling support](/toolhive/guides-vmcp/scaling-and-performance)
+Both vMCP and MCPServer now have
+[documented horizontal scaling support](/toolhive/guides-vmcp/scaling-and-performance),
 covering how to run multiple replicas and keep sessions consistent across pods:
 
-- **Multi-replica deployments** are controlled by setting `replicas` in your
-  `VirtualMCPServer` spec. Omit the field to defer replica management to an
-  HPA or other external controller.
-- **Redis session storage** is required when running more than one replica.
-  Without it, requests routed to a different pod than the one that established
-  the session will fail. The operator sets a `SessionStorageWarning` condition
-  if you configure multiple replicas without Redis, but still applies the
-  replica count.
-- **Session affinity considerations** - the default `ClientIP` affinity works
-  for stateful backends like browser sessions or database connections, but is
-  unreliable behind NAT or shared egress IPs (common in EKS, GKE, and AKS).
-  For stateless backends, set `sessionAffinity: None` to let the Service
-  load-balance freely.
-
-## Kubernetes Operator: Horizontal scaling for MCPServer
-
-**MCPServer** supports scaling the proxy runner and backend server
-independently, giving you more control over where to add resources:
-
-- **Independent proxy and backend scaling** via `spec.replicas` (proxy runner)
-  and `spec.backendReplicas` (backend MCP server) lets you target whichever
-  tier is the actual bottleneck - connection handling or tool execution.
-- **Redis-backed session routing** stores a session-to-pod mapping so every
-  proxy runner knows which backend pod owns each active session. Without Redis,
-  the proxy falls back to Kubernetes client-IP session affinity on the backend
-  Service, which is unreliable behind NAT and shared egress IPs.
-- **Connection draining on scale-down** gives terminating proxy pods 30
-  seconds to finish in-flight requests. Long-lived SSE or streaming connections
-  may be dropped if they exceed this window. Override
+- **Multi-replica vMCP deployments** are controlled by setting `replicas` in
+  your `VirtualMCPServer` spec. The operator sets a `SessionStorageWarning`
+  condition if you configure multiple replicas without Redis, but still applies
+  the replica count.
+- **Independent proxy and backend scaling for MCPServer** via `spec.replicas`
+  (proxy runner) and `spec.backendReplicas` (backend MCP server) lets you
+  target whichever tier is the actual bottleneck - connection handling or tool
+  execution.
+- **Redis session storage** is required for reliable multi-replica operation in
+  both cases. For vMCP, it keeps sessions consistent across pods. For
+  MCPServer, it stores a session-to-pod mapping so every proxy runner knows
+  which backend pod owns each active session. Without Redis, both fall back to
+  Kubernetes client-IP session affinity, which is unreliable behind NAT or
+  shared egress IPs (common in EKS, GKE, and AKS).
+- **Connection draining on MCPServer scale-down** gives terminating proxy pods
+  30 seconds to finish in-flight requests. Long-lived SSE or streaming
+  connections may be dropped if they exceed this window. Override
   `terminationGracePeriodSeconds` via `podTemplateSpec` if your workload needs
   a longer drain period.
 
