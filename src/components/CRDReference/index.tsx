@@ -175,6 +175,13 @@ function Modifiers({ schema }: { schema: Schema }) {
       </span>
     );
   }
+  if (schema.maxLength !== undefined) {
+    parts.push(
+      <span key='mxl' className={styles.modifier}>
+        maxLength <code>{schema.maxLength}</code>
+      </span>
+    );
+  }
   if (!parts.length) return null;
   const interleaved: React.ReactNode[] = [];
   parts.forEach((p, i) => {
@@ -318,8 +325,12 @@ export function CRDFields({
   const required = requiredOf(node);
   const scopeAnchors = collectAllScopes(schema);
 
+  // The heading injected by the crd-reference-remark plugin already owns
+  // the #slugify(path) anchor on reference pages. Giving the table the
+  // same id would create duplicates that confuse anchor navigation; cross-
+  // scope links in FieldRow below still resolve to the heading.
   return (
-    <table id={slugify(path)} className={styles.fieldTable}>
+    <table className={styles.fieldTable}>
       {/*
         table-layout: fixed takes column widths from the first row. Set
         them explicitly via colgroup so thead doesn't need width classes.
