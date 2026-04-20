@@ -123,35 +123,6 @@ function resolveMeta(entry) {
 const metaByKind = new Map();
 for (const entry of index) metaByKind.set(entry.kind, resolveMeta(entry));
 
-function formatRelated(entry) {
-  const out = [];
-  if (entry.references.length) {
-    out.push('**References:**\n');
-    for (const ref of entry.references) {
-      const meta = metaByKind.get(ref.targetKind);
-      const link = meta
-        ? `[${ref.targetKind}](./${meta.slug}.mdx)`
-        : ref.targetKind;
-      const fields = ref.paths.map((p) => `\`${p}\``).join(', ');
-      out.push(`- ${link} - via ${fields}`);
-    }
-    out.push('');
-  }
-  if (entry.referencedBy.length) {
-    out.push('**Referenced by:**\n');
-    for (const ref of entry.referencedBy) {
-      const meta = metaByKind.get(ref.sourceKind);
-      const link = meta
-        ? `[${ref.sourceKind}](./${meta.slug}.mdx)`
-        : ref.sourceKind;
-      const fields = ref.paths.map((p) => `\`${p}\``).join(', ');
-      out.push(`- ${link} - via ${fields}`);
-    }
-    out.push('');
-  }
-  return out.join('\n').trim();
-}
-
 function renderPage(entry) {
   const meta = metaByKind.get(entry.kind);
 
@@ -163,11 +134,10 @@ function renderPage(entry) {
   const example = fs.readFileSync(examplePath, 'utf8').trimEnd();
   const exampleFileLabel = `${meta.slug}.yaml`;
 
-  const related = formatRelated(entry);
-  const relatedSection = related
-    ? `\n## Related resources\n\n${related}\n`
-    : '';
-
+  // The Schema section and its Related resources tail are both injected by
+  // plugins/crd-reference-remark when it expands <CRDReference>. That
+  // plugin reads index.json (including each sibling's slug written below)
+  // so cross-reference edits regenerate without rewriting these MDX files.
   return `---
 title: ${entry.kind}
 description: >-
@@ -190,7 +160,7 @@ ${example}
 ## Schema
 
 <CRDReference kind="${entry.kind}" />
-${relatedSection}`;
+`;
 }
 
 function kindsByGroup() {
@@ -284,6 +254,18 @@ function renderSidebarFragment() {
     })),
   };
 }
+
+// Augment index.json with each entry's resolved slug so the
+// crd-reference-remark plugin can build relative links to sibling pages
+// without re-running override resolution at Docusaurus build time.
+const enrichedIndex = index.map((entry) => ({
+  ...entry,
+  slug: metaByKind.get(entry.kind).slug,
+}));
+fs.writeFileSync(
+  path.join(crdsDataDir, 'index.json'),
+  JSON.stringify(enrichedIndex, null, 2) + '\n'
+);
 
 // Emit per-CRD MDX pages for every CRD in the index.
 for (const entry of index) {

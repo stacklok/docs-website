@@ -133,6 +133,63 @@ function buildScopeBlock(kind, scope) {
   return blocks;
 }
 
+function relatedListItem(sibling, paths) {
+  // Build: `- [<Kind>](./<slug>.mdx) - via \`<path>\`, \`<path>\`...` as
+  // explicit mdast so remark doesn't have to re-parse anything.
+  const linkTarget = sibling ? `./${sibling.slug}.mdx` : null;
+  const kindChildren = [{ type: 'text', value: sibling.kind }];
+  const kindNode = linkTarget
+    ? { type: 'link', url: linkTarget, children: kindChildren }
+    : kindChildren[0];
+  const pathNodes = [];
+  paths.forEach((p, i) => {
+    if (i > 0) pathNodes.push({ type: 'text', value: ', ' });
+    pathNodes.push({ type: 'inlineCode', value: p });
+  });
+  return {
+    type: 'listItem',
+    spread: false,
+    children: [
+      {
+        type: 'paragraph',
+        children: [kindNode, { type: 'text', value: ' - via ' }, ...pathNodes],
+      },
+    ],
+  };
+}
+
+function relatedSubsection(label, items, registry) {
+  if (!items.length) return [];
+  const listItems = items.map((ref) => {
+    const siblingKind = ref.targetKind ?? ref.sourceKind;
+    const sibling = registry.get(siblingKind) ?? { kind: siblingKind };
+    return relatedListItem(sibling, ref.paths);
+  });
+  return [
+    {
+      type: 'paragraph',
+      children: [
+        { type: 'strong', children: [{ type: 'text', value: label }] },
+      ],
+    },
+    { type: 'list', ordered: false, spread: false, children: listItems },
+  ];
+}
+
+function buildRelatedBlocks(entry, registry) {
+  const hasAny = entry.references.length || entry.referencedBy.length;
+  if (!hasAny) return [];
+  return [
+    {
+      type: 'heading',
+      depth: 2,
+      children: [{ type: 'text', value: 'Related resources' }],
+    },
+    ...relatedSubsection('References:', entry.references, registry),
+    ...relatedSubsection('Referenced by:', entry.referencedBy, registry),
+  ];
+}
+
 export default function crdReferenceRemark(options = {}) {
   const schemaDir =
     options.schemaDir ??
@@ -190,6 +247,7 @@ export default function crdReferenceRemark(options = {}) {
       for (const scope of walkScopes(schema)) {
         blocks.push(...buildScopeBlock(kind, scope));
       }
+      blocks.push(...buildRelatedBlocks(entry, registry));
       replacements.push({ parent, index, blocks });
     });
 
