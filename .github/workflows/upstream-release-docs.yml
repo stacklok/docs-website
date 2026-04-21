@@ -367,21 +367,48 @@ jobs:
           REPO: ${{ steps.detect.outputs.repo }}
           PREV: ${{ steps.detect.outputs.prev_tag }}
           NEW: ${{ steps.detect.outputs.new_tag }}
+          REVIEW_REPO: ${{ github.repository }}
         run: |
-          # Capture stderr separately so we can surface a missing-compare
-          # situation in the PR body rather than silently dropping reviewers.
+          # Get non-bot commit authors in the release range.
           if COMPARE=$(gh api "repos/$REPO/compare/$PREV...$NEW" \
               --jq '[.commits[].author.login? // empty] | unique | .[]' 2>/dev/null); then
-            REVIEWERS=$(echo "$COMPARE" |
-              grep -Ev '(\[bot\]$|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)' |
-              head -5 | paste -sd, -)
             echo "compare_ok=true" >> "$GITHUB_OUTPUT"
           else
-            REVIEWERS=""
+            COMPARE=""
             echo "compare_ok=false" >> "$GITHUB_OUTPUT"
           fi
+
+          # Filter out bot accounts, then further filter to only this
+          # repo's collaborators. GitHub rejects reviewer requests for
+          # non-collaborators with 422, which would fail the whole
+          # `gh pr edit --add-reviewer` call and drop the valid
+          # reviewers along with the invalid ones. Community
+          # contributors from the upstream repo often aren't
+          # collaborators on docs-website; silently skip them rather
+          # than ping or fail.
+          CANDIDATES=$(echo "$COMPARE" |
+            grep -Ev '(\[bot\]$|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)' || true)
+
+          REVIEWERS=""
+          SKIPPED=""
+          while IFS= read -r login; do
+            [ -z "$login" ] && continue
+            if gh api "repos/$REVIEW_REPO/collaborators/$login" --silent 2>/dev/null; then
+              REVIEWERS="${REVIEWERS:+$REVIEWERS,}$login"
+            else
+              SKIPPED="${SKIPPED:+$SKIPPED, }$login"
+            fi
+          done <<< "$CANDIDATES"
+
+          # Cap at 5 to avoid review fatigue.
+          REVIEWERS=$(echo "$REVIEWERS" | tr ',' '\n' | head -5 | paste -sd, -)
+
           echo "list=$REVIEWERS" >> "$GITHUB_OUTPUT"
+          echo "skipped=$SKIPPED" >> "$GITHUB_OUTPUT"
           echo "Reviewers: ${REVIEWERS:-<none>}"
+          if [ -n "$SKIPPED" ]; then
+            echo "Skipped non-collaborator contributors: $SKIPPED"
+          fi
 
       - name: Read docs_paths hint
         id: hints
@@ -570,6 +597,7 @@ jobs:
           GAPS_BLOCK: ${{ steps.signals.outputs.gaps_block }}
           AUTOGEN_NOTE: ${{ steps.autogen.outputs.note }}
           COMPARE_OK: ${{ steps.reviewers.outputs.compare_ok }}
+          SKIPPED_REVIEWERS: ${{ steps.reviewers.outputs.skipped }}
         run: |
           START='<!-- upstream-release-docs:start -->'
           END='<!-- upstream-release-docs:end -->'
@@ -603,8 +631,12 @@ jobs:
               echo "$GAPS_BLOCK"
               echo ""
             fi
-            echo "Reviewers below are non-bot commit authors in the release range."
+            echo "Reviewers below are non-bot commit authors in the release range who are also collaborators on this repo."
             echo ""
+            if [ -n "$SKIPPED_REVIEWERS" ]; then
+              echo "Other release contributors (not assigned as reviewers because they aren't repo collaborators): $SKIPPED_REVIEWERS. Thanks for the contribution!"
+              echo ""
+            fi
             echo "$END"
           } > /tmp/section.md
 
