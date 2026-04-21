@@ -111,8 +111,11 @@ jobs:
             workflow_dispatch)
               if [ -n "$DISPATCH_PR" ]; then
                 PR_NUMBER="$DISPATCH_PR"
-                HEAD_REF=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
-                AUTHOR=$(gh pr view "$PR_NUMBER" --json author --jq '.author.login')
+                # --repo is required because this step runs before the
+                # actions/checkout below — gh otherwise looks for a
+                # local .git context and fails with "not a git repository".
+                HEAD_REF=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)
+                AUTHOR=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')
                 case "$AUTHOR" in
                   app/renovate|renovate[bot]|app/github-actions|github-actions[bot])
                     ;;
@@ -235,9 +238,10 @@ jobs:
             BASE="$BASE_FROM_EVENT"
           else
             # workflow_dispatch retry: look up the PR's base_ref.
+            # --repo because in retry mode there's no prior checkout.
             NUMBER="$PR_FROM_RESOLVE"
             HEAD="$HEAD_FROM_RESOLVE"
-            BASE=$(gh pr view "$NUMBER" --json baseRefName --jq .baseRefName)
+            BASE=$(gh pr view "$NUMBER" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
           fi
           {
             echo "number=$NUMBER"
@@ -344,21 +348,26 @@ jobs:
           node scripts/bundle-upstream-schema.mjs
           rm -rf "$TMP"
 
-      # Commit the refreshed reference assets (synced release-asset
-      # files + regenerated toolhive CRD MDX if applicable) before the
-      # skill runs. This keeps the skill's content commit clean and
+      # Commit AND PUSH the refreshed reference assets (synced release-
+      # asset files + regenerated toolhive CRD MDX if applicable) before
+      # the skill runs. Pushing here — rather than batching the push
+      # with the skill-content commit later — means refresh work is
+      # preserved on the PR even if the skill step fails or is
+      # cancelled. Also keeps the skill's content commit clean and
       # lets the autogen-detect step below distinguish skill touches
       # from our own legitimate refresh writes.
-      - name: Commit refreshed reference assets
+      - name: Commit + push refreshed reference assets
         env:
           PROJECT_ID: ${{ steps.detect.outputs.id }}
           NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+          HEAD_REF: ${{ steps.eff.outputs.head_ref }}
         run: |
           git add -A
           if git diff --cached --quiet; then
             echo "No reference changes for $PROJECT_ID $NEW_TAG."
           else
             git commit -m "Refresh reference assets for $PROJECT_ID $NEW_TAG"
+            git push origin "HEAD:$HEAD_REF"
           fi
 
       - name: Extract reviewers from release compare
@@ -428,11 +437,15 @@ jobs:
           allowed_bots: 'renovate'
           # Real-time visibility into skill progress during long runs.
           # track_progress posts a sticky tracking comment on the PR
-          # that updates as the skill works through each phase.
+          # that updates as the skill works through each phase —
+          # BUT it's only supported for pull_request / issue_comment
+          # /* events. Setting it on workflow_dispatch fails the
+          # action with "track_progress is only supported for events
+          # ... Current event: workflow_dispatch", so gate it on the
+          # triggering event.
           # display_report surfaces the Claude Code Report in the
-          # Actions Step Summary so operators watching the run see
-          # progress without waiting for gh run view --log.
-          track_progress: true
+          # Actions Step Summary regardless of trigger.
+          track_progress: ${{ github.event_name == 'pull_request' }}
           display_report: true
           prompt: |
             You are running in GitHub Actions with no interactive user. Follow
