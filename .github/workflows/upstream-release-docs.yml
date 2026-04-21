@@ -367,6 +367,14 @@ jobs:
             echo "No reference changes for $PROJECT_ID $NEW_TAG."
           else
             git commit -m "Refresh reference assets for $PROJECT_ID $NEW_TAG"
+            # Someone may have pushed to HEAD_REF between our checkout
+            # and now (merges from main, etc). Rebase onto the latest
+            # tip before pushing so we don't fail with "fetch first".
+            git fetch origin "$HEAD_REF" --quiet
+            git rebase "origin/$HEAD_REF" || {
+              echo "::error::Rebase of the refresh commit onto origin/$HEAD_REF hit conflicts. Resolve manually on the PR branch."
+              exit 1
+            }
             git push origin "HEAD:$HEAD_REF"
           fi
 
@@ -588,16 +596,30 @@ jobs:
           HEAD_REF: ${{ steps.eff.outputs.head_ref }}
         run: |
           # Stage any skill content and add a content commit if non-empty.
-          # A refresh commit from the earlier step may also be waiting.
           git add -A
           if ! git diff --cached --quiet; then
             git commit -m "Add upstream-release-docs content for $PROJECT_ID $NEW_TAG"
           else
             echo "No skill content changes to commit."
           fi
-          # Push whatever local commits are ahead of the remote — refresh
-          # only, content only, or both. Empty push is a no-op.
-          git push origin "HEAD:$HEAD_REF"
+
+          # Skill can take 20-45 min; during that window someone may
+          # push merges-from-main or other commits to the PR branch.
+          # Handle that safely:
+          #   - If our local HEAD is already on origin (no new work
+          #     to push), exit cleanly.
+          #   - Otherwise rebase any local-only commits onto the
+          #     latest origin tip, then push. Conflicts fail loudly.
+          git fetch origin "$HEAD_REF" --quiet
+          if git merge-base --is-ancestor HEAD "origin/$HEAD_REF" 2>/dev/null; then
+            echo "Origin is at or ahead of local; nothing to push."
+          else
+            git rebase "origin/$HEAD_REF" || {
+              echo "::error::Rebase of local commits onto origin/$HEAD_REF hit conflicts. Resolve manually on the PR branch."
+              exit 1
+            }
+            git push origin "HEAD:$HEAD_REF"
+          fi
 
       - name: Augment PR body (marker-delimited section)
         # Runs even if earlier steps soft-failed so the augmentation
