@@ -344,21 +344,26 @@ jobs:
           node scripts/bundle-upstream-schema.mjs
           rm -rf "$TMP"
 
-      # Commit the refreshed reference assets (synced release-asset
-      # files + regenerated toolhive CRD MDX if applicable) before the
-      # skill runs. This keeps the skill's content commit clean and
+      # Commit AND PUSH the refreshed reference assets (synced release-
+      # asset files + regenerated toolhive CRD MDX if applicable) before
+      # the skill runs. Pushing here — rather than batching the push
+      # with the skill-content commit later — means refresh work is
+      # preserved on the PR even if the skill step fails or is
+      # cancelled. Also keeps the skill's content commit clean and
       # lets the autogen-detect step below distinguish skill touches
       # from our own legitimate refresh writes.
-      - name: Commit refreshed reference assets
+      - name: Commit + push refreshed reference assets
         env:
           PROJECT_ID: ${{ steps.detect.outputs.id }}
           NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+          HEAD_REF: ${{ steps.eff.outputs.head_ref }}
         run: |
           git add -A
           if git diff --cached --quiet; then
             echo "No reference changes for $PROJECT_ID $NEW_TAG."
           else
             git commit -m "Refresh reference assets for $PROJECT_ID $NEW_TAG"
+            git push origin "HEAD:$HEAD_REF"
           fi
 
       - name: Extract reviewers from release compare
