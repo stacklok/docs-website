@@ -61,8 +61,20 @@ custom resources. Install the operator and its CRDs (which include
 
 ```bash
 helm upgrade --install toolhive-operator-crds \
-  oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds
+  oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds \
+  -n toolhive-system --create-namespace
 ```
+
+:::warning[Namespace consistency]
+
+The CRDs chart stamps each CRD with a `meta.helm.sh/release-namespace`
+annotation set to the namespace used at install time. Future `helm upgrade`
+commands for the CRDs must use the same namespace, or the upgrade fails with an
+ownership error. See
+[Namespace consistency in the operator guide](../guides-k8s/deploy-operator.mdx)
+for details.
+
+:::
 
 ```bash
 helm upgrade --install toolhive-operator \
@@ -92,7 +104,9 @@ the Registry Server pod, service, and RBAC for each one.
 The Registry Server requires a PostgreSQL database. For this quickstart, you
 deploy a minimal single-pod PostgreSQL instance in the `toolhive-system`
 namespace. This setup has no persistent storage or TLS, so don't use it for
-production workloads.
+production workloads. Production deployments should use separate application and
+migration users with distinct privileges. See
+[Database configuration](./database.mdx) for the production pattern.
 
 Create a manifest that defines the credentials Secret, Deployment, and Service:
 
@@ -328,7 +342,7 @@ kubectl port-forward svc/my-registry-api 8080:8080 -n toolhive-system
 In the separate terminal, list servers in the `default` registry:
 
 ```bash
-curl -s http://localhost:8080/default/v0.1/servers | jq .
+curl -s http://localhost:8080/registry/default/v0.1/servers | jq .
 ```
 
 You should see a response containing the `io.github.stacklok/fetch` entry you
@@ -338,7 +352,7 @@ Fetch a specific entry by name. The `/` inside server names is part of the
 identifier (reverse-DNS convention), so URL-encode it as `%2F`:
 
 ```bash
-curl -s http://localhost:8080/default/v0.1/servers/io.github.stacklok%2Ffetch \
+curl -s http://localhost:8080/registry/default/v0.1/servers/io.github.stacklok%2Ffetch \
   | jq .
 ```
 

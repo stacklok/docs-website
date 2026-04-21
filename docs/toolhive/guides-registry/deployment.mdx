@@ -69,36 +69,61 @@ config:
 Database credentials use the pgpass file pattern. Create a Kubernetes Secret
 with a
 [pgpass-formatted](https://www.postgresql.org/docs/current/libpq-pgpass.html)
-entry, then mount it into the Registry Server pod using the chart's
-`extraVolumes`, `extraVolumeMounts`, and `initContainers` values. The init
-container copies the Secret into a shared `emptyDir`, sets the ownership to the
-non-root UID the Registry Server container runs as (`65532`), and applies `0600`
-permissions so the server can read the file:
+entry under the key `.pgpass`, then point the chart at it with an init container
+that prepares the file and a `PGPASSFILE` environment variable that tells libpq
+where to find it.
 
-{/* prettier-ignore */}
+The chart's main container runs with `readOnlyRootFilesystem: true` as the
+non-root UID `65535`, so the init container copies the Secret into an `emptyDir`
+volume and applies `0600` permissions (libpq rejects pgpass files with wider
+permissions):
+
 ```yaml title="values.yaml (excerpt)"
-initContainers:
-  - name: pgpass-init
-    image: alpine:3
-    command:
-      - sh
-      - -c
-      - cp /pgpass/.pgpass /home/appuser/.pgpass && chown 65532:65532 /home/appuser/.pgpass && chmod 600 /home/appuser/.pgpass
-    volumeMounts:
-      - name: pgpass-secret
-        mountPath: /pgpass
-      - name: pgpass
-        mountPath: /home/appuser
+extraEnv:
+  - name: PGPASSFILE
+    value: /pgpass-prepared/.pgpass
+
 extraVolumes:
   - name: pgpass-secret
     secret:
       secretName: registry-pgpass
-  - name: pgpass
+      defaultMode: 0600
+  - name: pgpass-prepared
     emptyDir: {}
+
 extraVolumeMounts:
-  - name: pgpass
-    mountPath: /home/appuser
+  - name: pgpass-prepared
+    mountPath: /pgpass-prepared
+    readOnly: true
+
+initContainers:
+  - name: pgpass-init
+    image: cgr.dev/chainguard/busybox:latest
+    command:
+      - sh
+      - -c
+      - cp /pgpass-secret/.pgpass /pgpass-prepared/.pgpass && chmod 600
+        /pgpass-prepared/.pgpass
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 65535
+    volumeMounts:
+      - name: pgpass-secret
+        mountPath: /pgpass-secret
+        readOnly: true
+      - name: pgpass-prepared
+        mountPath: /pgpass-prepared
 ```
+
+The init container runs as the same UID as the main container, so the copied
+file is already owned by `65535` and the Registry Server can read it without a
+separate `chown` step. This matches the commented pgpass example in the chart's
+own
+[`values.yaml`](https://github.com/stacklok/toolhive-registry-server/blob/main/deploy/charts/toolhive-registry-server/values.yaml).
 
 See [Database configuration](./database.mdx) for the pgpass format and user
 privileges, and the
