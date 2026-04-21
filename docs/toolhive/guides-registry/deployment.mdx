@@ -70,8 +70,12 @@ Database credentials use the pgpass file pattern. Create a Kubernetes Secret
 with a
 [pgpass-formatted](https://www.postgresql.org/docs/current/libpq-pgpass.html)
 entry, then mount it into the Registry Server pod using the chart's
-`extraVolumes`, `extraVolumeMounts`, and `initContainers` values:
+`extraVolumes`, `extraVolumeMounts`, and `initContainers` values. The init
+container copies the Secret into a shared `emptyDir`, sets the ownership to the
+non-root UID the Registry Server container runs as (`65532`), and applies `0600`
+permissions so the server can read the file:
 
+{/* prettier-ignore */}
 ```yaml title="values.yaml (excerpt)"
 initContainers:
   - name: pgpass-init
@@ -79,8 +83,7 @@ initContainers:
     command:
       - sh
       - -c
-      - cp /pgpass/.pgpass /home/appuser/.pgpass && chmod 600
-        /home/appuser/.pgpass
+      - cp /pgpass/.pgpass /home/appuser/.pgpass && chown 65532:65532 /home/appuser/.pgpass && chmod 600 /home/appuser/.pgpass
     volumeMounts:
       - name: pgpass-secret
         mountPath: /pgpass
