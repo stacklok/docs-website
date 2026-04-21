@@ -453,28 +453,32 @@ The proxy runner handles authentication, MCP protocol framing, and session
 management; it is stateless with respect to tool execution. The backend runs the
 actual MCP server and executes tools.
 
+:::warning[Stdio transport limitation]
+
+Backends using the `stdio` transport are limited to a single replica. The
+operator rejects configurations with `backendReplicas` greater than 1 for stdio
+backends.
+
+:::
+
 ### Session routing for backend replicas
 
 MCP connections are stateful: once a client establishes a session with a
 specific backend pod, all subsequent requests in that session must reach the
-same pod. When `backendReplicas > 1`, the proxy runner uses Redis to store a
-session-to-pod mapping so every proxy runner replica knows which backend pod
-owns each session.
+same pod. When `backendReplicas > 1` and Redis session storage is configured,
+the proxy runner uses Redis to store a session-to-pod mapping so every proxy
+runner replica knows which backend pod owns each session.
 
-Without Redis, the proxy runner falls back to Kubernetes client-IP session
-affinity on the backend Service, which is unreliable behind NAT or shared egress
-IPs. If a backend pod is restarted or replaced, its entry in the Redis routing
-table is invalidated and the next request reconnects to an available pod.
-Sessions are not automatically migrated between pods.
+When Redis session storage is configured and a backend pod is restarted or
+replaced, its entry in the Redis routing table is invalidated and the next
+request reconnects to an available pod. Sessions are not automatically migrated
+between pods.
 
-:::note
-
-The `SessionStorageWarning` condition only fires when `spec.replicas > 1`
-(multiple proxy runner pods). It does not fire when only `backendReplicas > 1`,
-but Redis session storage is still strongly recommended in that case to ensure
-reliable per-session pod routing.
-
-:::
+Without Redis session storage, the proxy runner relies on Kubernetes `ClientIP`
+session affinity on the backend Service. `ClientIP` affinity is unreliable
+behind NAT or shared egress IPs, and there is no shared session-to-pod mapping,
+so a pod restart or replacement can cause subsequent requests to be routed to a
+different pod, which will fail for stateful sessions.
 
 Common configurations:
 
@@ -504,14 +508,21 @@ spec:
 
 When running multiple replicas, configure
 [Redis session storage](./redis-session-storage.mdx#horizontal-scaling-session-storage)
-so that sessions are shared across pods. The example above assumes you have
-deployed Redis using the manifests in that guide, which create a Service named
-`redis` and a Secret named `redis-password` in the `toolhive-system` namespace.
-Update `address` and `passwordRef.name` if your Redis deployment uses different
-names. If you omit `replicas` or `backendReplicas`, the operator defers replica
-management to an HPA or other external controller.
+so that sessions are shared across pods. If you omit `replicas` or
+`backendReplicas`, the operator defers replica management to an HPA or other
+external controller.
 
-:::note[Connection draining on scale-down]
+:::note
+
+The `SessionStorageWarning` condition fires only when `spec.replicas > 1`
+(multiple proxy runner pods). It does not fire when only
+`spec.backendReplicas > 1`, but `ClientIP` affinity is unreliable behind NAT or
+shared egress IPs. Redis session storage is strongly recommended whenever
+`spec.backendReplicas > 1`.
+
+:::
+
+### Connection draining on scale-down
 
 When a proxy runner pod is terminated (scale-in, rolling update, or node
 eviction), Kubernetes sends SIGTERM and the proxy drains in-flight requests for
@@ -532,16 +543,6 @@ spec:
 ```
 
 The same 30-second default applies to the backend Deployment.
-
-:::
-
-:::warning[Stdio transport limitation]
-
-Backends using the `stdio` transport are limited to a single replica. The
-operator rejects configurations with `backendReplicas` greater than 1 for stdio
-backends.
-
-:::
 
 ## Next steps
 
