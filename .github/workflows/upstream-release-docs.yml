@@ -141,14 +141,16 @@ jobs:
           echo "Mode: $MODE"
 
       # Bootstrap: a human manually dispatched with project_id + new_tag.
-      # Check out main, bump the YAML, create the PR, and emit its number
-      # + branch so the rest of the workflow proceeds as if Renovate had
+      # Check out the dispatching branch (main in production; any branch
+      # for pre-merge testing — just dispatch via `gh workflow run --ref
+      # <branch>`), bump the YAML, create the PR, and emit its number +
+      # branch so the rest of the workflow proceeds as if Renovate had
       # opened it.
-      - name: Checkout main for bootstrap
+      - name: Checkout dispatching branch for bootstrap
         if: steps.pr.outputs.mode == 'bootstrap'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
-          ref: main
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
 
       - name: Setup (bootstrap)
@@ -167,6 +169,7 @@ jobs:
         env:
           PROJECT_ID: ${{ github.event.inputs.project_id }}
           NEW_TAG: ${{ github.event.inputs.new_tag }}
+          BASE_REF: ${{ github.ref_name }}
           ACTOR: ${{ github.actor }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -200,7 +203,7 @@ jobs:
           sed -i 's/^          //' /tmp/bootstrap-body.md
 
           gh pr create \
-            --base main \
+            --base "$BASE_REF" \
             --head "$BRANCH" \
             --title "Update $PROJECT_ID to $NEW_TAG (manual dispatch)" \
             --body-file /tmp/bootstrap-body.md \
@@ -211,23 +214,43 @@ jobs:
           echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           echo "head_ref=$BRANCH" >> "$GITHUB_OUTPUT"
 
-      # Normalize the (possibly bootstrap-created) PR number + head_ref
-      # into a single step output so later steps reference one place.
-      - name: Resolve effective PR number
+      # Normalize the (possibly bootstrap-created) PR number, head_ref,
+      # and base_ref into a single step output so later steps reference
+      # one place. base_ref drives detect-change.mjs (the baseline to
+      # diff against) and the CRD-regen paths.
+      - name: Resolve effective PR metadata
         id: eff
         env:
+          EVENT: ${{ github.event_name }}
           PR_FROM_RESOLVE: ${{ steps.pr.outputs.number }}
           HEAD_FROM_RESOLVE: ${{ steps.pr.outputs.head_ref }}
           PR_FROM_BOOTSTRAP: ${{ steps.bootstrap.outputs.number }}
           HEAD_FROM_BOOTSTRAP: ${{ steps.bootstrap.outputs.head_ref }}
+          BASE_FROM_EVENT: ${{ github.event.pull_request.base.ref }}
+          DISPATCH_REF_NAME: ${{ github.ref_name }}
         run: |
           if [ -n "$PR_FROM_BOOTSTRAP" ]; then
-            echo "number=$PR_FROM_BOOTSTRAP" >> "$GITHUB_OUTPUT"
-            echo "head_ref=$HEAD_FROM_BOOTSTRAP" >> "$GITHUB_OUTPUT"
+            # Bootstrap mode: the PR was just created with --base set to
+            # the dispatching branch (main in production; feat branch
+            # when testing pre-merge).
+            NUMBER="$PR_FROM_BOOTSTRAP"
+            HEAD="$HEAD_FROM_BOOTSTRAP"
+            BASE="$DISPATCH_REF_NAME"
+          elif [ "$EVENT" = "pull_request" ]; then
+            NUMBER="$PR_FROM_RESOLVE"
+            HEAD="$HEAD_FROM_RESOLVE"
+            BASE="$BASE_FROM_EVENT"
           else
-            echo "number=$PR_FROM_RESOLVE" >> "$GITHUB_OUTPUT"
-            echo "head_ref=$HEAD_FROM_RESOLVE" >> "$GITHUB_OUTPUT"
+            # workflow_dispatch retry: look up the PR's base_ref.
+            NUMBER="$PR_FROM_RESOLVE"
+            HEAD="$HEAD_FROM_RESOLVE"
+            BASE=$(gh pr view "$NUMBER" --json baseRefName --jq .baseRefName)
           fi
+          {
+            echo "number=$NUMBER"
+            echo "head_ref=$HEAD"
+            echo "base_ref=$BASE"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Checkout PR branch
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -245,6 +268,10 @@ jobs:
 
       - name: Detect changed project
         id: detect
+        env:
+          # Pass the PR's actual base (main in production; dispatching
+          # branch when bootstrap was run via gh workflow run --ref).
+          BASE_REF: origin/${{ steps.eff.outputs.base_ref }}
         run: node scripts/upstream-release/detect-change.mjs
 
       - name: Verify prev_tag exists upstream
