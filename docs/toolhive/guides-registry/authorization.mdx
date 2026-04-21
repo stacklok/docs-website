@@ -140,7 +140,6 @@ on each CRD. Managed source entries get claims from the publish request payload.
 ```yaml title="config-source-claims.yaml"
 sources:
   - name: platform-tools
-    format: upstream
     git:
       repository: https://github.com/acme/platform-tools.git
       branch: main
@@ -154,7 +153,6 @@ sources:
     # highlight-end
 
   - name: data-tools
-    format: upstream
     git:
       repository: https://github.com/acme/data-tools.git
       branch: main
@@ -230,36 +228,74 @@ for Kubernetes sources).
 ## Claims on published entries
 
 When you publish an MCP server version or skill to a managed source, you can
-attach claims to the entry. The server enforces two rules:
+attach claims to the entry. The server enforces three rules:
 
-1. **Publish claims must be a subset of the publisher's JWT claims.** Every
+1. **Claims are required when authentication is enabled.** Publishing without
+   claims, or with an empty `claims` object, against an authenticated endpoint
+   returns `400 Bad Request`. Without claims, the entry would be invisible to
+   every non-super-admin caller, so the server rejects the request up front.
+2. **Publish claims must be a subset of the publisher's JWT claims.** Every
    claim key in the publish request must exist in the publisher's JWT with a
    matching value. For example, if your JWT has
    `{org: "acme", team: "platform"}`, you can publish entries with
-   `{org: "acme"}`, `{org: "acme", team: "platform"}`, or no claims at all, but
-   not with `{org: "contoso"}` (a value your JWT doesn't have).
-
-2. **Subsequent versions must have the same claims as the first.** Once you
+   `{org: "acme"}` or `{org: "acme", team: "platform"}`, but not
+   `{org: "contoso"}` (a value your JWT doesn't have).
+3. **Subsequent versions must have the same claims as the first.** Once you
    publish the first version of an entry with specific claims, all future
-   versions must carry the exact same claims. This prevents accidentally
-   narrowing or broadening visibility across versions.
+   versions must carry the exact same claims. If the first version had none,
+   subsequent versions must also have none. This prevents accidentally narrowing
+   or broadening visibility across versions.
 
 ```bash title="Publish a server with claims"
 curl -X POST \
-  https://registry.example.com/default/v0.1/publish \
+  https://registry.example.com/v1/entries \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "my-server",
-    "version": "1.0.0",
-    "url": "https://mcp.example.com/my-server",
-    "description": "Team-scoped MCP server",
+    "server": {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+      "name": "io.github.acme/my-server",
+      "description": "Team-scoped MCP server",
+      "version": "1.0.0"
+    },
     "claims": {
       "org": "acme",
       "team": "platform"
     }
   }'
 ```
+
+See the [Registry API reference](../reference/registry-api.mdx) for the full
+server payload schema, including `packages`, `remotes`, and `_meta` fields.
+
+### Update claims on an existing entry
+
+Use `PUT /v1/entries/{type}/{name}/claims` to change the claims on every version
+of a previously published entry. The `type` path parameter is either `server` or
+`skill`.
+
+```bash title="Update claims on a published server"
+curl -X PUT \
+  "https://registry.example.com/v1/entries/server/io.github.acme%2Fmy-server/claims" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "claims": {
+      "org": "acme",
+      "team": "platform"
+    }
+  }'
+```
+
+Because entry names contain a slash separating namespace from server name,
+URL-encode the slash as `%2F` so the path is treated as a single `{name}` path
+parameter.
+
+Pass an empty `claims` object (`{"claims": {}}`) to clear claims entirely. The
+same authorization rules apply: your JWT claims must satisfy both the existing
+claims on the entry (so you can modify it) and the new claims you're setting (so
+you can't escalate visibility beyond what you're entitled to). Successful
+updates return `204 No Content`.
 
 ## Admin API claim scoping
 
@@ -289,7 +325,10 @@ your configuration, the server runs in **auth-only mode**. In this mode:
 - Callers must still authenticate with a valid JWT token
 - All claims-based filtering is disabled. Every authenticated caller sees all
   entries regardless of source or registry claims
-- Role checks are not enforced (no roles are resolved)
+- Role checks are pass-throughs, so every authenticated caller can reach every
+  endpoint
+- `GET /v1/me` reports every defined role for authenticated callers, reflecting
+  that authorization isn't being enforced
 - The server logs a warning at startup:
   `Authorization not configured, per-entry claims filtering disabled (auth-only mode)`
 
@@ -336,7 +375,6 @@ This example shows a multi-team setup with full RBAC and claims-based scoping:
 ```yaml title="config-multi-tenant.yaml"
 sources:
   - name: platform-tools
-    format: upstream
     git:
       repository: https://github.com/acme/platform-tools.git
       branch: main
@@ -348,7 +386,6 @@ sources:
       team: 'platform'
 
   - name: data-tools
-    format: upstream
     git:
       repository: https://github.com/acme/data-tools.git
       branch: main

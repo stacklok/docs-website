@@ -18,7 +18,6 @@ sources).
 # Sources define where registry data comes from
 sources:
   - name: toolhive
-    format: upstream
     git:
       repository: https://github.com/stacklok/toolhive-catalog.git
       branch: main
@@ -96,17 +95,11 @@ Kubernetes lease name suffixes for leader election.
 | `--internal-address` | Listen address for internal endpoints (health, readiness, version) | No       | `:8081` |
 | `--auth-mode`        | Override auth mode (`anonymous` or `oauth`)                        | No       | -       |
 
-## Registry data formats
+## Registry data format
 
-The `format` field on a source specifies the JSON schema format for the registry
-data:
-
-- **`upstream`**: The official
-  [upstream MCP registry format](../reference/registry-schema-upstream.mdx),
-  used by the MCP Registry API and recommended for new registries.
-- **`toolhive`**: The
-  [ToolHive-native format](../reference/registry-schema-toolhive.mdx), used by
-  the built-in ToolHive registry.
+The Registry Server reads registry data in the official
+[upstream MCP registry format](../reference/registry-schema-upstream.mdx). All
+synced sources (Git, API, and File) must provide data in this format.
 
 ## Registry sources
 
@@ -129,7 +122,6 @@ on every container restart, adding startup latency and increasing network usage.
 ```yaml title="config-git.yaml"
 sources:
   - name: toolhive
-    format: upstream
     git:
       repository: https://github.com/stacklok/toolhive-catalog.git
       branch: main
@@ -169,7 +161,6 @@ credentials:
 ```yaml title="config-git-private.yaml"
 sources:
   - name: private-registry
-    format: upstream
     git:
       repository: https://github.com/my-org/private-registry.git
       branch: main
@@ -253,7 +244,6 @@ scenarios.
 ```yaml title="config-api.yaml"
 sources:
   - name: mcp-upstream
-    format: upstream
     api:
       endpoint: https://registry.modelcontextprotocol.io
     syncPolicy:
@@ -268,8 +258,6 @@ registries:
 
 - `endpoint` (required): Base URL of the upstream MCP Registry API (without
   path)
-- `format` (optional): Must be `upstream` if specified (API sources only support
-  the upstream format)
 
 :::note
 
@@ -285,7 +273,6 @@ Read from filesystem. Ideal for local development and testing.
 ```yaml title="config-file.yaml"
 sources:
   - name: local
-    format: upstream
     file:
       path: /data/registry.json
     syncPolicy:
@@ -301,7 +288,6 @@ Alternatively, the source can be a custom URL.
 ```yaml title="config-file-url.yaml"
 sources:
   - name: remote
-    format: upstream
     file:
       url: https://www.example.com/registry.json
       timeout: 5s
@@ -344,13 +330,30 @@ registries:
 - `managed` (required): Empty object to indicate managed source type
 - No sync policy required (managed sources are updated via API, not synced)
 
+:::warning[Single managed source limit]
+
+A server deployment can have at most one managed source. Attempts to create a
+second managed source through the admin API return `409 Conflict`. Startup also
+fails validation if the configuration file declares multiple managed sources, or
+if it declares a managed source while an API-created managed source already
+exists in the database.
+
+:::
+
 **Supported operations:**
 
-- `POST /{registryName}/v0.1/publish` - Publish new server versions
-- `DELETE /{registryName}/v0.1/servers/{name}/versions/{version}` - Delete
-  versions
-- `GET` operations for listing and retrieving servers
+- `POST /v1/entries` - Publish new server or skill versions
+- `DELETE /v1/entries/{type}/{name}/versions/{version}` - Delete a specific
+  version
+- `PUT /v1/entries/{type}/{name}/claims` - Update authorization claims on a
+  published entry
+- `GET /registry/{registryName}/v0.1/...` - List and retrieve servers and skills
 - [Skills management](./skills.mdx) via the extensions API
+
+When authentication is enabled, publish requests must include a `claims` object.
+See
+[Claims on published entries](./authorization.mdx#claims-on-published-entries)
+for the full rules.
 
 See the [Registry API reference](../reference/registry-api.mdx) for complete
 endpoint documentation and request/response examples.
@@ -378,7 +381,6 @@ RBAC requirements.
 ```yaml title="config-kubernetes.yaml"
 sources:
   - name: default
-    format: upstream
     kubernetes: {}
 
 registries:
@@ -523,7 +525,6 @@ Kubernetes sources.
 ```yaml
 sources:
   - name: toolhive
-    format: upstream
     git:
       repository: https://github.com/stacklok/toolhive-catalog.git
       branch: main
@@ -557,7 +558,6 @@ name patterns.
 ```yaml
 sources:
   - name: toolhive
-    format: upstream
     git:
       repository: https://github.com/stacklok/toolhive-catalog.git
       branch: main
@@ -596,7 +596,6 @@ controls.
 ```yaml title="config-multi-source.yaml"
 sources:
   - name: toolhive-catalog
-    format: upstream
     git:
       repository: https://github.com/stacklok/toolhive-catalog.git
       branch: main
@@ -605,7 +604,6 @@ sources:
       interval: '30m'
 
   - name: upstream-mcp
-    format: upstream
     api:
       endpoint: https://registry.modelcontextprotocol.io
     syncPolicy:
@@ -665,6 +663,23 @@ information.
 The server supports OpenTelemetry for comprehensive observability, including
 distributed tracing and metrics collection. See the
 [Telemetry and metrics](./telemetry-metrics.mdx) guide for detailed information.
+
+## Environment variables
+
+Most configuration values can be overridden with environment variables prefixed
+with `THV_REGISTRY_`. Nested keys use underscores; for example `database.host`
+maps to `THV_REGISTRY_DATABASE_HOST`. A few settings are environment-only:
+
+| Variable                          | Description                                                                                                      |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `THV_REGISTRY_COMPRESS_RESPONSE`  | Set to `true` to enable gzip compression on HTTP responses                                                       |
+| `THV_REGISTRY_WATCH_NAMESPACE`    | Comma-separated list of namespaces to watch for Kubernetes sources (see [Kubernetes source](#kubernetes-source)) |
+| `THV_REGISTRY_LEADER_ELECTION_ID` | Unique identifier for the leader election lease when running multiple instances                                  |
+| `THV_REGISTRY_INSECURE_URL`       | Set to `true` to allow HTTP OAuth issuer URLs (development only)                                                 |
+
+Database passwords can also be provided via environment variables. See
+[Database configuration](./database.mdx#password-configuration) for the full
+precedence order.
 
 ## Next steps
 
