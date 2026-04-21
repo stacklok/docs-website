@@ -307,12 +307,12 @@ jobs:
           node scripts/bundle-upstream-schema.mjs
           rm -rf "$TMP"
 
-      # Commit the regenerated reference assets (sync-assets output +
-      # toolhive CRD MDX if applicable) before the skill runs. This
-      # keeps the skill's content commit clean and lets the autogen-
-      # detect step below distinguish skill touches from our own
-      # legitimate regen writes.
-      - name: Commit regenerated reference assets
+      # Commit the refreshed reference assets (synced release-asset
+      # files + regenerated toolhive CRD MDX if applicable) before the
+      # skill runs. This keeps the skill's content commit clean and
+      # lets the autogen-detect step below distinguish skill touches
+      # from our own legitimate refresh writes.
+      - name: Commit refreshed reference assets
         env:
           PROJECT_ID: ${{ steps.detect.outputs.id }}
           NEW_TAG: ${{ steps.detect.outputs.new_tag }}
@@ -321,7 +321,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No reference changes for $PROJECT_ID $NEW_TAG."
           else
-            git commit -m "Regenerate reference assets for $PROJECT_ID $NEW_TAG"
+            git commit -m "Refresh reference assets for $PROJECT_ID $NEW_TAG"
           fi
 
       - name: Extract reviewers from release compare
@@ -387,15 +387,26 @@ jobs:
               For Phase 2 step 4 (context on major new features), SKIP
               writing the "why"/consumer narrative and append one bullet
               per gap to GAPS.md at repo root (create if missing). Each
-              bullet must name the feature and describe what context a
-              human needs to supply.
+              bullet MUST:
+                - Name the feature
+                - Reference the PR that introduced it, using the PR
+                  number you found in Phase 2 deep-dive
+                - @-mention the PR author by their GitHub handle (skip
+                  this for bot authors like renovate[bot] or
+                  github-actions[bot])
+                - Describe what context a human needs to supply
+              Format: `- Feature X (PR #123 by @alice): needs a user
+              story explaining who this is for and the expected
+              consumer workflow.`
+              This routes gaps to the engineer who built the feature
+              rather than the whole reviewer pool.
               Follow the skill's own guidance on auto-generated reference
               files (Phase 4 step 5, Phase 4 step 6) -- do not hand-edit
               docs/toolhive/reference/cli/, static/api-specs/, or
-              docs/toolhive/reference/crds/. Those are regenerated from
-              release assets by earlier steps in this workflow; if a
-              release genuinely needs hand-written reference updates,
-              note that in GAPS.md.
+              docs/toolhive/reference/crds/. Those are synced or
+              regenerated from release assets by earlier steps in this
+              workflow; if a release genuinely needs hand-written
+              reference updates, note that in GAPS.md.
 
             PASS 2 -- Editorial re-review:
               Run /docs-review over every file you changed in Pass 1 and
@@ -471,8 +482,8 @@ jobs:
 
       - name: Detect touches to auto-generated paths
         id: autogen
-        # Runs AFTER the skill and AFTER the regen commit above, so the
-        # staged diff represents skill-introduced changes only.
+        # Runs AFTER the skill and AFTER the refresh commit above, so
+        # the staged diff represents skill-introduced changes only.
         run: |
           git add -A
           TOUCHED=$(git diff --cached --name-only -- \
@@ -486,9 +497,10 @@ jobs:
               echo "> The skill touched files under auto-generated paths:"
               echo "> \`$TOUCHED\`"
               echo ">"
-              echo "> These paths are regenerated from release assets earlier"
-              echo "> in this workflow. Review the skill's changes and revert"
-              echo "> them if they should come from the regen step instead."
+              echo "> These paths are synced or regenerated from release"
+              echo "> assets earlier in this workflow. Review the skill's"
+              echo "> changes and revert them if they should come from the"
+              echo "> refresh step instead."
             fi
             echo "AUTOGEN_EOF"
           } >> "$GITHUB_OUTPUT"
@@ -501,14 +513,14 @@ jobs:
           HEAD_REF: ${{ steps.eff.outputs.head_ref }}
         run: |
           # Stage any skill content and add a content commit if non-empty.
-          # A regen commit from the earlier step may also be waiting.
+          # A refresh commit from the earlier step may also be waiting.
           git add -A
           if ! git diff --cached --quiet; then
             git commit -m "Add upstream-release-docs content for $PROJECT_ID $NEW_TAG"
           else
             echo "No skill content changes to commit."
           fi
-          # Push whatever local commits are ahead of the remote — regen
+          # Push whatever local commits are ahead of the remote — refresh
           # only, content only, or both. Empty push is a no-op.
           git push origin "HEAD:$HEAD_REF"
 
@@ -554,7 +566,7 @@ jobs:
             fi
             echo "### Review guidance"
             echo ""
-            echo "Machine-generated reference files under \`docs/toolhive/reference/cli/\`, \`static/api-specs/\`, and \`docs/toolhive/reference/crds/\` are regenerated from upstream release assets (separate commit, titled \"Regenerate reference assets\") and should be spot-checked only. The \"Add upstream-release-docs content\" commit contains hand-edited prose; review that one for accuracy, not just style. If the \"Gaps needing human context\" section is populated, the skill deferred those sections to a human; fill them in before merging."
+            echo "Machine-generated reference files under \`docs/toolhive/reference/cli/\`, \`static/api-specs/\`, and \`docs/toolhive/reference/crds/\` are synced or regenerated from upstream release assets (separate commit, titled \"Refresh reference assets\") and should be spot-checked only. The \"Add upstream-release-docs content\" commit contains hand-edited prose; review that one for accuracy, not just style. If the \"Gaps needing human context\" section is populated, the skill deferred those sections to a human; fill them in before merging."
             echo ""
             if [ -n "$GAPS_BLOCK" ]; then
               echo "$GAPS_BLOCK"
