@@ -214,7 +214,7 @@ const config: Config = {
           },
           {
             id: 'toolhive-registry-api',
-            spec: 'https://cdn.jsdelivr.net/gh/stacklok/toolhive-registry-server@latest/docs/thv-registry-api/swagger.yaml',
+            spec: 'static/api-specs/toolhive-registry-api.yaml',
             config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
           },
         ],
