@@ -5,18 +5,18 @@ description:
   operator, Helm, or raw manifests
 ---
 
-The Registry server can be deployed in Kubernetes using three methods. Choose
+The Registry Server can be deployed in Kubernetes using three methods. Choose
 the one that fits your environment:
 
-| Method                                           | Description                                                     |
-| ------------------------------------------------ | --------------------------------------------------------------- |
-| [ToolHive Operator](#toolhive-operator)          | Manage the Registry Server lifecycle through `MCPRegistry` CRDs |
-| [Helm](#helm)                                    | Deploy using the Registry Server Helm chart                     |
-| [Manual manifests](#manual-kubernetes-manifests) | Deploy directly using raw Kubernetes manifests                  |
+| Method                                           | Description                                                        |
+| ------------------------------------------------ | ------------------------------------------------------------------ |
+| [ToolHive Operator](#toolhive-operator)          | Manage the Registry Server lifecycle through `MCPRegistry` CRDs    |
+| [Helm](#helm)                                    | Deploy a standalone Registry Server using its dedicated Helm chart |
+| [Manual manifests](#manual-kubernetes-manifests) | Deploy directly using raw Kubernetes manifests                     |
 
 ## ToolHive Operator
 
-Deploy and manage the Registry server using `MCPRegistry` custom resources. The
+Deploy and manage the Registry Server using `MCPRegistry` custom resources. The
 ToolHive Operator watches for these resources and creates the necessary
 infrastructure automatically.
 
@@ -25,8 +25,89 @@ guide.
 
 ## Helm
 
-A Helm chart is available for the Registry Server. Documentation for this
-deployment method is coming soon.
+Deploy the Registry Server directly with the official Helm chart from the
+[toolhive-registry-server](https://github.com/stacklok/toolhive-registry-server)
+repository. Use this method when you want to manage the Registry Server like any
+other Helm release without installing the ToolHive Operator.
+
+Install from the OCI registry:
+
+```bash
+helm upgrade --install registry-server \
+  oci://ghcr.io/stacklok/toolhive-registry-server \
+  -n toolhive-system --create-namespace \
+  -f values.yaml
+```
+
+The chart's `config` block maps directly to the Registry Server's
+[configuration file](./configuration.mdx). Any valid configuration field can be
+set under `config` in your values file:
+
+```yaml title="values.yaml"
+config:
+  sources:
+    - name: toolhive
+      git:
+        repository: https://github.com/stacklok/toolhive-catalog.git
+        branch: main
+        path: pkg/catalog/toolhive/data/registry-upstream.json
+      syncPolicy:
+        interval: '30m'
+  registries:
+    - name: default
+      sources: ['toolhive']
+  auth:
+    mode: anonymous
+  database:
+    host: postgres
+    port: 5432
+    user: registry
+    database: registry
+    sslMode: require
+```
+
+Database credentials use the pgpass file pattern. Create a Kubernetes Secret
+with a
+[pgpass-formatted](https://www.postgresql.org/docs/current/libpq-pgpass.html)
+entry, then mount it into the Registry Server pod using the chart's
+`extraVolumes`, `extraVolumeMounts`, and `initContainers` values:
+
+```yaml title="values.yaml (excerpt)"
+initContainers:
+  - name: pgpass-init
+    image: alpine:3
+    command:
+      - sh
+      - -c
+      - cp /pgpass/.pgpass /home/appuser/.pgpass && chmod 600
+        /home/appuser/.pgpass
+    volumeMounts:
+      - name: pgpass-secret
+        mountPath: /pgpass
+      - name: pgpass
+        mountPath: /home/appuser
+extraVolumes:
+  - name: pgpass-secret
+    secret:
+      secretName: registry-pgpass
+  - name: pgpass
+    emptyDir: {}
+extraVolumeMounts:
+  - name: pgpass
+    mountPath: /home/appuser
+```
+
+See [Database configuration](./database.mdx) for the pgpass format and user
+privileges, and the
+[toolhive-registry-server repository](https://github.com/stacklok/toolhive-registry-server)
+for the full set of chart values and their defaults.
+
+:::tip[Trying this out for the first time?]
+
+For a hands-on walkthrough that gets a Registry Server running end-to-end in a
+local cluster, see [Quickstart: Registry Server](./quickstart.mdx).
+
+:::
 
 ## Manual Kubernetes manifests
 

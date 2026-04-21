@@ -200,6 +200,7 @@ const sidebars: SidebarsConfig = {
       },
       items: [
         'toolhive/guides-registry/intro',
+        'toolhive/guides-registry/quickstart',
         'toolhive/guides-registry/deployment',
         'toolhive/guides-registry/deploy-operator',
         'toolhive/guides-registry/deploy-manual',
