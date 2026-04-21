@@ -206,7 +206,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-registry/deploy-helm',
         'toolhive/guides-registry/deploy-manual',
         'toolhive/guides-registry/configuration',
-        'toolhive/guides-registry/publishing',
+        'toolhive/guides-registry/publish-servers',
         'toolhive/guides-registry/authentication',
         'toolhive/guides-registry/authorization',
         'toolhive/guides-registry/database',
