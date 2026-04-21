@@ -1,0 +1,150 @@
+---
+title: Deploy with Helm
+description:
+  How to deploy the ToolHive Registry Server in Kubernetes using the official
+  Helm chart
+---
+
+:::info
+
+For alternative deployment approaches, see
+[Deploy with the ToolHive Operator](./deploy-operator.mdx) or
+[Deploy manually](./deploy-manual.mdx).
+
+:::
+
+## Prerequisites
+
+- A Kubernetes cluster (current and two previous minor versions are supported)
+- Permissions to create resources in the cluster
+- [`kubectl`](https://kubernetes.io/docs/tasks/tools/) configured to communicate
+  with your cluster
+- [Helm](https://helm.sh/docs/intro/install/) v3.10 or later (v3.14+ is
+  recommended)
+- A PostgreSQL database
+
+## Overview
+
+The official Helm chart in the
+[toolhive-registry-server](https://github.com/stacklok/toolhive-registry-server)
+repository deploys a standalone Registry Server. Use this method when you want
+to manage the Registry Server like any other Helm release without installing the
+ToolHive Operator.
+
+## Install the chart
+
+Install the chart from its OCI registry into the `toolhive-system` namespace:
+
+```bash
+helm upgrade --install registry-server \
+  oci://ghcr.io/stacklok/toolhive-registry-server \
+  -n toolhive-system --create-namespace \
+  -f values.yaml
+```
+
+## Configure the Registry Server
+
+The chart's `config` block maps directly to the Registry Server's
+[configuration file](./configuration.mdx). Any valid configuration field can be
+set under `config` in your values file:
+
+```yaml title="values.yaml"
+config:
+  sources:
+    - name: toolhive
+      git:
+        repository: https://github.com/stacklok/toolhive-catalog.git
+        branch: main
+        path: pkg/catalog/toolhive/data/registry-upstream.json
+      syncPolicy:
+        interval: '30m'
+  registries:
+    - name: default
+      sources: ['toolhive']
+  auth:
+    mode: anonymous
+  database:
+    host: postgres
+    port: 5432
+    user: registry
+    database: registry
+    sslMode: require
+```
+
+## Provide database credentials
+
+Database credentials use the pgpass file pattern. Create a Kubernetes Secret
+with a
+[pgpass-formatted](https://www.postgresql.org/docs/current/libpq-pgpass.html)
+entry under the key `.pgpass`, then point the chart at it with an init container
+that prepares the file and a `PGPASSFILE` environment variable that tells libpq
+where to find it.
+
+The chart's main container runs with `readOnlyRootFilesystem: true` as the
+non-root UID `65535`, so the init container copies the Secret into an `emptyDir`
+volume and applies `0600` permissions (libpq rejects pgpass files with wider
+permissions):
+
+```yaml title="values.yaml (excerpt)"
+extraEnv:
+  - name: PGPASSFILE
+    value: /pgpass-prepared/.pgpass
+
+extraVolumes:
+  - name: pgpass-secret
+    secret:
+      secretName: registry-pgpass
+      defaultMode: 0600
+  - name: pgpass-prepared
+    emptyDir: {}
+
+extraVolumeMounts:
+  - name: pgpass-prepared
+    mountPath: /pgpass-prepared
+    readOnly: true
+
+initContainers:
+  - name: pgpass-init
+    image: cgr.dev/chainguard/busybox:latest
+    command:
+      - sh
+      - -c
+      - cp /pgpass-secret/.pgpass /pgpass-prepared/.pgpass && chmod 600
+        /pgpass-prepared/.pgpass
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 65535
+    volumeMounts:
+      - name: pgpass-secret
+        mountPath: /pgpass-secret
+        readOnly: true
+      - name: pgpass-prepared
+        mountPath: /pgpass-prepared
+```
+
+The init container runs as the same UID as the main container, so the copied
+file is already owned by `65535` and the Registry Server can read it without a
+separate `chown` step. This matches the commented pgpass example in the chart's
+own
+[`values.yaml`](https://github.com/stacklok/toolhive-registry-server/blob/main/deploy/charts/toolhive-registry-server/values.yaml).
+
+## Next steps
+
+- [Configure sources and registries](./configuration.mdx) to set up your data
+  sources and sync policies
+- [Set up authentication](./authentication.mdx) to secure access to your
+  registry
+- [Configure telemetry](./telemetry-metrics.mdx) to monitor your deployment
+
+## Related information
+
+- [Database configuration](./database.mdx) for the pgpass format and user
+  privileges
+- [toolhive-registry-server repository](https://github.com/stacklok/toolhive-registry-server)
+  for the full set of chart values and their defaults
+- [Quickstart: Registry Server](./quickstart.mdx) for a hands-on walkthrough of
+  a minimal local deployment

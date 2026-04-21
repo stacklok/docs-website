@@ -8,11 +8,11 @@ description:
 The Registry Server can be deployed in Kubernetes using three methods. Choose
 the one that fits your environment:
 
-| Method                                           | Description                                                        |
-| ------------------------------------------------ | ------------------------------------------------------------------ |
-| [ToolHive Operator](#toolhive-operator)          | Manage the Registry Server lifecycle through `MCPRegistry` CRDs    |
-| [Helm](#helm)                                    | Deploy a standalone Registry Server using its dedicated Helm chart |
-| [Manual manifests](#manual-kubernetes-manifests) | Deploy directly using raw Kubernetes manifests                     |
+| Method                                  | Description                                                        |
+| --------------------------------------- | ------------------------------------------------------------------ |
+| [ToolHive Operator](#toolhive-operator) | Manage the Registry Server lifecycle through `MCPRegistry` CRDs    |
+| [Helm](#helm)                           | Deploy a standalone Registry Server using its dedicated Helm chart |
+| [Manual manifests](#manual-manifests)   | Deploy directly using raw Kubernetes manifests                     |
 
 ## ToolHive Operator
 
@@ -30,114 +30,9 @@ Deploy the Registry Server directly with the official Helm chart from the
 repository. Use this method when you want to manage the Registry Server like any
 other Helm release without installing the ToolHive Operator.
 
-Install from the OCI registry:
+See [Deploy with Helm](./deploy-helm.mdx) for a complete guide.
 
-```bash
-helm upgrade --install registry-server \
-  oci://ghcr.io/stacklok/toolhive-registry-server \
-  -n toolhive-system --create-namespace \
-  -f values.yaml
-```
-
-The chart's `config` block maps directly to the Registry Server's
-[configuration file](./configuration.mdx). Any valid configuration field can be
-set under `config` in your values file:
-
-```yaml title="values.yaml"
-config:
-  sources:
-    - name: toolhive
-      git:
-        repository: https://github.com/stacklok/toolhive-catalog.git
-        branch: main
-        path: pkg/catalog/toolhive/data/registry-upstream.json
-      syncPolicy:
-        interval: '30m'
-  registries:
-    - name: default
-      sources: ['toolhive']
-  auth:
-    mode: anonymous
-  database:
-    host: postgres
-    port: 5432
-    user: registry
-    database: registry
-    sslMode: require
-```
-
-Database credentials use the pgpass file pattern. Create a Kubernetes Secret
-with a
-[pgpass-formatted](https://www.postgresql.org/docs/current/libpq-pgpass.html)
-entry under the key `.pgpass`, then point the chart at it with an init container
-that prepares the file and a `PGPASSFILE` environment variable that tells libpq
-where to find it.
-
-The chart's main container runs with `readOnlyRootFilesystem: true` as the
-non-root UID `65535`, so the init container copies the Secret into an `emptyDir`
-volume and applies `0600` permissions (libpq rejects pgpass files with wider
-permissions):
-
-```yaml title="values.yaml (excerpt)"
-extraEnv:
-  - name: PGPASSFILE
-    value: /pgpass-prepared/.pgpass
-
-extraVolumes:
-  - name: pgpass-secret
-    secret:
-      secretName: registry-pgpass
-      defaultMode: 0600
-  - name: pgpass-prepared
-    emptyDir: {}
-
-extraVolumeMounts:
-  - name: pgpass-prepared
-    mountPath: /pgpass-prepared
-    readOnly: true
-
-initContainers:
-  - name: pgpass-init
-    image: cgr.dev/chainguard/busybox:latest
-    command:
-      - sh
-      - -c
-      - cp /pgpass-secret/.pgpass /pgpass-prepared/.pgpass && chmod 600
-        /pgpass-prepared/.pgpass
-    securityContext:
-      allowPrivilegeEscalation: false
-      capabilities:
-        drop: [ALL]
-      readOnlyRootFilesystem: true
-      runAsNonRoot: true
-      runAsUser: 65535
-    volumeMounts:
-      - name: pgpass-secret
-        mountPath: /pgpass-secret
-        readOnly: true
-      - name: pgpass-prepared
-        mountPath: /pgpass-prepared
-```
-
-The init container runs as the same UID as the main container, so the copied
-file is already owned by `65535` and the Registry Server can read it without a
-separate `chown` step. This matches the commented pgpass example in the chart's
-own
-[`values.yaml`](https://github.com/stacklok/toolhive-registry-server/blob/main/deploy/charts/toolhive-registry-server/values.yaml).
-
-See [Database configuration](./database.mdx) for the pgpass format and user
-privileges, and the
-[toolhive-registry-server repository](https://github.com/stacklok/toolhive-registry-server)
-for the full set of chart values and their defaults.
-
-:::tip[Trying this out for the first time?]
-
-For a hands-on walkthrough that gets a Registry Server running end-to-end in a
-local cluster, see [Quickstart: Registry Server](./quickstart.mdx).
-
-:::
-
-## Manual Kubernetes manifests
+## Manual manifests
 
 Deploy the Registry Server directly using raw Kubernetes manifests. This
 approach gives you full control over the deployment configuration.
