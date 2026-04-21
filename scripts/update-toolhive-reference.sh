@@ -15,6 +15,7 @@ API_SPEC_DST="${STATIC_DIR}/api-specs/toolhive-api.yaml"
 REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/toolhive-legacy-registry.schema.json"
 UPSTREAM_REGISTRY_SCHEMA_DST="${STATIC_DIR}/api-specs/upstream-registry.schema.json"
 REGISTRY_META_SCHEMA_DST="${STATIC_DIR}/api-specs/publisher-provided.schema.json"
+SKILL_SCHEMA_DST="${STATIC_DIR}/api-specs/skill.schema.json"
 
 if [ ! -d "$DOCS_DIR" ]; then
     echo "Docs directory does not exist: $DOCS_DIR"
@@ -108,6 +109,7 @@ gh release download "$CORE_VERSION" \
     --pattern "toolhive-legacy-registry.schema.json" \
     --pattern "upstream-registry.schema.json" \
     --pattern "publisher-provided.schema.json" \
+    --pattern "skill.schema.json" \
     --dir "$DOWNLOAD_DIR"
 
 cp "${DOWNLOAD_DIR}/toolhive-legacy-registry.schema.json" "${REGISTRY_SCHEMA_DST}"
@@ -122,5 +124,8 @@ node "${REPO_ROOT}/scripts/bundle-upstream-schema.mjs"
 
 cp "${DOWNLOAD_DIR}/publisher-provided.schema.json" "${REGISTRY_META_SCHEMA_DST}"
 echo "Registry extensions JSON schema updated successfully"
+
+cp "${DOWNLOAD_DIR}/skill.schema.json" "${SKILL_SCHEMA_DST}"
+echo "Skill JSON schema updated successfully"
 
 echo "Release processing completed for: $VERSION (toolhive-core: $CORE_VERSION)"
