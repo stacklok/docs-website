@@ -270,7 +270,7 @@ jobs:
           # Capture stderr separately so we can surface a missing-compare
           # situation in the PR body rather than silently dropping reviewers.
           if COMPARE=$(gh api "repos/$REPO/compare/$PREV...$NEW" \
-              --jq '[.commits[].author.login] | unique | .[]' 2>/dev/null); then
+              --jq '[.commits[].author.login? // empty] | unique | .[]' 2>/dev/null); then
             REVIEWERS=$(echo "$COMPARE" |
               grep -Ev '(\[bot\]$|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)' |
               head -5 | paste -sd, -)
@@ -288,9 +288,9 @@ jobs:
           PROJECT_ID: ${{ steps.detect.outputs.id }}
         run: |
           HINTS=$(node -e "
-            const yaml = require('js-yaml');
+            const yaml = require('yaml');
             const fs = require('fs');
-            const p = yaml.load(fs.readFileSync('.github/upstream-projects.yaml','utf8')).projects.find(x=>x.id===process.env.PROJECT_ID);
+            const p = yaml.parse(fs.readFileSync('.github/upstream-projects.yaml','utf8')).projects.find(x=>x.id===process.env.PROJECT_ID);
             console.log(JSON.stringify(p?.docs_paths ?? []));
           ")
           echo "docs_paths=$HINTS" >> "$GITHUB_OUTPUT"
@@ -388,7 +388,11 @@ jobs:
             fi
             echo "GAPS_EOF"
 
-            echo "has_gaps=$([ -n "$GAPS_BODY" ] && echo true || echo false)"
+            if [ -n "$GAPS_BODY" ]; then
+              echo "has_gaps=true"
+            else
+              echo "has_gaps=false"
+            fi
           } >> "$GITHUB_OUTPUT"
 
       - name: Apply pin_files substitutions

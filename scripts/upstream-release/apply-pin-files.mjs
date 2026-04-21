@@ -15,7 +15,7 @@
 //       so unrelated `@latest` strings elsewhere in the file are safe.
 
 import fs from 'node:fs';
-import yaml from 'js-yaml';
+import yaml from 'yaml';
 
 const PROJECTS_FILE = '.github/upstream-projects.yaml';
 
@@ -66,7 +66,7 @@ function main() {
     process.exit(1);
   }
 
-  const parsed = yaml.load(fs.readFileSync(PROJECTS_FILE, 'utf8'));
+  const parsed = yaml.parse(fs.readFileSync(PROJECTS_FILE, 'utf8'));
   const project = parsed.projects.find((p) => p.id === id);
   if (!project) {
     console.error(`Unknown project id: ${id}`);

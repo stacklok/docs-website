@@ -22,7 +22,7 @@
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import yaml from 'js-yaml';
+import yaml from 'yaml';
 
 const PROJECTS_FILE = '.github/upstream-projects.yaml';
 const REPO_SHAPE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
@@ -41,13 +41,13 @@ function loadFromRef(ref) {
   const text = execFileSync('git', ['show', `${ref}:${PROJECTS_FILE}`], {
     encoding: 'utf8',
   });
-  return yaml.load(text).projects;
+  return yaml.parse(text).projects;
 }
 
 function main() {
   const ref = process.env.BASE_REF || 'origin/main';
   const mainProjects = loadFromRef(ref);
-  const headProjects = yaml.load(
+  const headProjects = yaml.parse(
     fs.readFileSync(PROJECTS_FILE, 'utf8')
   ).projects;
 

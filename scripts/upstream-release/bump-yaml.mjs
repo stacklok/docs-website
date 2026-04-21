@@ -17,7 +17,7 @@
 // matches (no-op — caller should not open a PR).
 
 import fs from 'node:fs';
-import yaml from 'js-yaml';
+import yaml from 'yaml';
 
 const PROJECTS_FILE = '.github/upstream-projects.yaml';
 
@@ -69,7 +69,7 @@ function main() {
   }
 
   const raw = fs.readFileSync(PROJECTS_FILE, 'utf8');
-  const parsed = yaml.load(raw);
+  const parsed = yaml.parse(raw);
   if (!parsed.projects.find((p) => p.id === id)) {
     console.error(`Unknown project id: ${id}`);
     process.exit(1);
