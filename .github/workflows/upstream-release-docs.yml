@@ -23,8 +23,16 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: 'PR number to (re-)augment. Must be an open Renovate PR touching .github/upstream-projects.yaml.'
-        required: true
+        description: 'Retry-only: PR number to re-augment (must be an open Renovate PR). Leave blank to bootstrap a new PR via project_id + new_tag.'
+        required: false
+        type: string
+      project_id:
+        description: 'Bootstrap a new PR: id from .github/upstream-projects.yaml (e.g. toolhive-registry-server). Requires new_tag.'
+        required: false
+        type: string
+      new_tag:
+        description: 'Bootstrap a new PR: the upstream tag to document (e.g. v1.3.0). Requires project_id.'
+        required: false
         type: string
 
 permissions:
@@ -54,39 +62,154 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - name: Validate workflow_dispatch inputs
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          PR_NUMBER_IN: ${{ github.event.inputs.pr_number }}
+          PROJECT_ID_IN: ${{ github.event.inputs.project_id }}
+          NEW_TAG_IN: ${{ github.event.inputs.new_tag }}
+        run: |
+          # Exactly one of: (pr_number) OR (project_id + new_tag).
+          if [ -n "$PR_NUMBER_IN" ] && { [ -n "$PROJECT_ID_IN" ] || [ -n "$NEW_TAG_IN" ]; }; then
+            echo "::error::Provide either pr_number (retry) or project_id + new_tag (bootstrap), not both."
+            exit 1
+          fi
+          if [ -z "$PR_NUMBER_IN" ] && { [ -z "$PROJECT_ID_IN" ] || [ -z "$NEW_TAG_IN" ]; }; then
+            echo "::error::Bootstrap mode requires both project_id and new_tag."
+            exit 1
+          fi
+
       - name: Resolve PR number and head ref
         id: pr
         env:
           EVENT: ${{ github.event_name }}
           DISPATCH_PR: ${{ github.event.inputs.pr_number }}
+          PROJECT_ID_IN: ${{ github.event.inputs.project_id }}
+          NEW_TAG_IN: ${{ github.event.inputs.new_tag }}
           EVENT_PR: ${{ github.event.pull_request.number }}
           EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            PR_NUMBER="$DISPATCH_PR"
-            HEAD_REF=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
-            # Validate: must be a Renovate PR with the upstream-content label.
-            AUTHOR=$(gh pr view "$PR_NUMBER" --json author --jq '.author.login')
-            LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '[.labels[].name] | join(",")')
-            if [ "$AUTHOR" != "app/renovate" ] && [ "$AUTHOR" != "renovate[bot]" ]; then
-              echo "::error::PR #$PR_NUMBER is not authored by Renovate (author=$AUTHOR)."
-              exit 1
-            fi
-            if ! echo "$LABELS" | grep -q 'upstream-content'; then
-              echo "::error::PR #$PR_NUMBER does not carry the upstream-content label (labels=$LABELS)."
-              exit 1
-            fi
-          else
-            PR_NUMBER="$EVENT_PR"
-            HEAD_REF="$EVENT_HEAD_REF"
+          case "$EVENT" in
+            pull_request)
+              PR_NUMBER="$EVENT_PR"
+              HEAD_REF="$EVENT_HEAD_REF"
+              MODE="react"
+              ;;
+            workflow_dispatch)
+              if [ -n "$DISPATCH_PR" ]; then
+                PR_NUMBER="$DISPATCH_PR"
+                HEAD_REF=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
+                AUTHOR=$(gh pr view "$PR_NUMBER" --json author --jq '.author.login')
+                LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '[.labels[].name] | join(",")')
+                if [ "$AUTHOR" != "app/renovate" ] && [ "$AUTHOR" != "renovate[bot]" ]; then
+                  echo "::error::PR #$PR_NUMBER is not authored by Renovate (author=$AUTHOR). Retry mode is for Renovate PRs only; use bootstrap (project_id + new_tag) to create a new manual PR."
+                  exit 1
+                fi
+                if ! echo "$LABELS" | grep -q 'upstream-content'; then
+                  echo "::error::PR #$PR_NUMBER does not carry the upstream-content label (labels=$LABELS)."
+                  exit 1
+                fi
+                MODE="retry"
+              else
+                # Bootstrap: branch and PR are created in the next step.
+                PR_NUMBER=""
+                HEAD_REF=""
+                MODE="bootstrap"
+              fi
+              ;;
+          esac
+          {
+            echo "number=$PR_NUMBER"
+            echo "head_ref=$HEAD_REF"
+            echo "mode=$MODE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Mode: $MODE"
+
+      # Bootstrap: a human manually dispatched with project_id + new_tag.
+      # Check out main, bump the YAML, create the PR, and emit its number
+      # + branch so the rest of the workflow proceeds as if Renovate had
+      # opened it.
+      - name: Checkout main for bootstrap
+        if: steps.pr.outputs.mode == 'bootstrap'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup (bootstrap)
+        if: steps.pr.outputs.mode == 'bootstrap'
+        uses: ./.github/actions/setup
+
+      - name: Set up Git (bootstrap)
+        if: steps.pr.outputs.mode == 'bootstrap'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bootstrap branch and PR
+        id: bootstrap
+        if: steps.pr.outputs.mode == 'bootstrap'
+        env:
+          PROJECT_ID: ${{ github.event.inputs.project_id }}
+          NEW_TAG: ${{ github.event.inputs.new_tag }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Branch name intentionally distinct from Renovate's
+          # docs/upstream-<id> so the two paths don't collide.
+          BRANCH="manual/upstream-${PROJECT_ID}-${NEW_TAG}"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "::error::Branch $BRANCH already exists on origin. Delete it or use retry mode with the existing PR's number."
+            exit 1
           fi
+          git checkout -b "$BRANCH"
+
+          node scripts/upstream-release/bump-yaml.mjs \
+            --id "$PROJECT_ID" \
+            --tag "$NEW_TAG"
+
+          git add .github/upstream-projects.yaml
+          git commit -m "Bump $PROJECT_ID to $NEW_TAG"
+          git push origin "$BRANCH"
+
+          # Open the PR with the same labels Renovate would apply, so
+          # downstream steps that read labels behave identically.
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "Update $PROJECT_ID to $NEW_TAG (manual dispatch)" \
+            --body "Manually dispatched by @$ACTOR via workflow run $RUN_URL.
+
+          This PR was created by the \`Upstream Release Docs\` workflow's bootstrap mode to document a release without waiting for Renovate. Content edits will be pushed as additional commits by the same workflow run." \
+            --label autogen-docs \
+            --label upstream-content
+
+          PR_NUMBER=$(gh pr view "$BRANCH" --json number --jq .number)
           echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
-          echo "head_ref=$HEAD_REF" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      # Normalize the (possibly bootstrap-created) PR number + head_ref
+      # into a single step output so later steps reference one place.
+      - name: Resolve effective PR number
+        id: eff
+        env:
+          PR_FROM_RESOLVE: ${{ steps.pr.outputs.number }}
+          HEAD_FROM_RESOLVE: ${{ steps.pr.outputs.head_ref }}
+          PR_FROM_BOOTSTRAP: ${{ steps.bootstrap.outputs.number }}
+          HEAD_FROM_BOOTSTRAP: ${{ steps.bootstrap.outputs.head_ref }}
+        run: |
+          if [ -n "$PR_FROM_BOOTSTRAP" ]; then
+            echo "number=$PR_FROM_BOOTSTRAP" >> "$GITHUB_OUTPUT"
+            echo "head_ref=$HEAD_FROM_BOOTSTRAP" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=$PR_FROM_RESOLVE" >> "$GITHUB_OUTPUT"
+            echo "head_ref=$HEAD_FROM_RESOLVE" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Checkout PR branch
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
-          ref: ${{ steps.pr.outputs.head_ref }}
+          ref: ${{ steps.eff.outputs.head_ref }}
           fetch-depth: 0
 
       - name: Setup
@@ -293,7 +416,7 @@ jobs:
         env:
           PROJECT_ID: ${{ steps.detect.outputs.id }}
           NEW_TAG: ${{ steps.detect.outputs.new_tag }}
-          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+          HEAD_REF: ${{ steps.eff.outputs.head_ref }}
         run: |
           git add -A
           if git diff --cached --quiet; then
@@ -311,7 +434,7 @@ jobs:
         # retry will re-enter here.
         if: always() && steps.detect.outputs.id != ''
         env:
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
           PROJECT_ID: ${{ steps.detect.outputs.id }}
           NEW_TAG: ${{ steps.detect.outputs.new_tag }}
           PREV_TAG: ${{ steps.detect.outputs.prev_tag }}
@@ -385,14 +508,14 @@ jobs:
       - name: Add reviewers
         if: always() && steps.reviewers.outputs.list != ''
         env:
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
           REVIEWERS: ${{ steps.reviewers.outputs.list }}
         run: gh pr edit "$PR_NUMBER" --add-reviewer "$REVIEWERS"
 
       - name: Add needs-human-context label
         if: always() && steps.signals.outputs.has_gaps == 'true'
         env:
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
         run: gh pr edit "$PR_NUMBER" --add-label needs-human-context
 
       - name: Flag augmentation failure
@@ -400,7 +523,7 @@ jobs:
         # operator can filter on and comments a retry pointer.
         if: failure()
         env:
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh pr edit "$PR_NUMBER" --add-label upstream-docs-failed || true
