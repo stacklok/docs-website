@@ -200,10 +200,23 @@ const sidebars: SidebarsConfig = {
       },
       items: [
         'toolhive/guides-registry/intro',
-        'toolhive/guides-registry/deployment',
-        'toolhive/guides-registry/deploy-operator',
-        'toolhive/guides-registry/deploy-manual',
+        'toolhive/guides-registry/quickstart',
+        {
+          type: 'category',
+          label: 'Deploy the Registry Server',
+          link: {
+            type: 'doc',
+            id: 'toolhive/guides-registry/deployment',
+          },
+          collapsible: false,
+          items: [
+            'toolhive/guides-registry/deploy-operator',
+            'toolhive/guides-registry/deploy-helm',
+            'toolhive/guides-registry/deploy-manual',
+          ],
+        },
         'toolhive/guides-registry/configuration',
+        'toolhive/guides-registry/publish-servers',
         'toolhive/guides-registry/authentication',
         'toolhive/guides-registry/authorization',
         'toolhive/guides-registry/database',
