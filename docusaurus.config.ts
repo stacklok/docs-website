@@ -59,10 +59,10 @@ const config: Config = {
           ],
         },
         includeOrder: [
-          '/toolhive/tutorials/**',
           '/toolhive/concepts/**',
-          '/toolhive/reference/client-compatibility',
           '/toolhive/guides-*',
+          '/toolhive/tutorials/**',
+          '/toolhive/integrations/**',
           '/toolhive/reference/**',
         ],
         optionalLinks: [
