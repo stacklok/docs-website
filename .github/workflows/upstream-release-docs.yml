@@ -16,9 +16,13 @@ name: Upstream Release Docs
 #      bundle-upstream-schema.mjs to produce our opinionated reference
 #      MDX (the CRD tarball and toolhive-core schemas are shipped as
 #      release assets by stacklok/toolhive#4982)
-#   5. Runs the upstream-release-docs skill (3 passes) to produce
-#      source-verified content edits
-#   6. Commits everything to the PR branch, augments the PR body,
+#   5. Runs two Claude Opus sessions: a generation pass running the
+#      upstream-release-docs skill, then a fresh-context editorial
+#      pass running docs-review over the changed files. Both have
+#      `gh` CLI access so they can fetch PR descriptions and linked
+#      issues for product context.
+#   6. Auto-fixes prettier/eslint on the skill-touched files,
+#      commits everything to the PR branch, augments the PR body,
 #      assigns reviewers from non-bot release contributors
 #
 # Renovate is configured with rebaseWhen: never + recreateWhen: never
@@ -378,6 +382,15 @@ jobs:
             git push origin "HEAD:$HEAD_REF"
           fi
 
+      # Anchor the "skill touched" set for the autofix step below.
+      # HEAD at this point is either the refresh commit (if it was
+      # non-empty) or the PR's pre-workflow tip. Either way, anything
+      # committed between this SHA and HEAD after the skill runs is
+      # attributable to the skill.
+      - name: Capture pre-skill SHA
+        id: pre_skill
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Extract reviewers from release compare
         id: reviewers
         env:
@@ -460,8 +473,16 @@ jobs:
           # Actions Step Summary regardless of trigger.
           track_progress: ${{ github.event_name == 'pull_request' }}
           display_report: true
+          # Grant the `gh` CLI so the skill can fetch PR descriptions,
+          # compare ranges, and view linked issues as it was designed
+          # to. Without this, Claude Code's default Bash allowlist
+          # rejects gh and the skill has to work from commit messages
+          # only, which misses most of the "why" narrative that PR
+          # authors write at open time. GH_TOKEN for auth is already
+          # in the job env at the top of this workflow.
           claude_args: |
             --model claude-opus-4-7
+            --allowed-tools "Bash(gh:*)"
           prompt: |
             You are running in GitHub Actions with no interactive user. Follow
             these steps exactly and do NOT ask clarifying questions -- proceed
@@ -480,22 +501,69 @@ jobs:
             instead of `gh api contents?ref=<tag>` -- it's already at
             the tag and doesn't consume API quota.
 
-            For Phase 2 step 4 (context on major new features), SKIP
-            writing the "why"/consumer narrative and append one bullet
-            per gap to GAPS.md at repo root (create if missing). Each
-            bullet MUST:
-              - Name the feature
-              - Reference the PR that introduced it, using the PR
-                number you found in Phase 2 deep-dive
-              - @-mention the PR author by their GitHub handle (skip
-                this for bot authors like renovate[bot] or
-                github-actions[bot])
-              - Describe what context a human needs to supply
-            Format: `- Feature X (PR #123 by @alice): needs a user
-            story explaining who this is for and the expected
-            consumer workflow.`
-            This routes gaps to the engineer who built the feature
-            rather than the whole reviewer pool.
+            For Phase 2 step 4 (context on major new features), do the
+            following INSTEAD of the skill's default "ask the user"
+            behavior (there is no interactive user here):
+              1. Use `gh pr view <NUMBER> --repo ${{ steps.detect.outputs.repo }}
+                 --json title,body,author` to fetch the PR description
+                 for each major new feature. The PR body typically
+                 contains the "why" framing the author wrote when
+                 opening the PR -- motivation, intended consumers,
+                 design decisions.
+              2. If the PR body references linked issues (look for
+                 "Closes #N", "Fixes #N", "Refs #N"), fetch those
+                 with `gh issue view <N> --repo ${{ steps.detect.outputs.repo }}`
+                 when they are likely to contain product context.
+              3. Write the "why"/consumer narrative directly in the
+                 relevant docs page using what you learned. This is a
+                 best-effort pass -- reviewers will refine it during
+                 normal review.
+              4. Only defer to GAPS.md when the rationale demonstrably
+                 cannot be derived from available sources. Genuine
+                 examples: the PR body points to an internal design
+                 doc or product spec you cannot access; multiple
+                 plausible consumer narratives exist and picking one
+                 would mislead readers; a release timeline or
+                 commitment needs product-team confirmation.
+
+            GAPS.md contract (only if you genuinely need to defer):
+              - ONLY include content gaps a human reviewer must fill
+                in. Do NOT include environment/sandbox limitations
+                (e.g. "couldn't run npm build") -- those are
+                infrastructure concerns; the PR's CI handles them.
+                Do NOT include "not a gap, documented for clarity"
+                commentary.
+              - Each entry MUST include a "Helper prompt for local
+                Claude" block a reviewer can paste verbatim into
+                their local Claude Code to resolve the gap. The
+                prompt must reference the specific file(s) to edit,
+                the PR number that provides context, and the narrow
+                piece of information the human needs to supply or
+                confirm.
+              - Each entry MUST @-mention the PR author (skip this
+                for bot authors: renovate[bot], github-actions[bot],
+                stacklokbot).
+
+            GAPS.md entry format:
+              ```
+              ### <Feature name> (PR #123 by @alice)
+
+              <One paragraph: what's missing, why you couldn't
+              resolve it from available sources.>
+
+              **File(s):** path/to/file.mdx
+
+              **Helper prompt for local Claude:**
+              > <Paste-ready prompt. Self-contained. References the
+              > specific file(s), the PR number, and the narrow
+              > piece of info needed. A human should be able to
+              > paste this into `claude` locally and get a usable
+              > response without additional context.>
+              ```
+
+            Do NOT create GAPS.md if every feature's "why" was
+            resolvable from PR descriptions. An empty GAPS.md is
+            worse than no file.
 
             Follow the skill's own guidance on auto-generated reference
             files (Phase 4 step 5, Phase 4 step 6) -- do not hand-edit
@@ -527,8 +595,12 @@ jobs:
           allowed_bots: 'renovate'
           track_progress: ${{ github.event_name == 'pull_request' }}
           display_report: true
+          # gh access parallels skill_gen so the review pass can
+          # re-verify claims against PR descriptions and linked
+          # issues if needed.
           claude_args: |
             --model claude-opus-4-7
+            --allowed-tools "Bash(gh:*)"
           prompt: |
             You are running in GitHub Actions with no interactive user. Follow
             these steps exactly and do NOT ask clarifying questions -- proceed
@@ -544,16 +616,67 @@ jobs:
             --name-only HEAD~1 HEAD` to find them). Apply every
             actionable fix per the skill's standard guidance.
 
-            If you spot a factual concern, re-verify against source
-            code in the local clone at
-            ${{ steps.clone.outputs.scratch_dir }} before changing
-            anything. Don't introduce new claims; only refine what's
-            already there.
+            If you spot a factual concern, re-verify against the
+            local clone at ${{ steps.clone.outputs.scratch_dir }}
+            first. You also have gh CLI access -- use `gh pr view
+            <N> --repo ${{ steps.detect.outputs.repo }}` to pull
+            context from the upstream PR if needed. Don't introduce
+            new claims; only refine what's already there.
 
             Do NOT re-run /upstream-release-docs. Do NOT touch files
             under docs/toolhive/reference/cli/, static/api-specs/,
             or docs/toolhive/reference/crds/ — those are
             regenerated from release assets and aren't yours to edit.
+
+            Do NOT touch GAPS.md or NO_CHANGES.md at the repo root
+            if they exist -- they're signal files handed off to the
+            next workflow step, not part of the docs.
+
+      # Auto-apply the same formatters the project's pre-commit hook
+      # runs, scoped to the files the skill touched. The skill's
+      # sandbox doesn't include npm run prettier/eslint, so without
+      # this step any formatting drift lands on PR CI as a "Lint and
+      # format checks" failure requiring a human push. Scope via git
+      # diff vs the pre-skill SHA so we don't reformat auto-generated
+      # reference assets (which would fight the generators).
+      - name: Auto-fix prettier and eslint on skill-touched files
+        id: autofix
+        if: always() && steps.skill_gen.conclusion == 'success'
+        env:
+          BASELINE_SHA: ${{ steps.pre_skill.outputs.sha }}
+        run: |
+          # Files the skill added/modified, excluding the three
+          # auto-generated reference paths.
+          CHANGED=$(git diff --name-only "$BASELINE_SHA..HEAD" -- \
+            ':!docs/toolhive/reference/cli/' \
+            ':!docs/toolhive/reference/crds/' \
+            ':!static/api-specs/' \
+            2>/dev/null | \
+            grep -E '\.(md|mdx|ts|tsx|js|jsx|mjs|cjs|css|json|jsonc|yaml|yml)$' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No skill-touched files in scope for autofix."
+            exit 0
+          fi
+          echo "Running prettier --write and eslint --fix on:"
+          echo "$CHANGED"
+          # xargs -0 with a NUL-delimited list so filenames with
+          # spaces survive.
+          printf '%s\n' "$CHANGED" | tr '\n' '\0' | \
+            xargs -0 npx prettier --write --log-level warn
+          # eslint --fix against mdx/ts/tsx/js only.
+          LINT_TARGETS=$(printf '%s\n' "$CHANGED" | \
+            grep -E '\.(mdx|ts|tsx|js|jsx|mjs|cjs)$' || true)
+          if [ -n "$LINT_TARGETS" ]; then
+            printf '%s\n' "$LINT_TARGETS" | tr '\n' '\0' | \
+              xargs -0 npx eslint --fix --no-error-on-unmatched-pattern || \
+              echo "::warning::eslint --fix reported non-zero; proceeding."
+          fi
+          if git diff --quiet; then
+            echo "No formatting changes needed."
+          else
+            git add -A
+            git commit -m "Apply prettier and eslint fixups to skill output"
+          fi
 
       - name: Capture skill signal files
         id: signals
@@ -684,7 +807,7 @@ jobs:
             echo ""
             echo "## Content additions by upstream-release-docs"
             echo ""
-            echo "Source-verified against \`$REPO\` at tag \`$NEW_TAG\` (was \`$PREV_TAG\`). The \`upstream-release-docs\` and \`docs-review\` skills each ran twice (three total passes) before this update."
+            echo "Source-verified against \`$REPO\` at tag \`$NEW_TAG\` (was \`$PREV_TAG\`). Two Claude Opus sessions produced this update: a generation pass running the \`upstream-release-docs\` skill over all six phases, then a fresh-context editorial pass running \`docs-review\` over the changed files. Prettier and ESLint auto-fixes were applied afterward."
             echo ""
             if [ "$COMPARE_OK" != "true" ]; then
               echo "> [!WARNING]"
@@ -701,7 +824,7 @@ jobs:
             fi
             echo "### Review guidance"
             echo ""
-            echo "Machine-generated reference files under \`docs/toolhive/reference/cli/\`, \`static/api-specs/\`, and \`docs/toolhive/reference/crds/\` are synced or regenerated from upstream release assets (separate commit, titled \"Refresh reference assets\") and should be spot-checked only. The \"Add upstream-release-docs content\" commit contains hand-edited prose; review that one for accuracy, not just style. If the \"Gaps needing human context\" section is populated, the skill deferred those sections to a human; fill them in before merging."
+            echo "Machine-generated reference files under \`docs/toolhive/reference/cli/\`, \`static/api-specs/\`, and \`docs/toolhive/reference/crds/\` are synced or regenerated from upstream release assets (separate commit, titled \"Refresh reference assets\") and should be spot-checked only. Commits authored by the skill contain hand-edited prose; review those for accuracy, not just style. If the \"Gaps needing human context\" section below is populated, each entry includes a **Helper prompt for local Claude** that a reviewer can paste verbatim into their local Claude Code session to resolve the gap. Fill those in before merging."
             echo ""
             if [ -n "$GAPS_BLOCK" ]; then
               echo "$GAPS_BLOCK"
