@@ -1,5 +1,17 @@
 name: Update ToolHive Reference Docs
 
+# Handles stacklok/toolhive releases end-to-end. Regenerates the
+# machine-generated reference assets (CLI help, Swagger, CRD schemas),
+# bumps the toolhive entry in .github/upstream-projects.yaml, applies
+# pin_files substitutions, and opens a PR carrying the
+# `upstream-content` label. The label triggers
+# upstream-release-docs.yml to add skill-generated content edits to
+# the same PR, producing one unified PR per toolhive release.
+#
+# The other three tracked projects (registry-server, studio,
+# cloud-ui) don't produce reference artifacts this docs site consumes;
+# they're handled by Renovate + upstream-release-docs.yml alone.
+
 on:
   workflow_dispatch:
     inputs:
@@ -18,7 +30,10 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: update-toolhive-reference
+  # Share the group with upstream-release-docs.yml so a toolhive
+  # release doesn't have the reference and content workflows racing
+  # against the same branch.
+  group: upstream-release-docs
   cancel-in-progress: false
 
 jobs:
@@ -63,12 +78,46 @@ jobs:
         id: imports
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.get-version.outputs.version }}
         run: |
           chmod +x scripts/update-toolhive-reference.sh
-          if ! scripts/update-toolhive-reference.sh ${{ steps.get-version.outputs.version }}; then
+          if ! scripts/update-toolhive-reference.sh "$VERSION"; then
             echo "::error::Failed to update ToolHive reference docs"
             exit 1
           fi
+
+      - name: Resolve tag for YAML bump
+        id: resolve
+        env:
+          INPUT_VERSION: ${{ steps.imports.outputs.version }}
+          FALLBACK_VERSION: ${{ steps.get-version.outputs.version }}
+        run: |
+          # scripts/update-toolhive-reference.sh emits `version` to
+          # GITHUB_OUTPUT after resolving `latest` to a concrete tag.
+          # Fall back to the raw input if something unexpected happened.
+          TAG="${INPUT_VERSION:-$FALLBACK_VERSION}"
+          if [ -z "$TAG" ] || [ "$TAG" = "latest" ]; then
+            echo "::error::Could not resolve a concrete tag for the YAML bump (got '$TAG')."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Bump YAML + apply pin_files for toolhive
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          # No-ops cleanly if already at this tag (rerun safety).
+          if ! node scripts/upstream-release/bump-yaml.mjs \
+              --id toolhive --tag "$TAG" 2>/tmp/bump.err; then
+            if grep -q 'already pinned' /tmp/bump.err; then
+              echo "YAML already at $TAG; continuing."
+            else
+              cat /tmp/bump.err >&2
+              exit 1
+            fi
+          fi
+          node scripts/upstream-release/apply-pin-files.mjs \
+            --id toolhive --tag "$TAG"
 
       - name: Check for changes
         id: git-diff
@@ -124,33 +173,39 @@ jobs:
         if: steps.git-diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
         with:
-          branch: update-toolhive-reference-${{ steps.imports.outputs.version }}
+          branch: docs/upstream-toolhive-${{ steps.imports.outputs.version }}
           title: |
-            Update ToolHive reference docs for ${{ steps.imports.outputs.version }}
+            Update toolhive docs for ${{ steps.imports.outputs.version }}
           body: |
             This PR was auto-generated from ToolHive release **${{ steps.imports.outputs.version }}**.${{ steps.get-reviewer.outputs.assign_to != '' && format(' @{0} is tagged as the person who cut this release.', steps.get-reviewer.outputs.assign_to) || '' }}
             ${{ steps.new-crds.outputs.note_block }}
 
             ## What's in this PR
 
-            Only machine-generated reference files that are built from the ToolHive source code during the release process:
+            **Machine-generated reference files** (built from the ToolHive source at tag `${{ steps.imports.outputs.version }}`):
 
             - **CLI reference** (`docs/toolhive/reference/cli/`) - help text for every `thv` command
             - **REST API spec** (`static/api-specs/toolhive-api.yaml`) - OpenAPI/Swagger spec
             - **CRD reference** (`docs/toolhive/reference/crds/`, `static/api-specs/crds/`) - per-CRD MDX pages, extracted JSON schemas, and YAML examples
             - **Registry JSON schemas** (`static/api-specs/*.schema.json`) - registry validation schemas
 
-            ## What's NOT in this PR
+            **Version tracking**:
 
-            This PR does **not** contain guide, tutorial, or conceptual content. Any documentation updates beyond reference files are handled in separate, manually authored PRs.
+            - `.github/upstream-projects.yaml` - toolhive pin bumped to `${{ steps.imports.outputs.version }}`
+            - `pin_files` substitutions applied (e.g., `docusaurus.config.ts`)
+
+            ## What will be added next
+
+            The `upstream-release-docs.yml` workflow runs automatically when this PR opens and adds source-verified content edits to the guide/concept pages that describe this release. Wait for the content augmentation to complete before reviewing - look for a second commit from `github-actions[bot]` and a "Content additions by upstream-release-docs" section in the PR body.
 
             ## Review guidance
 
-            These files are generated directly from the ToolHive source and are not hand-edited. A quick scan for obvious issues is sufficient - this is intended to be merged shortly after the release is cut so the docs stay in sync.
+            Reference files are not hand-edited - a quick scan suffices. Content edits should be reviewed for accuracy against the release notes and source at the tag.
           commit-message: |
-            Update ToolHive reference docs for ${{ steps.imports.outputs.version }}
+            Update toolhive docs for ${{ steps.imports.outputs.version }}
           labels: |
             autogen-docs
+            upstream-content
           reviewers: ${{ steps.get-reviewer.outputs.assign_to }}
           delete-branch: true
           sign-commits: true

@@ -49,14 +49,21 @@ jobs:
   augment:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    # Gate: triggered either by a Renovate-authored PR carrying the
-    # upstream-content label, OR by a manual workflow_dispatch retry.
-    # The per-event branches below resolve PR metadata from the right
-    # source.
+    # Gate: triggered either by a bot-authored PR carrying the
+    # upstream-content label, OR by a manual workflow_dispatch.
+    #
+    # Accepted authors:
+    #   renovate[bot]       - version-bump PRs for the three non-toolhive
+    #                         projects (see renovate.json customManager).
+    #   github-actions[bot] - the toolhive reference workflow opens a PR
+    #                         from its own identity; we augment it.
     if: |
       github.event_name == 'workflow_dispatch' ||
       (
-        github.event.pull_request.user.login == 'renovate[bot]' &&
+        (
+          github.event.pull_request.user.login == 'renovate[bot]' ||
+          github.event.pull_request.user.login == 'github-actions[bot]'
+        ) &&
         contains(github.event.pull_request.labels.*.name, 'upstream-content')
       )
     env:
@@ -101,10 +108,14 @@ jobs:
                 HEAD_REF=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
                 AUTHOR=$(gh pr view "$PR_NUMBER" --json author --jq '.author.login')
                 LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '[.labels[].name] | join(",")')
-                if [ "$AUTHOR" != "app/renovate" ] && [ "$AUTHOR" != "renovate[bot]" ]; then
-                  echo "::error::PR #$PR_NUMBER is not authored by Renovate (author=$AUTHOR). Retry mode is for Renovate PRs only; use bootstrap (project_id + new_tag) to create a new manual PR."
-                  exit 1
-                fi
+                case "$AUTHOR" in
+                  app/renovate|renovate[bot]|app/github-actions|github-actions[bot])
+                    ;;
+                  *)
+                    echo "::error::PR #$PR_NUMBER author '$AUTHOR' is not an accepted bot. Retry mode accepts renovate[bot] or github-actions[bot]; use bootstrap (project_id + new_tag) for a fresh manual PR."
+                    exit 1
+                    ;;
+                esac
                 if ! echo "$LABELS" | grep -q 'upstream-content'; then
                   echo "::error::PR #$PR_NUMBER does not carry the upstream-content label (labels=$LABELS)."
                   exit 1
