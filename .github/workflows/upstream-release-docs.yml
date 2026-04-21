@@ -1,17 +1,24 @@
 name: Upstream Release Docs
 
 # Reacts to Renovate-authored PRs that bump a `version:` in
-# .github/upstream-projects.yaml. Runs the upstream-release-docs skill
-# in multi-pass non-interactive mode to produce source-verified content
-# edits, pushes them to the same PR branch, augments the PR body, and
-# requests review from non-bot release contributors.
+# .github/upstream-projects.yaml. For all four tracked projects
+# (toolhive, toolhive-registry-server, toolhive-studio,
+# toolhive-cloud-ui), the flow is identical:
 #
-# Renovate is configured (renovate.json customManagers + packageRules)
-# not to rebase these PRs, so we can push commits without force-push
-# races. `rebaseWhen: never` + `recreateWhen: never` own that contract.
+#   1. Renovate opens a version-bump PR
+#   2. This workflow fires on the PR event, detects which project
+#      changed, shallow-clones the upstream at the new tag
+#   3. For toolhive specifically, regenerates reference assets
+#      (CLI help, Swagger, CRD schemas) via the existing
+#      scripts/update-toolhive-reference.sh
+#   4. Copies declared upstream assets into static/
+#   5. Runs the upstream-release-docs skill (3 passes) to produce
+#      source-verified content edits
+#   6. Commits everything to the PR branch, augments the PR body,
+#      assigns reviewers from non-bot release contributors
 #
-# Reference docs for stacklok/toolhive are handled separately by
-# update-toolhive-reference.yml and are explicitly out of scope.
+# Renovate is configured with rebaseWhen: never + recreateWhen: never
+# so we can push commits without force-push races.
 
 on:
   pull_request:
@@ -34,42 +41,26 @@ on:
         description: 'Bootstrap a new PR: the upstream tag to document (e.g. v1.3.0). Requires project_id.'
         required: false
         type: string
-  # Reusable-workflow entry point. Called by update-toolhive-reference.yml
-  # after it opens its PR via peter-evans — PRs opened with the default
-  # GITHUB_TOKEN do not fire pull_request workflows, so we cross the seam
-  # via workflow_call instead of the event chain.
-  workflow_call:
-    inputs:
-      pr_number:
-        description: 'PR number to augment.'
-        required: true
-        type: string
 
 permissions:
   contents: write
   pull-requests: write
 
 concurrency:
-  # Distinct from update-toolhive-reference.yml's group so a workflow_call
-  # from that workflow (which holds its own group) doesn't deadlock when
-  # this one also tries to acquire the same group.
-  group: upstream-release-docs-content
+  # Workflow-level group so two simultaneous upstream releases don't
+  # run the skill in parallel on shared concept pages.
+  group: upstream-release-docs
   cancel-in-progress: false
 
 jobs:
   augment:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    # Gate: three accepted entry points.
+    # Gate: two accepted entry points.
     #   - pull_request: Renovate-authored PR with upstream-content label.
-    #     (The toolhive reference workflow can't reach here because PRs
-    #     opened with the default GITHUB_TOKEN don't fire pull_request
-    #     events; the reference workflow reaches us via workflow_call.)
     #   - workflow_dispatch: human manually retries or bootstraps.
-    #   - workflow_call: the reference workflow invokes us with pr_number.
     if: |
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'workflow_call' ||
       (
         github.event_name == 'pull_request' &&
         github.event.pull_request.user.login == 'renovate[bot]' &&
@@ -104,19 +95,11 @@ jobs:
           NEW_TAG_IN: ${{ github.event.inputs.new_tag }}
           EVENT_PR: ${{ github.event.pull_request.number }}
           EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          CALL_PR: ${{ inputs.pr_number }}
         run: |
           case "$EVENT" in
             pull_request)
               PR_NUMBER="$EVENT_PR"
               HEAD_REF="$EVENT_HEAD_REF"
-              MODE="react"
-              ;;
-            workflow_call)
-              # Invoked by update-toolhive-reference.yml after it opens
-              # its PR. Trust the caller; we already share a repository.
-              PR_NUMBER="$CALL_PR"
-              HEAD_REF=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
               MODE="react"
               ;;
             workflow_dispatch)
@@ -285,14 +268,31 @@ jobs:
             "$SCRATCH/upstream"
           echo "scratch_dir=$SCRATCH/upstream" >> "$GITHUB_OUTPUT"
 
-      - name: Sync declared assets from upstream clone
+      - name: Sync declared assets
         env:
           PROJECT_ID: ${{ steps.detect.outputs.id }}
           CLONE_DIR: ${{ steps.clone.outputs.scratch_dir }}
+          REPO: ${{ steps.detect.outputs.repo }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
         run: |
           node scripts/upstream-release/sync-assets.mjs \
             --id "$PROJECT_ID" \
-            --clone "$CLONE_DIR"
+            --clone "$CLONE_DIR" \
+            --repo "$REPO" \
+            --tag "$NEW_TAG"
+
+      # toolhive ships CRD manifests in its repo (not as release assets)
+      # and needs custom MDX generation. It also pulls toolhive-core
+      # JSON schemas via a go.mod-derived version. Both are handled
+      # here; reuses the shallow clone to skip a redundant clone.
+      - name: Regenerate ToolHive CRD + core schema reference
+        if: steps.detect.outputs.id == 'toolhive'
+        env:
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+          TOOLHIVE_CLONE_DIR: ${{ steps.clone.outputs.scratch_dir }}
+        run: |
+          chmod +x scripts/update-toolhive-reference.sh
+          scripts/update-toolhive-reference.sh "$NEW_TAG"
 
       - name: Extract reviewers from release compare
         id: reviewers
