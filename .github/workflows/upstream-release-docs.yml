@@ -1,0 +1,409 @@
+name: Upstream Release Docs
+
+# Reacts to Renovate-authored PRs that bump a `version:` in
+# .github/upstream-projects.yaml. Runs the upstream-release-docs skill
+# in multi-pass non-interactive mode to produce source-verified content
+# edits, pushes them to the same PR branch, augments the PR body, and
+# requests review from non-bot release contributors.
+#
+# Renovate is configured (renovate.json customManagers + packageRules)
+# not to rebase these PRs, so we can push commits without force-push
+# races. `rebaseWhen: never` + `recreateWhen: never` own that contract.
+#
+# Reference docs for stacklok/toolhive are handled separately by
+# update-toolhive-reference.yml and are explicitly out of scope.
+
+on:
+  pull_request:
+    # `labeled` is included to close the race where Renovate's
+    # labels aren't yet on the PR at the `opened` event payload.
+    types: [opened, reopened, labeled]
+    paths:
+      - '.github/upstream-projects.yaml'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to (re-)augment. Must be an open Renovate PR touching .github/upstream-projects.yaml.'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # Workflow-level group (not per-PR) so two simultaneous upstream
+  # releases don't run the skill in parallel on shared concept pages.
+  group: upstream-release-docs
+  cancel-in-progress: false
+
+jobs:
+  augment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Gate: triggered either by a Renovate-authored PR carrying the
+    # upstream-content label, OR by a manual workflow_dispatch retry.
+    # The per-event branches below resolve PR metadata from the right
+    # source.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.pull_request.user.login == 'renovate[bot]' &&
+        contains(github.event.pull_request.labels.*.name, 'upstream-content')
+      )
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Resolve PR number and head ref
+        id: pr
+        env:
+          EVENT: ${{ github.event_name }}
+          DISPATCH_PR: ${{ github.event.inputs.pr_number }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            PR_NUMBER="$DISPATCH_PR"
+            HEAD_REF=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
+            # Validate: must be a Renovate PR with the upstream-content label.
+            AUTHOR=$(gh pr view "$PR_NUMBER" --json author --jq '.author.login')
+            LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '[.labels[].name] | join(",")')
+            if [ "$AUTHOR" != "app/renovate" ] && [ "$AUTHOR" != "renovate[bot]" ]; then
+              echo "::error::PR #$PR_NUMBER is not authored by Renovate (author=$AUTHOR)."
+              exit 1
+            fi
+            if ! echo "$LABELS" | grep -q 'upstream-content'; then
+              echo "::error::PR #$PR_NUMBER does not carry the upstream-content label (labels=$LABELS)."
+              exit 1
+            fi
+          else
+            PR_NUMBER="$EVENT_PR"
+            HEAD_REF="$EVENT_HEAD_REF"
+          fi
+          echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$HEAD_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout PR branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ steps.pr.outputs.head_ref }}
+          fetch-depth: 0
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Set up Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Detect changed project
+        id: detect
+        run: node scripts/upstream-release/detect-change.mjs
+
+      - name: Verify prev_tag exists upstream
+        env:
+          REPO: ${{ steps.detect.outputs.repo }}
+          PREV_TAG: ${{ steps.detect.outputs.prev_tag }}
+        run: |
+          # Sanity check: if the pinned prev_tag doesn't exist upstream
+          # (e.g., a fake v0.0.0 seed, a retagged release, a deleted tag),
+          # fail early rather than let the skill produce a confusing diff.
+          if ! gh api "repos/$REPO/git/refs/tags/$PREV_TAG" --silent 2>/dev/null; then
+            echo "::error::prev_tag $PREV_TAG does not exist in $REPO. The pinned version in .github/upstream-projects.yaml may be wrong or the upstream tag was deleted. Fix the pinned version and re-run."
+            exit 1
+          fi
+
+      - name: Shallow-clone upstream at new tag
+        id: clone
+        env:
+          REPO: ${{ steps.detect.outputs.repo }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+        run: |
+          SCRATCH=$(mktemp -d)
+          git clone --depth 1 --branch "$NEW_TAG" \
+            "https://github.com/${REPO}.git" \
+            "$SCRATCH/upstream"
+          echo "scratch_dir=$SCRATCH/upstream" >> "$GITHUB_OUTPUT"
+
+      - name: Extract reviewers from release compare
+        id: reviewers
+        env:
+          REPO: ${{ steps.detect.outputs.repo }}
+          PREV: ${{ steps.detect.outputs.prev_tag }}
+          NEW: ${{ steps.detect.outputs.new_tag }}
+        run: |
+          # Capture stderr separately so we can surface a missing-compare
+          # situation in the PR body rather than silently dropping reviewers.
+          if COMPARE=$(gh api "repos/$REPO/compare/$PREV...$NEW" \
+              --jq '[.commits[].author.login] | unique | .[]' 2>/dev/null); then
+            REVIEWERS=$(echo "$COMPARE" |
+              grep -Ev '(\[bot\]$|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)' |
+              head -5 | paste -sd, -)
+            echo "compare_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            REVIEWERS=""
+            echo "compare_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "list=$REVIEWERS" >> "$GITHUB_OUTPUT"
+          echo "Reviewers: ${REVIEWERS:-<none>}"
+
+      - name: Read docs_paths hint
+        id: hints
+        env:
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+        run: |
+          HINTS=$(node -e "
+            const yaml = require('js-yaml');
+            const fs = require('fs');
+            const p = yaml.load(fs.readFileSync('.github/upstream-projects.yaml','utf8')).projects.find(x=>x.id===process.env.PROJECT_ID);
+            console.log(JSON.stringify(p?.docs_paths ?? []));
+          ")
+          echo "docs_paths=$HINTS" >> "$GITHUB_OUTPUT"
+
+      - name: Run upstream-release-docs skill (multi-pass)
+        id: skill
+        uses: anthropics/claude-code-action@38ec876110f9fbf8b950c79f534430740c3ac009 # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          additional_permissions: |
+            actions: read
+          prompt: |
+            You are running in GitHub Actions with no interactive user. Follow
+            these steps exactly and do NOT ask clarifying questions -- proceed
+            best-effort at every decision point.
+
+            PROJECT:    ${{ steps.detect.outputs.id }}
+            REPO:       ${{ steps.detect.outputs.repo }}
+            PREV_TAG:   ${{ steps.detect.outputs.prev_tag }}
+            NEW_TAG:    ${{ steps.detect.outputs.new_tag }}
+            CLONE:      ${{ steps.clone.outputs.scratch_dir }}
+            DOCS_HINTS: ${{ steps.hints.outputs.docs_paths }}
+
+            PASS 1 -- Initial content update:
+              Run /upstream-release-docs ${{ steps.detect.outputs.repo }} ${{ steps.detect.outputs.new_tag }}
+              Execute all 6 phases. Prefer reading source code from the
+              local clone at ${{ steps.clone.outputs.scratch_dir }}
+              instead of `gh api contents?ref=<tag>` -- it's already at
+              the tag and doesn't consume API quota.
+              For Phase 2 step 4 (context on major new features), SKIP
+              writing the "why"/consumer narrative and append one bullet
+              per gap to GAPS.md at repo root (create if missing). Each
+              bullet must name the feature and describe what context a
+              human needs to supply.
+              Follow the skill's own guidance on auto-generated reference
+              files (Phase 4 step 5, Phase 4 step 6) -- do not hand-edit
+              docs/toolhive/reference/cli/, static/api-specs/, or
+              docs/toolhive/reference/crds/. If a release genuinely needs
+              reference updates, note that in GAPS.md -- the separate
+              update-toolhive-reference.yml workflow handles those.
+
+            PASS 2 -- Editorial re-review:
+              Run /docs-review over every file you changed in Pass 1 and
+              apply every actionable fix. Do NOT re-run upstream-release-docs;
+              you already have the source verification context in your
+              history. If docs-review surfaces a factual concern, re-verify
+              against source code at the tag before changing.
+
+            PASS 3 -- Technical re-verification:
+              Re-run Phase 5 step 1 of /upstream-release-docs: re-verify
+              every factual claim in the changed files against source code
+              at the release tag. Fix any drift found. If no changes are
+              needed, say so explicitly.
+              Finally, re-run /docs-review one more time and apply any
+              remaining fixes.
+
+            If at any point you conclude there are no doc-relevant changes
+            for this release (Phase 3 impact map is empty), stop and write
+            NO_CHANGES.md at repo root with a one-line explanation. Still
+            do not hand-edit any file.
+
+      - name: Capture skill signal files
+        id: signals
+        run: |
+          GAPS_BODY=""
+          NO_CHANGES_BODY=""
+          if [ -f GAPS.md ]; then
+            GAPS_BODY=$(cat GAPS.md)
+            rm GAPS.md
+          fi
+          if [ -f NO_CHANGES.md ]; then
+            NO_CHANGES_BODY=$(cat NO_CHANGES.md)
+            rm NO_CHANGES.md
+          fi
+
+          # Build full markdown fragments here so the PR body edit
+          # step can treat them as plain strings.
+          {
+            echo "note_block<<NOTE_EOF"
+            if [ -n "$NO_CHANGES_BODY" ]; then
+              echo "> [!NOTE]"
+              echo "> The skill reported no doc-relevant changes for this"
+              echo "> release. This PR only bumps the version reference"
+              echo "> and any pin_files substitutions."
+              echo ">"
+              echo "> $NO_CHANGES_BODY"
+            fi
+            echo "NOTE_EOF"
+
+            echo "gaps_block<<GAPS_EOF"
+            if [ -n "$GAPS_BODY" ]; then
+              echo "## Gaps needing human context"
+              echo ""
+              echo "$GAPS_BODY"
+            fi
+            echo "GAPS_EOF"
+
+            echo "has_gaps=$([ -n "$GAPS_BODY" ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Apply pin_files substitutions
+        env:
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+        run: |
+          node scripts/upstream-release/apply-pin-files.mjs \
+            --id "$PROJECT_ID" \
+            --tag "$NEW_TAG"
+
+      - name: Detect touches to auto-generated paths
+        id: autogen
+        run: |
+          git add -A
+          TOUCHED=$(git diff --cached --name-only -- \
+            'docs/toolhive/reference/cli/' \
+            'static/api-specs/' \
+            'docs/toolhive/reference/crds/' | paste -sd, - || true)
+          {
+            echo "note<<AUTOGEN_EOF"
+            if [ -n "$TOUCHED" ]; then
+              echo "> [!WARNING]"
+              echo "> The skill touched files under auto-generated paths:"
+              echo "> \`$TOUCHED\`"
+              echo ">"
+              echo "> These are normally maintained by update-toolhive-reference.yml."
+              echo "> Review the changes carefully and revert if they should come"
+              echo "> from the reference workflow instead."
+            fi
+            echo "AUTOGEN_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push content
+        id: push
+        env:
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No content changes to push."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m "Add upstream-release-docs content for $PROJECT_ID $NEW_TAG"
+          git push origin "HEAD:$HEAD_REF"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Augment PR body (marker-delimited section)
+        # Runs even if earlier steps soft-failed so the augmentation
+        # survives partial failures; a subsequent workflow_dispatch
+        # retry will re-enter here.
+        if: always() && steps.detect.outputs.id != ''
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+          PREV_TAG: ${{ steps.detect.outputs.prev_tag }}
+          REPO: ${{ steps.detect.outputs.repo }}
+          NOTE_BLOCK: ${{ steps.signals.outputs.note_block }}
+          GAPS_BLOCK: ${{ steps.signals.outputs.gaps_block }}
+          AUTOGEN_NOTE: ${{ steps.autogen.outputs.note }}
+          COMPARE_OK: ${{ steps.reviewers.outputs.compare_ok }}
+        run: |
+          START='<!-- upstream-release-docs:start -->'
+          END='<!-- upstream-release-docs:end -->'
+
+          # Build our section.
+          {
+            echo "$START"
+            echo ""
+            echo "## Content additions by upstream-release-docs"
+            echo ""
+            echo "Source-verified against \`$REPO\` at tag \`$NEW_TAG\` (was \`$PREV_TAG\`). The \`upstream-release-docs\` and \`docs-review\` skills each ran twice (three total passes) before this update."
+            echo ""
+            if [ "$COMPARE_OK" != "true" ]; then
+              echo "> [!WARNING]"
+              echo "> Could not compare \`$PREV_TAG\` against \`$NEW_TAG\` upstream, so no reviewers were auto-assigned from release contributors. The pinned previous tag may have been retagged or deleted."
+              echo ""
+            fi
+            if [ -n "$NOTE_BLOCK" ]; then
+              echo "$NOTE_BLOCK"
+              echo ""
+            fi
+            if [ -n "$AUTOGEN_NOTE" ]; then
+              echo "$AUTOGEN_NOTE"
+              echo ""
+            fi
+            echo "### What's NOT in this PR"
+            echo ""
+            echo "Auto-generated reference files (\`docs/toolhive/reference/cli/\`, \`static/api-specs/\`, \`docs/toolhive/reference/crds/\`). Those are handled by \`update-toolhive-reference.yml\`. If this release has reference impact, that workflow opens a separate PR; merge it first, then rebase this one."
+            echo ""
+            echo "### Review guidance"
+            echo ""
+            echo "Unlike the reference-docs PR, this one contains hand-edited prose. Review for accuracy, not just style. If the \"Gaps needing human context\" section is populated, the skill deferred those sections to a human; fill them in before merging."
+            echo ""
+            if [ -n "$GAPS_BLOCK" ]; then
+              echo "$GAPS_BLOCK"
+              echo ""
+            fi
+            echo "Reviewers below are non-bot commit authors in the release range."
+            echo ""
+            echo "$END"
+          } > /tmp/section.md
+
+          # Read existing body, replace or append our marked section.
+          EXISTING=$(gh pr view "$PR_NUMBER" --json body --jq .body)
+          if echo "$EXISTING" | grep -qF "$START"; then
+            # Replace existing section.
+            printf '%s\n' "$EXISTING" | awk -v start="$START" -v end="$END" -v repl_file=/tmp/section.md '
+              BEGIN { in_section = 0 }
+              $0 == start { in_section = 1; while ((getline line < repl_file) > 0) print line; next }
+              $0 == end   { if (in_section) { in_section = 0; next } }
+              !in_section { print }
+            ' > /tmp/pr-body.md
+          else
+            # Append.
+            {
+              printf '%s\n\n---\n\n' "$EXISTING"
+              cat /tmp/section.md
+            } > /tmp/pr-body.md
+          fi
+
+          gh pr edit "$PR_NUMBER" --body-file /tmp/pr-body.md
+
+      - name: Add reviewers
+        if: always() && steps.reviewers.outputs.list != ''
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          REVIEWERS: ${{ steps.reviewers.outputs.list }}
+        run: gh pr edit "$PR_NUMBER" --add-reviewer "$REVIEWERS"
+
+      - name: Add needs-human-context label
+        if: always() && steps.signals.outputs.has_gaps == 'true'
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: gh pr edit "$PR_NUMBER" --add-label needs-human-context
+
+      - name: Flag augmentation failure
+        # Runs only when a preceding step failed. Adds a label the
+        # operator can filter on and comments a retry pointer.
+        if: failure()
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr edit "$PR_NUMBER" --add-label upstream-docs-failed || true
+          gh pr comment "$PR_NUMBER" --body "Automated docs augmentation failed. Run: $RUN_URL
+
+          Retry via the \`Upstream Release Docs\` workflow with \`pr_number=$PR_NUMBER\` once the underlying issue is resolved." || true
