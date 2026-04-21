@@ -34,36 +34,45 @@ on:
         description: 'Bootstrap a new PR: the upstream tag to document (e.g. v1.3.0). Requires project_id.'
         required: false
         type: string
+  # Reusable-workflow entry point. Called by update-toolhive-reference.yml
+  # after it opens its PR via peter-evans — PRs opened with the default
+  # GITHUB_TOKEN do not fire pull_request workflows, so we cross the seam
+  # via workflow_call instead of the event chain.
+  workflow_call:
+    inputs:
+      pr_number:
+        description: 'PR number to augment.'
+        required: true
+        type: string
 
 permissions:
   contents: write
   pull-requests: write
 
 concurrency:
-  # Workflow-level group (not per-PR) so two simultaneous upstream
-  # releases don't run the skill in parallel on shared concept pages.
-  group: upstream-release-docs
+  # Distinct from update-toolhive-reference.yml's group so a workflow_call
+  # from that workflow (which holds its own group) doesn't deadlock when
+  # this one also tries to acquire the same group.
+  group: upstream-release-docs-content
   cancel-in-progress: false
 
 jobs:
   augment:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    # Gate: triggered either by a bot-authored PR carrying the
-    # upstream-content label, OR by a manual workflow_dispatch.
-    #
-    # Accepted authors:
-    #   renovate[bot]       - version-bump PRs for the three non-toolhive
-    #                         projects (see renovate.json customManager).
-    #   github-actions[bot] - the toolhive reference workflow opens a PR
-    #                         from its own identity; we augment it.
+    # Gate: three accepted entry points.
+    #   - pull_request: Renovate-authored PR with upstream-content label.
+    #     (The toolhive reference workflow can't reach here because PRs
+    #     opened with the default GITHUB_TOKEN don't fire pull_request
+    #     events; the reference workflow reaches us via workflow_call.)
+    #   - workflow_dispatch: human manually retries or bootstraps.
+    #   - workflow_call: the reference workflow invokes us with pr_number.
     if: |
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'workflow_call' ||
       (
-        (
-          github.event.pull_request.user.login == 'renovate[bot]' ||
-          github.event.pull_request.user.login == 'github-actions[bot]'
-        ) &&
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login == 'renovate[bot]' &&
         contains(github.event.pull_request.labels.*.name, 'upstream-content')
       )
     env:
@@ -95,11 +104,19 @@ jobs:
           NEW_TAG_IN: ${{ github.event.inputs.new_tag }}
           EVENT_PR: ${{ github.event.pull_request.number }}
           EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          CALL_PR: ${{ inputs.pr_number }}
         run: |
           case "$EVENT" in
             pull_request)
               PR_NUMBER="$EVENT_PR"
               HEAD_REF="$EVENT_HEAD_REF"
+              MODE="react"
+              ;;
+            workflow_call)
+              # Invoked by update-toolhive-reference.yml after it opens
+              # its PR. Trust the caller; we already share a repository.
+              PR_NUMBER="$CALL_PR"
+              HEAD_REF=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
               MODE="react"
               ;;
             workflow_dispatch)
@@ -185,13 +202,21 @@ jobs:
 
           # Open the PR with the same labels Renovate would apply, so
           # downstream steps that read labels behave identically.
+          # Heredoc so the YAML indent doesn't leak into the PR body.
+          cat > /tmp/bootstrap-body.md <<EOF
+          Manually dispatched by @$ACTOR via workflow run $RUN_URL.
+
+          This PR was created by the \`Upstream Release Docs\` workflow's bootstrap mode to document a release without waiting for Renovate. Content edits will be pushed as additional commits by the same workflow run.
+          EOF
+          # Strip the leading 10-space indent the heredoc inherits from
+          # YAML nesting so the body renders cleanly.
+          sed -i 's/^          //' /tmp/bootstrap-body.md
+
           gh pr create \
             --base main \
             --head "$BRANCH" \
             --title "Update $PROJECT_ID to $NEW_TAG (manual dispatch)" \
-            --body "Manually dispatched by @$ACTOR via workflow run $RUN_URL.
-
-          This PR was created by the \`Upstream Release Docs\` workflow's bootstrap mode to document a release without waiting for Renovate. Content edits will be pushed as additional commits by the same workflow run." \
+            --body-file /tmp/bootstrap-body.md \
             --label autogen-docs \
             --label upstream-content
 

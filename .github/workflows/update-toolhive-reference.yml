@@ -30,15 +30,17 @@ permissions:
   pull-requests: write
 
 concurrency:
-  # Share the group with upstream-release-docs.yml so a toolhive
-  # release doesn't have the reference and content workflows racing
-  # against the same branch.
-  group: upstream-release-docs
+  # Distinct from upstream-release-docs-content so that when this
+  # workflow calls the content workflow via workflow_call, the nested
+  # run doesn't block waiting for this one's concurrency slot.
+  group: upstream-release-docs-reference
   cancel-in-progress: false
 
 jobs:
   update-reference:
     runs-on: ubuntu-latest
+    outputs:
+      pr_number: ${{ steps.cpr.outputs.pull-request-number }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -170,6 +172,7 @@ jobs:
           fi
 
       - name: Create Pull Request
+        id: cpr
         if: steps.git-diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
         with:
@@ -194,13 +197,7 @@ jobs:
             - `.github/upstream-projects.yaml` - toolhive pin bumped to `${{ steps.imports.outputs.version }}`
             - `pin_files` substitutions applied (e.g., `docusaurus.config.ts`)
 
-            ## What will be added next
-
-            The `upstream-release-docs.yml` workflow runs automatically when this PR opens and adds source-verified content edits to the guide/concept pages that describe this release. Wait for the content augmentation to complete before reviewing - look for a second commit from `github-actions[bot]` and a "Content additions by upstream-release-docs" section in the PR body.
-
-            ## Review guidance
-
-            Reference files are not hand-edited - a quick scan suffices. Content edits should be reviewed for accuracy against the release notes and source at the tag.
+            A follow-up commit from `upstream-release-docs.yml` will add source-verified content edits to the guide/concept pages and a "Content additions by upstream-release-docs" section below. Wait for it to land before reviewing.
           commit-message: |
             Update toolhive docs for ${{ steps.imports.outputs.version }}
           labels: |
@@ -209,3 +206,19 @@ jobs:
           reviewers: ${{ steps.get-reviewer.outputs.assign_to }}
           delete-branch: true
           sign-commits: true
+
+  # Chains into the content workflow via workflow_call. We can't rely
+  # on the `pull_request: opened` event because peter-evans opens the
+  # PR with the default GITHUB_TOKEN, which by design does not trigger
+  # further workflow runs. Calling the reusable workflow directly is
+  # the supported escape hatch.
+  augment-content:
+    needs: update-reference
+    if: needs.update-reference.outputs.pr_number != ''
+    uses: ./.github/workflows/upstream-release-docs.yml
+    with:
+      pr_number: ${{ needs.update-reference.outputs.pr_number }}
+    secrets: inherit
+    permissions:
+      contents: write
+      pull-requests: write
