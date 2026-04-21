@@ -1,0 +1,340 @@
+---
+title: Publish MCP servers
+description:
+  How to publish MCP server entries to a ToolHive Registry Server using a Git or
+  file source, or the managed source admin API.
+---
+
+This guide walks you through publishing MCP server entries to a Registry Server.
+The right path depends on how you want to manage your catalog:
+
+| Approach             | Best for                                                                               |
+| -------------------- | -------------------------------------------------------------------------------------- |
+| Git or file source   | Catalogs that fit naturally in a repository with code review, CI, and version history. |
+| Managed source (API) | Programmatic or UI-driven publishing, per-version releases, and dynamic content.       |
+
+This guide focuses on MCP servers. For skills, see
+[Manage skills](./skills.mdx), which uses the same `/v1/entries` admin API with
+a `skill` payload instead of a `server` payload.
+
+## Prerequisites
+
+- A running Registry Server with at least one source configured (see
+  [Configuration](./configuration.mdx))
+- `curl` or another HTTP client for the managed-source path
+- If authentication is enabled, a valid bearer token (see
+  [Authentication](./authentication.mdx))
+
+## Registry file format
+
+Git and file sources both read a single JSON file in the
+[upstream MCP registry format](../reference/registry-schema-upstream.mdx). The
+file wraps an array of server entries in a `data.servers` array, with top-level
+`version` and `meta` fields:
+
+```json title="registry.json"
+{
+  "$schema": "https://raw.githubusercontent.com/stacklok/toolhive-core/main/registry/types/data/upstream-registry.schema.json",
+  "version": "1.0.0",
+  "meta": {
+    "last_updated": "2026-04-21T00:00:00Z"
+  },
+  "data": {
+    "servers": [
+      {
+        "name": "io.github.acme/deploy-helper",
+        "description": "Deployment assistant for internal services",
+        "title": "deploy-helper",
+        "repository": {
+          "url": "https://github.com/acme/deploy-helper",
+          "source": "github"
+        },
+        "version": "1.0.0",
+        "packages": [
+          {
+            "registryType": "oci",
+            "identifier": "ghcr.io/acme/deploy-helper:1.0.0",
+            "transport": {
+              "type": "streamable-http",
+              "url": "http://localhost:8080"
+            }
+          }
+        ],
+        "_meta": {
+          "io.modelcontextprotocol.registry/publisher-provided": {
+            "io.github.acme": {
+              "ghcr.io/acme/deploy-helper:1.0.0": {
+                "status": "Active",
+                "tier": "Official",
+                "tags": ["deployment", "internal"],
+                "tools": ["deploy", "rollback", "status"]
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}
+```
+
+### Required fields
+
+Each entry in the `data.servers` array needs the following keys, per the
+upstream schema:
+
+- `name`: reverse-DNS identifier (for example, `io.github.acme/deploy-helper`).
+  This is the unique key for the entry.
+- `description`: short text displayed in listings.
+- `version`: the version this entry represents. Must follow the rules in the
+  upstream schema.
+- Either `packages` (for servers distributed as container images or other
+  package types) or `remotes` (for remote MCP servers accessed by URL).
+
+See the [upstream registry schema](../reference/registry-schema-upstream.mdx)
+for the full field catalog, including optional metadata, tool definitions, and
+the ToolHive extensions under
+`_meta["io.modelcontextprotocol.registry/publisher-provided"]`.
+
+### Add the `$schema` property
+
+Adding the `$schema` property at the top of the file enables inline validation
+and autocomplete in editors that support JSON Schema (for example, Visual Studio
+Code with the YAML/JSON extensions):
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/stacklok/toolhive-core/main/registry/types/data/upstream-registry.schema.json"
+}
+```
+
+## Publish via a Git source
+
+Use a Git source when you want version control, code review, and CI for your
+registry content. The Registry Server clones the repository on startup and
+re-syncs on the configured interval.
+
+### Repository layout
+
+The Registry Server reads a single JSON file from each Git source. The
+repository layout is up to you, but the path to that file is declared in the
+source's `path` field:
+
+```text
+my-registry/
+├── .github/
+│   └── workflows/
+│       └── validate.yml       # CI to validate registry.json against the schema
+├── README.md
+└── registry.json              # The file declared in the source's "path" field
+```
+
+You can keep multiple registry files in the same repository, served by different
+sources (for example, `teams/platform/registry.json` and
+`teams/data/registry.json`). Each source points at a different path.
+
+If you omit `path` on the source, the server looks for `registry.json` at the
+repository root.
+
+### Point a source at the file
+
+In the Registry Server's configuration, configure a Git source that references
+the repository, branch or tag, and path:
+
+```yaml title="config.yaml"
+sources:
+  - name: internal
+    git:
+      repository: https://github.com/acme/my-registry.git
+      branch: main
+      path: registry.json
+    syncPolicy:
+      interval: '30m'
+
+registries:
+  - name: default
+    sources: ['internal']
+```
+
+Use `branch`, `tag`, or `commit` to pin a specific version. When more than one
+is set, `commit` takes precedence over `branch`, which takes precedence over
+`tag`.
+
+For private repositories, set `auth.username` and `auth.passwordFile` on the
+source (see
+[Git source configuration](./configuration.mdx#git-repository-source)).
+
+### Validate before committing
+
+Validate the file against the upstream schema locally before opening a PR. Any
+JSON Schema validator works. For a quick check with
+[`check-jsonschema`](https://github.com/python-jsonschema/check-jsonschema):
+
+```bash
+check-jsonschema \
+  --schemafile https://raw.githubusercontent.com/stacklok/toolhive-core/main/registry/types/data/upstream-registry.schema.json \
+  registry.json
+```
+
+Running this check in CI on every pull request catches formatting errors before
+they reach the Registry Server.
+
+### How changes reach the server
+
+Once your change is merged into the tracked branch, the Registry Server picks it
+up on the next scheduled sync. If you need to verify immediately, either wait
+for the interval configured in `syncPolicy`, or restart the Registry Server to
+force an immediate sync.
+
+## Serve entries from a file source
+
+A file source is similar to a Git source but reads the JSON from a local path or
+URL instead of cloning a repository. Use it for local development, air-gapped
+environments, or when you already have a delivery mechanism that writes files
+onto the server (for example, a mounted ConfigMap or a persistent volume).
+
+```yaml title="config.yaml"
+sources:
+  - name: local
+    file:
+      path: /data/registry/registry.json
+    syncPolicy:
+      interval: '15m'
+
+registries:
+  - name: default
+    sources: ['local']
+```
+
+The file format is identical to the Git source format. See
+[File source configuration](./configuration.mdx#file-source) for mounting
+options in Kubernetes, and the [Quickstart](./quickstart.mdx) for a complete
+ConfigMap-based example.
+
+## Publish via the managed source API
+
+Managed sources accept entries directly through the `/v1/entries` admin API
+instead of syncing from an external file. Use this when you want programmatic
+publishing, per-version release workflows, or a UI that calls the Registry
+Server for you.
+
+A server deployment can have at most one managed source. See
+[Managed source configuration](./configuration.mdx#managed-source) for the
+startup rules.
+
+### Publish a server
+
+To publish a new server version, send a `POST` request to `/v1/entries` with the
+entry wrapped in a `server` object:
+
+```bash title="Publish a server"
+curl -X POST \
+  https://registry.example.com/v1/entries \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -d '{
+    "server": {
+      "name": "io.github.acme/deploy-helper",
+      "description": "Deployment assistant for internal services",
+      "version": "1.0.0",
+      "packages": [
+        {
+          "registryType": "oci",
+          "identifier": "ghcr.io/acme/deploy-helper:1.0.0",
+          "transport": {
+            "type": "streamable-http",
+            "url": "http://localhost:8080"
+          }
+        }
+      ]
+    }
+  }'
+```
+
+Required fields in the `server` object: `name`, `description`, `version`, and
+either `packages` or `remotes`. See the
+[upstream registry schema](../reference/registry-schema-upstream.mdx) for the
+full structure and the optional ToolHive extensions.
+
+A successful response returns `201 Created` with the published server. If the
+version already exists, the server returns `409 Conflict`.
+
+### Claims on publish
+
+When [authentication](./authentication.mdx) is enabled, publish requests must
+include a top-level `claims` object alongside `server`:
+
+```json
+{
+  "server": {
+    "name": "io.github.acme/deploy-helper",
+    "description": "Deployment assistant for internal services",
+    "version": "1.0.0",
+    "packages": [{ "...": "..." }]
+  },
+  "claims": { "org": "acme", "team": "platform" }
+}
+```
+
+The publish claims must be a subset of your JWT claims, and subsequent versions
+of the same server must carry the same claims as the first version. See
+[Claims on published entries](./authorization.mdx#claims-on-published-entries)
+for the full rules.
+
+### Versioning behavior
+
+When you publish a new version, the Registry Server compares it against the
+current latest version. If the new version is newer, the `latest` pointer
+updates automatically. Publishing an older version (for example, backfilling
+`0.9.0` after `1.0.0` exists) does not change the `latest` pointer.
+
+### Delete a server version
+
+To delete a specific version, send a `DELETE` request to the version path.
+URL-encode the `/` in the server name as `%2F`:
+
+```bash
+curl -X DELETE \
+  https://registry.example.com/v1/entries/server/io.github.acme%2Fdeploy-helper/versions/1.0.0 \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+A successful request returns `204 No Content`. Deleting a version that doesn't
+exist returns `404 Not Found`. If you delete the version currently marked
+`latest`, the server promotes the next-highest remaining version to `latest`
+automatically.
+
+:::warning
+
+Deleting a server version is permanent. The entry is removed from the database
+immediately, and any clients with cached references will get a `404` on
+subsequent lookups.
+
+:::
+
+### Update claims on a published server
+
+To change the authorization claims on an existing server, send a `PUT` request
+to the claims path:
+
+```bash
+curl -X PUT \
+  https://registry.example.com/v1/entries/server/io.github.acme%2Fdeploy-helper/claims \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -d '{"claims": {"org": "acme", "team": "platform"}}'
+```
+
+The JWT presented on both the original publish and this update must satisfy the
+claims being set. See
+[Claims on published entries](./authorization.mdx#claims-on-published-entries)
+for the authorization rules.
+
+## Next steps
+
+- [Manage skills](./skills.mdx) using the same admin API for the skills
+  extension
+- [Configure authorization](./authorization.mdx) to control who can publish,
+  read, and update entries
+- [View the API reference](../reference/registry-api.mdx) for the full request
+  and response schemas
