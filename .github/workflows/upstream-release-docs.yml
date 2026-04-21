@@ -8,10 +8,14 @@ name: Upstream Release Docs
 #   1. Renovate opens a version-bump PR
 #   2. This workflow fires on the PR event, detects which project
 #      changed, shallow-clones the upstream at the new tag
-#   3. For toolhive specifically, regenerates reference assets
-#      (CLI help, Swagger, CRD schemas) via the existing
-#      scripts/update-toolhive-reference.sh
-#   4. Copies declared upstream assets into static/
+#   3. Syncs declared upstream assets into static/ via sync-assets.mjs
+#      (release-asset downloads, tarball extractions, file-from-clone
+#      copies — see `assets:` in upstream-projects.yaml)
+#   4. For toolhive specifically, downloads the CRD manifests tarball
+#      and runs extract-crd-schemas.mjs + generate-crd-pages.mjs +
+#      bundle-upstream-schema.mjs to produce our opinionated reference
+#      MDX (the CRD tarball and toolhive-core schemas are shipped as
+#      release assets by stacklok/toolhive#4982)
 #   5. Runs the upstream-release-docs skill (3 passes) to produce
 #      source-verified content edits
 #   6. Commits everything to the PR branch, augments the PR body,
@@ -281,18 +285,44 @@ jobs:
             --repo "$REPO" \
             --tag "$NEW_TAG"
 
-      # toolhive ships CRD manifests in its repo (not as release assets)
-      # and needs custom MDX generation. It also pulls toolhive-core
-      # JSON schemas via a go.mod-derived version. Both are handled
-      # here; reuses the shallow clone to skip a redundant clone.
-      - name: Regenerate ToolHive CRD + core schema reference
+      # toolhive ships CRD manifests as a release asset tarball (see
+      # stacklok/toolhive#4982). We extract it to a temp dir and run our
+      # opinionated transforms: extract per-CRD JSON schemas + examples,
+      # generate MDX reference pages. Bundling the upstream-registry
+      # schema (resolves the remote MCP-server $refs for our JSON-Schema
+      # viewer) also runs here.
+      - name: Extract CRDs + generate reference MDX (toolhive)
         if: steps.detect.outputs.id == 'toolhive'
         env:
+          REPO: ${{ steps.detect.outputs.repo }}
           NEW_TAG: ${{ steps.detect.outputs.new_tag }}
-          TOOLHIVE_CLONE_DIR: ${{ steps.clone.outputs.scratch_dir }}
         run: |
-          chmod +x scripts/update-toolhive-reference.sh
-          scripts/update-toolhive-reference.sh "$NEW_TAG"
+          TMP=$(mktemp -d)
+          gh release download "$NEW_TAG" --repo "$REPO" \
+            --pattern "thv-crds.tar.gz" --dir "$TMP"
+          mkdir -p "$TMP/crds"
+          tar -xzf "$TMP/thv-crds.tar.gz" -C "$TMP/crds"
+          TOOLHIVE_CRD_DIR="$TMP/crds" node scripts/extract-crd-schemas.mjs
+          node scripts/generate-crd-pages.mjs
+          node scripts/bundle-upstream-schema.mjs
+          rm -rf "$TMP"
+
+      # Commit the regenerated reference assets (sync-assets output +
+      # toolhive CRD MDX if applicable) before the skill runs. This
+      # keeps the skill's content commit clean and lets the autogen-
+      # detect step below distinguish skill touches from our own
+      # legitimate regen writes.
+      - name: Commit regenerated reference assets
+        env:
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No reference changes for $PROJECT_ID $NEW_TAG."
+          else
+            git commit -m "Regenerate reference assets for $PROJECT_ID $NEW_TAG"
+          fi
 
       - name: Extract reviewers from release compare
         id: reviewers
@@ -362,9 +392,10 @@ jobs:
               Follow the skill's own guidance on auto-generated reference
               files (Phase 4 step 5, Phase 4 step 6) -- do not hand-edit
               docs/toolhive/reference/cli/, static/api-specs/, or
-              docs/toolhive/reference/crds/. If a release genuinely needs
-              reference updates, note that in GAPS.md -- the separate
-              update-toolhive-reference.yml workflow handles those.
+              docs/toolhive/reference/crds/. Those are regenerated from
+              release assets by earlier steps in this workflow; if a
+              release genuinely needs hand-written reference updates,
+              note that in GAPS.md.
 
             PASS 2 -- Editorial re-review:
               Run /docs-review over every file you changed in Pass 1 and
@@ -440,6 +471,8 @@ jobs:
 
       - name: Detect touches to auto-generated paths
         id: autogen
+        # Runs AFTER the skill and AFTER the regen commit above, so the
+        # staged diff represents skill-introduced changes only.
         run: |
           git add -A
           TOUCHED=$(git diff --cached --name-only -- \
@@ -453,29 +486,31 @@ jobs:
               echo "> The skill touched files under auto-generated paths:"
               echo "> \`$TOUCHED\`"
               echo ">"
-              echo "> These are normally maintained by update-toolhive-reference.yml."
-              echo "> Review the changes carefully and revert if they should come"
-              echo "> from the reference workflow instead."
+              echo "> These paths are regenerated from release assets earlier"
+              echo "> in this workflow. Review the skill's changes and revert"
+              echo "> them if they should come from the regen step instead."
             fi
             echo "AUTOGEN_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Commit and push content
+      - name: Commit and push
         id: push
         env:
           PROJECT_ID: ${{ steps.detect.outputs.id }}
           NEW_TAG: ${{ steps.detect.outputs.new_tag }}
           HEAD_REF: ${{ steps.eff.outputs.head_ref }}
         run: |
+          # Stage any skill content and add a content commit if non-empty.
+          # A regen commit from the earlier step may also be waiting.
           git add -A
-          if git diff --cached --quiet; then
-            echo "No content changes to push."
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          if ! git diff --cached --quiet; then
+            git commit -m "Add upstream-release-docs content for $PROJECT_ID $NEW_TAG"
+          else
+            echo "No skill content changes to commit."
           fi
-          git commit -m "Add upstream-release-docs content for $PROJECT_ID $NEW_TAG"
+          # Push whatever local commits are ahead of the remote — regen
+          # only, content only, or both. Empty push is a no-op.
           git push origin "HEAD:$HEAD_REF"
-          echo "pushed=true" >> "$GITHUB_OUTPUT"
 
       - name: Augment PR body (marker-delimited section)
         # Runs even if earlier steps soft-failed so the augmentation
@@ -517,13 +552,9 @@ jobs:
               echo "$AUTOGEN_NOTE"
               echo ""
             fi
-            echo "### What's NOT in this PR"
-            echo ""
-            echo "Auto-generated reference files (\`docs/toolhive/reference/cli/\`, \`static/api-specs/\`, \`docs/toolhive/reference/crds/\`). Those are handled by \`update-toolhive-reference.yml\`. If this release has reference impact, that workflow opens a separate PR; merge it first, then rebase this one."
-            echo ""
             echo "### Review guidance"
             echo ""
-            echo "Unlike the reference-docs PR, this one contains hand-edited prose. Review for accuracy, not just style. If the \"Gaps needing human context\" section is populated, the skill deferred those sections to a human; fill them in before merging."
+            echo "Machine-generated reference files under \`docs/toolhive/reference/cli/\`, \`static/api-specs/\`, and \`docs/toolhive/reference/crds/\` are regenerated from upstream release assets (separate commit, titled \"Regenerate reference assets\") and should be spot-checked only. The \"Add upstream-release-docs content\" commit contains hand-edited prose; review that one for accuracy, not just style. If the \"Gaps needing human context\" section is populated, the skill deferred those sections to a human; fill them in before merging."
             echo ""
             if [ -n "$GAPS_BLOCK" ]; then
               echo "$GAPS_BLOCK"
