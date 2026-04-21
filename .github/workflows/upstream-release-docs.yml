@@ -432,8 +432,13 @@ jobs:
           ")
           echo "docs_paths=$HINTS" >> "$GITHUB_OUTPUT"
 
-      - name: Run upstream-release-docs skill (multi-pass)
-        id: skill
+      # Invocation 1: generation. Runs /upstream-release-docs end-to-
+      # end (all 6 phases, including the skill's own internal
+      # docs-review in Phase 5). Uses Opus 4.7 — generation benefits
+      # from the stronger model on long multi-file edits and source
+      # verification.
+      - name: Run upstream-release-docs skill (generation)
+        id: skill_gen
         uses: anthropics/claude-code-action@38ec876110f9fbf8b950c79f534430740c3ac009 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -455,6 +460,8 @@ jobs:
           # Actions Step Summary regardless of trigger.
           track_progress: ${{ github.event_name == 'pull_request' }}
           display_report: true
+          claude_args: |
+            --model claude-opus-4-7
           prompt: |
             You are running in GitHub Actions with no interactive user. Follow
             these steps exactly and do NOT ask clarifying questions -- proceed
@@ -467,55 +474,86 @@ jobs:
             CLONE:      ${{ steps.clone.outputs.scratch_dir }}
             DOCS_HINTS: ${{ steps.hints.outputs.docs_paths }}
 
-            PASS 1 -- Initial content update:
-              Run /upstream-release-docs ${{ steps.detect.outputs.repo }} ${{ steps.detect.outputs.new_tag }}
-              Execute all 6 phases. Prefer reading source code from the
-              local clone at ${{ steps.clone.outputs.scratch_dir }}
-              instead of `gh api contents?ref=<tag>` -- it's already at
-              the tag and doesn't consume API quota.
-              For Phase 2 step 4 (context on major new features), SKIP
-              writing the "why"/consumer narrative and append one bullet
-              per gap to GAPS.md at repo root (create if missing). Each
-              bullet MUST:
-                - Name the feature
-                - Reference the PR that introduced it, using the PR
-                  number you found in Phase 2 deep-dive
-                - @-mention the PR author by their GitHub handle (skip
-                  this for bot authors like renovate[bot] or
-                  github-actions[bot])
-                - Describe what context a human needs to supply
-              Format: `- Feature X (PR #123 by @alice): needs a user
-              story explaining who this is for and the expected
-              consumer workflow.`
-              This routes gaps to the engineer who built the feature
-              rather than the whole reviewer pool.
-              Follow the skill's own guidance on auto-generated reference
-              files (Phase 4 step 5, Phase 4 step 6) -- do not hand-edit
-              docs/toolhive/reference/cli/, static/api-specs/, or
-              docs/toolhive/reference/crds/. Those are synced or
-              regenerated from release assets by earlier steps in this
-              workflow; if a release genuinely needs hand-written
-              reference updates, note that in GAPS.md.
+            Run /upstream-release-docs ${{ steps.detect.outputs.repo }} ${{ steps.detect.outputs.new_tag }}
+            Execute all 6 phases. Prefer reading source code from the
+            local clone at ${{ steps.clone.outputs.scratch_dir }}
+            instead of `gh api contents?ref=<tag>` -- it's already at
+            the tag and doesn't consume API quota.
 
-            PASS 2 -- Editorial re-review:
-              Run /docs-review over every file you changed in Pass 1 and
-              apply every actionable fix. Do NOT re-run upstream-release-docs;
-              you already have the source verification context in your
-              history. If docs-review surfaces a factual concern, re-verify
-              against source code at the tag before changing.
+            For Phase 2 step 4 (context on major new features), SKIP
+            writing the "why"/consumer narrative and append one bullet
+            per gap to GAPS.md at repo root (create if missing). Each
+            bullet MUST:
+              - Name the feature
+              - Reference the PR that introduced it, using the PR
+                number you found in Phase 2 deep-dive
+              - @-mention the PR author by their GitHub handle (skip
+                this for bot authors like renovate[bot] or
+                github-actions[bot])
+              - Describe what context a human needs to supply
+            Format: `- Feature X (PR #123 by @alice): needs a user
+            story explaining who this is for and the expected
+            consumer workflow.`
+            This routes gaps to the engineer who built the feature
+            rather than the whole reviewer pool.
 
-            PASS 3 -- Technical re-verification:
-              Re-run Phase 5 step 1 of /upstream-release-docs: re-verify
-              every factual claim in the changed files against source code
-              at the release tag. Fix any drift found. If no changes are
-              needed, say so explicitly.
-              Finally, re-run /docs-review one more time and apply any
-              remaining fixes.
+            Follow the skill's own guidance on auto-generated reference
+            files (Phase 4 step 5, Phase 4 step 6) -- do not hand-edit
+            docs/toolhive/reference/cli/, static/api-specs/, or
+            docs/toolhive/reference/crds/. Those are synced or
+            regenerated from release assets by earlier steps in this
+            workflow; if a release genuinely needs hand-written
+            reference updates, note that in GAPS.md.
 
-            If at any point you conclude there are no doc-relevant changes
-            for this release (Phase 3 impact map is empty), stop and write
-            NO_CHANGES.md at repo root with a one-line explanation. Still
-            do not hand-edit any file.
+            If you conclude there are no doc-relevant changes for this
+            release (Phase 3 impact map is empty), stop and write
+            NO_CHANGES.md at repo root with a one-line explanation.
+            Still do not hand-edit any file.
+
+      # Invocation 2: editorial re-review with FRESH CONTEXT. Running
+      # docs-review in a separate session — with no exposure to the
+      # generation session's internal reasoning — tends to catch style
+      # and structure issues the generation pass rationalized away.
+      # Also uses Opus 4.7 since docs-review benefits from the same
+      # model quality.
+      - name: Run docs-review on skill output (fresh context)
+        id: skill_review
+        if: always() && steps.skill_gen.conclusion == 'success'
+        uses: anthropics/claude-code-action@38ec876110f9fbf8b950c79f534430740c3ac009 # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          additional_permissions: |
+            actions: read
+          allowed_bots: 'renovate'
+          track_progress: ${{ github.event_name == 'pull_request' }}
+          display_report: true
+          claude_args: |
+            --model claude-opus-4-7
+          prompt: |
+            You are running in GitHub Actions with no interactive user. Follow
+            these steps exactly and do NOT ask clarifying questions -- proceed
+            best-effort at every decision point.
+
+            A previous Claude session just generated content for the
+            upstream release ${{ steps.detect.outputs.repo }} ${{ steps.detect.outputs.new_tag }}.
+            You are a fresh reviewer with no prior context from that
+            session. Your job is purely editorial.
+
+            Run /docs-review over every file the previous commit
+            changed (use `git show --name-only HEAD` or `git diff
+            --name-only HEAD~1 HEAD` to find them). Apply every
+            actionable fix per the skill's standard guidance.
+
+            If you spot a factual concern, re-verify against source
+            code in the local clone at
+            ${{ steps.clone.outputs.scratch_dir }} before changing
+            anything. Don't introduce new claims; only refine what's
+            already there.
+
+            Do NOT re-run /upstream-release-docs. Do NOT touch files
+            under docs/toolhive/reference/cli/, static/api-specs/,
+            or docs/toolhive/reference/crds/ — those are
+            regenerated from release assets and aren't yours to edit.
 
       - name: Capture skill signal files
         id: signals
