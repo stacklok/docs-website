@@ -690,6 +690,26 @@ jobs:
             if they exist -- they're signal files handed off to the
             next workflow step, not part of the docs.
 
+      # Count the commits the skill itself added between pre_skill
+      # and now. Zero commits means skill_gen and skill_review both
+      # concluded there was nothing to change -- e.g. because main
+      # already has the content for this release (a re-run or test
+      # after the same content was merged via a different PR), or
+      # because the release genuinely had no doc-relevant impact
+      # but the skill didn't produce NO_CHANGES.md. Either way the
+      # resulting PR is silent and reviewers can't tell that from
+      # a successful run with content -- we emit a visible note in
+      # the PR body when this is the case.
+      - name: Count skill commits
+        id: skill_commits
+        if: always() && steps.skill_gen.conclusion == 'success'
+        env:
+          BASELINE_SHA: ${{ steps.pre_skill.outputs.sha }}
+        run: |
+          COUNT=$(git rev-list "$BASELINE_SHA..HEAD" --count)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Skill produced $COUNT commit(s) between pre_skill and now."
+
       # Auto-apply the same formatters the project's pre-commit hook
       # runs, scoped to the files the skill touched. The skill's
       # sandbox doesn't include npm run prettier/eslint, so without
@@ -857,6 +877,7 @@ jobs:
           COMPARE_OK: ${{ steps.reviewers.outputs.compare_ok }}
           MENTION_BLOCK: ${{ steps.reviewers.outputs.mention_block }}
           ASSIGN_LIST: ${{ steps.reviewers.outputs.list }}
+          SKILL_COMMIT_COUNT: ${{ steps.skill_commits.outputs.count }}
         run: |
           START='<!-- upstream-release-docs:start -->'
           END='<!-- upstream-release-docs:end -->'
@@ -876,6 +897,30 @@ jobs:
             fi
             if [ -n "$NOTE_BLOCK" ]; then
               echo "$NOTE_BLOCK"
+              echo ""
+            fi
+            # When the skill ran to success but produced zero commits,
+            # we have no NOTE_BLOCK (no NO_CHANGES.md), no content for
+            # reviewers to look at, and a PR body that otherwise reads
+            # as if content was added. Surface the silence explicitly.
+            if [ "$SKILL_COMMIT_COUNT" = "0" ] && [ -z "$NOTE_BLOCK" ]; then
+              echo "> [!NOTE]"
+              echo "> The \`upstream-release-docs\` skill ran to success but"
+              echo "> produced no content commits on this PR. Likely causes:"
+              echo ">"
+              echo "> - The docs already cover this release (e.g. this PR"
+              echo ">   was dispatched after an earlier PR for the same"
+              echo ">   tag had merged, or \`main\` is already ahead of the"
+              echo ">   pinned base)."
+              echo "> - The release genuinely had no doc-relevant changes"
+              echo ">   but the skill did not write \`NO_CHANGES.md\` (which"
+              echo ">   would have triggered the standard 'no changes'"
+              echo ">   note above)."
+              echo "> - The skill's source verification concluded the"
+              echo ">   existing prose already matches upstream behavior."
+              echo ">"
+              echo "> Only the version bump and any refreshed reference"
+              echo "> assets are included in this PR."
               echo ""
             fi
             if [ -n "$AUTOGEN_NOTE" ]; then
@@ -945,6 +990,7 @@ jobs:
           GEN_CONCLUSION: ${{ steps.skill_gen.conclusion }}
           REVIEW_CONCLUSION: ${{ steps.skill_review.conclusion }}
           AUTOFIX_CONCLUSION: ${{ steps.autofix.conclusion }}
+          SKILL_COMMIT_COUNT: ${{ steps.skill_commits.outputs.count }}
         run: |
           gh pr comment "$PR_NUMBER" --body "## Upstream-release-docs run summary
 
@@ -955,6 +1001,7 @@ jobs:
           | Generation (\`skill_gen\`) | \`${GEN_CONCLUSION:-(not run)}\` |
           | Editorial review (\`skill_review\`) | \`${REVIEW_CONCLUSION:-(not run)}\` |
           | Autofix (prettier/eslint) | \`${AUTOFIX_CONCLUSION:-(not run)}\` |
+          | Skill commits produced | \`${SKILL_COMMIT_COUNT:-?}\` |
 
           Full report and Claude's step-by-step log: $RUN_URL" || true
 
