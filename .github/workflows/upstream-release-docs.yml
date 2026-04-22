@@ -481,6 +481,33 @@ jobs:
           ")
           echo "docs_paths=$HINTS" >> "$GITHUB_OUTPUT"
 
+      # claude-code-action@v1 rejects track_progress: true on
+      # workflow_dispatch events with "track_progress is only
+      # supported for events: pull_request, issue_comment, ...".
+      # That means on manual retries and bootstrap dispatches, the
+      # PR gets no real-time "Claude is working on it" comment from
+      # the action -- a reviewer watching the PR has no visible
+      # signal that the skill is actually running. Post a static
+      # placeholder comment ourselves, scoped to workflow_dispatch
+      # runs so we don't duplicate the action's own tracking on
+      # normal Renovate-opened PRs.
+      - name: Post skill-started comment (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch' && steps.eff.outputs.number != ''
+        env:
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+        run: |
+          # `|| true` so a transient gh failure (rate limit, API
+          # hiccup, permission edge case) doesn't abort the run
+          # before skill_gen gets to execute. The comment is a
+          # visibility aid, not load-bearing. Matches the pattern
+          # used by the other gh pr comment steps in this workflow.
+          gh pr comment "$PR_NUMBER" --body "Claude Opus is generating docs updates for \`$PROJECT_ID\` \`$NEW_TAG\`. Follow progress in the workflow run: $RUN_URL
+
+          (This comment replaces the real-time tracking comment claude-code-action posts on Renovate-opened PRs, which isn't supported on \`workflow_dispatch\` events.)" || true
+
       # Invocation 1: generation. Runs /upstream-release-docs end-to-
       # end (all 6 phases, including the skill's own internal
       # docs-review in Phase 5). Uses Opus 4.7 — generation benefits
@@ -668,6 +695,26 @@ jobs:
             if they exist -- they're signal files handed off to the
             next workflow step, not part of the docs.
 
+      # Count the commits the skill itself added between pre_skill
+      # and now. Zero commits means skill_gen and skill_review both
+      # concluded there was nothing to change -- e.g. because main
+      # already has the content for this release (a re-run or test
+      # after the same content was merged via a different PR), or
+      # because the release genuinely had no doc-relevant impact
+      # but the skill didn't produce NO_CHANGES.md. Either way the
+      # resulting PR is silent and reviewers can't tell that from
+      # a successful run with content -- we emit a visible note in
+      # the PR body when this is the case.
+      - name: Count skill commits
+        id: skill_commits
+        if: always() && steps.skill_gen.conclusion == 'success'
+        env:
+          BASELINE_SHA: ${{ steps.pre_skill.outputs.sha }}
+        run: |
+          COUNT=$(git rev-list "$BASELINE_SHA..HEAD" --count)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Skill produced $COUNT commit(s) between pre_skill and now."
+
       # Auto-apply the same formatters the project's pre-commit hook
       # runs, scoped to the files the skill touched. The skill's
       # sandbox doesn't include npm run prettier/eslint, so without
@@ -835,6 +882,9 @@ jobs:
           COMPARE_OK: ${{ steps.reviewers.outputs.compare_ok }}
           MENTION_BLOCK: ${{ steps.reviewers.outputs.mention_block }}
           ASSIGN_LIST: ${{ steps.reviewers.outputs.list }}
+          SKILL_COMMIT_COUNT: ${{ steps.skill_commits.outputs.count }}
+          GEN_CONCLUSION: ${{ steps.skill_gen.conclusion }}
+          REVIEW_CONCLUSION: ${{ steps.skill_review.conclusion }}
         run: |
           START='<!-- upstream-release-docs:start -->'
           END='<!-- upstream-release-docs:end -->'
@@ -854,6 +904,38 @@ jobs:
             fi
             if [ -n "$NOTE_BLOCK" ]; then
               echo "$NOTE_BLOCK"
+              echo ""
+            fi
+            # When BOTH skill invocations ran to success but produced
+            # zero commits between them, we have no NOTE_BLOCK (no
+            # NO_CHANGES.md), no content for reviewers to look at, and
+            # a PR body that otherwise reads as if content was added.
+            # Surface the silence explicitly -- but ONLY when both
+            # skill steps actually succeeded, so we don't claim "ran
+            # to success" on behalf of a run that had a mid-flight
+            # failure. Partial failures are covered by the separate
+            # augmentation-failure comment step at the end.
+            if [ "$SKILL_COMMIT_COUNT" = "0" ] \
+               && [ -z "$NOTE_BLOCK" ] \
+               && [ "$GEN_CONCLUSION" = "success" ] \
+               && [ "$REVIEW_CONCLUSION" = "success" ]; then
+              echo "> [!NOTE]"
+              echo "> The \`upstream-release-docs\` skill ran to success but"
+              echo "> produced no content commits on this PR. Likely causes:"
+              echo ">"
+              echo "> - The docs already cover this release (e.g. this PR"
+              echo ">   was dispatched after an earlier PR for the same"
+              echo ">   tag had merged, or \`main\` is already ahead of the"
+              echo ">   pinned base)."
+              echo "> - The release genuinely had no doc-relevant changes"
+              echo ">   but the skill did not write \`NO_CHANGES.md\` (which"
+              echo ">   would have triggered the standard 'no changes'"
+              echo ">   note above)."
+              echo "> - The skill's source verification concluded the"
+              echo ">   existing prose already matches upstream behavior."
+              echo ">"
+              echo "> Only the version bump and any refreshed reference"
+              echo "> assets are included in this PR."
               echo ""
             fi
             if [ -n "$AUTOGEN_NOTE" ]; then
@@ -906,6 +988,37 @@ jobs:
           fi
 
           gh pr edit "$PR_NUMBER" --body-file /tmp/pr-body.md
+
+      # Post-run summary for workflow_dispatch, mirroring the pre-run
+      # placeholder comment above. Gives reviewers a single point in
+      # the PR timeline that says "here's what happened, and where to
+      # see the full report" without them having to hunt through the
+      # Actions tab. Skipped on pull_request runs where claude-code-
+      # action already posts its own completion comment.
+      - name: Post skill-completed summary (workflow_dispatch only)
+        if: always() && github.event_name == 'workflow_dispatch' && steps.eff.outputs.number != ''
+        env:
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+          GEN_CONCLUSION: ${{ steps.skill_gen.conclusion }}
+          REVIEW_CONCLUSION: ${{ steps.skill_review.conclusion }}
+          AUTOFIX_CONCLUSION: ${{ steps.autofix.conclusion }}
+          SKILL_COMMIT_COUNT: ${{ steps.skill_commits.outputs.count }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "## Upstream-release-docs run summary
+
+          Project: \`$PROJECT_ID\` at tag \`$NEW_TAG\`
+
+          | Step | Conclusion |
+          | --- | --- |
+          | Generation (\`skill_gen\`) | \`${GEN_CONCLUSION:-(not run)}\` |
+          | Editorial review (\`skill_review\`) | \`${REVIEW_CONCLUSION:-(not run)}\` |
+          | Autofix (prettier/eslint) | \`${AUTOFIX_CONCLUSION:-(not run)}\` |
+          | Skill commits produced | \`${SKILL_COMMIT_COUNT:-?}\` |
+
+          Full report and Claude's step-by-step log: $RUN_URL" || true
 
       - name: Comment on augmentation failure
         # Runs only when a preceding step failed. Comments a retry
