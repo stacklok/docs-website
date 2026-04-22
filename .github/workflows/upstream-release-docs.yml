@@ -641,6 +641,35 @@ jobs:
             NO_CHANGES.md at repo root with a one-line explanation.
             Still do not hand-edit any file.
 
+      # Capture skill_gen's execution stats BEFORE skill_review runs
+      # and overwrites the shared execution-output JSON at the
+      # canonical claude-code-action location. Lets us report
+      # per-invocation turns/cost in the PR body and the workflow_
+      # dispatch summary comment. Missing-file defaults to 0 so a
+      # failed run still emits plausible outputs.
+      - name: Capture skill_gen stats
+        id: skill_gen_stats
+        if: always() && steps.skill_gen.conclusion == 'success'
+        run: |
+          LOG="/home/runner/work/_temp/claude-execution-output.json"
+          if [ -f "$LOG" ]; then
+            TURNS=$(jq -r '.num_turns // 0' "$LOG")
+            COST=$(jq -r '.total_cost_usd // 0' "$LOG")
+            DENIALS=$(jq -r '.permission_denials_count // 0' "$LOG")
+          else
+            TURNS=0
+            COST=0
+            DENIALS=0
+          fi
+          # Format cost with 4 decimal places for readability.
+          COST_FMT=$(printf '%.4f' "$COST")
+          {
+            echo "turns=$TURNS"
+            echo "cost_usd=$COST_FMT"
+            echo "denials=$DENIALS"
+          } >> "$GITHUB_OUTPUT"
+          echo "skill_gen stats: turns=$TURNS cost=\$$COST_FMT denials=$DENIALS"
+
       # Invocation 2: editorial re-review with FRESH CONTEXT. Running
       # docs-review in a separate session — with no exposure to the
       # generation session's internal reasoning — tends to catch style
@@ -694,6 +723,30 @@ jobs:
             Do NOT touch GAPS.md or NO_CHANGES.md at the repo root
             if they exist -- they're signal files handed off to the
             next workflow step, not part of the docs.
+
+      # Mirror of skill_gen_stats for skill_review. Reads the same
+      # canonical log path, which skill_review overwrote on exit.
+      - name: Capture skill_review stats
+        id: skill_review_stats
+        if: always() && steps.skill_review.conclusion == 'success'
+        run: |
+          LOG="/home/runner/work/_temp/claude-execution-output.json"
+          if [ -f "$LOG" ]; then
+            TURNS=$(jq -r '.num_turns // 0' "$LOG")
+            COST=$(jq -r '.total_cost_usd // 0' "$LOG")
+            DENIALS=$(jq -r '.permission_denials_count // 0' "$LOG")
+          else
+            TURNS=0
+            COST=0
+            DENIALS=0
+          fi
+          COST_FMT=$(printf '%.4f' "$COST")
+          {
+            echo "turns=$TURNS"
+            echo "cost_usd=$COST_FMT"
+            echo "denials=$DENIALS"
+          } >> "$GITHUB_OUTPUT"
+          echo "skill_review stats: turns=$TURNS cost=\$$COST_FMT denials=$DENIALS"
 
       # Count the commits the skill itself added between pre_skill
       # and now. Zero commits means skill_gen and skill_review both
@@ -885,6 +938,10 @@ jobs:
           SKILL_COMMIT_COUNT: ${{ steps.skill_commits.outputs.count }}
           GEN_CONCLUSION: ${{ steps.skill_gen.conclusion }}
           REVIEW_CONCLUSION: ${{ steps.skill_review.conclusion }}
+          GEN_TURNS: ${{ steps.skill_gen_stats.outputs.turns }}
+          GEN_COST: ${{ steps.skill_gen_stats.outputs.cost_usd }}
+          REVIEW_TURNS: ${{ steps.skill_review_stats.outputs.turns }}
+          REVIEW_COST: ${{ steps.skill_review_stats.outputs.cost_usd }}
         run: |
           START='<!-- upstream-release-docs:start -->'
           END='<!-- upstream-release-docs:end -->'
@@ -966,6 +1023,29 @@ jobs:
               echo "No non-bot contributors were found in the release range."
               echo ""
             fi
+            # Per-invocation cost/turns from each skill session's
+            # claude-execution-output.json. Useful for tracking per-run
+            # spend and noticing regressions (e.g. a release that
+            # suddenly takes 10x the turns).
+            if [ -n "$GEN_TURNS" ] || [ -n "$REVIEW_TURNS" ]; then
+              echo "### Run cost"
+              echo ""
+              echo "| Session | Turns | Cost (USD) |"
+              echo "| --- | ---: | ---: |"
+              if [ -n "$GEN_TURNS" ]; then
+                echo "| Generation (\`skill_gen\`) | $GEN_TURNS | \$$GEN_COST |"
+              fi
+              if [ -n "$REVIEW_TURNS" ]; then
+                echo "| Editorial review (\`skill_review\`) | $REVIEW_TURNS | \$$REVIEW_COST |"
+              fi
+              # Only render a Total row when both sessions reported.
+              if [ -n "$GEN_TURNS" ] && [ -n "$REVIEW_TURNS" ]; then
+                TOTAL_TURNS=$((GEN_TURNS + REVIEW_TURNS))
+                TOTAL_COST=$(awk -v a="$GEN_COST" -v b="$REVIEW_COST" 'BEGIN { printf "%.4f", a + b }')
+                echo "| **Total** | **$TOTAL_TURNS** | **\$$TOTAL_COST** |"
+              fi
+              echo ""
+            fi
             echo "$END"
           } > /tmp/section.md
 
@@ -1006,17 +1086,31 @@ jobs:
           REVIEW_CONCLUSION: ${{ steps.skill_review.conclusion }}
           AUTOFIX_CONCLUSION: ${{ steps.autofix.conclusion }}
           SKILL_COMMIT_COUNT: ${{ steps.skill_commits.outputs.count }}
+          GEN_TURNS: ${{ steps.skill_gen_stats.outputs.turns }}
+          GEN_COST: ${{ steps.skill_gen_stats.outputs.cost_usd }}
+          REVIEW_TURNS: ${{ steps.skill_review_stats.outputs.turns }}
+          REVIEW_COST: ${{ steps.skill_review_stats.outputs.cost_usd }}
         run: |
+          # Compute totals when both sessions reported. Awk handles
+          # the float add since bash can't.
+          if [ -n "$GEN_TURNS" ] && [ -n "$REVIEW_TURNS" ]; then
+            TOTAL_TURNS=$((GEN_TURNS + REVIEW_TURNS))
+            TOTAL_COST=$(awk -v a="$GEN_COST" -v b="$REVIEW_COST" 'BEGIN { printf "%.4f", a + b }')
+          else
+            TOTAL_TURNS=""
+            TOTAL_COST=""
+          fi
           gh pr comment "$PR_NUMBER" --body "## Upstream-release-docs run summary
 
           Project: \`$PROJECT_ID\` at tag \`$NEW_TAG\`
 
-          | Step | Conclusion |
-          | --- | --- |
-          | Generation (\`skill_gen\`) | \`${GEN_CONCLUSION:-(not run)}\` |
-          | Editorial review (\`skill_review\`) | \`${REVIEW_CONCLUSION:-(not run)}\` |
-          | Autofix (prettier/eslint) | \`${AUTOFIX_CONCLUSION:-(not run)}\` |
-          | Skill commits produced | \`${SKILL_COMMIT_COUNT:-?}\` |
+          | Step | Conclusion | Turns | Cost (USD) |
+          | --- | --- | ---: | ---: |
+          | Generation (\`skill_gen\`) | \`${GEN_CONCLUSION:-(not run)}\` | ${GEN_TURNS:-–} | ${GEN_COST:+\$$GEN_COST} |
+          | Editorial review (\`skill_review\`) | \`${REVIEW_CONCLUSION:-(not run)}\` | ${REVIEW_TURNS:-–} | ${REVIEW_COST:+\$$REVIEW_COST} |
+          | **Total** | | **${TOTAL_TURNS:-–}** | ${TOTAL_COST:+**\$$TOTAL_COST**} |
+          | Autofix (prettier/eslint) | \`${AUTOFIX_CONCLUSION:-(not run)}\` | – | – |
+          | Skill commits produced | \`${SKILL_COMMIT_COUNT:-?}\` | – | – |
 
           Full report and Claude's step-by-step log: $RUN_URL" || true
 
