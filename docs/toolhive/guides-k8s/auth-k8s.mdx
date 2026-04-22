@@ -107,7 +107,7 @@ isolation.
 <TabItem value="inline" label="External IdP" default>
 
 ```yaml title="shared-oidc-config.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPOIDCConfig
 metadata:
   name: production-oidc
@@ -127,7 +127,7 @@ spec:
 <TabItem value="k8s" label="Kubernetes service account">
 
 ```yaml title="k8s-oidc-config.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPOIDCConfig
 metadata:
   name: k8s-sa-oidc
@@ -154,7 +154,7 @@ Use `oidcConfigRef` instead of inline `oidcConfig`. Each server must set a
 unique `audience` to prevent token replay across servers:
 
 ```yaml title="mcp-server-shared-oidc.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: weather-server
@@ -217,7 +217,7 @@ settings, and an `MCPServer` resource that references it. The ToolHive proxy
 handles authentication before forwarding requests to the MCP server.
 
 ```yaml title="mcp-server-external-auth.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPOIDCConfig
 metadata:
   name: external-oidc
@@ -229,7 +229,7 @@ spec:
     clientId: 'your-client-id'
     jwksUrl: 'https://your-oidc-issuer.com/path/to/jwks'
 ---
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: weather-server-external
@@ -310,7 +310,7 @@ Create an `MCPOIDCConfig` resource for Kubernetes service account authentication
 and an `MCPServer` that references it:
 
 ```yaml title="mcp-server-k8s-auth.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPOIDCConfig
 metadata:
   name: k8s-sa-oidc
@@ -321,7 +321,7 @@ spec:
     serviceAccount: 'mcp-client'
     namespace: 'client-apps'
 ---
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: weather-server-k8s
@@ -499,7 +499,7 @@ Create an `MCPExternalAuthConfig` resource with the `embeddedAuthServer` type.
 This example configures an OIDC upstream provider (the most common case):
 
 ```yaml title="embedded-auth-config.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPExternalAuthConfig
 metadata:
   name: embedded-auth-server
@@ -562,7 +562,7 @@ authorization server itself. The MCPOIDCConfig issuer must match the `issuer` in
 your `MCPExternalAuthConfig`.
 
 ```yaml title="mcp-server-embedded-auth.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPOIDCConfig
 metadata:
   name: embedded-auth-oidc
@@ -573,7 +573,7 @@ spec:
     # This must match the embedded authorization server issuer url
     issuer: 'https://mcp.example.com'
 ---
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: weather-server-embedded
@@ -690,7 +690,7 @@ for providers like GitHub that use OAuth 2.0 but don't implement the full OIDC
 specification.
 
 ```yaml title="embedded-auth-oauth2-config.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPExternalAuthConfig
 metadata:
   name: embedded-auth-oauth2
@@ -788,6 +788,51 @@ refresh-token state), add `prompt: 'consent'` alongside `access_type: 'offline'`
 - Google then shows the consent screen on every login and re-issues a refresh
   token each time.
 
+### Default callback URL for upstream providers
+
+When you omit `redirectUri` from an upstream provider's `oidcConfig` or
+`oauth2Config`, the operator defaults it to `{resourceUrl}/oauth/callback`.
+`resourceUrl` is the `oidcConfigRef.resourceUrl` set on the MCPServer or
+VirtualMCPServer that references this MCPExternalAuthConfig. It's typically the
+external URL that MCP clients use to reach the server.
+
+You still need to register this callback URL with your upstream OAuth2 or OIDC
+provider before the flow can complete. Use the same URL on both sides: the value
+computed from `resourceUrl` here, and the authorized redirect URI in your
+provider's application settings.
+
+For example, given this `oidcConfigRef` on an MCPServer:
+
+```yaml
+spec:
+  oidcConfigRef:
+    name: embedded-auth-oidc
+    audience: 'https://mcp.example.com/mcp'
+    resourceUrl: 'https://mcp.example.com/mcp'
+```
+
+Omitting `redirectUri` on the upstream provider resolves the callback to
+`https://mcp.example.com/mcp/oauth/callback`:
+
+```yaml
+upstreamProviders:
+  - name: google
+    type: oidc
+    oidcConfig:
+      issuerUrl: 'https://accounts.google.com'
+      clientId: '<YOUR_GOOGLE_CLIENT_ID>'
+      clientSecretRef:
+        name: upstream-idp-secret
+        key: client-secret
+      # redirectUri omitted - defaults to:
+      # https://mcp.example.com/mcp/oauth/callback
+```
+
+Set `redirectUri` explicitly if you need a non-default callback path, for
+example to route the callback through a separate gateway hostname. If
+`resourceUrl` is also unset, no default is applied and the upstream provider
+must have `redirectUri` set explicitly.
+
 ## Set up authorization
 
 All authentication approaches can use the same authorization configuration using
@@ -836,7 +881,7 @@ kubectl apply -f authz-configmap.yaml
 Add the authorization configuration to your `MCPServer` resources:
 
 ```yaml title="mcp-server-with-authz.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPOIDCConfig
 metadata:
   name: k8s-sa-authz-oidc
@@ -847,7 +892,7 @@ spec:
     serviceAccount: 'mcp-client'
     namespace: 'client-apps'
 ---
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: weather-server-with-authz

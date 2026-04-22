@@ -2,13 +2,13 @@
 title: Migrate to v1beta1
 description:
   Breaking changes and migration steps for the CRD API stabilization track from
-  v0.15.0 through v0.21.0
+  v0.15.0 through v0.23.0
 ---
 
 The ToolHive Kubernetes Operator has undergone a series of CRD API changes in
-preparation for the `v1beta1` API version promotion. These changes span releases
-v0.15.0 through v0.21.0, each introducing breaking changes that require manifest
-and tooling updates.
+preparation for the `v1beta1` API version promotion, which landed in v0.23.0.
+These changes span releases v0.15.0 through v0.23.0, each introducing breaking
+changes that require manifest and tooling updates.
 
 This guide covers every breaking change in order, so you can start from
 whichever version you are currently running and work forward.
@@ -52,6 +52,7 @@ that point forward.
 | v0.21.0 | [`config.groupRef` fallback removed](#configgroupref-fallback-removed)                    | VirtualMCPServer                                                              | `spec.config.groupRef` removed; use `spec.groupRef`                                                                                 |
 | v0.21.0 | [`external_auth_config_ref` enum removed](#external_auth_config_ref-enum-removed)         | VirtualMCPServer                                                              | Snake_case enum value removed; use `externalAuthConfigRef`                                                                          |
 | v0.21.0 | [Inline vMCP `telemetry` removed](#inline-vmcp-telemetry-removed)                         | VirtualMCPServer                                                              | `spec.config.telemetry` removed; use `spec.telemetryConfigRef`                                                                      |
+| v0.23.0 | [API version graduated to `v1beta1`](#api-version-graduated-to-v1beta1)                   | All ToolHive CRDs                                                             | `apiVersion: toolhive.stacklok.dev/v1alpha1` is deprecated; bump manifests to `v1beta1`                                             |
 
 ## General upgrade procedure
 
@@ -700,6 +701,80 @@ outgoingAuth:
 
 The inline `spec.config.telemetry` field on VirtualMCPServer has been removed.
 Use `spec.telemetryConfigRef` to reference a shared MCPTelemetryConfig resource.
+
+## v0.23.0
+
+[Full release notes](https://github.com/stacklok/toolhive/releases/tag/v0.23.0)
+
+### API version graduated to `v1beta1`
+
+The ToolHive CRD API has graduated from `v1alpha1` to `v1beta1`. All 12 CRD
+kinds (EmbeddingServer, MCPExternalAuthConfig, MCPGroup, MCPOIDCConfig,
+MCPRegistry, MCPRemoteProxy, MCPServer, MCPServerEntry, MCPTelemetryConfig,
+MCPToolConfig, VirtualMCPCompositeToolDefinition, and VirtualMCPServer) are
+served at both versions simultaneously, with `v1beta1` as the storage version.
+
+The schemas are identical between the two versions, so there is no data-format
+migration to perform. The `v1alpha1` entry will be removed in a future release.
+
+:::info[Zero-downtime upgrade]
+
+Existing `v1alpha1` resources continue to work untouched after upgrading to
+v0.23.0. You do not need to delete or re-create resources. `kubectl` prints a
+deprecation warning on every access to a `v1alpha1` resource, so you can migrate
+manifests at your own pace before the `v1alpha1` entry is removed.
+
+:::
+
+**Before:**
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: my-server
+spec:
+  # ...
+```
+
+**After:**
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: my-server
+spec:
+  # ...
+```
+
+Migration steps:
+
+1. Upgrade the operator and CRDs charts to v0.23.0 or later, using the
+   [general upgrade procedure](#general-upgrade-procedure). No resource deletion
+   or recreation is required.
+2. Update your manifests to use `apiVersion: toolhive.stacklok.dev/v1beta1` and
+   re-apply them. Kubernetes stores the new version in etcd, and the object's
+   `status.storedVersions` advances to include `v1beta1`.
+3. Apply the same change to every kind you have manifests for, including any
+   shared configuration resources referenced by `oidcConfigRef`,
+   `telemetryConfigRef`, `toolConfigRef`, `authServerRef`, or
+   `externalAuthConfigRef`.
+
+To find remaining `v1alpha1` manifests in a Git repository:
+
+```bash
+grep -rn 'toolhive.stacklok.dev/v1alpha1' .
+```
+
+To check which CRDs still list `v1alpha1` in `status.storedVersions` (these have
+at least one stored resource that has not yet been re-applied at `v1beta1`):
+
+```bash
+kubectl get crds -o json | jq -r '.items[]
+  | select(.spec.group == "toolhive.stacklok.dev")
+  | "\(.metadata.name): \(.status.storedVersions)"'
+```
 
 ## Next steps
 
