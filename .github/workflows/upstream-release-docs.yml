@@ -663,10 +663,19 @@ jobs:
         if: always() && steps.skill_gen.conclusion == 'success'
         run: |
           LOG="/home/runner/work/_temp/claude-execution-output.json"
+          # claude-code-action writes a top-level JSON array of
+          # messages (init, assistant turns, tool calls, result).
+          # The final entry is a "result" object with the session
+          # summary (num_turns, total_cost_usd, etc.). Use recursive
+          # descent with a last-match tail so we pick up the summary
+          # regardless of where in the structure it lives, and so
+          # the query still works if the upstream format shifts
+          # between array and object. `|| echo 0` guards against
+          # jq errors on missing/malformed files.
           if [ -f "$LOG" ]; then
-            TURNS=$(jq -r '.num_turns // 0' "$LOG")
-            COST=$(jq -r '.total_cost_usd // 0' "$LOG")
-            DENIALS=$(jq -r '.permission_denials_count // 0' "$LOG")
+            TURNS=$(jq -r '[.. | .num_turns? // empty] | last // 0' "$LOG" 2>/dev/null || echo 0)
+            COST=$(jq -r '[.. | .total_cost_usd? // empty] | last // 0' "$LOG" 2>/dev/null || echo 0)
+            DENIALS=$(jq -r '[.. | .permission_denials_count? // empty] | last // 0' "$LOG" 2>/dev/null || echo 0)
           else
             TURNS=0
             COST=0
@@ -777,10 +786,19 @@ jobs:
         if: always() && steps.skill_review.conclusion == 'success'
         run: |
           LOG="/home/runner/work/_temp/claude-execution-output.json"
+          # claude-code-action writes a top-level JSON array of
+          # messages (init, assistant turns, tool calls, result).
+          # The final entry is a "result" object with the session
+          # summary (num_turns, total_cost_usd, etc.). Use recursive
+          # descent with a last-match tail so we pick up the summary
+          # regardless of where in the structure it lives, and so
+          # the query still works if the upstream format shifts
+          # between array and object. `|| echo 0` guards against
+          # jq errors on missing/malformed files.
           if [ -f "$LOG" ]; then
-            TURNS=$(jq -r '.num_turns // 0' "$LOG")
-            COST=$(jq -r '.total_cost_usd // 0' "$LOG")
-            DENIALS=$(jq -r '.permission_denials_count // 0' "$LOG")
+            TURNS=$(jq -r '[.. | .num_turns? // empty] | last // 0' "$LOG" 2>/dev/null || echo 0)
+            COST=$(jq -r '[.. | .total_cost_usd? // empty] | last // 0' "$LOG" 2>/dev/null || echo 0)
+            DENIALS=$(jq -r '[.. | .permission_denials_count? // empty] | last // 0' "$LOG" 2>/dev/null || echo 0)
           else
             TURNS=0
             COST=0
