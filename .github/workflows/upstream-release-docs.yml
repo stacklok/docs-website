@@ -753,15 +753,21 @@ jobs:
       # commit" + unformatted files landing on CI unformatted.
       #
       # Fetch + fast-forward-merge origin so local HEAD reflects
-      # whatever the skill pushed. || true on the merge because a
-      # failed skill step may leave nothing to pull.
+      # whatever the skill pushed. Fail loudly on fetch or merge
+      # errors -- silently continuing on stale HEAD reintroduces
+      # the exact skill_commits=0 + autofix-skips-files bugs this
+      # step is meant to prevent. Gated on skill_gen success; if
+      # gen didn't run, there's nothing for the skill to have
+      # pushed and this step is skipped.
+      # A no-op fast-forward (local already at origin, e.g. skill
+      # made no commits) exits 0 cleanly.
       - name: Sync local branch with skill-pushed commits
         if: always() && steps.skill_gen.conclusion == 'success'
         env:
           HEAD_REF: ${{ steps.eff.outputs.head_ref }}
         run: |
           git fetch origin "$HEAD_REF" --quiet
-          git merge --ff-only "origin/$HEAD_REF" || true
+          git merge --ff-only "origin/$HEAD_REF"
           echo "Local HEAD after sync: $(git rev-parse HEAD)"
 
       # Mirror of skill_gen_stats for skill_review. Reads the same
