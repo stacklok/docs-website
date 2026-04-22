@@ -652,6 +652,30 @@ jobs:
             NO_CHANGES.md at repo root with a one-line explanation.
             Still do not hand-edit any file.
 
+            BEFORE the final commit in Phase 6, write SUMMARY.md at
+            repo root with a concise bullet list of changes you made
+            on the docs side. This surfaces directly in the PR body
+            as a "Summary of changes" section so reviewers see what
+            actually shipped without clicking the diff.
+
+            Format each bullet as one of:
+              - `Added <what> at <path>` -- new pages/sections
+              - `Updated <what> in <path>` -- meaningful prose edits
+              - `Swept <what> across N files in <area>` -- repo-wide
+                renames, apiVersion bumps, etc.
+              - `Removed <what> from <path>` -- deletions
+
+            Keep the list to 3-8 bullets. Focus on what a reviewer
+            needs to know, not how you did it. If many files are
+            touched as one logical change (e.g. a v1alpha1 ->
+            v1beta1 apiVersion sweep), describe it as one bullet --
+            do not enumerate each file. Do NOT include bullets for
+            auto-generated reference files the refresh step
+            updated; only describe your hand-written edits.
+
+            Skip SUMMARY.md only when you wrote NO_CHANGES.md or
+            made zero hand-edits.
+
       # Capture skill_gen's execution stats BEFORE skill_review runs
       # and overwrites the shared execution-output JSON at the
       # canonical claude-code-action location. Lets us report
@@ -748,9 +772,10 @@ jobs:
             or docs/toolhive/reference/crds/ — those are
             regenerated from release assets and aren't yours to edit.
 
-            Do NOT touch GAPS.md or NO_CHANGES.md at the repo root
-            if they exist -- they're signal files handed off to the
-            next workflow step, not part of the docs.
+            Do NOT touch GAPS.md, NO_CHANGES.md, or SUMMARY.md at
+            the repo root if they exist -- they're signal files
+            handed off to the next workflow step, not part of the
+            docs.
 
       # claude-code-action works in a sibling scratch checkout (the
       # .claude-pr/ dir we gitignore) and pushes commits to origin
@@ -880,9 +905,12 @@ jobs:
 
       - name: Capture skill signal files
         id: signals
+        env:
+          BASELINE_SHA: ${{ steps.pre_skill.outputs.sha }}
         run: |
           GAPS_BODY=""
           NO_CHANGES_BODY=""
+          SUMMARY_BODY=""
           if [ -f GAPS.md ]; then
             GAPS_BODY=$(cat GAPS.md)
             rm GAPS.md
@@ -890,6 +918,26 @@ jobs:
           if [ -f NO_CHANGES.md ]; then
             NO_CHANGES_BODY=$(cat NO_CHANGES.md)
             rm NO_CHANGES.md
+          fi
+          if [ -f SUMMARY.md ]; then
+            SUMMARY_BODY=$(cat SUMMARY.md)
+            rm SUMMARY.md
+          fi
+
+          # Fallback summary from skill-authored commit titles when
+          # the skill didn't write SUMMARY.md. Extracted from the
+          # range between the pre-skill baseline and HEAD so it
+          # captures the skill's commits only (refresh commit is
+          # before the baseline). Each line is pre-formatted as a
+          # markdown bullet so downstream just has to echo.
+          COMMIT_FALLBACK=""
+          if [ -z "$SUMMARY_BODY" ] && [ -n "$BASELINE_SHA" ]; then
+            # Raw "<sha> <subject>" lines; awk reformats each as a
+            # markdown bullet with the short SHA in backticks.
+            # Backticks via awk's \x60 to avoid shellcheck SC2016
+            # on a single-quoted git-log format string.
+            COMMIT_FALLBACK=$(git log --reverse --format='%h %s' "$BASELINE_SHA..HEAD" 2>/dev/null | \
+              awk '{ sha=$1; sub("^" sha " *", ""); printf "- %s (\x60%s\x60)\n", $0, sha }' || true)
           fi
 
           # Build full markdown fragments here so the PR body edit
@@ -913,6 +961,21 @@ jobs:
               echo "$GAPS_BODY"
             fi
             echo "GAPS_EOF"
+
+            # summary_block carries either the skill's hand-written
+            # SUMMARY.md body, or the commit-title fallback when the
+            # skill didn't write one. Empty when neither applies
+            # (e.g. silent run / NO_CHANGES case). The Augment step
+            # renders a "Summary of changes" section iff non-empty.
+            echo "summary_block<<SUMMARY_EOF"
+            if [ -n "$SUMMARY_BODY" ]; then
+              echo "$SUMMARY_BODY"
+            elif [ -n "$COMMIT_FALLBACK" ]; then
+              echo "_Auto-generated from commit titles -- skill did not write SUMMARY.md._"
+              echo ""
+              echo "$COMMIT_FALLBACK"
+            fi
+            echo "SUMMARY_EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Apply pin_files substitutions
@@ -984,6 +1047,7 @@ jobs:
           REPO: ${{ steps.detect.outputs.repo }}
           NOTE_BLOCK: ${{ steps.signals.outputs.note_block }}
           GAPS_BLOCK: ${{ steps.signals.outputs.gaps_block }}
+          SUMMARY_BLOCK: ${{ steps.signals.outputs.summary_block }}
           AUTOGEN_TOUCHED: ${{ steps.autogen.outputs.touched }}
           COMPARE_OK: ${{ steps.reviewers.outputs.compare_ok }}
           MENTION_BLOCK: ${{ steps.reviewers.outputs.mention_block }}
@@ -1136,6 +1200,18 @@ jobs:
             echo "| **Release contributors** | $CONTRIB_CELL |"
             echo "| **Action required** | $ACTION_REQUIRED |"
             echo ""
+
+            # ----- SUMMARY OF CHANGES -----
+            # Renders either the skill's hand-written SUMMARY.md body
+            # or the commit-title fallback from the signals step.
+            # Skipped entirely on silent / NO_CHANGES runs where the
+            # signals step leaves SUMMARY_BLOCK empty.
+            if [ -n "$SUMMARY_BLOCK" ]; then
+              echo "### Summary of changes"
+              echo ""
+              echo "$SUMMARY_BLOCK"
+              echo ""
+            fi
 
             # ----- GAPS (when present) -----
             if [ -n "$GAPS_BLOCK" ]; then
