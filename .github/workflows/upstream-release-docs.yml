@@ -391,13 +391,14 @@ jobs:
         id: pre_skill
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Extract reviewers and contributors from release compare
+      - name: Assign reviewers and prepare contributor mentions
         id: reviewers
         env:
           REPO: ${{ steps.detect.outputs.repo }}
           PREV: ${{ steps.detect.outputs.prev_tag }}
           NEW: ${{ steps.detect.outputs.new_tag }}
           REVIEW_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
         run: |
           # Get non-bot commit authors in the release range.
           if COMPARE=$(gh api "repos/$REPO/compare/$PREV...$NEW" \
@@ -412,43 +413,53 @@ jobs:
           CANDIDATES=$(echo "$COMPARE" |
             grep -Ev '(\[bot\]$|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)' || true)
 
-          # Split candidates into two groups:
-          #   - ASSIGN_LIST: collaborators on this repo -- safe to pass
-          #     to `gh pr edit --add-reviewer`. GitHub rejects the
-          #     entire call with 422 if any name in the list isn't a
-          #     collaborator, so the filter is mandatory to avoid
-          #     dropping valid reviewers alongside invalid ones.
-          #   - MENTION_LIST: everyone else. Upstream contributors
-          #     (often Stacklok employees with private org membership
-          #     we can't detect via GITHUB_TOKEN, which lacks
-          #     read:org) still deserve a ping so they see the PR
-          #     documenting their work. @-mentioning in the PR body
-          #     handles that without needing reviewer-assignment
-          #     rights.
-          # Future: a PAT with read:org could let us also check
-          # membership in the `stackers` team and promote those to
-          # ASSIGN_LIST. Deferred -- not wiring a secret in now.
+          # Attempt to assign each candidate as a reviewer individually,
+          # rather than filtering upfront and batching. Rationale:
+          #   - `gh pr edit --add-reviewer "a,b,c"` is atomic. A single
+          #     422 on any name aborts the whole call, dropping valid
+          #     names alongside invalid ones.
+          #   - `gh api repos/X/collaborators/Y` as a pre-filter is
+          #     unreliable from a GITHUB_TOKEN in Actions: on PR #759
+          #     the check returned 404 for Stacklok employees who ARE
+          #     collaborators via the `stackers` team (push perm on
+          #     this repo), and only `rdimitrov` slipped through. We
+          #     suspect the collaborator endpoint treats team-based
+          #     access differently for GITHUB_TOKEN vs PATs with
+          #     read:org, but haven't nailed down the exact rule.
+          # Per-user attempts sidestep both issues: the authoritative
+          # answer is "does GitHub accept this as a reviewer right now"
+          # and we ask the API that question directly.
+          #
+          # Cap attempts at 5 to avoid review fatigue on big releases.
+          TRIED=0
           ASSIGN_LIST=""
           MENTION_LIST=""
           while IFS= read -r login; do
             [ -z "$login" ] && continue
-            if gh api "repos/$REVIEW_REPO/collaborators/$login" --silent 2>/dev/null; then
+            if [ "$TRIED" -ge 5 ]; then
+              # Over the review-fatigue cap -- mention any additional
+              # contributors instead of trying to assign them.
+              MENTION_LIST="${MENTION_LIST:+$MENTION_LIST }@$login"
+              continue
+            fi
+            TRIED=$((TRIED + 1))
+            if gh pr edit "$PR_NUMBER" --add-reviewer "$login" 2>/dev/null; then
               ASSIGN_LIST="${ASSIGN_LIST:+$ASSIGN_LIST,}$login"
+              echo "Assigned: $login"
             else
               MENTION_LIST="${MENTION_LIST:+$MENTION_LIST }@$login"
+              echo "Mention (assignment rejected by GitHub): $login"
             fi
           done <<< "$CANDIDATES"
 
-          # Cap auto-assignments at 5 to avoid review fatigue. Mentions
-          # aren't capped -- they're cheap and the block is a single
-          # PR-body notification.
-          ASSIGN_LIST=$(echo "$ASSIGN_LIST" | tr ',' '\n' | head -5 | paste -sd, -)
-
+          # Exposed for diagnostic visibility in the PR body (e.g.,
+          # "Auto-assigned: @alice @bob") and for the next workflow_
+          # dispatch retry to know what was attempted.
           echo "list=$ASSIGN_LIST" >> "$GITHUB_OUTPUT"
           {
             echo "mention_block<<MENTION_EOF"
             if [ -n "$MENTION_LIST" ]; then
-              echo "Release contributors who aren't collaborators on this repo and so couldn't be auto-assigned as reviewers. Mentioning them so they see the PR documenting their work:"
+              echo "Release contributors we couldn't auto-assign as reviewers (review fatigue cap or GitHub rejected the assignment). Mentioning them so they see the PR documenting their work:"
               echo ""
               echo "$MENTION_LIST"
             fi
@@ -895,13 +906,6 @@ jobs:
           fi
 
           gh pr edit "$PR_NUMBER" --body-file /tmp/pr-body.md
-
-      - name: Add reviewers
-        if: always() && steps.reviewers.outputs.list != ''
-        env:
-          PR_NUMBER: ${{ steps.eff.outputs.number }}
-          REVIEWERS: ${{ steps.reviewers.outputs.list }}
-        run: gh pr edit "$PR_NUMBER" --add-reviewer "$REVIEWERS"
 
       - name: Comment on augmentation failure
         # Runs only when a preceding step failed. Comments a retry
