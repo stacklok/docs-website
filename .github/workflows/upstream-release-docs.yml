@@ -499,9 +499,14 @@ jobs:
           PROJECT_ID: ${{ steps.detect.outputs.id }}
           NEW_TAG: ${{ steps.detect.outputs.new_tag }}
         run: |
+          # `|| true` so a transient gh failure (rate limit, API
+          # hiccup, permission edge case) doesn't abort the run
+          # before skill_gen gets to execute. The comment is a
+          # visibility aid, not load-bearing. Matches the pattern
+          # used by the other gh pr comment steps in this workflow.
           gh pr comment "$PR_NUMBER" --body "Claude Opus is generating docs updates for \`$PROJECT_ID\` \`$NEW_TAG\`. Follow progress in the workflow run: $RUN_URL
 
-          (This comment replaces the real-time tracking comment claude-code-action posts on Renovate-opened PRs, which isn't supported on \`workflow_dispatch\` events.)"
+          (This comment replaces the real-time tracking comment claude-code-action posts on Renovate-opened PRs, which isn't supported on \`workflow_dispatch\` events.)" || true
 
       # Invocation 1: generation. Runs /upstream-release-docs end-to-
       # end (all 6 phases, including the skill's own internal
@@ -878,6 +883,8 @@ jobs:
           MENTION_BLOCK: ${{ steps.reviewers.outputs.mention_block }}
           ASSIGN_LIST: ${{ steps.reviewers.outputs.list }}
           SKILL_COMMIT_COUNT: ${{ steps.skill_commits.outputs.count }}
+          GEN_CONCLUSION: ${{ steps.skill_gen.conclusion }}
+          REVIEW_CONCLUSION: ${{ steps.skill_review.conclusion }}
         run: |
           START='<!-- upstream-release-docs:start -->'
           END='<!-- upstream-release-docs:end -->'
@@ -899,11 +906,19 @@ jobs:
               echo "$NOTE_BLOCK"
               echo ""
             fi
-            # When the skill ran to success but produced zero commits,
-            # we have no NOTE_BLOCK (no NO_CHANGES.md), no content for
-            # reviewers to look at, and a PR body that otherwise reads
-            # as if content was added. Surface the silence explicitly.
-            if [ "$SKILL_COMMIT_COUNT" = "0" ] && [ -z "$NOTE_BLOCK" ]; then
+            # When BOTH skill invocations ran to success but produced
+            # zero commits between them, we have no NOTE_BLOCK (no
+            # NO_CHANGES.md), no content for reviewers to look at, and
+            # a PR body that otherwise reads as if content was added.
+            # Surface the silence explicitly -- but ONLY when both
+            # skill steps actually succeeded, so we don't claim "ran
+            # to success" on behalf of a run that had a mid-flight
+            # failure. Partial failures are covered by the separate
+            # augmentation-failure comment step at the end.
+            if [ "$SKILL_COMMIT_COUNT" = "0" ] \
+               && [ -z "$NOTE_BLOCK" ] \
+               && [ "$GEN_CONCLUSION" = "success" ] \
+               && [ "$REVIEW_CONCLUSION" = "success" ]; then
               echo "> [!NOTE]"
               echo "> The \`upstream-release-docs\` skill ran to success but"
               echo "> produced no content commits on this PR. Likely causes:"
