@@ -55,9 +55,9 @@ The project uses automated tooling to enforce code quality and formatting standa
 
 - **Pre-commit hooks**: lint-staged runs automatically on `git commit`, applying Prettier and appropriate linters to staged files.
 - **GitHub Actions**: All PRs trigger automated checks (ESLint, Prettier).
-- **No manual formatting needed**: The pre-commit hook handles formatting automatically - you do not need to run formatters manually.
+- **Don't rely on the pre-commit hook**: lint-staged only fires on `git commit` when Node, dependencies, and husky are all set up. It silently no-ops in CI and unattended contexts (GitHub Actions, scheduled agents) and in local environments where `npm install` hasn't been run. If you edited content, run `npm run prettier:fix` and `npm run eslint:fix` yourself to avoid lint failures on PR CI.
 
-File type to linter mapping (handled automatically by pre-commit hooks):
+File type to linter mapping (run manually if the pre-commit hook doesn't fire):
 
 - `.md` files: Prettier only
 - `.mdx` files: Prettier + ESLint
