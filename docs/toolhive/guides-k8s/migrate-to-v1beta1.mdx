@@ -2,16 +2,14 @@
 title: Migrate to v1beta1
 description:
   Breaking changes and migration steps for the CRD API stabilization track from
-  v0.15.0 through v0.21.0
+  v0.15.0 through v0.23.0
 ---
 
-The ToolHive Kubernetes Operator has undergone a series of CRD API changes in
-preparation for the `v1beta1` API version promotion. These changes span releases
-v0.15.0 through v0.21.0, each introducing breaking changes that require manifest
-and tooling updates.
-
-This guide covers every breaking change in order, so you can start from
-whichever version you are currently running and work forward.
+The ToolHive Kubernetes Operator stabilized its CRD API over multiple
+releases and graduated from `v1alpha1` to `v1beta1` in v0.23.0. This guide
+walks through every breaking schema change that landed during the stabilization
+track, so you can start from whichever version you are currently running and
+work forward to v0.23.0.
 
 :::warning[Upgrade one version at a time]
 
@@ -52,6 +50,7 @@ that point forward.
 | v0.21.0 | [`config.groupRef` fallback removed](#configgroupref-fallback-removed)                    | VirtualMCPServer                                                              | `spec.config.groupRef` removed; use `spec.groupRef`                                                                                 |
 | v0.21.0 | [`external_auth_config_ref` enum removed](#external_auth_config_ref-enum-removed)         | VirtualMCPServer                                                              | Snake_case enum value removed; use `externalAuthConfigRef`                                                                          |
 | v0.21.0 | [Inline vMCP `telemetry` removed](#inline-vmcp-telemetry-removed)                         | VirtualMCPServer                                                              | `spec.config.telemetry` removed; use `spec.telemetryConfigRef`                                                                      |
+| v0.23.0 | [CRD API graduated to v1beta1](#crd-api-graduated-from-v1alpha1-to-v1beta1)               | All ToolHive CRDs                                                             | `v1alpha1` served-and-deprecated; migrate manifests to `apiVersion: toolhive.stacklok.dev/v1beta1`                                  |
 
 ## General upgrade procedure
 
@@ -349,7 +348,7 @@ have been removed from the schema.
 
 ```yaml
 # Before (legacy typed fields)
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRegistry
 metadata:
   name: my-registry
@@ -378,7 +377,7 @@ spec:
     mode: anonymous
 
 # After (configYAML)
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRegistry
 metadata:
   name: my-registry
@@ -584,7 +583,7 @@ spec:
 Create a shared MCPOIDCConfig resource:
 
 ```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPOIDCConfig
 metadata:
   name: my-oidc-config
@@ -619,7 +618,7 @@ spec:
 Create a shared MCPTelemetryConfig resource:
 
 ```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPTelemetryConfig
 metadata:
   name: my-telemetry
@@ -701,8 +700,59 @@ outgoingAuth:
 The inline `spec.config.telemetry` field on VirtualMCPServer has been removed.
 Use `spec.telemetryConfigRef` to reference a shared MCPTelemetryConfig resource.
 
+## v0.23.0
+
+[Full release notes](https://github.com/stacklok/toolhive/releases/tag/v0.23.0)
+
+### CRD API graduated from v1alpha1 to v1beta1
+
+The operator graduates every ToolHive CRD from `v1alpha1` to `v1beta1`.
+`v1beta1` is now the storage version and the recommended API for all new and
+existing manifests.
+
+:::info[Non-breaking]
+
+`v1alpha1` is still served by the CRDs and uses a `None` conversion strategy
+(spec and status schemas are identical between versions), so existing
+`v1alpha1` resources continue to reconcile without changes. Applying a
+`v1alpha1` manifest emits a deprecation warning; plan to migrate manifests to
+`v1beta1` before the deprecation period ends.
+
+:::
+
+Update the `apiVersion` line in every ToolHive manifest:
+
+```yaml
+# Before
+apiVersion: toolhive.stacklok.dev/v1alpha1
+
+# After
+apiVersion: toolhive.stacklok.dev/v1beta1
+```
+
+Reapply each resource:
+
+```bash
+kubectl apply -f your-manifest.yaml
+```
+
+This applies to all ToolHive CRDs:
+
+- `MCPServer`, `MCPRemoteProxy`, `MCPServerEntry`, `MCPGroup`
+- `MCPRegistry`
+- `MCPOIDCConfig`, `MCPToolConfig`, `MCPTelemetryConfig`,
+  `MCPExternalAuthConfig`
+- `VirtualMCPServer`, `VirtualMCPCompositeToolDefinition`
+- `EmbeddingServer`
+
 ## Next steps
 
 - [Deploy the ToolHive operator](./deploy-operator.mdx)
 - [Run MCP servers in Kubernetes](./run-mcp-k8s.mdx)
 - [CRD specification reference](../reference/crds/index.mdx)
+
+
+
+
+
+
