@@ -391,13 +391,14 @@ jobs:
         id: pre_skill
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Extract reviewers from release compare
+      - name: Assign reviewers and prepare contributor mentions
         id: reviewers
         env:
           REPO: ${{ steps.detect.outputs.repo }}
           PREV: ${{ steps.detect.outputs.prev_tag }}
           NEW: ${{ steps.detect.outputs.new_tag }}
           REVIEW_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
         run: |
           # Get non-bot commit authors in the release range.
           if COMPARE=$(gh api "repos/$REPO/compare/$PREV...$NEW" \
@@ -408,29 +409,64 @@ jobs:
             echo "compare_ok=false" >> "$GITHUB_OUTPUT"
           fi
 
-          # Filter out bot accounts, then further filter to only this
-          # repo's collaborators. GitHub rejects reviewer requests for
-          # non-collaborators with 422, which would fail the whole
-          # `gh pr edit --add-reviewer` call and drop the valid
-          # reviewers along with the invalid ones. Community
-          # contributors from the upstream repo often aren't
-          # collaborators here; silently skip them.
+          # Filter out bot accounts.
           CANDIDATES=$(echo "$COMPARE" |
             grep -Ev '(\[bot\]$|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)' || true)
 
-          REVIEWERS=""
+          # Attempt to assign each candidate as a reviewer individually,
+          # rather than filtering upfront and batching. Rationale:
+          #   - `gh pr edit --add-reviewer "a,b,c"` is atomic. A single
+          #     422 on any name aborts the whole call, dropping valid
+          #     names alongside invalid ones.
+          #   - `gh api repos/X/collaborators/Y` as a pre-filter is
+          #     unreliable from a GITHUB_TOKEN in Actions: on PR #759
+          #     the check returned 404 for Stacklok employees who ARE
+          #     collaborators via the `stackers` team (push perm on
+          #     this repo), and only `rdimitrov` slipped through. We
+          #     suspect the collaborator endpoint treats team-based
+          #     access differently for GITHUB_TOKEN vs PATs with
+          #     read:org, but haven't nailed down the exact rule.
+          # Per-user attempts sidestep both issues: the authoritative
+          # answer is "does GitHub accept this as a reviewer right now"
+          # and we ask the API that question directly.
+          #
+          # Cap attempts at 5 to avoid review fatigue on big releases.
+          TRIED=0
+          ASSIGN_LIST=""
+          MENTION_LIST=""
           while IFS= read -r login; do
             [ -z "$login" ] && continue
-            if gh api "repos/$REVIEW_REPO/collaborators/$login" --silent 2>/dev/null; then
-              REVIEWERS="${REVIEWERS:+$REVIEWERS,}$login"
+            if [ "$TRIED" -ge 5 ]; then
+              # Over the review-fatigue cap -- mention any additional
+              # contributors instead of trying to assign them.
+              MENTION_LIST="${MENTION_LIST:+$MENTION_LIST }@$login"
+              continue
+            fi
+            TRIED=$((TRIED + 1))
+            if gh pr edit "$PR_NUMBER" --add-reviewer "$login" 2>/dev/null; then
+              ASSIGN_LIST="${ASSIGN_LIST:+$ASSIGN_LIST,}$login"
+              echo "Assigned: $login"
+            else
+              MENTION_LIST="${MENTION_LIST:+$MENTION_LIST }@$login"
+              echo "Mention (assignment rejected by GitHub): $login"
             fi
           done <<< "$CANDIDATES"
 
-          # Cap at 5 to avoid review fatigue.
-          REVIEWERS=$(echo "$REVIEWERS" | tr ',' '\n' | head -5 | paste -sd, -)
-
-          echo "list=$REVIEWERS" >> "$GITHUB_OUTPUT"
-          echo "Reviewers: ${REVIEWERS:-<none>}"
+          # Exposed for diagnostic visibility in the PR body (e.g.,
+          # "Auto-assigned: @alice @bob") and for the next workflow_
+          # dispatch retry to know what was attempted.
+          echo "list=$ASSIGN_LIST" >> "$GITHUB_OUTPUT"
+          {
+            echo "mention_block<<MENTION_EOF"
+            if [ -n "$MENTION_LIST" ]; then
+              echo "Release contributors we couldn't auto-assign as reviewers (review fatigue cap or GitHub rejected the assignment). Mentioning them so they see the PR documenting their work:"
+              echo ""
+              echo "$MENTION_LIST"
+            fi
+            echo "MENTION_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Auto-assigned: ${ASSIGN_LIST:-<none>}"
+          echo "Mentioned:     ${MENTION_LIST:-<none>}"
 
       - name: Read docs_paths hint
         id: hints
@@ -797,6 +833,8 @@ jobs:
           GAPS_BLOCK: ${{ steps.signals.outputs.gaps_block }}
           AUTOGEN_NOTE: ${{ steps.autogen.outputs.note }}
           COMPARE_OK: ${{ steps.reviewers.outputs.compare_ok }}
+          MENTION_BLOCK: ${{ steps.reviewers.outputs.mention_block }}
+          ASSIGN_LIST: ${{ steps.reviewers.outputs.list }}
         run: |
           START='<!-- upstream-release-docs:start -->'
           END='<!-- upstream-release-docs:end -->'
@@ -830,8 +868,22 @@ jobs:
               echo "$GAPS_BLOCK"
               echo ""
             fi
-            echo "Reviewers below are non-bot commit authors in the release range who are also collaborators on this repo."
+            echo "### Release contributors"
             echo ""
+            if [ -n "$ASSIGN_LIST" ]; then
+              # Comma list -> @-mention list for rendering.
+              ASSIGNED_MENTIONS=$(echo "$ASSIGN_LIST" | tr ',' '\n' | sed 's/^/@/' | paste -sd' ' -)
+              echo "Auto-assigned as reviewers (collaborators on this repo): $ASSIGNED_MENTIONS"
+              echo ""
+            fi
+            if [ -n "$MENTION_BLOCK" ]; then
+              echo "$MENTION_BLOCK"
+              echo ""
+            fi
+            if [ -z "$ASSIGN_LIST" ] && [ -z "$MENTION_BLOCK" ]; then
+              echo "No non-bot contributors were found in the release range."
+              echo ""
+            fi
             echo "$END"
           } > /tmp/section.md
 
@@ -854,13 +906,6 @@ jobs:
           fi
 
           gh pr edit "$PR_NUMBER" --body-file /tmp/pr-body.md
-
-      - name: Add reviewers
-        if: always() && steps.reviewers.outputs.list != ''
-        env:
-          PR_NUMBER: ${{ steps.eff.outputs.number }}
-          REVIEWERS: ${{ steps.reviewers.outputs.list }}
-        run: gh pr edit "$PR_NUMBER" --add-reviewer "$REVIEWERS"
 
       - name: Comment on augmentation failure
         # Runs only when a preceding step failed. Comments a retry
