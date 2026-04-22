@@ -1,0 +1,332 @@
+---
+title: Run vMCP locally with the CLI
+sidebar_label: Local mode (CLI)
+description:
+  Run Virtual MCP Server locally using the ToolHive CLI without a Kubernetes
+  cluster.
+---
+
+Virtual MCP Server (vMCP) can run locally using the `thv vmcp` commands. This
+lets you aggregate MCP servers on your laptop or CI environment without a
+Kubernetes cluster.
+
+## Overview
+
+`thv vmcp` has three subcommands:
+
+| Command             | Purpose                                             |
+| ------------------- | --------------------------------------------------- |
+| `thv vmcp serve`    | Start the vMCP server                               |
+| `thv vmcp init`     | Generate a starter config file from a running group |
+| `thv vmcp validate` | Check a config file for errors                      |
+
+## Quick start (zero-config)
+
+If you already have MCP servers running in a ToolHive group, you can start vMCP
+with a single command. No config file needed:
+
+```bash
+thv vmcp serve --group my-group
+```
+
+This starts a vMCP server on `127.0.0.1:4483` that aggregates all servers in the
+group `my-group`. The server is accessible only from localhost — quick mode does
+not allow binding to a non-loopback interface because it uses anonymous
+authentication.
+
+:::note
+
+Quick mode uses anonymous auth by default. Anyone with local access can connect.
+For access control, use [config file mode](#config-file-mode) with OIDC auth.
+
+:::
+
+To use a different port:
+
+```bash
+thv vmcp serve --group my-group --port 8080
+```
+
+## Config file mode
+
+For production-like setups, authentication, or advanced features, use a config
+file.
+
+### Generate a starter config
+
+Run `thv vmcp init` to generate a config file from a running ToolHive group:
+
+```bash
+thv vmcp init --group my-group --config vmcp.yaml
+```
+
+This discovers the MCP servers in `my-group` and writes a ready-to-use YAML file
+to `vmcp.yaml`. The generated file includes one backend entry per server, inline
+comments explaining each field, and sensible defaults.
+
+### Start the server
+
+```bash
+thv vmcp serve --config vmcp.yaml
+```
+
+### Validate before starting
+
+Check a config file for errors without starting the server:
+
+```bash
+thv vmcp validate --config vmcp.yaml
+```
+
+Exit code `0` means the file is valid; any other exit code prints a description
+of the error.
+
+## Config file reference
+
+Below is a minimal config file. See the sections that follow for each feature
+area.
+
+```yaml title="vmcp.yaml"
+name: my-vmcp
+groupRef: my-group
+
+incomingAuth:
+  type: anonymous
+
+aggregation:
+  conflictResolution: prefix
+```
+
+### Backends
+
+vMCP discovers backends automatically from the group named in `groupRef`. You
+can also declare backends explicitly when you need to point to a URL that isn't
+managed by ToolHive:
+
+```yaml title="vmcp.yaml"
+backends:
+  - name: fetch
+    url: http://127.0.0.1:8081/mcp
+    transport: streamable-http
+  - name: osv
+    url: http://127.0.0.1:8082/mcp
+    transport: streamable-http
+```
+
+When you provide an explicit `backends` list, vMCP uses that list instead of
+discovering from `groupRef`. The `name` values must match the workload names
+used in aggregation rules, conflict resolution prefixes, and composite tool
+steps.
+
+### Conflict resolution
+
+When two backends expose a tool with the same name, vMCP needs to know how to
+handle the collision. Set `conflictResolution` in the `aggregation` block:
+
+```yaml title="vmcp.yaml"
+aggregation:
+  conflictResolution: prefix
+  conflictResolutionConfig:
+    prefixFormat: '{workload}_' # produces: fetch_fetch_content, osv_query
+```
+
+| Strategy   | Behavior                                                          |
+| ---------- | ----------------------------------------------------------------- |
+| `prefix`   | Prepend the backend name to each tool name (default)              |
+| `priority` | First backend in the list wins; duplicates from others are hidden |
+| `manual`   | Explicit per-conflict mapping                                     |
+
+### Incoming authentication
+
+Control how clients authenticate to vMCP.
+
+**Anonymous** (development only):
+
+```yaml title="vmcp.yaml"
+incomingAuth:
+  type: anonymous
+```
+
+**OIDC** (recommended for shared or production use):
+
+```yaml title="vmcp.yaml"
+incomingAuth:
+  type: oidc
+  oidc:
+    issuer: https://your-idp.example.com
+    clientId: vmcp-server
+    audience: vmcp-api
+```
+
+The OIDC middleware validates the `iss`, `aud`, and expiry claims on every
+request. Set `insecureAllowHttp: true` and `jwksAllowPrivateIp: true` only when
+testing against a local OIDC server.
+
+For the full set of OIDC fields see [Authentication](./authentication.mdx).
+
+### Outgoing authentication
+
+Control how vMCP authenticates to its backends.
+
+**No auth** (default, for trusted local backends):
+
+```yaml title="vmcp.yaml"
+outgoingAuth:
+  source: inline
+  default:
+    type: unauthenticated
+```
+
+**Static API key** injected as a header:
+
+```yaml title="vmcp.yaml"
+outgoingAuth:
+  source: inline
+  default:
+    type: header_injection
+    headerInjection:
+      headerName: Authorization
+      headerValueEnv: BACKEND_API_KEY # read from environment variable
+```
+
+**Per-backend overrides** (when backends need different credentials):
+
+```yaml title="vmcp.yaml"
+outgoingAuth:
+  source: inline
+  default:
+    type: unauthenticated
+  backends:
+    fetch:
+      type: header_injection
+      headerInjection:
+        headerName: X-API-Key
+        headerValueEnv: FETCH_API_KEY
+```
+
+For token exchange and upstream injection see
+[Authentication](./authentication.mdx).
+
+### Tool optimizer
+
+Enable the optimizer to replace all backend tool definitions with two
+lightweight operations: `find_tool` and `call_tool`. This reduces the number of
+tokens sent to the LLM on each request and improves tool selection across many
+backends.
+
+**Tier 1 — keyword search** (no extra dependencies):
+
+```bash
+thv vmcp serve --group my-group --optimizer
+```
+
+Or in a config file:
+
+```yaml title="vmcp.yaml"
+optimizer: {}
+```
+
+**Tier 2 — semantic search** (requires Docker; starts a TEI container
+automatically):
+
+```bash
+thv vmcp serve --group my-group --optimizer-embedding
+```
+
+```yaml title="vmcp.yaml"
+optimizer:
+  embeddingService: http://127.0.0.1:8090 # optional: use an existing TEI instance
+```
+
+See [Optimize tool discovery](./optimizer.mdx) for details on how the optimizer
+works and how to tune it.
+
+### Composite tools
+
+Define multi-step workflows in the config file. Each step calls a backend tool,
+and steps can depend on each other or run in parallel:
+
+```yaml title="vmcp.yaml"
+compositeTools:
+  - name: check_and_report
+    description: Check a package for vulnerabilities and fetch a summary
+    parameters:
+      type: object
+      properties:
+        package:
+          type: string
+          description: Package name to check
+      required: [package]
+    steps:
+      - id: check_vuln
+        type: tool
+        tool: osv.query # format: <backend-name>.<tool-name>
+        arguments:
+          package: '{{ .params.package }}'
+      - id: fetch_summary
+        type: tool
+        tool: fetch.fetch_content
+        dependsOn: [check_vuln]
+        arguments:
+          url: '{{ .steps.check_vuln.output.advisory_url }}'
+```
+
+See [Composite tools](./composite-tools.mdx) for step types, error handling, and
+template syntax.
+
+### Session storage
+
+By default vMCP stores session state in memory (single process only). For
+scenarios where you run multiple vMCP instances behind a load balancer, use
+Redis:
+
+```yaml title="vmcp.yaml"
+sessionStorage:
+  provider: redis
+  address: 127.0.0.1:6379
+  keyPrefix: vmcp:my-app:
+```
+
+## thv vmcp serve reference
+
+```
+Usage:
+  thv vmcp serve [flags]
+
+Flags:
+  -c, --config string              Path to vMCP configuration file
+      --group string               ToolHive group name (quick mode; used when --config is omitted)
+      --host string                Host address to bind to (default "127.0.0.1")
+      --port int                   Port to listen on (default 4483)
+      --optimizer                  Enable keyword optimizer (Tier 1)
+      --optimizer-embedding        Enable semantic optimizer (Tier 2); implies --optimizer
+      --embedding-model string     HuggingFace model for semantic search
+                                   (default "BAAI/bge-small-en-v1.5")
+      --embedding-image string     TEI container image
+                                   (default "ghcr.io/huggingface/text-embeddings-inference:cpu-latest")
+      --enable-audit               Enable audit logging with default configuration
+  -h, --help                       Help for serve
+```
+
+## thv vmcp init reference
+
+```
+Usage:
+  thv vmcp init [flags]
+
+Flags:
+  -g, --group string    ToolHive group name to discover workloads from (required)
+  -c, --config string   Output file path (default: stdout)
+  -h, --help            Help for init
+```
+
+## thv vmcp validate reference
+
+```
+Usage:
+  thv vmcp validate [flags]
+
+Flags:
+  -c, --config string   Path to vMCP configuration file (required)
+  -h, --help            Help for validate
+```
