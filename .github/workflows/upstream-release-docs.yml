@@ -195,13 +195,13 @@ jobs:
           git push origin "$BRANCH"
 
           # Heredoc so the YAML indent doesn't leak into the PR body.
+          # Minimal placeholder -- the augmentation step below replaces
+          # content below its <!-- upstream-release-docs:start -->
+          # marker. Everything above the separator stays as the one-
+          # line context of who triggered the PR.
           cat > /tmp/bootstrap-body.md <<EOF
-          Manually dispatched by @$ACTOR via workflow run $RUN_URL.
-
-          This PR was created by the \`Upstream Release Docs\` workflow's bootstrap mode to document a release without waiting for Renovate. Content edits will be pushed as additional commits by the same workflow run.
+          Manually dispatched by @$ACTOR. [Workflow run]($RUN_URL).
           EOF
-          # Strip the leading 10-space indent the heredoc inherits from
-          # YAML nesting so the body renders cleanly.
           sed -i 's/^          //' /tmp/bootstrap-body.md
 
           gh pr create \
@@ -361,6 +361,7 @@ jobs:
       # lets the autogen-detect step below distinguish skill touches
       # from our own legitimate refresh writes.
       - name: Commit + push refreshed reference assets
+        id: refresh
         env:
           PROJECT_ID: ${{ steps.detect.outputs.id }}
           NEW_TAG: ${{ steps.detect.outputs.new_tag }}
@@ -369,6 +370,7 @@ jobs:
           git add -A
           if git diff --cached --quiet; then
             echo "No reference changes for $PROJECT_ID $NEW_TAG."
+            echo "refreshed=false" >> "$GITHUB_OUTPUT"
           else
             git commit -m "Refresh reference assets for $PROJECT_ID $NEW_TAG"
             # Someone may have pushed to HEAD_REF between our checkout
@@ -380,6 +382,7 @@ jobs:
               exit 1
             }
             git push origin "HEAD:$HEAD_REF"
+            echo "refreshed=true" >> "$GITHUB_OUTPUT"
           fi
 
       # Anchor the "skill touched" set for the autofix step below.
@@ -499,14 +502,10 @@ jobs:
           PROJECT_ID: ${{ steps.detect.outputs.id }}
           NEW_TAG: ${{ steps.detect.outputs.new_tag }}
         run: |
-          # `|| true` so a transient gh failure (rate limit, API
-          # hiccup, permission edge case) doesn't abort the run
-          # before skill_gen gets to execute. The comment is a
-          # visibility aid, not load-bearing. Matches the pattern
-          # used by the other gh pr comment steps in this workflow.
-          gh pr comment "$PR_NUMBER" --body "Claude Opus is generating docs updates for \`$PROJECT_ID\` \`$NEW_TAG\`. Follow progress in the workflow run: $RUN_URL
-
-          (This comment replaces the real-time tracking comment claude-code-action posts on Renovate-opened PRs, which isn't supported on \`workflow_dispatch\` events.)" || true
+          # `|| true` so a transient gh failure doesn't abort the run
+          # before skill_gen executes. The comment is a visibility
+          # aid, not load-bearing.
+          gh pr comment "$PR_NUMBER" --body "Generating docs for \`$PROJECT_ID\` $NEW_TAG… ([run]($RUN_URL))" || true
 
       # Invocation 1: generation. Runs /upstream-release-docs end-to-
       # end (all 6 phases, including the skill's own internal
@@ -641,6 +640,35 @@ jobs:
             NO_CHANGES.md at repo root with a one-line explanation.
             Still do not hand-edit any file.
 
+      # Capture skill_gen's execution stats BEFORE skill_review runs
+      # and overwrites the shared execution-output JSON at the
+      # canonical claude-code-action location. Lets us report
+      # per-invocation turns/cost in the PR body and the workflow_
+      # dispatch summary comment. Missing-file defaults to 0 so a
+      # failed run still emits plausible outputs.
+      - name: Capture skill_gen stats
+        id: skill_gen_stats
+        if: always() && steps.skill_gen.conclusion == 'success'
+        run: |
+          LOG="/home/runner/work/_temp/claude-execution-output.json"
+          if [ -f "$LOG" ]; then
+            TURNS=$(jq -r '.num_turns // 0' "$LOG")
+            COST=$(jq -r '.total_cost_usd // 0' "$LOG")
+            DENIALS=$(jq -r '.permission_denials_count // 0' "$LOG")
+          else
+            TURNS=0
+            COST=0
+            DENIALS=0
+          fi
+          # Format cost with 4 decimal places for readability.
+          COST_FMT=$(printf '%.4f' "$COST")
+          {
+            echo "turns=$TURNS"
+            echo "cost_usd=$COST_FMT"
+            echo "denials=$DENIALS"
+          } >> "$GITHUB_OUTPUT"
+          echo "skill_gen stats: turns=$TURNS cost=\$$COST_FMT denials=$DENIALS"
+
       # Invocation 2: editorial re-review with FRESH CONTEXT. Running
       # docs-review in a separate session — with no exposure to the
       # generation session's internal reasoning — tends to catch style
@@ -694,6 +722,30 @@ jobs:
             Do NOT touch GAPS.md or NO_CHANGES.md at the repo root
             if they exist -- they're signal files handed off to the
             next workflow step, not part of the docs.
+
+      # Mirror of skill_gen_stats for skill_review. Reads the same
+      # canonical log path, which skill_review overwrote on exit.
+      - name: Capture skill_review stats
+        id: skill_review_stats
+        if: always() && steps.skill_review.conclusion == 'success'
+        run: |
+          LOG="/home/runner/work/_temp/claude-execution-output.json"
+          if [ -f "$LOG" ]; then
+            TURNS=$(jq -r '.num_turns // 0' "$LOG")
+            COST=$(jq -r '.total_cost_usd // 0' "$LOG")
+            DENIALS=$(jq -r '.permission_denials_count // 0' "$LOG")
+          else
+            TURNS=0
+            COST=0
+            DENIALS=0
+          fi
+          COST_FMT=$(printf '%.4f' "$COST")
+          {
+            echo "turns=$TURNS"
+            echo "cost_usd=$COST_FMT"
+            echo "denials=$DENIALS"
+          } >> "$GITHUB_OUTPUT"
+          echo "skill_review stats: turns=$TURNS cost=\$$COST_FMT denials=$DENIALS"
 
       # Count the commits the skill itself added between pre_skill
       # and now. Zero commits means skill_gen and skill_review both
@@ -811,26 +863,15 @@ jobs:
         id: autogen
         # Runs AFTER the skill and AFTER the refresh commit above, so
         # the staged diff represents skill-introduced changes only.
+        # The Augment step consumes `touched` directly and composes
+        # the CAUTION alert itself -- no note block assembled here.
         run: |
           git add -A
           TOUCHED=$(git diff --cached --name-only -- \
             'docs/toolhive/reference/cli/' \
             'static/api-specs/' \
             'docs/toolhive/reference/crds/' | paste -sd, - || true)
-          {
-            echo "note<<AUTOGEN_EOF"
-            if [ -n "$TOUCHED" ]; then
-              echo "> [!WARNING]"
-              echo "> The skill touched files under auto-generated paths:"
-              echo "> \`$TOUCHED\`"
-              echo ">"
-              echo "> These paths are synced or regenerated from release"
-              echo "> assets earlier in this workflow. Review the skill's"
-              echo "> changes and revert them if they should come from the"
-              echo "> refresh step instead."
-            fi
-            echo "AUTOGEN_EOF"
-          } >> "$GITHUB_OUTPUT"
+          echo "touched=$TOUCHED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push
         id: push
@@ -878,94 +919,232 @@ jobs:
           REPO: ${{ steps.detect.outputs.repo }}
           NOTE_BLOCK: ${{ steps.signals.outputs.note_block }}
           GAPS_BLOCK: ${{ steps.signals.outputs.gaps_block }}
-          AUTOGEN_NOTE: ${{ steps.autogen.outputs.note }}
+          AUTOGEN_TOUCHED: ${{ steps.autogen.outputs.touched }}
           COMPARE_OK: ${{ steps.reviewers.outputs.compare_ok }}
           MENTION_BLOCK: ${{ steps.reviewers.outputs.mention_block }}
           ASSIGN_LIST: ${{ steps.reviewers.outputs.list }}
           SKILL_COMMIT_COUNT: ${{ steps.skill_commits.outputs.count }}
           GEN_CONCLUSION: ${{ steps.skill_gen.conclusion }}
           REVIEW_CONCLUSION: ${{ steps.skill_review.conclusion }}
+          GEN_TURNS: ${{ steps.skill_gen_stats.outputs.turns }}
+          GEN_COST: ${{ steps.skill_gen_stats.outputs.cost_usd }}
+          REVIEW_TURNS: ${{ steps.skill_review_stats.outputs.turns }}
+          REVIEW_COST: ${{ steps.skill_review_stats.outputs.cost_usd }}
+          REFRESHED: ${{ steps.refresh.outputs.refreshed }}
         run: |
           START='<!-- upstream-release-docs:start -->'
           END='<!-- upstream-release-docs:end -->'
 
-          # Build our section.
+          # Compose in three phases so the body reads top-to-bottom:
+          #   1. Top alert (at most one, ordered by severity)
+          #   2. At-a-glance table (the reviewer's first 5-second scan)
+          #   3. Gaps / contributors / cost / process-lore details
+          #
+          # Derive some small things upfront so the table logic stays
+          # readable:
+
+          # Compare URL for the table's "Upstream" row.
+          COMPARE_URL="https://github.com/${REPO}/compare/${PREV_TAG}...${NEW_TAG}"
+
+          # Gaps count: grep for the "### " entry headings inside GAPS_BLOCK.
+          if [ -n "$GAPS_BLOCK" ]; then
+            GAPS_COUNT=$(printf '%s\n' "$GAPS_BLOCK" | grep -cE '^### ' || true)
+          else
+            GAPS_COUNT=0
+          fi
+
+          # Autogen-drift gate: AUTOGEN_TOUCHED is a comma-separated
+          # list of paths the skill edited under auto-generated roots.
+          # Non-empty means drift -- surfaced as the top-of-section
+          # CAUTION alert.
+          AUTOGEN_DRIFT="$AUTOGEN_TOUCHED"
+
+          # Silent-run check: both skill steps ran OK and produced 0
+          # commits. NOTE_BLOCK covers the NO_CHANGES.md path; we only
+          # emit our own silent-run note when NOTE_BLOCK is empty.
+          SILENT_RUN=false
+          if [ "$SKILL_COMMIT_COUNT" = "0" ] \
+             && [ -z "$NOTE_BLOCK" ] \
+             && [ "$GEN_CONCLUSION" = "success" ] \
+             && [ "$REVIEW_CONCLUSION" = "success" ]; then
+            SILENT_RUN=true
+          fi
+
+          # Action-required verdict drives the At-a-glance table's
+          # last row. Priority: autogen-drift > gaps > silent > content > none.
+          if [ -n "$AUTOGEN_DRIFT" ]; then
+            ACTION_REQUIRED="**Yes** — revert auto-generated-path drift (see above)"
+          elif [ "$GAPS_COUNT" -gt 0 ]; then
+            ACTION_REQUIRED="**Yes** — resolve $GAPS_COUNT gap(s), then spot-check prose"
+          elif [ "$SILENT_RUN" = "true" ]; then
+            ACTION_REQUIRED="**None** — approve and merge if the silent-run signal is expected"
+          elif [ "$SKILL_COMMIT_COUNT" != "0" ] && [ -n "$SKILL_COMMIT_COUNT" ]; then
+            ACTION_REQUIRED="Spot-check skill-authored prose for accuracy"
+          else
+            ACTION_REQUIRED="—"
+          fi
+
+          # Hand-written-changes cell: either a commit count, or a
+          # placeholder when the skill step didn't run.
+          if [ -n "$SKILL_COMMIT_COUNT" ]; then
+            CHANGES_CELL="$SKILL_COMMIT_COUNT commit(s)"
+          else
+            CHANGES_CELL="—"
+          fi
+
+          # Reference-assets cell.
+          case "$REFRESHED" in
+            true)  REFRESH_CELL="refreshed (separate commit)" ;;
+            false) REFRESH_CELL="unchanged" ;;
+            *)     REFRESH_CELL="—" ;;
+          esac
+
+          # Contributor counts. Auto-assigned folks already appear in
+          # GitHub's reviewer sidebar, so we don't also list them in
+          # the PR body -- that would duplicate info across three
+          # places (sidebar, at-a-glance cell, dedicated section).
+          # Only the overflow (non-collaborator) mentions need a
+          # render target, so the dedicated section is skipped when
+          # MENTION_COUNT is zero.
+          if [ -n "$ASSIGN_LIST" ]; then
+            ASSIGN_COUNT=$(echo "$ASSIGN_LIST" | tr ',' '\n' | grep -c . || true)
+          else
+            ASSIGN_COUNT=0
+          fi
+          if [ -n "$MENTION_BLOCK" ]; then
+            MENTION_COUNT=$(printf '%s\n' "$MENTION_BLOCK" | grep -oE '@[A-Za-z0-9_-]+' | wc -l | tr -d ' ')
+          else
+            MENTION_COUNT=0
+          fi
+
+          if [ "$COMPARE_OK" != "true" ]; then
+            CONTRIB_CELL="**Compare failed** — pinned \`$PREV_TAG\` missing upstream, no auto-assignment"
+          elif [ "$ASSIGN_COUNT" -gt 0 ] && [ "$MENTION_COUNT" -gt 0 ]; then
+            CONTRIB_CELL="$ASSIGN_COUNT auto-assigned · $MENTION_COUNT mentioned below"
+          elif [ "$ASSIGN_COUNT" -gt 0 ]; then
+            CONTRIB_CELL="$ASSIGN_COUNT auto-assigned (see sidebar)"
+          elif [ "$MENTION_COUNT" -gt 0 ]; then
+            CONTRIB_CELL="$MENTION_COUNT mentioned below"
+          else
+            CONTRIB_CELL="none in release range"
+          fi
+
           {
             echo "$START"
             echo ""
-            echo "## Content additions by upstream-release-docs"
+            echo "## Docs update for \`$PROJECT_ID\` $NEW_TAG"
             echo ""
-            echo "Source-verified against \`$REPO\` at tag \`$NEW_TAG\` (was \`$PREV_TAG\`). Two Claude Opus sessions produced this update: a generation pass running the \`upstream-release-docs\` skill over all six phases, then a fresh-context editorial pass running \`docs-review\` over the changed files. Prettier and ESLint auto-fixes were applied afterward."
-            echo ""
-            if [ "$COMPARE_OK" != "true" ]; then
-              echo "> [!WARNING]"
-              echo "> Could not compare \`$PREV_TAG\` against \`$NEW_TAG\` upstream, so no reviewers were auto-assigned from release contributors. The pinned previous tag may have been retagged or deleted."
+
+            # ----- TOP ALERT (at most one, by severity) -----
+            if [ -n "$AUTOGEN_DRIFT" ]; then
+              echo "> [!CAUTION]"
+              echo "> **Auto-generated-path drift**: the skill edited files that should"
+              echo "> only come from the refresh step. Review and revert:"
+              echo ">"
+              printf '%s\n' "$AUTOGEN_DRIFT" | tr ',' '\n' | awk '{ print "> - \x60" $0 "\x60" }'
               echo ""
-            fi
-            if [ -n "$NOTE_BLOCK" ]; then
-              echo "$NOTE_BLOCK"
-              echo ""
-            fi
-            # When BOTH skill invocations ran to success but produced
-            # zero commits between them, we have no NOTE_BLOCK (no
-            # NO_CHANGES.md), no content for reviewers to look at, and
-            # a PR body that otherwise reads as if content was added.
-            # Surface the silence explicitly -- but ONLY when both
-            # skill steps actually succeeded, so we don't claim "ran
-            # to success" on behalf of a run that had a mid-flight
-            # failure. Partial failures are covered by the separate
-            # augmentation-failure comment step at the end.
-            if [ "$SKILL_COMMIT_COUNT" = "0" ] \
-               && [ -z "$NOTE_BLOCK" ] \
-               && [ "$GEN_CONCLUSION" = "success" ] \
-               && [ "$REVIEW_CONCLUSION" = "success" ]; then
+            elif [ -n "$NOTE_BLOCK" ]; then
+              # NO_CHANGES.md path -- the skill explicitly said no doc-
+              # relevant changes. Simpler than the silent-run case.
               echo "> [!NOTE]"
-              echo "> The \`upstream-release-docs\` skill ran to success but"
-              echo "> produced no content commits on this PR. Likely causes:"
-              echo ">"
-              echo "> - The docs already cover this release (e.g. this PR"
-              echo ">   was dispatched after an earlier PR for the same"
-              echo ">   tag had merged, or \`main\` is already ahead of the"
-              echo ">   pinned base)."
-              echo "> - The release genuinely had no doc-relevant changes"
-              echo ">   but the skill did not write \`NO_CHANGES.md\` (which"
-              echo ">   would have triggered the standard 'no changes'"
-              echo ">   note above)."
-              echo "> - The skill's source verification concluded the"
-              echo ">   existing prose already matches upstream behavior."
-              echo ">"
-              echo "> Only the version bump and any refreshed reference"
-              echo "> assets are included in this PR."
+              echo "> Skill reported **no doc-relevant changes** for this release."
+              echo "> This PR only bumps the version pin and any pin_files edits."
+              echo ""
+            elif [ "$SILENT_RUN" = "true" ]; then
+              echo "> [!NOTE]"
+              echo "> **Silent run** — skill produced no content commits. The docs are"
+              echo "> likely already up-to-date (e.g. \`main\` ahead of pin, or a re-run"
+              echo "> after a previous PR for this tag merged). Only the version bump"
+              echo "> and refreshed reference assets are included."
               echo ""
             fi
-            if [ -n "$AUTOGEN_NOTE" ]; then
-              echo "$AUTOGEN_NOTE"
-              echo ""
-            fi
-            echo "### Review guidance"
+
+            # ----- AT-A-GLANCE TABLE -----
+            echo "### At a glance"
             echo ""
-            echo "Machine-generated reference files under \`docs/toolhive/reference/cli/\`, \`static/api-specs/\`, and \`docs/toolhive/reference/crds/\` are synced or regenerated from upstream release assets (separate commit, titled \"Refresh reference assets\") and should be spot-checked only. Commits authored by the skill contain hand-edited prose; review those for accuracy, not just style. If the \"Gaps needing human context\" section below is populated, each entry includes a **Helper prompt for local Claude** that a reviewer can paste verbatim into their local Claude Code session to resolve the gap. Fill those in before merging."
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| **Upstream** | \`$REPO\` [\`$PREV_TAG\` → \`$NEW_TAG\`]($COMPARE_URL) |"
+            echo "| **Hand-written changes** | $CHANGES_CELL |"
+            echo "| **Reference assets** | $REFRESH_CELL |"
+            echo "| **Gaps** | $GAPS_COUNT |"
+            echo "| **Release contributors** | $CONTRIB_CELL |"
+            echo "| **Action required** | $ACTION_REQUIRED |"
             echo ""
+
+            # ----- GAPS (when present) -----
             if [ -n "$GAPS_BLOCK" ]; then
-              echo "$GAPS_BLOCK"
+              # Skill's GAPS.md starts at H2 ("## Gaps needing human
+              # context") with per-entry H3s inside. To nest correctly
+              # under our H2 ("Docs update for …"), demote each
+              # heading one level (## -> ###, ### -> ####), except the
+              # section heading itself stays at ### so the entries
+              # still appear as distinct subsections.
+              awk '
+                /^## Gaps needing human context$/ { print "### Gaps needing human context"; next }
+                /^### / { sub(/^### /, "#### "); print; next }
+                /^## / { sub(/^## /, "### "); print; next }
+                { print }
+              ' <<<"$GAPS_BLOCK"
               echo ""
             fi
-            echo "### Release contributors"
+
+            # ----- OVERFLOW CONTRIBUTORS (not auto-assigned) -----
+            # Skipped entirely when everyone who should review got
+            # auto-assigned -- GitHub's sidebar covers that case. This
+            # section exists only to render @-mentions for contributors
+            # GitHub refused to accept as reviewers (usually because
+            # they're not collaborators on this repo).
+            if [ "$MENTION_COUNT" -gt 0 ]; then
+              echo "### Additional release contributors"
+              echo ""
+              echo "Couldn't be auto-assigned as reviewers on this repo, but cc'd below so they see the PR:"
+              echo ""
+              MENTIONS_ONLY=$(printf '%s\n' "$MENTION_BLOCK" | grep -oE '@[A-Za-z0-9_-]+' | paste -sd' ' -)
+              echo "$MENTIONS_ONLY"
+              echo ""
+            fi
+
+            # ----- RUN COST -----
+            if [ -n "$GEN_TURNS" ] || [ -n "$REVIEW_TURNS" ]; then
+              echo "### Run cost"
+              echo ""
+              echo "| Session | Turns | Cost (USD) |"
+              echo "| --- | ---: | ---: |"
+              if [ -n "$GEN_TURNS" ]; then
+                echo "| Generation | $GEN_TURNS | \$$GEN_COST |"
+              fi
+              if [ -n "$REVIEW_TURNS" ]; then
+                echo "| Editorial review | $REVIEW_TURNS | \$$REVIEW_COST |"
+              fi
+              if [ -n "$GEN_TURNS" ] && [ -n "$REVIEW_TURNS" ]; then
+                TOTAL_TURNS=$((GEN_TURNS + REVIEW_TURNS))
+                TOTAL_COST=$(awk -v a="$GEN_COST" -v b="$REVIEW_COST" 'BEGIN { printf "%.4f", a + b }')
+                echo "| **Total** | **$TOTAL_TURNS** | **\$$TOTAL_COST** |"
+              fi
+              echo ""
+            fi
+
+            # ----- PROCESS DETAILS (collapsed) -----
+            echo "<details><summary>How this PR was built</summary>"
             echo ""
-            if [ -n "$ASSIGN_LIST" ]; then
-              # Comma list -> @-mention list for rendering.
-              ASSIGNED_MENTIONS=$(echo "$ASSIGN_LIST" | tr ',' '\n' | sed 's/^/@/' | paste -sd' ' -)
-              echo "Auto-assigned as reviewers (collaborators on this repo): $ASSIGNED_MENTIONS"
-              echo ""
-            fi
-            if [ -n "$MENTION_BLOCK" ]; then
-              echo "$MENTION_BLOCK"
-              echo ""
-            fi
-            if [ -z "$ASSIGN_LIST" ] && [ -z "$MENTION_BLOCK" ]; then
-              echo "No non-bot contributors were found in the release range."
-              echo ""
-            fi
+            echo "Two Claude Opus sessions run per release: a generation pass"
+            echo "(\`upstream-release-docs\` skill, 6 phases) followed by a fresh-"
+            echo "context editorial pass (\`docs-review\`). Prettier/ESLint"
+            echo "auto-fixes are applied after."
+            echo ""
+            echo "Auto-synced paths — do not hand-edit these in review:"
+            echo "- \`docs/toolhive/reference/cli/\`"
+            echo "- \`docs/toolhive/reference/crds/\`"
+            echo "- \`static/api-specs/\`"
+            echo ""
+            echo "If a \"Gaps needing human context\" section is present above,"
+            echo "each entry includes a paste-ready **Helper prompt for local"
+            echo "Claude** a reviewer can use to resolve the gap."
+            echo ""
+            echo "</details>"
+            echo ""
+
             echo "$END"
           } > /tmp/section.md
 
@@ -1005,20 +1184,40 @@ jobs:
           GEN_CONCLUSION: ${{ steps.skill_gen.conclusion }}
           REVIEW_CONCLUSION: ${{ steps.skill_review.conclusion }}
           AUTOFIX_CONCLUSION: ${{ steps.autofix.conclusion }}
-          SKILL_COMMIT_COUNT: ${{ steps.skill_commits.outputs.count }}
+          GEN_TURNS: ${{ steps.skill_gen_stats.outputs.turns }}
+          GEN_COST: ${{ steps.skill_gen_stats.outputs.cost_usd }}
+          REVIEW_TURNS: ${{ steps.skill_review_stats.outputs.turns }}
+          REVIEW_COST: ${{ steps.skill_review_stats.outputs.cost_usd }}
         run: |
-          gh pr comment "$PR_NUMBER" --body "## Upstream-release-docs run summary
-
-          Project: \`$PROJECT_ID\` at tag \`$NEW_TAG\`
-
-          | Step | Conclusion |
-          | --- | --- |
-          | Generation (\`skill_gen\`) | \`${GEN_CONCLUSION:-(not run)}\` |
-          | Editorial review (\`skill_review\`) | \`${REVIEW_CONCLUSION:-(not run)}\` |
-          | Autofix (prettier/eslint) | \`${AUTOFIX_CONCLUSION:-(not run)}\` |
-          | Skill commits produced | \`${SKILL_COMMIT_COUNT:-?}\` |
-
-          Full report and Claude's step-by-step log: $RUN_URL" || true
+          # Tight one-line summary. Detail lives in the PR body's
+          # At-a-glance table and Run cost section. Pick status icon
+          # by whether any step failed.
+          STATUS=""
+          if [ "$GEN_CONCLUSION" = "success" ] \
+             && [ "$REVIEW_CONCLUSION" = "success" ] \
+             && [ "$AUTOFIX_CONCLUSION" != "failure" ]; then
+            STATUS="Done"
+          else
+            # Flag the first failing session so a reviewer knows
+            # which one died.
+            if [ "$GEN_CONCLUSION" != "success" ]; then
+              STATUS="Failed at generation (\`$GEN_CONCLUSION\`)"
+            elif [ "$REVIEW_CONCLUSION" != "success" ]; then
+              STATUS="Failed at editorial review (\`$REVIEW_CONCLUSION\`)"
+            elif [ "$AUTOFIX_CONCLUSION" = "failure" ]; then
+              STATUS="Autofix failed"
+            else
+              STATUS="Incomplete"
+            fi
+          fi
+          # Total turns/cost when both reported.
+          EXTRAS=""
+          if [ -n "$GEN_TURNS" ] && [ -n "$REVIEW_TURNS" ]; then
+            TT=$((GEN_TURNS + REVIEW_TURNS))
+            TC=$(awk -v a="$GEN_COST" -v b="$REVIEW_COST" 'BEGIN { printf "%.2f", a + b }')
+            EXTRAS=" · $TT turns · \$$TC"
+          fi
+          gh pr comment "$PR_NUMBER" --body "$STATUS$EXTRAS · [run]($RUN_URL) · see PR body for details" || true
 
       - name: Comment on augmentation failure
         # Runs only when a preceding step failed. Comments a retry
@@ -1028,6 +1227,6 @@ jobs:
           PR_NUMBER: ${{ steps.eff.outputs.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          gh pr comment "$PR_NUMBER" --body "Automated docs augmentation failed. Run: $RUN_URL
-
-          Retry via the \`Upstream Release Docs\` workflow with \`pr_number=$PR_NUMBER\` once the underlying issue is resolved." || true
+          gh pr comment "$PR_NUMBER" --body "> [!CAUTION]
+          > Docs augmentation **failed**. [Run log]($RUN_URL).
+          > Retry: \`gh workflow run upstream-release-docs.yml -f pr_number=$PR_NUMBER\`" || true
