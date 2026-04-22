@@ -241,7 +241,7 @@ const config: Config = {
     docs: {
       sidebar: {
         hideable: false,
-        autoCollapseCategories: false,
+        autoCollapseCategories: true,
       },
     },
     navbar: {
@@ -259,10 +259,6 @@ const config: Config = {
             {
               label: 'Home',
               href: '/toolhive',
-            },
-            {
-              label: 'Integrations',
-              to: 'toolhive/integrations',
             },
             {
               label: 'ToolHive UI',
