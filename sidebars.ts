@@ -176,7 +176,7 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'html',
-      value: 'Platform services',
+      value: 'Platform capabilities',
       className: 'sidebar-title',
       defaultStyle: false,
     },
