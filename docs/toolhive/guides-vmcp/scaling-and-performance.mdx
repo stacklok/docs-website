@@ -157,11 +157,11 @@ client must reinitialize.
 To serve more than 1,000 concurrent sessions per replica, add vMCP replicas and
 configure Redis session storage. Total capacity scales as `replicas × 1,000`.
 
-### Session TTL
+### Session time-to-live (TTL)
 
 The vMCP server applies a **30-minute inactivity TTL** to session metadata. A
-session with no activity for 30 minutes expires and must be reinitialized by the
-client.
+session that receives no activity for 30 minutes expires, and the client must
+reinitialize it.
 
 With Redis session storage, the TTL is a sliding window: every request
 atomically refreshes the key's expiry. Active sessions remain valid indefinitely
@@ -182,7 +182,7 @@ expect to serve hundreds of sessions aggregating multiple backends.
 ### Redis sizing
 
 When you enable Redis session storage, size the Redis instance for the full
-fleet. Session payloads include routing tables and tool metadata - a rough
+fleet. Session payloads include routing tables and tool metadata. A rough
 estimate is 10-50 KB per session depending on backend count and tool count, with
 a fleet-wide maximum of `replicas × 1,000` concurrent sessions.
 
@@ -191,7 +191,8 @@ sessions under memory pressure rather than returning errors on new writes. Redis
 persistence is not required for session storage; if the Redis instance restarts,
 all sessions are lost and clients must reinitialize.
 
-Default timeouts (all tunable through `sessionStorage` configuration):
+The Redis client uses these default timeouts. They are hardcoded defaults and
+are not currently exposed through the VirtualMCPServer CRD.
 
 | Setting       | Default   |
 | ------------- | --------- |
@@ -207,9 +208,10 @@ open files). When a vMCP pod restarts or is evicted, backend connections are
 torn down without a graceful MCP shutdown sequence.
 
 With Redis session storage, the routing table survives and clients can
-reconnect. However, any backend-side state is not recovered - the new connection
-starts fresh. In-flight tool calls are lost without a response. Implement retry
-logic with idempotency guards for tool invocations that modify external state.
+reconnect. However, the new connection does not recover any backend-side state;
+it starts fresh. In-flight tool calls are lost without a response. Implement
+retry logic with idempotency guards for tool invocations that modify external
+state.
 
 ## Next steps
 
