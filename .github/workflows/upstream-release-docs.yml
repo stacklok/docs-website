@@ -265,14 +265,20 @@ jobs:
       # idempotency on workflow_dispatch retries. The "Flip PR to
       # ready for review" step at the end reverses this once the body
       # is augmented and reviewers are assigned.
+      # --repo is required on `gh pr view` / `gh pr ready` here because
+      # this step runs before the "Checkout PR branch" step below; gh
+      # otherwise looks for local .git context and fails with "not a
+      # git repository" on pull_request and workflow_dispatch retries.
+      # (Bootstrap has already checked out the dispatching branch, but
+      # the flag is harmless there and keeps this step path-agnostic.)
       - name: Convert PR to draft
         if: steps.eff.outputs.number != ''
         env:
           PR_NUMBER: ${{ steps.eff.outputs.number }}
         run: |
-          IS_DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq .isDraft)
+          IS_DRAFT=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
           if [ "$IS_DRAFT" = "false" ]; then
-            gh pr ready "$PR_NUMBER" --undo
+            gh pr ready "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --undo
             echo "Converted PR #$PR_NUMBER to draft."
           else
             echo "PR #$PR_NUMBER is already a draft; nothing to do."
@@ -1187,7 +1193,19 @@ jobs:
             MENTION_COUNT=0
           fi
 
-          if [ "$COMPARE_OK" != "true" ]; then
+          # COMPARE_OK tri-state:
+          #   "true"  -> compare succeeded, contributor list is populated
+          #   "false" -> compare was attempted and failed (pinned prev_tag
+          #              missing upstream)
+          #   ""      -> reviewers step never ran (earlier step in the job
+          #              failed and short-circuited before we got there).
+          #              The augment step itself is `if: always()`, so it
+          #              still renders the PR body -- but the contributor
+          #              cell must say "not attempted" rather than claim
+          #              a compare failure that never happened.
+          if [ -z "$COMPARE_OK" ]; then
+            CONTRIB_CELL="**Not attempted** — run failed before reviewer assignment"
+          elif [ "$COMPARE_OK" != "true" ]; then
             CONTRIB_CELL="**Compare failed** — pinned \`$PREV_TAG\` missing upstream, no auto-assignment"
           elif [ "$ASSIGN_COUNT" -gt 0 ] && [ "$MENTION_COUNT" -gt 0 ]; then
             CONTRIB_CELL="$ASSIGN_COUNT auto-assigned · $MENTION_COUNT mentioned below"
