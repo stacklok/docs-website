@@ -138,6 +138,79 @@ a dedicated vMCP instance per team instead.
 
 :::
 
+## Capacity limits
+
+Review these limits before planning capacity for a vMCP deployment.
+
+### Per-pod session cache
+
+Each vMCP pod holds a node-local LRU cache capped at **1,000 concurrent
+sessions**. When the cache is full, the least-recently-used session is evicted
+and its backend connections are closed. Any request in flight at eviction time
+fails, and the next request for that session ID triggers a cache miss.
+
+When Redis session storage is configured, the session manager transparently
+rebuilds the session from stored metadata and reconnects to backends, so clients
+do not need to reinitialize. Without Redis, an evicted session is lost and the
+client must reinitialize.
+
+To serve more than 1,000 concurrent sessions per replica, add vMCP replicas and
+configure Redis session storage. Total capacity scales as `replicas × 1,000`.
+
+### Session TTL
+
+The vMCP server applies a **30-minute inactivity TTL** to session metadata. A
+session with no activity for 30 minutes expires and must be reinitialized by the
+client.
+
+With Redis session storage, the TTL is a sliding window: every request
+atomically refreshes the key's expiry. Active sessions remain valid indefinitely
+as long as they receive at least one request per TTL window. There is no
+absolute maximum session lifetime.
+
+### File descriptors
+
+Each open backend connection consumes one file descriptor on the vMCP pod. A pod
+aggregating many MCP backends at high session concurrency can exhaust the
+container's `nofile` limit before hitting the 1,000-session cache cap.
+
+Estimate the requirement as `concurrent_sessions × backends_per_session`, plus
+overhead for incoming client connections. The default Linux soft `nofile` limit
+is typically 1,024; raise it in the container spec or at the node level if you
+expect to serve hundreds of sessions aggregating multiple backends.
+
+### Redis sizing
+
+When you enable Redis session storage, size the Redis instance for the full
+fleet. Session payloads include routing tables and tool metadata - a rough
+estimate is 10-50 KB per session depending on backend count and tool count, with
+a fleet-wide maximum of `replicas × 1,000` concurrent sessions.
+
+Configure Redis with the `allkeys-lru` eviction policy so Redis sheds stale
+sessions under memory pressure rather than returning errors on new writes. Redis
+persistence is not required for session storage; if the Redis instance restarts,
+all sessions are lost and clients must reinitialize.
+
+Default timeouts (all tunable through `sessionStorage` configuration):
+
+| Setting       | Default   |
+| ------------- | --------- |
+| Dial timeout  | 5 seconds |
+| Read timeout  | 3 seconds |
+| Write timeout | 3 seconds |
+
+### Stateful backend data loss on pod restart
+
+vMCP is a stateless proxy: it holds routing tables and tool aggregation state,
+but backend MCP servers own their own state (browser sessions, database cursors,
+open files). When a vMCP pod restarts or is evicted, backend connections are
+torn down without a graceful MCP shutdown sequence.
+
+With Redis session storage, the routing table survives and clients can
+reconnect. However, any backend-side state is not recovered - the new connection
+starts fresh. In-flight tool calls are lost without a response. Implement retry
+logic with idempotency guards for tool invocations that modify external state.
+
 ## Next steps
 
 - [Explore Kubernetes operator guides](../guides-k8s/index.mdx) for managing MCP
