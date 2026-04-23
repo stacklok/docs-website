@@ -345,7 +345,11 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'toolhive/reference/client-compatibility',
-        'toolhive/reference/authz-policy-reference',
+        {
+          type: 'doc',
+          id: 'toolhive/reference/authz-policy-reference',
+          label: 'Authorization policies',
+        },
       ],
     },
     {
