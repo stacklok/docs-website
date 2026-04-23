@@ -204,7 +204,11 @@ jobs:
           EOF
           sed -i 's/^          //' /tmp/bootstrap-body.md
 
+          # Opens as draft; the "Flip PR to ready for review" step at
+          # the end of the job flips it once the body has been augmented
+          # and reviewers assigned.
           gh pr create \
+            --draft \
             --base "$BASE_REF" \
             --head "$BRANCH" \
             --title "Update $PROJECT_ID to $NEW_TAG (manual dispatch)" \
@@ -252,6 +256,27 @@ jobs:
             echo "head_ref=$HEAD"
             echo "base_ref=$BASE"
           } >> "$GITHUB_OUTPUT"
+
+      # Flip the PR to draft for the duration of the augmentation job.
+      # A Renovate-opened PR arrives non-draft with the default bump-
+      # only body -- reviewers could approve / merge it before the
+      # skill has written any content. Bootstrap PRs are already
+      # --draft from the create call above, but we still run this for
+      # idempotency on workflow_dispatch retries. The "Flip PR to
+      # ready for review" step at the end reverses this once the body
+      # is augmented and reviewers are assigned.
+      - name: Convert PR to draft
+        if: steps.eff.outputs.number != ''
+        env:
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+        run: |
+          IS_DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq .isDraft)
+          if [ "$IS_DRAFT" = "false" ]; then
+            gh pr ready "$PR_NUMBER" --undo
+            echo "Converted PR #$PR_NUMBER to draft."
+          else
+            echo "PR #$PR_NUMBER is already a draft; nothing to do."
+          fi
 
       - name: Checkout PR branch
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -393,83 +418,6 @@ jobs:
       - name: Capture pre-skill SHA
         id: pre_skill
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Assign reviewers and prepare contributor mentions
-        id: reviewers
-        env:
-          REPO: ${{ steps.detect.outputs.repo }}
-          PREV: ${{ steps.detect.outputs.prev_tag }}
-          NEW: ${{ steps.detect.outputs.new_tag }}
-          REVIEW_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ steps.eff.outputs.number }}
-        run: |
-          # Get non-bot commit authors in the release range.
-          if COMPARE=$(gh api "repos/$REPO/compare/$PREV...$NEW" \
-              --jq '[.commits[].author.login? // empty] | unique | .[]' 2>/dev/null); then
-            echo "compare_ok=true" >> "$GITHUB_OUTPUT"
-          else
-            COMPARE=""
-            echo "compare_ok=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # Filter out bot accounts.
-          CANDIDATES=$(echo "$COMPARE" |
-            grep -Ev '(\[bot\]$|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)' || true)
-
-          # Attempt to assign each candidate as a reviewer individually,
-          # rather than filtering upfront and batching. Rationale:
-          #   - `gh pr edit --add-reviewer "a,b,c"` is atomic. A single
-          #     422 on any name aborts the whole call, dropping valid
-          #     names alongside invalid ones.
-          #   - `gh api repos/X/collaborators/Y` as a pre-filter is
-          #     unreliable from a GITHUB_TOKEN in Actions: on PR #759
-          #     the check returned 404 for Stacklok employees who ARE
-          #     collaborators via the `stackers` team (push perm on
-          #     this repo), and only `rdimitrov` slipped through. We
-          #     suspect the collaborator endpoint treats team-based
-          #     access differently for GITHUB_TOKEN vs PATs with
-          #     read:org, but haven't nailed down the exact rule.
-          # Per-user attempts sidestep both issues: the authoritative
-          # answer is "does GitHub accept this as a reviewer right now"
-          # and we ask the API that question directly.
-          #
-          # Cap attempts at 5 to avoid review fatigue on big releases.
-          TRIED=0
-          ASSIGN_LIST=""
-          MENTION_LIST=""
-          while IFS= read -r login; do
-            [ -z "$login" ] && continue
-            if [ "$TRIED" -ge 5 ]; then
-              # Over the review-fatigue cap -- mention any additional
-              # contributors instead of trying to assign them.
-              MENTION_LIST="${MENTION_LIST:+$MENTION_LIST }@$login"
-              continue
-            fi
-            TRIED=$((TRIED + 1))
-            if gh pr edit "$PR_NUMBER" --add-reviewer "$login" 2>/dev/null; then
-              ASSIGN_LIST="${ASSIGN_LIST:+$ASSIGN_LIST,}$login"
-              echo "Assigned: $login"
-            else
-              MENTION_LIST="${MENTION_LIST:+$MENTION_LIST }@$login"
-              echo "Mention (assignment rejected by GitHub): $login"
-            fi
-          done <<< "$CANDIDATES"
-
-          # Exposed for diagnostic visibility in the PR body (e.g.,
-          # "Auto-assigned: @alice @bob") and for the next workflow_
-          # dispatch retry to know what was attempted.
-          echo "list=$ASSIGN_LIST" >> "$GITHUB_OUTPUT"
-          {
-            echo "mention_block<<MENTION_EOF"
-            if [ -n "$MENTION_LIST" ]; then
-              echo "Release contributors we couldn't auto-assign as reviewers (review fatigue cap or GitHub rejected the assignment). Mentioning them so they see the PR documenting their work:"
-              echo ""
-              echo "$MENTION_LIST"
-            fi
-            echo "MENTION_EOF"
-          } >> "$GITHUB_OUTPUT"
-          echo "Auto-assigned: ${ASSIGN_LIST:-<none>}"
-          echo "Mentioned:     ${MENTION_LIST:-<none>}"
 
       - name: Read docs_paths hint
         id: hints
@@ -1042,6 +990,91 @@ jobs:
             git push origin "HEAD:$HEAD_REF"
           fi
 
+      # Reviewer assignment is deliberately at the end of the job (not
+      # at skill-start). Placement rationale: GitHub fires the
+      # "review-requested" email the moment `gh pr edit --add-reviewer`
+      # runs. If we assign early, reviewers land on a half-written,
+      # draft PR whose body is still the default Renovate bump-only
+      # text. Running this right before the body augmentation and
+      # flip-to-ready gives reviewers a single coherent notification
+      # on a PR that's actually reviewable.
+      - name: Assign reviewers and prepare contributor mentions
+        id: reviewers
+        env:
+          REPO: ${{ steps.detect.outputs.repo }}
+          PREV: ${{ steps.detect.outputs.prev_tag }}
+          NEW: ${{ steps.detect.outputs.new_tag }}
+          REVIEW_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+        run: |
+          # Get non-bot commit authors in the release range.
+          if COMPARE=$(gh api "repos/$REPO/compare/$PREV...$NEW" \
+              --jq '[.commits[].author.login? // empty] | unique | .[]' 2>/dev/null); then
+            echo "compare_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            COMPARE=""
+            echo "compare_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Filter out bot accounts.
+          CANDIDATES=$(echo "$COMPARE" |
+            grep -Ev '(\[bot\]$|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)' || true)
+
+          # Attempt to assign each candidate as a reviewer individually,
+          # rather than filtering upfront and batching. Rationale:
+          #   - `gh pr edit --add-reviewer "a,b,c"` is atomic. A single
+          #     422 on any name aborts the whole call, dropping valid
+          #     names alongside invalid ones.
+          #   - `gh api repos/X/collaborators/Y` as a pre-filter is
+          #     unreliable from a GITHUB_TOKEN in Actions: on PR #759
+          #     the check returned 404 for Stacklok employees who ARE
+          #     collaborators via the `stackers` team (push perm on
+          #     this repo), and only `rdimitrov` slipped through. We
+          #     suspect the collaborator endpoint treats team-based
+          #     access differently for GITHUB_TOKEN vs PATs with
+          #     read:org, but haven't nailed down the exact rule.
+          # Per-user attempts sidestep both issues: the authoritative
+          # answer is "does GitHub accept this as a reviewer right now"
+          # and we ask the API that question directly.
+          #
+          # Cap attempts at 5 to avoid review fatigue on big releases.
+          TRIED=0
+          ASSIGN_LIST=""
+          MENTION_LIST=""
+          while IFS= read -r login; do
+            [ -z "$login" ] && continue
+            if [ "$TRIED" -ge 5 ]; then
+              # Over the review-fatigue cap -- mention any additional
+              # contributors instead of trying to assign them.
+              MENTION_LIST="${MENTION_LIST:+$MENTION_LIST }@$login"
+              continue
+            fi
+            TRIED=$((TRIED + 1))
+            if gh pr edit "$PR_NUMBER" --add-reviewer "$login" 2>/dev/null; then
+              ASSIGN_LIST="${ASSIGN_LIST:+$ASSIGN_LIST,}$login"
+              echo "Assigned: $login"
+            else
+              MENTION_LIST="${MENTION_LIST:+$MENTION_LIST }@$login"
+              echo "Mention (assignment rejected by GitHub): $login"
+            fi
+          done <<< "$CANDIDATES"
+
+          # Exposed for diagnostic visibility in the PR body (e.g.,
+          # "Auto-assigned: @alice @bob") and for the next workflow_
+          # dispatch retry to know what was attempted.
+          echo "list=$ASSIGN_LIST" >> "$GITHUB_OUTPUT"
+          {
+            echo "mention_block<<MENTION_EOF"
+            if [ -n "$MENTION_LIST" ]; then
+              echo "Release contributors we couldn't auto-assign as reviewers (review fatigue cap or GitHub rejected the assignment). Mentioning them so they see the PR documenting their work:"
+              echo ""
+              echo "$MENTION_LIST"
+            fi
+            echo "MENTION_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Auto-assigned: ${ASSIGN_LIST:-<none>}"
+          echo "Mentioned:     ${MENTION_LIST:-<none>}"
+
       - name: Augment PR body (marker-delimited section)
         # Runs even if earlier steps soft-failed so the augmentation
         # survives partial failures; a subsequent workflow_dispatch
@@ -1316,6 +1349,24 @@ jobs:
           fi
 
           gh pr edit "$PR_NUMBER" --body-file /tmp/pr-body.md
+
+      # Counterpart to the "Convert PR to draft" step at the top of
+      # the job. Uses success() (not always()) on purpose: a failed
+      # run leaves the PR as draft so nobody merges a half-written
+      # augmentation. The existing failure-comment step at the end of
+      # the job points reviewers to the retry command.
+      - name: Flip PR to ready for review
+        if: success() && steps.eff.outputs.number != ''
+        env:
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+        run: |
+          IS_DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq .isDraft)
+          if [ "$IS_DRAFT" = "true" ]; then
+            gh pr ready "$PR_NUMBER"
+            echo "Flipped PR #$PR_NUMBER to ready for review."
+          else
+            echo "PR #$PR_NUMBER is already ready for review; nothing to do."
+          fi
 
       # Post-run summary for workflow_dispatch, mirroring the pre-run
       # placeholder comment above. Gives reviewers a single point in
