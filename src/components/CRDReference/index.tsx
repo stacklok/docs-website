@@ -264,7 +264,7 @@ export function CRDFields({
   include,
   exclude,
 }: CRDFieldsProps): React.ReactNode {
-  const schema = schemas[kind as CRDKind];
+  const schema = schemas[kind as CRDKind] as unknown as Schema;
   if (!schema) {
     return (
       <div className={styles.error}>
