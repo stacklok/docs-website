@@ -27,6 +27,24 @@ interface HubSpotFormProps {
   anchorId?: string;
 }
 
+interface HubSpotFormCreateOptions {
+  portalId: string;
+  formId: string;
+  region: string;
+  target: string;
+  onFormSubmitted?: () => void;
+}
+
+declare global {
+  interface Window {
+    hbspt?: {
+      forms: {
+        create: (options: HubSpotFormCreateOptions) => void;
+      };
+    };
+  }
+}
+
 const SCRIPT_SRC = '//js-na2.hsforms.net/forms/embed/v2.js';
 
 export default function HubSpotForm({
@@ -46,7 +64,7 @@ export default function HubSpotForm({
     if (!containerRef.current) return;
 
     const init = () => {
-      window['hbspt'].forms.create({
+      window.hbspt?.forms.create({
         portalId,
         formId,
         region,
@@ -55,7 +73,7 @@ export default function HubSpotForm({
       });
     };
 
-    if (window['hbspt']) {
+    if (window.hbspt) {
       init();
       return;
     }

@@ -29,6 +29,7 @@ interface EnterpriseAdmonitionProps {
 function EnterpriseAdmonition(props: EnterpriseAdmonitionProps): ReactNode {
   return (
     <AdmonitionLayout
+      type='enterprise'
       icon={<StacklokIcon />}
       title={props.title ?? 'Stacklok Enterprise'}
       className={`alert alert--enterprise ${props.className ?? ''}`}

@@ -59,8 +59,10 @@ export default function mcpMetadataPlugin(
           }
 
           // Store error message as fallback
+          const message =
+            error instanceof Error ? error.message : String(error);
           serverData[serverName] = `# Error fetching data for ${serverName}
-# ${error.message}
+# ${message}
 # Please check that the server exists in the registry and thv command is available`;
         }
       }
