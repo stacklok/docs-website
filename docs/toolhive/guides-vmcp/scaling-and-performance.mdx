@@ -1,11 +1,13 @@
 ---
 title: Scaling and performance
 description:
-  How to scale Virtual MCP Server deployments vertically and horizontally.
+  How to scale Virtual MCP Server deployments vertically and horizontally, and
+  the known capacity limits operators should plan for.
 ---
 
-This guide explains how to scale Virtual MCP Server (vMCP) deployments. For
-MCPServer scaling, see
+This guide explains how to scale Virtual MCP Server (vMCP) deployments and
+documents the known scalability limits so you can plan capacity appropriately.
+For MCPServer scaling, see
 [Horizontal scaling](../guides-k8s/run-mcp-k8s.mdx#horizontal-scaling) in the
 Kubernetes operator guide.
 
@@ -135,6 +137,131 @@ For stateless backends, set `sessionAffinity: None` so the Service load-balances
 freely. For stateful backends where true per-session routing is required,
 `ClientIP` affinity is a best-effort mechanism only. Prefer vertical scaling or
 a dedicated vMCP instance per team instead.
+
+:::
+
+## Known limits and constraints
+
+This section describes the hardcoded limits and configuration-driven constraints
+in the current vMCP implementation. Use this information to plan capacity,
+configure Redis, and set OS-level tuning parameters before you scale beyond a
+single replica.
+
+### Per-pod session cache
+
+Each vMCP pod maintains a node-local LRU cache with a hard cap of **1,000
+concurrent sessions**. When the cache is full, the least-recently-used session
+is evicted and its backend connections are closed. Clients whose sessions are
+evicted receive an error and must reconnect.
+
+This limit is not currently configurable from the VirtualMCPServer CRD. If you
+expect more than 1,000 concurrent sessions, scale horizontally by adding
+replicas and configuring Redis session storage.
+
+### Session TTL
+
+vMCP sessions have a default TTL of **30 minutes**. A session that receives no
+requests for 30 minutes is cleaned up automatically.
+
+- **Local storage (single replica):** The session is removed from the in-memory
+  store after the TTL elapses.
+- **Redis storage (multi-replica):** The TTL is a sliding window. Each read
+  resets the expiry via `GETEX`, so an active session is preserved indefinitely.
+  A session becomes eligible for Redis eviction only after the full 30 minutes
+  of inactivity.
+
+When a session is explicitly terminated (for example, a client disconnect or an
+authorization failure), vMCP issues a `DEL` to Redis immediately rather than
+waiting for the TTL to expire. Abandoned sessions that are never explicitly
+terminated expire automatically.
+
+:::note
+
+The 30-minute session TTL is a property of the vMCP server and applies
+regardless of whether you use local or Redis session storage. Stateful backend
+operations (tool calls, streaming responses) in progress when a session expires
+are terminated without completing.
+
+:::
+
+### File descriptor limits
+
+Each open backend connection consumes a file descriptor. A single vMCP pod that
+aggregates many MCP backends can exhaust the pod-level file descriptor limit
+before it reaches the 1,000-session cache cap.
+
+The default Linux `nofile` limit is typically 1,024 per process. To increase it,
+configure `securityContext.sysctls` or a custom `ulimit` wrapper in your pod
+template:
+
+```yaml
+spec:
+  podTemplateSpec:
+    spec:
+      containers:
+        - name: vmcp
+          securityContext:
+            allowPrivilegeEscalation: false
+      initContainers:
+        - name: set-fd-limit
+          image: busybox
+          command: ['sh', '-c', 'ulimit -n 65536']
+          securityContext:
+            privileged: true
+```
+
+Alternatively, set the limit at the node level via the container runtime, or
+increase it in your Kubernetes node configuration. The correct value depends on
+the number of backends multiplied by the expected concurrent session count.
+
+### Redis sizing guidance
+
+When Redis session storage is enabled, session data is written on every new
+session and refreshed on every request. Plan your Redis instance size based on
+the following:
+
+| Parameter                       | Guidance                                                                      |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| **Memory per session**          | Estimate 10–50 KB depending on tool count and session metadata size           |
+| **Maximum concurrent sessions** | Replicas × 1,000 (capped by the per-pod LRU cache)                            |
+| **Connection count**            | One connection pool per vMCP pod; size pools to match your replica count      |
+| **Eviction policy**             | Use `allkeys-lru` so Redis can evict stale session keys under memory pressure |
+| **Persistence**                 | Not required; session loss on Redis restart causes clients to reconnect       |
+
+Start with a `256Mi` Redis instance for small deployments and monitor
+`used_memory` as you scale. If `used_memory` exceeds 70% of `maxmemory`, add
+memory or switch to a larger instance before session writes start failing.
+
+Redis timeouts default to 5 seconds (dial), 3 seconds (read), and 3 seconds
+(write). If your Redis instance is overloaded, increase these by configuring a
+dedicated Redis instance rather than raising timeouts, which would mask the
+underlying capacity issue.
+
+### Stateful backends and pod restarts
+
+vMCP is a stateless proxy: it routes MCP protocol messages to backend pods. The
+backend MCP servers themselves may be stateful (for example, Playwright browser
+sessions, database connections, or open file handles).
+
+If a vMCP pod restarts or is evicted while a stateful backend session is in
+progress, **the in-flight operation is lost**. The backend connection is torn
+down without sending a graceful shutdown message. Clients see an error and must
+reinitiate the session and retry any interrupted operations.
+
+Redis session storage preserves the session routing table across pod restarts,
+so clients can reconnect and establish a new session. However, any state held
+exclusively on the backend side (open browser tabs, transaction cursors, and so
+on) is not recovered. Design your workflows to tolerate reconnects, or use
+vertical scaling to minimize the risk of pod restarts for workloads with
+long-running stateful operations.
+
+:::warning
+
+Multi-replica deployments with stateful backends require that all requests from
+a given session reach the same backend pod. `ClientIP` affinity provides
+best-effort routing but fails silently when clients are behind NAT. For
+production stateful workloads, prefer vertical scaling (one large pod) over
+horizontal scaling.
 
 :::
 
