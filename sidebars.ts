@@ -1,6 +1,10 @@
 import type { SidebarsConfig } from '@docusaurus/plugin-content-docs';
 import { buildCliReferenceSidebar } from './src/utils/buildHierarchicalSidebar';
-import crdSidebar from './static/api-specs/crds/sidebar.json';
+import crdSidebarJson from './static/api-specs/crds/sidebar.json';
+
+type SidebarItemConfig = SidebarsConfig[string] extends (infer T)[] ? T : never;
+
+const crdSidebar = crdSidebarJson as SidebarItemConfig;
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
