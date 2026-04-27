@@ -1,0 +1,568 @@
+---
+title: Connect vMCP to Microsoft Entra ID
+description:
+  Configure Microsoft Entra ID app roles and connect to VirtualMCPServer for
+  Cedar group-based MCP access control.
+---
+
+This guide covers the full setup for connecting a
+[VirtualMCPServer](../guides-vmcp/authentication.mdx) to Microsoft Entra ID.
+Entra uses App Roles for group-based access control, and the `roles` claim
+appears in the access token.
+
+See [Connect vMCP to an enterprise identity provider](./vmcp-idp-overview.mdx)
+for the architecture overview, shared concepts, and verification steps.
+
+## What you'll need
+
+Collect these values as you complete the steps below:
+
+- [ ] Application (client) ID
+- [ ] Client Secret
+- [ ] Tenant ID
+- [ ] Application ID URI (e.g. `api://<client-id>`)
+- [ ] Issuer URL: `https://login.microsoftonline.com/{tenant-id}/v2.0`
+- [ ] Redirect URI: `https://<your-vmcp-endpoint>/oauth/callback`
+
+## Configure Entra ID
+
+### Step 1: Register an application
+
+- **Entra ID > App registrations > New registration**
+- Name: e.g. `toolhive-engineering`
+- Supported account types: **Single tenant**
+- Redirect URI: platform **Web**, URI
+  `https://<your-vmcp-endpoint>/oauth/callback`
+- Note the **Application (client) ID** and **Directory (tenant) ID**
+
+:::note
+
+The redirect URI must be an exact match - no wildcards, no trailing slashes.
+
+:::
+
+<details>
+<summary>CLI equivalent</summary>
+
+```bash
+TENANT_ID=$(az account show --query tenantId -o tsv)
+DISPLAY_NAME="toolhive-engineering"
+REDIRECT_URI="https://<your-vmcp-endpoint>/oauth/callback"
+
+APP=$(az ad app create \
+  --display-name "$DISPLAY_NAME" \
+  --sign-in-audience AzureADMyOrg \
+  --web-redirect-uris "$REDIRECT_URI" \
+  --query "{appId:appId, id:id}" \
+  -o json)
+
+APP_ID=$(echo $APP | jq -r .appId)
+OBJECT_ID=$(echo $APP | jq -r .id)
+
+echo "APP_ID=$APP_ID"
+echo "OBJECT_ID=$OBJECT_ID"
+echo "TENANT_ID=$TENANT_ID"
+```
+
+`APP_ID` = Application (client) ID. `OBJECT_ID` = Graph object ID (needed for
+PATCH calls). These are different values.
+
+</details>
+
+### Step 2: Expose an API
+
+The embedded auth server needs an access token with your app as the audience
+(not Microsoft Graph) so that App Roles appear in the `roles` claim. This
+requires exposing a custom scope.
+
+- **App registrations > your app > Expose an API**
+- Click **Add** next to "Application ID URI" - accept the default
+  `api://<client-id>`
+- Click **Add a scope**:
+  - Scope name: `mcp.access`
+  - Who can consent: **Admins and users**
+  - Admin consent display name: "Access MCP Servers"
+  - Admin consent description: "Allow access to ToolHive MCP servers"
+  - User consent display name: "Access MCP Servers"
+  - User consent description: "Allow access to ToolHive MCP servers"
+  - State: **Enabled**
+
+:::info[Why is this needed?]
+
+When the embedded auth server requests only standard OIDC scopes
+(`openid profile email`), Entra issues an access token with audience
+`https://graph.microsoft.com`, not your app. App Roles only appear in tokens
+where your app is the audience. Exposing a scope under `api://<client-id>/` lets
+the embedded auth server request a token with your app as the audience, which
+carries the `roles` claim.
+
+:::
+
+<details>
+<summary>CLI equivalent</summary>
+
+```bash
+# 2a: Set Application ID URI
+az ad app update \
+  --id "$APP_ID" \
+  --identifier-uris "api://$APP_ID"
+
+# 2b: Add the mcp.access scope
+SCOPE_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+
+az rest \
+  --method PATCH \
+  --uri "https://graph.microsoft.com/v1.0/applications/$OBJECT_ID" \
+  --headers "Content-Type=application/json" \
+  --body "{
+    \"api\": {
+      \"oauth2PermissionScopes\": [
+        {
+          \"id\": \"$SCOPE_ID\",
+          \"adminConsentDescription\": \"Allow access to ToolHive MCP servers\",
+          \"adminConsentDisplayName\": \"Access MCP Servers\",
+          \"userConsentDescription\": \"Allow access to ToolHive MCP servers\",
+          \"userConsentDisplayName\": \"Access MCP Servers\",
+          \"isEnabled\": true,
+          \"type\": \"User\",
+          \"value\": \"mcp.access\"
+        }
+      ]
+    }
+  }"
+```
+
+`oauth2PermissionScopes` is a full-replacement array. To add more scopes later,
+include existing scopes with their original UUIDs.
+
+</details>
+
+### Step 3: Require assignment
+
+By default, any user in your tenant can authenticate to the app (they just won't
+have any roles). To restrict access to explicitly assigned users only:
+
+- **Enterprise applications > your app > Properties**
+- Set **Assignment required?** to **Yes** > **Save**
+
+:::note
+
+Without this setting, unassigned users can still obtain tokens. They will have
+no `roles` claim and be denied by Cedar, but the experience (successful login
+followed by 403) is avoidable.
+
+:::
+
+<details>
+<summary>CLI equivalent</summary>
+
+```bash
+# The portal creates the service principal automatically;
+# the CLI requires it explicitly before you can set properties on it.
+SP_OBJECT_ID=$(az ad sp create --id "$APP_ID" --query id -o tsv)
+
+az rest \
+  --method PATCH \
+  --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$SP_OBJECT_ID" \
+  --headers "Content-Type=application/json" \
+  --body '{"appRoleAssignmentRequired": true}'
+```
+
+</details>
+
+### Step 4: Create app roles
+
+- **App registrations > your app > App roles > Create app role**
+- Create each role:
+
+| Display name   | Value            | Description                            | Allowed member types |
+| -------------- | ---------------- | -------------------------------------- | -------------------- |
+| MCP Developers | `mcp-developers` | Developer access to MCP tools          | Users/Groups         |
+| MCP Platform   | `mcp-platform`   | Platform/SRE access to MCP tools       | Users/Groups         |
+| MCP Admin      | `mcp-admin`      | Administrative access to all MCP tools | Users/Groups         |
+
+:::note
+
+For machine-to-machine scenarios, set Allowed member types to **Applications**.
+
+:::
+
+<details>
+<summary>CLI equivalent</summary>
+
+```bash
+# All three roles must be set in a single call (full replacement).
+ROLE_DEVELOPERS_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+ROLE_PLATFORM_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+ROLE_ADMIN_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+
+az ad app update \
+  --id "$APP_ID" \
+  --app-roles "[
+    {
+      \"id\": \"$ROLE_DEVELOPERS_ID\",
+      \"allowedMemberTypes\": [\"User\"],
+      \"displayName\": \"MCP Developers\",
+      \"description\": \"Developer access to MCP tools\",
+      \"value\": \"mcp-developers\",
+      \"isEnabled\": true
+    },
+    {
+      \"id\": \"$ROLE_PLATFORM_ID\",
+      \"allowedMemberTypes\": [\"User\"],
+      \"displayName\": \"MCP Platform\",
+      \"description\": \"Platform/SRE access to MCP tools\",
+      \"value\": \"mcp-platform\",
+      \"isEnabled\": true
+    },
+    {
+      \"id\": \"$ROLE_ADMIN_ID\",
+      \"allowedMemberTypes\": [\"User\"],
+      \"displayName\": \"MCP Admin\",
+      \"description\": \"Administrative access to all MCP tools\",
+      \"value\": \"mcp-admin\",
+      \"isEnabled\": true
+    }
+  ]"
+```
+
+`allowedMemberTypes: ["User"]` covers both users and groups in assignments.
+`"Group"` is not a separate Graph API value; the portal's "Users/Groups" option
+maps to `["User"]`.
+
+</details>
+
+### Step 5: Assign users and groups to roles
+
+- **Enterprise applications > your app > Users and groups > Add user/group**
+- Select users or security groups
+- **Select the role** (e.g. `mcp-developers`) - Entra defaults to "Default
+  Access" if you skip this step, which will not match your Cedar policies
+- Click **Assign**
+- Roles appear in the `roles` claim on next sign-in
+
+:::warning
+
+**This is the most commonly missed step.** If users report 403 errors after a
+correct setup, verify: (1) users are assigned to the app, (2) the correct role
+is selected for each assignment, and (3) the user has signed in again since the
+assignment was made.
+
+:::
+
+:::warning[Gotcha]
+
+If the role dropdown only shows "Default Access" and not your custom roles,
+refresh the page. App Roles created on the App registration can take a moment to
+propagate to the Enterprise application view. A hard browser refresh
+(Ctrl+Shift+R) usually resolves this.
+
+Nested groups are not supported for app role assignments. Only directly assigned
+group members receive the role claim.
+
+:::
+
+<details>
+<summary>CLI equivalent</summary>
+
+```bash
+# For a standard managed-tenant user:
+USER_OID=$(az ad user show --id "user@yourdomain.com" --query id -o tsv)
+
+# For the signed-in account (tenant owner or personal Microsoft account):
+# USER_OID=$(az ad signed-in-user show --query id -o tsv)
+
+# For a guest/external user, their UPN uses the #EXT# format:
+# USER_OID=$(az ad user show \
+#   --id "user_externaldomain.com#EXT#@yourtenant.onmicrosoft.com" \
+#   --query id -o tsv)
+
+# Assign user to mcp-developers role
+az rest \
+  --method POST \
+  --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$SP_OBJECT_ID/appRoleAssignedTo" \
+  --headers "Content-Type=application/json" \
+  --body "{
+    \"principalId\": \"$USER_OID\",
+    \"resourceId\": \"$SP_OBJECT_ID\",
+    \"appRoleId\": \"$ROLE_DEVELOPERS_ID\"
+  }"
+```
+
+`resourceId` must be the service principal object ID (`SP_OBJECT_ID`), not the
+application client ID (`APP_ID`).
+
+</details>
+
+### Step 6: Create a client secret
+
+- **App registrations > your app > Certificates & secrets > Client secrets > New
+  client secret**
+- Set expiry to 12 months or less
+- Copy the **Value** immediately - it is shown only once and cannot be retrieved
+  later
+
+<details>
+<summary>CLI equivalent</summary>
+
+```bash
+SECRET=$(az ad app credential reset \
+  --id "$APP_ID" \
+  --display-name "toolhive-vmcp-secret" \
+  --years 1 \
+  --append \
+  --query password \
+  -o tsv)
+
+echo "CLIENT_SECRET=$SECRET"  # Store immediately - shown only once
+```
+
+**Use `--append`** or this command deletes all existing credentials.
+
+</details>
+
+### Optional: Configure additional token claims
+
+If you want Cedar policies to reference the user's name or email, or want
+human-readable names in audit logs:
+
+- **App registrations > your app > Token configuration > Add optional claim >
+  select "ID" > check `email`, `given_name`, `family_name` > Add**
+- When prompted to add Microsoft Graph permissions, click **Yes**
+
+This is not required for group-based access control. The `roles` claim is
+already present in the access token from step 2.
+
+<details>
+<summary>CLI equivalent</summary>
+
+```bash
+az ad app update \
+  --id "$APP_ID" \
+  --optional-claims '{
+    "idToken": [
+      {"name": "email",       "essential": false},
+      {"name": "given_name",  "essential": false},
+      {"name": "family_name", "essential": false}
+    ],
+    "accessToken": [],
+    "saml2Token": []
+  }'
+```
+
+</details>
+
+**Scopes the embedded AS requests from Entra**:
+`api://<client-id>/mcp.access openid profile email offline_access`
+
+**Token claims produced** (in the access token): `roles: ["mcp-developers"]`,
+`sub`, `iss`, `aud: "api://<client-id>"`
+
+### Consistency checklist
+
+Role values must match exactly (case-sensitive) in three places:
+
+1. **App role Value field** (step 4): App registrations > your app > App roles >
+   Value (e.g. `mcp-developers`)
+2. **Role assignment** (step 5): Enterprise applications > Users and groups >
+   the role selected during assignment
+3. **Cedar policies** (see [Deploy to ToolHive](#deploy-to-toolhive)):
+   `THVGroup::"mcp-developers"` must match the app role Value exactly
+
+:::warning
+
+Changing the Value in place 1 does not update existing assignments in place 2.
+If you rename a role, you must remove and recreate all assignments.
+
+This Entra application is exclusively for vMCP authentication. Do not reuse an
+existing app registered for other services. Each VirtualMCPServer should have
+its own app registration. See
+[Adding another team](./vmcp-idp-overview.mdx#adding-another-team).
+
+:::
+
+## Deploy to ToolHive
+
+### Step 1: Create the IdP client secret
+
+```bash
+kubectl create secret generic idp-client-secret \
+  -n <your-namespace> \
+  --from-literal=client-secret=<YOUR_CLIENT_SECRET>
+```
+
+:::note
+
+The embedded auth server auto-generates ephemeral signing keys and HMAC secrets
+at startup. This is fine for getting started, but tokens become invalid if the
+pod restarts. For production, provide persistent keys via `signingKeySecretRefs`
+and `hmacSecretRefs` on `authServerConfig`.
+
+:::
+
+### Step 2: Create backend MCPServers
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPGroup
+metadata:
+  name: engineering-tools
+spec:
+  description: 'Engineering team MCP tools'
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: github-backend
+spec:
+  groupRef:
+    name: engineering-tools
+  image: ghcr.io/github/github-mcp-server:latest
+  transport: stdio
+  secrets:
+    - name: github-pat
+      key: token
+      targetEnvName: GITHUB_PERSONAL_ACCESS_TOKEN
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: kubernetes-backend
+spec:
+  groupRef:
+    name: engineering-tools
+  image: ghcr.io/stackloklabs/yardstick/yardstick-server:1.1.1
+  transport: stdio
+```
+
+:::note
+
+Replace the backend images with the MCP servers your team actually uses. The
+`yardstick-server` is a test echo server used here as a placeholder.
+
+:::
+
+### Step 3: Create the VirtualMCPServer
+
+The VirtualMCPServer ties everything together: it references the backend group,
+configures the embedded auth server with Entra ID as the upstream provider, sets
+up incoming OIDC validation, and defines Cedar policies for group-based access
+control.
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: engineering-tools-oidc
+spec:
+  type: inline
+  inline:
+    issuer: 'https://<your-vmcp-endpoint>' # Must match authServerConfig.issuer
+    insecureAllowHTTP: true # Remove in production
+    jwksAllowPrivateIP: true # Remove in production
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: VirtualMCPServer
+metadata:
+  name: engineering-tools
+spec:
+  groupRef:
+    name: engineering-tools
+
+  authServerConfig:
+    issuer: 'https://<your-vmcp-endpoint>'
+    upstreamProviders:
+      - name: entra
+        type: oidc
+        oidcConfig:
+          issuerUrl: 'https://login.microsoftonline.com/<TENANT_ID>/v2.0'
+          clientId: '<YOUR_CLIENT_ID>'
+          clientSecretRef:
+            name: idp-client-secret
+            key: client-secret
+          redirectUri: 'https://<your-vmcp-endpoint>/oauth/callback'
+          scopes:
+            - 'api://<client-id>/mcp.access'
+            - openid
+            - profile
+            - email
+            - offline_access
+
+  incomingAuth:
+    type: oidc
+    oidcConfigRef:
+      name: engineering-tools-oidc
+      audience: 'https://<your-mcp-endpoint>'
+      resourceUrl: 'https://<your-mcp-endpoint>'
+    authzConfig:
+      type: inline
+      inline:
+        policies:
+          - |
+            permit(
+              principal in THVGroup::"mcp-developers",
+              action,
+              resource
+            );
+          - |
+            forbid(
+              principal in THVGroup::"mcp-developers",
+              action == Action::"call_tool",
+              resource == Tool::"delete_namespace"
+            );
+          - |
+            permit(
+              principal in THVGroup::"mcp-platform",
+              action,
+              resource
+            );
+          - |
+            permit(
+              principal in THVGroup::"mcp-admin",
+              action,
+              resource
+            );
+
+  outgoingAuth:
+    source: discovered
+```
+
+In this policy:
+
+- `mcp-developers` can use all tools **except** `delete_namespace`
+- `mcp-platform` can use all tools including dangerous ones
+- `mcp-admin` is the escape hatch with full access
+- Anyone not in these groups is denied (Cedar default deny)
+
+:::info[Note on `audience` vs `resourceUrl`]
+
+The `audience` is the `aud` claim the embedded AS puts in issued JWTs. The
+`resourceUrl` is the RFC 9728 protected resource identifier that MCP clients
+send as the RFC 8707 `resource` parameter. These can differ but often match.
+Both are required.
+
+:::
+
+## Next steps
+
+- [Verify your setup](./vmcp-idp-overview.mdx#verify-your-setup)
+- [Cedar quick reference](./vmcp-idp-overview.mdx#cedar-quick-reference)
+- [Adding another team](./vmcp-idp-overview.mdx#adding-another-team)
+- [Authentication and authorization](../concepts/auth-framework.mdx)
+
+## Troubleshooting
+
+**v1 vs v2 endpoint**: Use the `/v2.0` issuer. The v1 endpoint produces
+different claim formats.
+
+**Roles not appearing**: The user hasn't signed in since role assignment. Roles
+update on next token issuance.
+
+**Multi-tenant vs single-tenant**: Single-tenant is recommended. Multi-tenant
+changes the issuer URL format.
+
+**Redirect URI mismatch**: The redirect URI in Entra must exactly match
+`https://<your-vmcp-endpoint>/oauth/callback`.
+
+For issues common to all IdPs (401, 403, DCR failures), see
+[Troubleshooting](./vmcp-idp-overview.mdx#troubleshooting).

@@ -1,0 +1,205 @@
+---
+title: Connect vMCP to an enterprise identity provider
+description:
+  Connect VirtualMCPServer to Okta or Entra ID with embedded OAuth 2.0 auth and
+  Cedar group-based access control for engineering teams.
+---
+
+Your engineering team needs access to GitHub and Kubernetes MCP tools through a
+single gateway. ToolHive's Virtual MCP Server (vMCP) aggregates multiple
+backends behind one endpoint, with Cedar policies controlling which tools each
+group can use.
+
+This guide walks through setting up one VirtualMCPServer (`engineering-tools`)
+with two backends, protected by your corporate identity provider. The pattern
+repeats. Adding a second team (e.g., `sales-tools`) follows the same steps with
+a new app registration and a new VirtualMCPServer.
+
+## How it works
+
+ToolHive includes an embedded OAuth 2.0 Authorization Server that runs inside
+the VirtualMCPServer process. MCP clients (VS Code, Claude Desktop) never talk
+to your IdP directly. They discover the embedded auth server via standard MCP
+OAuth discovery and authenticate through it.
+
+For a full diagram of the embedded auth server flow, see
+[Authentication](../guides-vmcp/authentication.mdx).
+
+The flow:
+
+1. MCP client discovers the embedded AS via
+   `/.well-known/oauth-protected-resource`
+2. Client self-registers via Dynamic Client Registration (DCR)
+3. User authenticates at Okta or Entra ID through the embedded AS
+4. Embedded AS issues a ToolHive JWT
+5. Client uses that JWT for all subsequent MCP requests
+6. Cedar evaluates group claims per tool call
+
+:::tip
+
+See [Authentication and authorization](../concepts/auth-framework.mdx) for
+deeper background on Cedar and ToolHive's security model.
+
+:::
+
+### Per-team isolation
+
+Each team gets its own VirtualMCPServer with its own embedded auth server and
+audience. A token for `engineering-tools` is cryptographically invalid at
+`sales-tools`. This satisfies the MCP specification's requirement that servers
+"MUST validate that access tokens were issued specifically for them." See
+[Adding another team](#adding-another-team).
+
+### Cedar group model
+
+Okta puts group membership in the `groups` claim. Entra ID puts it in the
+`roles` claim. Both are in ToolHive's default claim extraction list (`groups`,
+`roles`, `cognito:groups`), so the same Cedar policies work with either IdP, as
+long as you use the same `mcp-` prefix convention for both Okta group names and
+Entra role values.
+
+## Prerequisites
+
+- Kubernetes cluster with the ToolHive operator installed
+- `kubectl` access to your target namespace
+- Admin access to your identity provider
+- A publicly reachable URL for your VirtualMCPServer (the embedded auth server
+  needs a callback URL that your IdP can redirect to)
+
+## Choose your identity provider
+
+Follow the guide for your IdP to complete the full setup and deployment:
+
+- [Microsoft Entra ID](./vmcp-entra-id.mdx) - uses App Roles for group-based
+  access control, with the `roles` claim in access tokens
+- [Okta](./vmcp-okta.mdx) - uses Okta Groups and a custom authorization server,
+  with the `groups` claim in access tokens
+
+For other OIDC-compliant providers, see
+[vMCP authentication](../guides-vmcp/authentication.mdx).
+
+## Verify your setup
+
+For instructions on pointing VS Code, Claude Desktop, or other MCP clients at
+your VirtualMCPServer endpoint, see
+[Connect clients to MCP servers](../guides-k8s/connect-clients.mdx).
+
+### Verify group-based access
+
+- Log in as a user in the `developers` group - should see tools from both
+  backends
+- Log in as a user in the `platform` group - should see all tools
+- Log in as a user in neither group - should be denied all tools (Cedar default
+  deny)
+
+### Manual verification with curl
+
+```bash
+# Port-forward the vMCP service
+kubectl port-forward svc/vmcp-engineering-tools 9091:4483 &
+
+# Check the embedded AS is running
+curl -s http://localhost:9091/.well-known/oauth-authorization-server | jq .
+
+# Unauthenticated request should return 401
+curl -s -o /dev/null -w "%{http_code}" http://localhost:9091/mcp
+```
+
+## Cedar quick reference
+
+| Pattern                 | Cedar expression                                                                                                        |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Allow a group all tools | `permit(principal in THVGroup::"mcp-developers", action, resource);`                                                    |
+| Allow a specific user   | `permit(principal == Client::"user@example.com", action == Action::"call_tool", resource);`                             |
+| Allow by claim value    | `permit(principal, action == Action::"call_tool", resource) when { principal.claim_roles.contains("admin") };`          |
+| Restrict to one tool    | `permit(principal in THVGroup::"mcp-platform", action == Action::"call_tool", resource == Tool::"get_pods");`           |
+| Deny a group one tool   | `forbid(principal in THVGroup::"mcp-developers", action == Action::"call_tool", resource == Tool::"delete_namespace");` |
+| Admin escape hatch      | `permit(principal in THVGroup::"mcp-admin", action, resource);`                                                         |
+
+See [Cedar policies](../concepts/cedar-policies.mdx) for full reference.
+
+## Adding another team
+
+To add a second team (e.g., `sales-tools`), repeat the IdP and ToolHive steps
+with a new app registration and a new VirtualMCPServer. All teams can share the
+same Okta authorization server or Entra tenant.
+
+### IdP setup
+
+1. **Create a new OIDC app registration** for the new vMCP. Do not add redirect
+   URIs to the existing app. Each VirtualMCPServer should have its own app
+   registration so that:
+   - Client secrets can be rotated independently
+   - Access can be revoked per-team without affecting others
+   - Audit logs attribute events to the correct team
+2. Configure the new app the same way (Authorization Code and Refresh Token
+   grants, redirect URI `https://sales-tools.example.com/oauth/callback`)
+3. Create an `mcp-sales` group (matching your prefix convention) and assign
+   users
+4. Assign the group to the new app
+
+### ToolHive setup
+
+Copy the VirtualMCPServer manifest, changing:
+
+- `metadata.name`: `sales-tools`
+- `audience` and `resourceUrl`: `https://sales-tools.example.com`
+- `authServerConfig.issuer`: `https://sales-tools.example.com`
+- `upstreamProviders[0].clientId`: the new app's client ID
+- `upstreamProviders[0].clientSecretRef`: a new Secret with the new app's client
+  secret
+- `redirectUri`: `https://sales-tools.example.com/oauth/callback`
+- Cedar policies: `THVGroup::"mcp-sales"`
+
+Create the MCPGroup and MCPServer backends for the sales team.
+
+### Audience isolation
+
+Each VirtualMCPServer gets its own audience, so tokens for `engineering-tools`
+are cryptographically invalid at `sales-tools`. This provides per-team isolation
+at the OIDC layer. No Cedar misconfiguration can cross this boundary.
+
+:::info[Why per-team audience isolation?]
+
+The MCP specification requires that each server "MUST validate that access
+tokens were issued specifically for them." With the embedded auth server,
+per-server audiences are free: the embedded AS sets the `aud` claim based on the
+RFC 8707 `resource` parameter from the MCP client's request. No extra
+authorization server is needed.
+
+:::
+
+:::info[Why one app per vMCP?]
+
+A shared app with multiple redirect URIs works for getting started, but couples
+all teams' lifecycle together. Separate apps give you independent secret
+rotation, per-team audit attribution, and the ability to revoke one team's
+access without affecting others.
+
+:::
+
+## Next steps
+
+- [Connect vMCP to Microsoft Entra ID](./vmcp-entra-id.mdx)
+- [Connect vMCP to Okta](./vmcp-okta.mdx)
+- [Authentication and authorization](../concepts/auth-framework.mdx)
+- [Cedar policies](../concepts/cedar-policies.mdx)
+
+## Troubleshooting
+
+**401 Unauthorized**: Issuer mismatch, audience mismatch, expired token, JWKS
+endpoint unreachable, or embedded AS not running. Check that
+`authServerConfig.issuer` matches `MCPOIDCConfig.inline.issuer`.
+
+**403 Forbidden**: Cedar policy denied. Check that group or role claim names in
+the token match the `THVGroup` values in your policies.
+
+**MCP client can't discover auth**: Verify
+`/.well-known/oauth-protected-resource` returns JSON with
+`authorization_servers` pointing to the embedded AS.
+
+**DCR fails**: Ensure the `/oauth/register` endpoint is routable from the
+client. If using ingress, verify the route exists.
+
+**Tools not visible**: Backends may not have joined the group yet. Check
+`kubectl get mcpserver` and verify the backends show `STATUS: Ready`.
