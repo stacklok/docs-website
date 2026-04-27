@@ -310,6 +310,18 @@ const sidebars: SidebarsConfig = {
         'toolhive/integrations/aws-sts',
         'toolhive/integrations/ingress-ngrok',
         'toolhive/integrations/okta',
+        {
+          type: 'category',
+          label: 'Identity provider integration',
+          link: {
+            type: 'doc',
+            id: 'toolhive/integrations/vmcp-idp-overview',
+          },
+          items: [
+            'toolhive/integrations/vmcp-entra-id',
+            'toolhive/integrations/vmcp-okta',
+          ],
+        },
       ],
     },
 
