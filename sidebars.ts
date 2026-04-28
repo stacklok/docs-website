@@ -58,8 +58,24 @@ const sidebars: SidebarsConfig = {
           ],
         },
         'toolhive/guides-ui/client-configuration',
+        {
+          type: 'category',
+          label: 'Skills',
+          description:
+            'How to install, build, and manage agent skills from the ToolHive UI',
+          collapsed: false,
+          collapsible: false,
+          link: {
+            type: 'doc',
+            id: 'toolhive/guides-ui/skills',
+          },
+          items: [
+            'toolhive/guides-ui/skills-browse-install',
+            'toolhive/guides-ui/skills-build',
+            'toolhive/guides-ui/skills-manage',
+          ],
+        },
         'toolhive/guides-ui/cli-access',
-        'toolhive/guides-ui/mcp-optimizer',
         'toolhive/guides-ui/playground',
       ],
     },
