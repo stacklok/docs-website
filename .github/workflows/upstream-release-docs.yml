@@ -820,44 +820,21 @@ jobs:
           echo "Skill produced $COUNT commit(s) between pre_skill and now."
 
       # Auto-apply the same formatters the project's pre-commit hook
-      # runs, scoped to the files the skill touched. The skill's
-      # sandbox doesn't include npm run prettier/eslint, so without
-      # this step any formatting drift lands on PR CI as a "Lint and
-      # format checks" failure requiring a human push. Scope via git
-      # diff vs the pre-skill SHA so we don't reformat auto-generated
-      # reference assets (which would fight the generators).
-      - name: Auto-fix prettier and eslint on skill-touched files
+      # runs. The skill's sandbox doesn't include npm run
+      # prettier/eslint, so without this step any formatting drift
+      # lands on PR CI as a "Lint and format checks" failure
+      # requiring a human push. Run the repo-wide scripts: they
+      # already exclude auto-generated reference paths via
+      # .prettierignore and eslint.config.mjs, and a whole-repo
+      # scan is robust to deletions and renames in the skill's
+      # diff (which a per-file xargs invocation is not).
+      - name: Auto-fix prettier and eslint
         id: autofix
         if: always() && steps.skill_gen.conclusion == 'success'
-        env:
-          BASELINE_SHA: ${{ steps.pre_skill.outputs.sha }}
         run: |
-          # Files the skill added/modified, excluding the three
-          # auto-generated reference paths.
-          CHANGED=$(git diff --name-only "$BASELINE_SHA..HEAD" -- \
-            ':!docs/toolhive/reference/cli/' \
-            ':!docs/toolhive/reference/crds/' \
-            ':!static/api-specs/' \
-            2>/dev/null | \
-            grep -E '\.(md|mdx|ts|tsx|js|jsx|mjs|cjs|css|json|jsonc|yaml|yml)$' || true)
-          if [ -z "$CHANGED" ]; then
-            echo "No skill-touched files in scope for autofix."
-            exit 0
-          fi
-          echo "Running prettier --write and eslint --fix on:"
-          echo "$CHANGED"
-          # xargs -0 with a NUL-delimited list so filenames with
-          # spaces survive.
-          printf '%s\n' "$CHANGED" | tr '\n' '\0' | \
-            xargs -0 npx prettier --write --log-level warn
-          # eslint --fix against mdx/ts/tsx/js only.
-          LINT_TARGETS=$(printf '%s\n' "$CHANGED" | \
-            grep -E '\.(mdx|ts|tsx|js|jsx|mjs|cjs)$' || true)
-          if [ -n "$LINT_TARGETS" ]; then
-            printf '%s\n' "$LINT_TARGETS" | tr '\n' '\0' | \
-              xargs -0 npx eslint --fix --no-error-on-unmatched-pattern || \
-              echo "::warning::eslint --fix reported non-zero; proceeding."
-          fi
+          npm run prettier:fix
+          npm run eslint:fix || \
+            echo "::warning::eslint --fix reported non-zero; proceeding."
           if git diff --quiet; then
             echo "No formatting changes needed."
           else
