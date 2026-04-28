@@ -8,23 +8,6 @@ schema_type: tutorial
 
 ## Overview
 
-:::warning[Registry format change]
-
-As of ToolHive v0.25.0, the legacy ToolHive-native registry format used in this
-tutorial is no longer accepted by `thv config set-registry` or by remote
-registries. Convert any registry file you create here to the upstream MCP format
-before applying it:
-
-```bash
-thv registry convert --in registry.json --in-place
-```
-
-The conversion is lossless. To author files directly in the upstream format
-instead, see the
-[upstream registry schema reference](../reference/registry-schema-upstream.mdx).
-
-:::
-
 ToolHive includes a built-in registry of MCP servers with verified
 configurations that meet a
 [minimum quality standard](../concepts/registry-criteria.mdx).
@@ -84,62 +67,110 @@ Create a new file called `registry.json` and add the following content:
 
 ```json title='registry.json'
 {
-  "$schema": "https://raw.githubusercontent.com/stacklok/toolhive-core/main/registry/types/data/toolhive-legacy-registry.schema.json",
+  "$schema": "https://raw.githubusercontent.com/stacklok/toolhive-core/main/registry/types/data/upstream-registry.schema.json",
   "version": "1.0.0",
-  "last_updated": "2025-08-15T10:00:00Z",
-  "servers": {
-    "my-fetch": {
-      "description": "A custom web content fetching MCP server for our organization",
-      "image": "ghcr.io/stackloklabs/gofetch/server:latest",
-      "status": "Active",
-      "tier": "Community",
-      "transport": "streamable-http",
-      "args": ["--user-agent", "Mozilla/5.0 (compatible;MyOrgFetchBot/1.0)"],
-      "tags": ["web", "fetch", "content"],
-      "tools": ["fetch"],
-      "permissions": {
-        "network": {
-          "outbound": {
-            "allow_host": [".example.com", "api.mycompany.com"],
-            "allow_port": [80, 443]
-          }
-        }
-      }
-    }
+  "meta": {
+    "last_updated": "2025-08-15T10:00:00Z"
   },
-  "groups": [
-    {
-      "name": "dev-toolkit",
-      "description": "Essential MCP servers for development workflows",
-      "servers": {
-        "fetch-tool": {
-          "description": "A web content fetching MCP server for development",
-          "image": "ghcr.io/stackloklabs/gofetch/server:latest",
-          "status": "Active",
-          "tier": "Community",
-          "transport": "streamable-http",
-          "args": ["--user-agent", "Mozilla/5.0 (compatible;DevBot/1.0)"],
-          "tags": ["web", "fetch", "dev"],
-          "tools": ["fetch"],
-          "permissions": {
-            "network": {
-              "outbound": {
-                "allow_host": [".github.com", ".stackoverflow.com"],
-                "allow_port": [80, 443]
+  "data": {
+    "servers": [
+      {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "com.example/my-fetch",
+        "title": "my-fetch",
+        "description": "A custom web content fetching MCP server for our organization",
+        "version": "1.0.0",
+        "packages": [
+          {
+            "registryType": "oci",
+            "identifier": "ghcr.io/stackloklabs/gofetch/server:latest",
+            "transport": {
+              "type": "streamable-http",
+              "url": "http://localhost:8080"
+            }
+          }
+        ],
+        "_meta": {
+          "io.modelcontextprotocol.registry/publisher-provided": {
+            "com.example": {
+              "ghcr.io/stackloklabs/gofetch/server:latest": {
+                "status": "Active",
+                "tier": "Community",
+                "tags": ["web", "fetch", "content"],
+                "tools": ["fetch"],
+                "args": ["--user-agent", "Mozilla/5.0 (compatible;MyOrgFetchBot/1.0)"],
+                "permissions": {
+                  "network": {
+                    "outbound": {
+                      "allow_host": [".example.com", "api.mycompany.com"],
+                      "allow_port": [80, 443]
+                    }
+                  }
+                }
               }
             }
           }
         }
       }
-    }
-  ]
+    ],
+    "groups": [
+      {
+        "name": "dev-toolkit",
+        "description": "Essential MCP servers for development workflows",
+        "servers": [
+          {
+            "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+            "name": "com.example/fetch-tool",
+            "title": "fetch-tool",
+            "description": "A web content fetching MCP server for development",
+            "version": "1.0.0",
+            "packages": [
+              {
+                "registryType": "oci",
+                "identifier": "ghcr.io/stackloklabs/gofetch/server:latest",
+                "transport": {
+                  "type": "streamable-http",
+                  "url": "http://localhost:8080"
+                }
+              }
+            ],
+            "_meta": {
+              "io.modelcontextprotocol.registry/publisher-provided": {
+                "com.example": {
+                  "ghcr.io/stackloklabs/gofetch/server:latest": {
+                    "status": "Active",
+                    "tier": "Community",
+                    "tags": ["web", "fetch", "dev"],
+                    "tools": ["fetch"],
+                    "args": [
+                      "--user-agent",
+                      "Mozilla/5.0 (compatible;DevBot/1.0)"
+                    ],
+                    "permissions": {
+                      "network": {
+                        "outbound": {
+                          "allow_host": [".github.com", ".stackoverflow.com"],
+                          "allow_port": [80, 443]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
 
 This registry contains two types of server configurations:
 
-- A standalone MCP server called `my-fetch` in the top-level `servers` section
-- A group called `dev-toolkit` containing a `fetch-tool` server
+- A standalone MCP server called `my-fetch` in `data.servers`
+- A group called `dev-toolkit` containing a `fetch-tool` server in
+  `data.groups`
 
 The `dev-toolkit` group demonstrates how you can organize related servers
 together. When you run this group later, you'll be able to start multiple
@@ -148,14 +179,12 @@ toolsets. Notice how the `fetch-tool` server has a different user agent and
 network permissions than `my-fetch`, showing how you can customize servers
 within groups for specific purposes.
 
-Your server configurations include everything ToolHive needs to run them:
+Each server entry includes everything ToolHive needs to run it:
 
-- A description explaining its purpose
-- The container image to use
-- Required metadata like status and tier
-- A list of tools it provides
-- Command-line arguments for customization
-- Network permissions for security
+- A `title` field - the short name used in `thv run` and `thv registry info`
+- A `packages` entry pointing to the container image and transport type
+- ToolHive-specific metadata (status, tier, tools, permissions, args) in the
+  `_meta` extension block under the publisher namespace and image identifier
 
 :::note
 
@@ -164,16 +193,6 @@ Registry groups are supported in both the CLI and the ToolHive UI.
 :::
 
 ### Step 2: Configure ToolHive to use your registry
-
-First, convert the file to the upstream MCP format that ToolHive accepts:
-
-```bash
-thv registry convert --in registry.json --in-place
-```
-
-This rewrites `registry.json` in place and writes a `registry.json.bak` backup
-of the original. The conversion is lossless: every ToolHive-specific field moves
-to a publisher-provided extension on the corresponding upstream server entry.
 
 Configure ToolHive to use your custom registry.
 
@@ -291,36 +310,55 @@ server within it.
 
 ### Step 5: Add more servers (optional)
 
-You can extend your registry by adding more servers to the `servers` object. For
+You can extend your registry by adding more servers to `data.servers`. For
 example, add a second server (note this is just an example, it will not function
 if you try to run it):
 
 ```json title='registry.json'
 {
-  "$schema": "https://raw.githubusercontent.com/stacklok/toolhive-core/main/registry/types/data/toolhive-legacy-registry.schema.json",
+  "$schema": "https://raw.githubusercontent.com/stacklok/toolhive-core/main/registry/types/data/upstream-registry.schema.json",
   "version": "1.0.0",
-  "last_updated": "2025-08-15T10:00:00Z",
-  "servers": {
-    "my-fetch": {
-      // ... existing server configuration
-    },
-    "company-tools": {
-      "description": "Internal company tools and utilities MCP server",
-      "image": "registry.company.com/mcp/company-tools:v1.2.0",
-      "status": "Active",
-      "tier": "Community",
-      "transport": "stdio",
-      "tools": ["get_employee_info", "create_ticket", "check_inventory"],
-      "tags": ["internal", "company", "tools"],
-      "env_vars": [
-        {
-          "name": "COMPANY_API_KEY",
-          "description": "API key for accessing company internal services",
-          "required": true,
-          "secret": true
+  "meta": { "last_updated": "2025-08-15T10:00:00Z" },
+  "data": {
+    "servers": [
+      {
+        // ... existing my-fetch server configuration
+      },
+      {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "com.example/company-tools",
+        "title": "company-tools",
+        "description": "Internal company tools and utilities MCP server",
+        "version": "1.0.0",
+        "packages": [
+          {
+            "registryType": "oci",
+            "identifier": "registry.company.com/mcp/company-tools:v1.2.0",
+            "transport": { "type": "stdio" }
+          }
+        ],
+        "_meta": {
+          "io.modelcontextprotocol.registry/publisher-provided": {
+            "com.example": {
+              "registry.company.com/mcp/company-tools:v1.2.0": {
+                "status": "Active",
+                "tier": "Community",
+                "tags": ["internal", "company", "tools"],
+                "tools": ["get_employee_info", "create_ticket", "check_inventory"],
+                "env_vars": [
+                  {
+                    "name": "COMPANY_API_KEY",
+                    "description": "API key for accessing company internal services",
+                    "required": true,
+                    "secret": true
+                  }
+                ]
+              }
+            }
+          }
         }
-      ]
-    }
+      }
+    ]
   }
 }
 ```
@@ -369,8 +407,7 @@ registries and private servers hosted within your organization.
 
 - Explore the full
   [upstream registry schema reference](../reference/registry-schema-upstream.mdx)
-  to understand all available configuration options for the format ToolHive now
-  consumes
+  to understand all available configuration options
 - Learn about [custom permissions](../guides-cli/custom-permissions.mdx) for
   fine-grained security control
 - Set up [secrets management](../guides-cli/secrets-management.mdx) for servers
