@@ -40,9 +40,9 @@ MCP servers.
 
 ### What you'll build
 
-You'll create a JSON registry file containing a simple MCP server entry,
-configure ToolHive to use your custom registry, and verify it works by listing
-and running servers from your registry.
+You'll create a JSON registry file containing a packaged MCP server and a remote
+MCP server, configure ToolHive to use your custom registry, and verify it works
+by listing and running servers from your registry.
 
 ### Prerequisites
 
@@ -76,10 +76,14 @@ Create a new file called `registry.json` and add the following content:
     "servers": [
       {
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-        "name": "com.example/my-fetch",
-        "title": "my-fetch",
+        "name": "corp.acme/my-fetch",
+        "title": "Acme Web Fetch",
         "description": "A custom web content fetching MCP server for our organization",
-        "version": "1.0.0",
+        "repository": {
+          "url": "https://github.acme.corp/platform/mcp-fetch",
+          "source": "github"
+        },
+        "version": "1.2.1",
         "packages": [
           {
             "registryType": "oci",
@@ -94,6 +98,12 @@ Create a new file called `registry.json` and add the following content:
           "io.modelcontextprotocol.registry/publisher-provided": {
             "io.github.stacklok": {
               "ghcr.io/stackloklabs/gofetch/server:latest": {
+                "custom_metadata": {
+                  "author": "Platform Engineering",
+                  "owner": "platform-team@acme.corp",
+                  "internal_ticket": "MCP-042",
+                  "license": "Proprietary"
+                },
                 "status": "Active",
                 "tier": "Community",
                 "tags": ["web", "fetch", "content"],
@@ -105,7 +115,7 @@ Create a new file called `registry.json` and add the following content:
                 "permissions": {
                   "network": {
                     "outbound": {
-                      "allow_host": [".example.com", "api.mycompany.com"],
+                      "allow_host": [".example.com", "api.acme.corp"],
                       "allow_port": [80, 443]
                     }
                   }
@@ -114,85 +124,67 @@ Create a new file called `registry.json` and add the following content:
             }
           }
         }
-      }
-    ],
-    "groups": [
+      },
       {
-        "name": "dev-toolkit",
-        "description": "Essential MCP servers for development workflows",
-        "servers": [
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.stacklok/toolhive-doc-mcp-remote",
+        "description": "Search ToolHive docs for help with using and contributing to the project (hosted version)",
+        "title": "ToolHive Docs (Remote)",
+        "version": "1.0.0",
+        "remotes": [
           {
-            "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-            "name": "com.example/fetch-tool",
-            "title": "fetch-tool",
-            "description": "A web content fetching MCP server for development",
-            "version": "1.0.0",
-            "packages": [
-              {
-                "registryType": "oci",
-                "identifier": "ghcr.io/stackloklabs/gofetch/server:latest",
-                "transport": {
-                  "type": "streamable-http",
-                  "url": "http://localhost:8080"
-                }
-              }
-            ],
-            "_meta": {
-              "io.modelcontextprotocol.registry/publisher-provided": {
-                "io.github.stacklok": {
-                  "ghcr.io/stackloklabs/gofetch/server:latest": {
-                    "status": "Active",
-                    "tier": "Community",
-                    "tags": ["web", "fetch", "dev"],
-                    "tools": ["fetch"],
-                    "args": [
-                      "--user-agent",
-                      "Mozilla/5.0 (compatible;DevBot/1.0)"
-                    ],
-                    "permissions": {
-                      "network": {
-                        "outbound": {
-                          "allow_host": [".github.com", ".stackoverflow.com"],
-                          "allow_port": [80, 443]
-                        }
-                      }
-                    }
-                  }
-                }
+            "type": "streamable-http",
+            "url": "https://toolhive-doc-mcp.stacklok.com/mcp"
+          }
+        ],
+        "_meta": {
+          "io.modelcontextprotocol.registry/publisher-provided": {
+            "io.github.stacklok": {
+              "https://toolhive-doc-mcp.stacklok.com/mcp": {
+                "custom_metadata": {
+                  "author": "Stacklok",
+                  "homepage": "https://github.com/StacklokLabs/toolhive-doc-mcp",
+                  "license": "Apache-2.0"
+                },
+                "metadata": {
+                  "last_updated": "2026-04-13T03:04:50Z",
+                  "stars": 3
+                },
+                "overview": "The toolhive-doc-mcp-remote server allows you to search ToolHive documentation for help with using and contributing to the project.",
+                "status": "Active",
+                "tags": ["remote", "docs", "search", "stacklok"],
+                "tier": "Official",
+                "tools": ["query_docs", "get_chunk"]
               }
             }
           }
-        ]
+        }
       }
     ]
   }
 }
 ```
 
-This registry contains two types of server configurations:
+This registry contains two MCP server entries in `data.servers`:
 
-- A standalone MCP server called `my-fetch` in `data.servers`
-- A group called `dev-toolkit` containing a `fetch-tool` server in `data.groups`
-
-The `dev-toolkit` group demonstrates how you can organize related servers
-together. When you run this group later, you'll be able to start multiple
-servers as a single unit, perfect for development workflows or team-specific
-toolsets. Notice how the `fetch-tool` server has a different user agent and
-network permissions than `my-fetch`, showing how you can customize servers
-within groups for specific purposes.
+- `my-fetch` - a packaged server distributed as a container image, with custom
+  arguments and network permissions
+- `toolhive-doc-mcp-remote` - a remote server hosted at a URL
 
 Each server entry includes everything ToolHive needs to run it:
 
-- A `title` field - the short name used in `thv run` and `thv registry info`
-- A `packages` entry pointing to the container image and transport type
+- A `title` field - the display name shown in the UI and CLI listings
+- A `packages` entry (for packaged servers) or a `remotes` entry (for remote
+  servers) describing how to reach the server and its transport type
 - ToolHive-specific metadata (status, tier, tools, permissions, args) in the
-  `_meta` extension block under the publisher namespace and image identifier
+  `_meta` extension block, keyed by the publisher namespace and the package
+  identifier or remote URL
 
-:::note
-
-Registry groups are supported in both the CLI and the ToolHive UI.
-
-:::
+Both entries also include a `custom_metadata` block under `_meta`. This is a
+free-form object you can use to track whatever information matters to your
+organization - things like the owning team, an internal ticket reference, a
+license, or links to internal documentation. ToolHive preserves these fields so
+they're available wherever you consume the registry.
 
 ### Step 2: Configure ToolHive to use your registry
 
@@ -238,9 +230,9 @@ Verify your custom registry is working.
 <TabItem value='ui' label='ToolHive UI' default>
 
 1. Navigate to the **Registry** page from the menu bar
-2. You should see your `my-fetch` server displayed alongside any other servers
-   in your custom registry
-3. Click on the server to view its details, including description, tools, and
+2. You should see your `my-fetch` and `toolhive-doc-mcp-remote` servers
+   displayed
+3. Click on a server to view its details, including description, tools, and
    configuration options
 
 </TabItem>
@@ -252,7 +244,8 @@ List the servers in your custom registry:
 thv registry list
 ```
 
-You should see your `my-fetch` server listed. Get detailed information about it:
+You should see both `my-fetch` and `toolhive-doc-mcp-remote` listed. Get
+detailed information about a server:
 
 ```bash
 thv registry info my-fetch
@@ -281,11 +274,6 @@ Finally, run the MCP server from your custom registry.
 The server will appear in your MCP servers list, where you can start, stop, view
 logs, and manage it like any other MCP server.
 
-To install the `dev-toolkit` group, click on it in the registry grid and then
-click **Install group**. The installation wizard guides you through configuring
-each server in the group one at a time. For more details on installing groups,
-see [Use the registry](../guides-ui/registry.mdx#registry-groups).
-
 </TabItem>
 <TabItem value='cli' label='CLI'>
 
@@ -295,17 +283,6 @@ thv run my-fetch
 
 The server should start successfully, demonstrating that your custom registry is
 working correctly.
-
-Next, run the `fetch-tool` server from the `dev-toolkit` group using a runtime
-group:
-
-```bash
-thv group create dev-toolkit
-thv run --group dev-toolkit fetch-tool
-```
-
-This creates a runtime group called `dev-toolkit` and runs the `fetch-tool`
-server within it.
 
 </TabItem>
 </Tabs>
@@ -324,25 +301,33 @@ if you try to run it):
   "data": {
     "servers": [
       {
-        // ... existing my-fetch server configuration
+        // ... existing entries ...
       },
       {
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-        "name": "com.example/company-tools",
-        "title": "company-tools",
+        "name": "corp.acme/company-tools",
+        "title": "Acme Internal Tools",
         "description": "Internal company tools and utilities MCP server",
-        "version": "1.0.0",
+        "version": "2.0.3",
         "packages": [
           {
             "registryType": "oci",
-            "identifier": "registry.company.com/mcp/company-tools:v1.2.0",
-            "transport": { "type": "stdio" }
+            "identifier": "registry.acme.corp/mcp/company-tools:v2.0.3",
+            "transport": { "type": "stdio" },
+            "environmentVariables": [
+              {
+                "name": "COMPANY_API_KEY",
+                "description": "API key for accessing company internal services",
+                "isRequired": true,
+                "isSecret": true
+              }
+            ]
           }
         ],
         "_meta": {
           "io.modelcontextprotocol.registry/publisher-provided": {
             "io.github.stacklok": {
-              "registry.company.com/mcp/company-tools:v1.2.0": {
+              "registry.acme.corp/mcp/company-tools:v2.0.3": {
                 "status": "Active",
                 "tier": "Community",
                 "tags": ["internal", "company", "tools"],
@@ -350,14 +335,6 @@ if you try to run it):
                   "get_employee_info",
                   "create_ticket",
                   "check_inventory"
-                ],
-                "env_vars": [
-                  {
-                    "name": "COMPANY_API_KEY",
-                    "description": "API key for accessing company internal services",
-                    "required": true,
-                    "secret": true
-                  }
                 ]
               }
             }
@@ -375,24 +352,28 @@ to see the new server listed.
 
 ## Production considerations
 
-While this tutorial uses a local file for simplicity, in production environments
-you should:
+While this tutorial uses a local file for simplicity, production deployments
+should harden the registry with:
 
-- **Host your registry on a secure HTTP server**
-- **Use version control** to track changes to your registry
-- **Implement proper access controls** to prevent unauthorized modifications
-- **Set up automated validation** to ensure registry entries follow the schema
-- **Regularly update** the registry with new servers and remove deprecated ones
-- **Deploy the ToolHive Registry Server** for production registries with
-  built-in authentication, multiple data sources, Kubernetes integration, and
-  automatic synchronization (see
-  [Registry Server documentation](../guides-registry/index.mdx))
+- **Hosting on a secure HTTP server**
+- **Version control** to track changes to your registry
+- **Access controls** to prevent unauthorized modifications
+- **Automated validation** to ensure registry entries follow the schema
+- **Regular updates** to add new servers and remove deprecated ones
 
-For production use, configure ToolHive to use a remote registry URL:
+If you host the registry as a static file, point ToolHive at the URL:
 
 ```bash
-thv config set-registry https://registry.example.com/mcp-registry.json
+thv config set-registry https://registry.acme.corp/mcp-registry.json
 ```
+
+For more capable production deployments, run the
+[ToolHive Registry Server](../guides-registry/index.mdx). It consumes the same
+schema you've built in this tutorial as a file source, and adds built-in
+authentication, multiple data sources, Kubernetes integration, and automatic
+synchronization. Follow the
+[Registry Server quickstart](../guides-registry/quickstart.mdx) to deploy your
+own.
 
 ## What you've learned
 
@@ -400,17 +381,19 @@ You've successfully:
 
 - Created a custom MCP registry following the JSON schema
 - Configured ToolHive to use your custom registry
-- Added MCP servers with proper metadata and permissions
-- Created groups to organize related servers
-- Tested your registry by listing and running both individual servers and groups
+- Added both packaged and remote MCP servers with proper metadata and
+  permissions
+- Tested your registry by listing and running a server
 
-You can now maintain your own curated list of MCP servers and groups tailored to
-your organization's needs, organized into logical groups for different teams or
-workflows. The registry can include both public servers from container
-registries and private servers hosted within your organization.
+You can now maintain your own curated list of MCP servers tailored to your
+organization's needs. The registry can include packaged servers from container
+registries (public or private) as well as remote servers hosted at a URL.
 
 ## Next steps
 
+- Deploy a [ToolHive Registry Server](../guides-registry/index.mdx) to host your
+  registry with authentication, multiple data sources, and automatic
+  synchronization
 - Explore the full
   [upstream registry schema reference](../reference/registry-schema-upstream.mdx)
   to understand all available configuration options
