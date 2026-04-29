@@ -1,42 +1,70 @@
 <details>
-<summary>Authentication issues</summary>
+<summary>Clients receive 401 Unauthorized</summary>
 
-If clients can't authenticate:
+A 401 means token validation failed before the request reached your policy
+layer. Work through these checks in order:
 
-1. Check that the JWT token is valid and not expired
-2. Verify that the audience and issuer match your configuration
-3. Ensure the JWKS URL is accessible
-4. Check the server logs for specific authentication errors:
+1. **Check the token itself.** Decode the JWT (for example, paste it into
+   [jwt.io](https://jwt.io/) - never use production tokens). Verify the `iss`
+   claim matches your configured issuer URL exactly (including trailing paths
+   like `/oauth2/default`), the `aud` claim matches the configured audience, and
+   `exp` is in the future.
+2. **Check the request.** The `Authorization` header must be
+   `Authorization: Bearer <TOKEN>` with no extra whitespace or quoting.
+3. **Check provider reachability.** ToolHive must be able to fetch the JWKS from
+   your identity provider's `${issuerUrl}/.well-known/openid-configuration`
+   endpoint. In Kubernetes, that means egress from the proxy pod; with the CLI,
+   it means egress from your machine.
 
-   ```bash
-   # View logs
-   thv logs <server-name>
+To inspect the proxy logs for the specific validation error:
 
-   # Follow logs in real-time (like tail -f)
-   thv logs <server-name> --follow
+```bash title="ToolHive CLI"
+# Container logs
+thv logs <SERVER_NAME>
 
-   # View proxy logs instead of container logs
-   thv logs <server-name> --proxy
-   ```
+# Proxy logs (auth runs here)
+thv logs <SERVER_NAME> --proxy
+
+# Follow live
+thv logs <SERVER_NAME> --proxy --follow
+```
+
+```bash title="Kubernetes"
+# Operator logs (reconciliation errors)
+kubectl logs -n toolhive-system deployment/toolhive-operator
+
+# Proxy logs for a specific MCPServer
+kubectl logs -n toolhive-system \
+  -l app.kubernetes.io/managed-by=toolhive,app.kubernetes.io/name=<SERVER_NAME> \
+  -c proxy
+```
 
 </details>
 
 <details>
-<summary>Authorization issues</summary>
+<summary>Authenticated requests are denied (403)</summary>
 
-If authenticated clients are denied access:
+A 403 means authentication succeeded but Cedar policy evaluation rejected the
+request. ToolHive uses default-deny: anything not explicitly permitted is
+denied.
 
-1. Make sure your Cedar policies explicitly permit the specific action
-   (remember, default deny)
-2. Check that the principal, action, and resource match what's in your policies
-   (including case and formatting)
-3. Examine any conditions in your policies to ensure they're satisfied (for
-   example, required JWT claims or tool arguments)
-4. Remember that Cedar uses a default deny policy: if no policy explicitly
-   permits an action, it will be denied
+1. **Match principal, action, and resource exactly.** Cedar is case-sensitive.
+   `Tool::"GetIssue"` is not the same as `Tool::"get_issue"`.
+2. **Check policy conditions.** If your policy has a `when { ... }` clause, make
+   sure the JWT actually contains the claim you reference (with the `claim_`
+   prefix). For example, `principal.claim_groups.contains("writers")` requires a
+   `groups` claim on the token.
+3. **Use `has` for tool annotations.** Policies that read
+   `resource.readOnlyHint`, `destructiveHint`, `idempotentHint`, or
+   `openWorldHint` must guard the access with `resource has <attr>` first.
+   Reading a missing attribute throws an evaluation error that ToolHive treats
+   as a deny.
+4. **Confirm group claims arrive.** If you use
+   `principal in THVGroup::"<name>"`, decode the token and verify the configured
+   group claim (`groups`, `roles`, `cognito:groups`, or whatever you set in
+   `group_claim_name`) is present and contains the expected values.
 
-**Troubleshooting tip:** If access is denied, check that your policies
-explicitly permit the action. Cedar uses a default deny model: if no policy
-matches, the request is denied.
+For the full attribute and entity reference, see
+[Authorization policy reference](../reference/authz-policy-reference.mdx).
 
 </details>
