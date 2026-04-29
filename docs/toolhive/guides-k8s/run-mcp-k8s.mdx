@@ -673,12 +673,20 @@ Check that:
 <details>
 <summary>Pod in CrashLoopBackOff</summary>
 
-The container starts but exits repeatedly. Check the logs from the failing
-container, including the previous instance:
+The container starts but exits repeatedly. The label selector matches both the
+proxy pod (container `toolhive`) and the MCP server pod (container `mcp`), so
+target the failing container explicitly. For the MCP server backend:
 
 ```bash
 kubectl -n <NAMESPACE> logs <POD_NAME> -c mcp
 kubectl -n <NAMESPACE> logs <POD_NAME> -c mcp --previous
+```
+
+For the proxy:
+
+```bash
+kubectl -n <NAMESPACE> logs <POD_NAME> -c toolhive
+kubectl -n <NAMESPACE> logs <POD_NAME> -c toolhive --previous
 ```
 
 Typical causes:
@@ -704,8 +712,6 @@ Typical causes:
 The pod was created but never scheduled. `kubectl describe pod` shows the
 reason. Common cases:
 
-- A namespace ResourceQuota or LimitRange is blocking pod creation. The events
-  section names the limit that was exceeded.
 - The pod requests more CPU or memory than any node can satisfy. Lower
   `resources.requests` or add nodes.
 - A `nodeSelector`, `affinity`, or `tolerations` rule in your `podTemplateSpec`
@@ -715,6 +721,16 @@ reason. Common cases:
   ```bash
   kubectl -n <NAMESPACE> get pvc
   ```
+
+If no Pod exists at all, a namespace `ResourceQuota` may be blocking creation at
+admission time. Check the controller events instead:
+
+```bash
+kubectl -n <NAMESPACE> describe deployment <MCPSERVER_NAME>
+kubectl -n <NAMESPACE> get events --sort-by=.lastTimestamp
+```
+
+Look for `FailedCreate` events naming the exceeded quota.
 
 </details>
 

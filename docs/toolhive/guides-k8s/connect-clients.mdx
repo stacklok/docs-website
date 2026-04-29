@@ -898,17 +898,22 @@ MCP server usage and performance.
 <summary>Ingress returns 503 Service Unavailable</summary>
 
 A 503 from the Ingress means the controller has no healthy backend to forward
-to. Check the Service has endpoints, which requires a Ready proxy pod:
+to. Check the Service exists and has endpoints:
 
 ```bash
+kubectl describe svc -n toolhive-system mcp-fetch-proxy
 kubectl get endpoints -n toolhive-system mcp-fetch-proxy
-kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=fetch
+kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=fetch --show-labels
 kubectl logs -n toolhive-system -l app.kubernetes.io/instance=fetch
 ```
 
-If endpoints are empty:
+If the Service is missing, the operator hasn't reconciled the MCPServer yet (see
+[Run MCP servers in Kubernetes › Troubleshooting](./run-mcp-k8s.mdx#troubleshooting)).
+If endpoints are empty, possible causes include:
 
 - The proxy pod isn't Ready. The pod logs show why.
+- The Service selector doesn't match the proxy pod's labels (compare
+  `kubectl describe svc` selector with `kubectl get pods --show-labels`).
 - The Ingress backend Service name doesn't match the
   [service naming convention](#connect-from-outside-the-cluster) (for example,
   `mcp-<MCPSERVER_NAME>-proxy`).
@@ -994,10 +999,14 @@ If a pod can't reach the proxy Service, first confirm the Service exists and has
 endpoints:
 
 ```bash
+kubectl describe svc -n toolhive-system mcp-fetch-proxy
 kubectl get endpoints -n toolhive-system mcp-fetch-proxy
+kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=fetch --show-labels
 ```
 
-Empty endpoints means the proxy pod isn't Ready. If endpoints look correct, test
+If endpoints are empty, the proxy pod isn't Ready, or the Service selector
+doesn't match the proxy pod's labels (compare the `Selector:` line from
+`describe svc` with the labels from `get pods`). If endpoints look correct, test
 DNS and connectivity from a temporary pod:
 
 ```bash
