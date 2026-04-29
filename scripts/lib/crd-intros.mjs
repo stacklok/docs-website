@@ -22,6 +22,12 @@
 //                 cross-CRD links should use [Kind](./slug.mdx) form.
 //                 Default: cleaned upstream schema description, or a
 //                 generic fallback if only boilerplate is present upstream.
+//   preferredType - Override the discriminator value used in the generated
+//                 example YAML. Useful when `spec.type` has several enum
+//                 variants and the alphabetical first pick is not the most
+//                 representative. The value must be one of the enum's values
+//                 and the matching sibling block must satisfy admission with
+//                 default placeholders.
 
 export const groupLabels = {
   core: 'Core workloads',
@@ -97,6 +103,7 @@ export const intros = {
       'Schema reference for MCPOIDCConfig, which configures OIDC-based incoming authentication for MCP servers.',
     intro:
       '`MCPOIDCConfig` defines OIDC authentication settings that can be shared across multiple MCP workloads. [MCPServer](./mcpserver.mdx), [MCPRemoteProxy](./mcpremoteproxy.mdx), and [VirtualMCPServer](./virtualmcpserver.mdx) reference an `MCPOIDCConfig` via `spec.oidcConfigRef` to validate incoming tokens.',
+    preferredType: 'inline',
   },
   MCPExternalAuthConfig: {
     slug: 'mcpexternalauthconfig',
@@ -106,6 +113,7 @@ export const intros = {
       'Schema reference for MCPExternalAuthConfig, which configures external authentication for MCP servers and proxies.',
     intro:
       '`MCPExternalAuthConfig` configures how an MCP server or proxy authenticates to external services via token exchange or an embedded authorization server. It is referenced by [MCPServer](./mcpserver.mdx), [MCPRemoteProxy](./mcpremoteproxy.mdx), [MCPServerEntry](./mcpserverentry.mdx), and [VirtualMCPServer](./virtualmcpserver.mdx).',
+    preferredType: 'embeddedAuthServer',
   },
   MCPTelemetryConfig: {
     slug: 'mcptelemetryconfig',
