@@ -96,12 +96,14 @@ function arrayExample(schema) {
   return Array.from({ length: minItems }, () => item);
 }
 
-// Match the kubebuilder discriminator idiom:
-//   self.<discriminator> == '<value>' ? has(self.<sibling>) : !has(self.<sibling>)
-// Rules with this shape mean "when discriminator equals value, the sibling
-// block must be present." We use them to materialize the sibling on top of
-// what `required` alone would emit. Other CEL shapes (cross-field guards,
-// !has preconditions, enum-style 'any of', leaf range checks) are ignored.
+// Match CEL rules whose true branch is `has(self.<sibling>)` - the
+// kubebuilder discriminator idiom, regardless of whether the false branch
+// is `!has(self.<sibling>)` (exclusive-or) or `true` (constraint-only).
+// In both cases the rule means "when discriminator equals value, the
+// sibling must be present", which is all we need to know to materialize
+// the sibling on top of what `required` alone would emit. Other CEL
+// shapes (cross-field guards, !has preconditions, leaf range checks) are
+// ignored.
 const DISCRIMINATOR_RULE_RE =
   /^\s*self\.(\w+)\s*==\s*'([^']+)'\s*\?\s*has\(self\.(\w+)\)/;
 
