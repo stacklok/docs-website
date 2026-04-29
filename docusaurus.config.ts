@@ -5,8 +5,15 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 import PrismLight from './src/utils/prismLight';
 import PrismDark from './src/utils/prismDark';
+import crdReferenceRemark from './plugins/crd-reference-remark/index.mjs';
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
+
+// Only load tracking/analytics scripts in Vercel production deployments.
+// This keeps HubSpot, GTM/Stape, and Thred disabled during local development
+// (`npm run start`) and on Vercel preview deployments, avoiding cookie banners,
+// chatbot widgets, and polluted analytics data.
+const isProductionDeploy = process.env.VERCEL_ENV === 'production';
 
 const config: Config = {
   title: 'Stacklok Docs',
@@ -52,10 +59,10 @@ const config: Config = {
           ],
         },
         includeOrder: [
-          '/toolhive/tutorials/**',
           '/toolhive/concepts/**',
-          '/toolhive/reference/client-compatibility',
           '/toolhive/guides-*',
+          '/toolhive/tutorials/**',
+          '/toolhive/integrations/**',
           '/toolhive/reference/**',
         ],
         optionalLinks: [
@@ -72,6 +79,31 @@ const config: Config = {
         ],
       },
     ],
+    function googleTagManager() {
+      return {
+        name: 'google-tag-manager',
+        injectHtmlTags() {
+          if (!isProductionDeploy) return {};
+          return {
+            headTags: [
+              {
+                tagName: 'script',
+                // Server-side GTM loader script.
+                // Source: Generated from the Stape dashboard for Stacklok.
+                // The snippet is intentionally kept minified and should not be edited manually.
+                // To update, re-generate from the Stape dashboard and replace the string verbatim.
+                innerHTML:
+                  '!function(){"use strict";function l(e){for(var t=e,r=0,n=document.cookie.split(";");r<n.length;r++){var o=n[r].split("=");if(o[0].trim()===t)return o[1]}}function s(e){return localStorage.getItem(e)}function u(e){return window[e]}function A(e,t){e=document.querySelector(e);return t?null==e?void 0:e.getAttribute(t):null==e?void 0:e.textContent}var e=window,t=document,r="script",n="dataLayer",o="https://mm.stacklok.com",a="",i="3ghsgqgovzfj",c="2ng=AwJHMTsqXDBTKyIxOyFIQRxbSFheQRUJVxUOFwwMHQgBSBkZAg%3D%3D",g="cookie",v="user_id",E="",d=!1;try{var d=!!g&&(m=navigator.userAgent,!!(m=new RegExp("Version/([0-9._]+)(.*Mobile)?.*Safari.*").exec(m)))&&16.4<=parseFloat(m[1]),f="stapeUserId"===g,I=d&&!f?function(e,t,r){void 0===t&&(t="");var n={cookie:l,localStorage:s,jsVariable:u,cssSelector:A},t=Array.isArray(t)?t:[t];if(e&&n[e])for(var o=n[e],a=0,i=t;a<i.length;a++){var c=i[a],c=r?o(c,r):o(c);if(c)return c}else console.warn("invalid uid source",e)}(g,v,E):void 0;d=d&&(!!I||f)}catch(e){console.error(e)}var m=e,g=(m[n]=m[n]||[],m[n].push({"gtm.start":(new Date).getTime(),event:"gtm.js"}),t.getElementsByTagName(r)[0]),v=I?"&bi="+encodeURIComponent(I):"",E=t.createElement(r),f=(d&&(i=8<i.length?i.replace(/([a-z]{8}$)/,"kp$1"):"kp"+i),!d&&a?a:o);E.async=!0,E.src=f+"/"+i+".js?"+c+v,null!=(e=g.parentNode)&&e.insertBefore(E,g)}();',
+              },
+            ],
+            preBodyTags: [
+              // Server-side GTM noscript fallback.
+              `<!-- Google Tag Manager (noscript) --><noscript><iframe src="https://mm.stacklok.com/ns.html?id=GTM-W9MXGTF9" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript><!-- End Google Tag Manager (noscript) -->`,
+            ],
+          };
+        },
+      };
+    },
   ],
 
   // Set the production url of your site here
@@ -109,6 +141,23 @@ const config: Config = {
     },
   },
 
+  future: {
+    v4: {
+      removeLegacyPostBuildHeadAttribute: true,
+      useCssCascadeLayers: true,
+    },
+    faster: {
+      swcJsLoader: false, // Disabled due to https://github.com/rohit-gohri/redocusaurus/issues/388
+      swcJsMinimizer: true,
+      swcHtmlMinimizer: true,
+      lightningCssMinimizer: true,
+      rspackBundler: true,
+      rspackPersistentCache: true,
+      ssgWorkerThreads: true,
+      mdxCrossCompilerCache: true,
+    },
+  },
+
   themes: ['@docusaurus/theme-mermaid', 'docusaurus-json-schema-plugin'],
 
   presets: [
@@ -120,6 +169,23 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           // Remove this to remove the "edit this page" links.
           editUrl: 'https://github.com/stacklok/docs-website/tree/main/',
+          // Populate lastUpdatedAt metadata for JSON-LD structured data.
+          // The rendered timestamp is hidden via CSS (.theme-last-updated).
+          showLastUpdateTime: true,
+          admonitions: {
+            keywords: ['enterprise'],
+            extendDefaults: true,
+          },
+          // Must run before Docusaurus's default TOC extractor so the
+          // headings injected for <CRDReference> make it into the TOC.
+          beforeDefaultRemarkPlugins: [
+            [
+              crdReferenceRemark,
+              {
+                schemaDir: path.join(__dirname, 'static', 'api-specs', 'crds'),
+              },
+            ],
+          ],
         },
         blog: {
           blogTitle: 'ToolHive Updates and Announcements',
@@ -132,9 +198,6 @@ const config: Config = {
         },
         theme: {
           customCss: [require.resolve('./src/css/custom.css')],
-        },
-        googleTagManager: {
-          containerId: 'GTM-W9MXGTF9',
         },
       } satisfies Preset.Options,
     ],
@@ -151,7 +214,7 @@ const config: Config = {
           },
           {
             id: 'toolhive-registry-api',
-            spec: 'https://cdn.jsdelivr.net/gh/stacklok/toolhive-registry-server@latest/docs/thv-registry-api/swagger.yaml',
+            spec: 'static/api-specs/toolhive-registry-api.yaml',
             config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
           },
         ],
@@ -167,16 +230,6 @@ const config: Config = {
     ],
   ],
 
-  scripts: [
-    {
-      id: 'hs-script-loader',
-      type: 'text/javascript',
-      src: '//js-na2.hs-scripts.com/42544743.js',
-      async: true,
-      defer: true,
-    },
-  ],
-
   themeConfig: {
     colorMode: {
       defaultMode: 'dark',
@@ -188,7 +241,7 @@ const config: Config = {
     docs: {
       sidebar: {
         hideable: false,
-        autoCollapseCategories: false,
+        autoCollapseCategories: true,
       },
     },
     navbar: {
@@ -206,10 +259,6 @@ const config: Config = {
             {
               label: 'Home',
               href: '/toolhive',
-            },
-            {
-              label: 'Integrations',
-              to: 'toolhive/integrations',
             },
             {
               label: 'ToolHive UI',
@@ -248,19 +297,19 @@ const config: Config = {
             },
             {
               label: 'ToolHive Operator CRD',
-              to: 'toolhive/reference/crd-spec',
+              to: 'toolhive/reference/crds',
             },
             {
-              label: 'ToolHive Registry schema',
+              label: 'ToolHive Registry Server API',
+              to: 'toolhive/reference/registry-api',
+            },
+            {
+              label: 'ToolHive registry schema',
               to: 'toolhive/reference/registry-schema-toolhive',
             },
             {
-              label: 'Upstream Registry schema',
+              label: 'Upstream registry schema',
               to: 'toolhive/reference/registry-schema-upstream',
-            },
-            {
-              label: 'ToolHive Registry API',
-              to: 'toolhive/reference/registry-api',
             },
           ],
         },
@@ -270,25 +319,25 @@ const config: Config = {
           position: 'left',
         },
         {
-          href: 'https://stacklok.com/platform/',
+          to: 'toolhive/enterprise',
           label: 'Enterprise',
           position: 'left',
         },
         {
           href: 'https://github.com/stacklok',
-          className: 'fa-brands fa-github fa-lg',
+          className: 'navbar-icon-link fa-brands fa-github fa-lg',
           position: 'right',
           'aria-label': 'Stacklok on GitHub',
         },
         {
           href: 'https://discord.gg/stacklok',
-          className: 'fa-brands fa-discord fa-lg',
+          className: 'navbar-icon-link fa-brands fa-discord fa-lg',
           position: 'right',
           'aria-label': 'Join Stacklok on Discord',
         },
         {
           href: 'https://youtube.com/@stacklok',
-          className: 'fa-brands fa-youtube fa-lg',
+          className: 'navbar-icon-link fa-brands fa-youtube fa-lg',
           position: 'right',
           'aria-label': 'Stacklok on YouTube',
         },

@@ -1,10 +1,13 @@
 ---
-title: Scaling and Performance
+title: Scaling and performance
 description:
   How to scale Virtual MCP Server deployments vertically and horizontally.
 ---
 
-This guide explains how to scale Virtual MCP Server (vMCP) deployments.
+This guide explains how to scale Virtual MCP Server (vMCP) deployments. For
+MCPServer scaling, see
+[Horizontal scaling](../guides-k8s/run-mcp-k8s.mdx#horizontal-scaling) in the
+Kubernetes operator guide.
 
 ## Vertical scaling
 
@@ -37,23 +40,65 @@ higher request volumes.
 
 ### How to scale horizontally
 
-The VirtualMCPServer CRD does not have a `replicas` field. The operator creates
-a Deployment named `vmcp-<NAME>` (where `<NAME>` is your VirtualMCPServer name)
-with 1 replica and preserves the replicas count, allowing you to manage scaling
-separately.
+Set the `replicas` field in your VirtualMCPServer spec to control the number of
+vMCP pods:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  replicas: 3
+```
+
+If you omit `replicas`, the operator defers replica management to an HPA or
+other external controller. You can also scale manually or with an HPA:
 
 **Option 1: Manual scaling**
 
 ```bash
-kubectl scale deployment vmcp-<vmcp-name> -n <NAMESPACE> --replicas=3
+kubectl scale deployment vmcp-<VMCP_NAME> -n <NAMESPACE> --replicas=3
 ```
 
 **Option 2: Autoscaling with HPA**
 
 ```bash
-kubectl autoscale deployment vmcp-<vmcp-name> -n <NAMESPACE> \
+kubectl autoscale deployment vmcp-<VMCP_NAME> -n <NAMESPACE> \
   --min=2 --max=5 --cpu-percent=70
 ```
+
+### Session storage for multi-replica deployments
+
+When running multiple replicas, configure Redis session storage so that sessions
+are shared across pods and survive pod restarts. Without session storage, a
+request routed to a different replica than the one that established the session
+will fail, and sessions are lost when pods restart.
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  replicas: 3
+  sessionStorage:
+    provider: redis
+    address: redis.toolhive-system.svc.cluster.local:6379
+    db: 0
+    keyPrefix: vmcp-sessions
+    passwordRef:
+      name: redis-password
+      key: password
+```
+
+The example above assumes Redis is deployed using the manifests in the
+[Horizontal scaling session storage](../guides-k8s/redis-session-storage.mdx#horizontal-scaling-session-storage)
+guide, which creates a Service named `redis` and a Secret named `redis-password`
+in the `toolhive-system` namespace. Update `address` and `passwordRef.name` to
+match your Redis Service and Secret if they differ.
+
+:::warning
+
+If you configure multiple replicas without session storage, the operator sets a
+`SessionStorageWarning` status condition on the resource but **still applies the
+replica count**. Pods will start, but requests routed to a replica that did not
+establish the session will fail. Ensure Redis is available before scaling beyond
+a single replica.
+
+:::
 
 ### When horizontal scaling is challenging
 
@@ -63,14 +108,117 @@ read-only operations) where sessions can be resumed on any instance.
 However, **stateful backends** make horizontal scaling difficult:
 
 - **Stateful backends** (Playwright browser sessions, database connections, file
-  system operations) require requests to be routed to the same vMCP instance
-  that established the session
-- Requires session affinity configuration (which may not work reliably through
-  proxies)
+  system operations) require requests to be routed to the same instance that
+  established the session
 - Session resumption may not work reliably for stateful backends
 
-For stateful backends, vertical scaling or dedicated vMCP instances per team/use
-case are recommended instead of horizontal scaling.
+The `VirtualMCPServer` CRD includes a `sessionAffinity` field that controls how
+the Kubernetes Service routes repeated client connections. By default, it uses
+`ClientIP` affinity, which routes connections from the same client IP to the
+same pod:
+
+```yaml
+spec:
+  sessionAffinity: ClientIP # default
+```
+
+:::warning[ClientIP affinity is unreliable behind NAT or shared egress IPs]
+
+`ClientIP` affinity relies on the source IP reaching kube-proxy. When clients
+sit behind a NAT gateway, corporate proxy, or cloud load balancer (common in
+EKS, GKE, and AKS), all traffic appears to originate from the same IP - routing
+every client to the same pod and eliminating the benefit of horizontal scaling.
+This fails silently: the deployment appears healthy but only one pod handles all
+load.
+
+For stateless backends, set `sessionAffinity: None` so the Service load-balances
+freely. For stateful backends where true per-session routing is required,
+`ClientIP` affinity is a best-effort mechanism only. Prefer vertical scaling or
+a dedicated vMCP instance per team instead.
+
+:::
+
+## Capacity limits
+
+Review these limits before planning capacity for a vMCP deployment.
+
+### Per-pod session cache
+
+Each vMCP pod holds a node-local LRU cache capped at **1,000 concurrent
+sessions**. When the cache is full, the least-recently-used session is evicted
+and its backend connections are closed. Any request in flight at eviction time
+fails, and the next request for that session ID triggers a cache miss.
+
+When Redis session storage is configured, the session manager transparently
+rebuilds the session from stored metadata and reconnects to backends, so clients
+do not need to reinitialize. Without Redis, an evicted session is lost and the
+client must reinitialize.
+
+To serve more than 1,000 concurrent sessions per replica, add vMCP replicas and
+configure Redis session storage. Total capacity scales as `replicas × 1,000`.
+
+### Session time-to-live (TTL)
+
+The vMCP server applies a **30-minute inactivity TTL** to session metadata. A
+session that receives no activity for 30 minutes expires, and the client must
+reinitialize it.
+
+With Redis session storage, the TTL is a sliding window: every request
+atomically refreshes the key's expiry. Active sessions remain valid indefinitely
+as long as they receive at least one request per TTL window. There is no
+absolute maximum session lifetime.
+
+### File descriptors
+
+Each open backend connection consumes one file descriptor on the vMCP pod. A pod
+aggregating many MCP backends at high session concurrency can exhaust the
+container's `nofile` limit before hitting the 1,000-session cache cap.
+
+Estimate the requirement as `concurrent_sessions × backends_per_session`, plus
+overhead for incoming client connections. The default Linux soft `nofile` limit
+is typically 1,024; raise it in the container spec or at the node level if you
+expect to serve hundreds of sessions aggregating multiple backends.
+
+### Redis sizing
+
+When you enable Redis session storage, size the Redis instance for the full
+fleet. Session payloads include routing tables and tool metadata. A rough
+estimate is 10-50 KB per session depending on backend count and tool count, with
+a fleet-wide maximum of `replicas × 1,000` concurrent sessions.
+
+Configure Redis with the `allkeys-lru` eviction policy so Redis sheds stale
+sessions under memory pressure rather than returning errors on new writes. Redis
+persistence is not required for session storage; if the Redis instance restarts,
+all sessions are lost and clients must reinitialize.
+
+The Redis client uses these default timeouts. They are hardcoded defaults and
+are not currently exposed through the VirtualMCPServer CRD.
+
+| Setting       | Default   |
+| ------------- | --------- |
+| Dial timeout  | 5 seconds |
+| Read timeout  | 3 seconds |
+| Write timeout | 3 seconds |
+
+### Stateful backend data loss on pod restart
+
+vMCP is a stateless proxy: it holds routing tables and tool aggregation state,
+but backend MCP servers own their own state (browser sessions, database cursors,
+open files). When a vMCP pod restarts or is evicted, backend connections are
+torn down without a graceful MCP shutdown sequence.
+
+With Redis session storage, the routing table survives and clients can
+reconnect. However, the new connection does not recover any backend-side state;
+it starts fresh. In-flight tool calls are lost without a response. Implement
+retry logic with idempotency guards for tool invocations that modify external
+state.
+
+## Next steps
+
+- [Explore Kubernetes operator guides](../guides-k8s/index.mdx) for managing MCP
+  servers alongside vMCP
+- [Curate a server catalog](../guides-registry/index.mdx) for your team with the
+  Registry Server
 
 ## Related information
 
@@ -78,4 +226,4 @@ case are recommended instead of horizontal scaling.
 - [Configure health checks](./configuration.mdx#health-checks)
 - [Backend discovery modes](./backend-discovery.mdx)
 - [Telemetry and metrics](./telemetry-and-metrics.mdx)
-- [VirtualMCPServer CRD specification](../reference/crd-spec.md#apiv1alpha1virtualmcpserver)
+- [VirtualMCPServer CRD specification](../reference/crds/virtualmcpserver.mdx)

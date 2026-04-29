@@ -1,0 +1,226 @@
+---
+title: Rate limiting
+description:
+  Configure per-user and shared rate limits on MCPServer resources to prevent
+  noisy neighbors and protect downstream services.
+---
+
+Configure token bucket rate limits on MCPServer resources to control how many
+tool invocations users can make. Rate limiting prevents individual users from
+monopolizing shared servers and protects downstream services from traffic
+spikes.
+
+ToolHive supports two scopes of rate limiting:
+
+- **Shared** limits cap total requests across all users.
+- **Per-user** limits cap requests independently for each authenticated user.
+
+Both scopes can be applied at the server level and overridden per tool. A
+request must pass all applicable limits to proceed.
+
+:::info[Prerequisites]
+
+Before you begin, ensure you have:
+
+- A Kubernetes cluster with the ToolHive Operator installed
+- Redis deployed in your cluster: rate limiting stores token bucket counters in
+  Redis (see [Redis Sentinel session storage](./redis-session-storage.mdx) for
+  deployment instructions)
+- For per-user limits: authentication enabled on the MCPServer (`oidcConfigRef`
+  or `externalAuthConfigRef`)
+
+If you need help with these prerequisites, see:
+
+- [Kubernetes quickstart](./quickstart.mdx)
+- [Authentication and authorization](./auth-k8s.mdx)
+
+:::
+
+## How rate limiting works
+
+Rate limits use a **token bucket** algorithm. Each bucket has a capacity
+(`maxTokens`) and a refill period (`refillPeriod`). The bucket starts full and
+each `tools/call` request consumes one token. When the bucket is empty, requests
+are rejected until tokens refill. The refill rate is `maxTokens / refillPeriod`
+tokens per second.
+
+Only `tools/call` requests are rate-limited. Lifecycle methods (`initialize`,
+`ping`) and discovery methods (`tools/list`, `prompts/list`) pass through
+unconditionally.
+
+When a request is rejected, the proxy returns:
+
+- **HTTP 429** with a `Retry-After` header (seconds until a token is available)
+- A **JSON-RPC error** with code `-32029` and `retryAfterSeconds` in the error
+  data
+
+If Redis is unreachable, rate limiting **fails open** and all requests are
+allowed through.
+
+## Configure shared rate limits
+
+Shared limits apply a single token bucket across all users. Use them to cap
+total throughput to protect downstream services.
+
+```yaml title="mcpserver-shared-ratelimit.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: weather-server
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: streamable-http
+  sessionStorage:
+    provider: redis
+    address: <YOUR_REDIS_ADDRESS>
+  # highlight-start
+  rateLimiting:
+    shared:
+      maxTokens: 1000
+      refillPeriod: 1m0s
+  # highlight-end
+```
+
+This allows 1,000 total `tools/call` requests per minute across all users.
+
+## Configure per-user rate limits
+
+Per-user limits give each authenticated user their own independent token bucket.
+This prevents a single user from consuming the entire server capacity.
+
+Per-user limits **require authentication** to be enabled. The proxy identifies
+users by the `sub` claim from their JWT token.
+
+```yaml title="mcpserver-peruser-ratelimit.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: ratelimit-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: https://my-idp.example.com
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: weather-server
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: streamable-http
+  oidcConfigRef:
+    name: ratelimit-oidc
+    audience: my-audience
+  sessionStorage:
+    provider: redis
+    address: <YOUR_REDIS_ADDRESS>
+  # highlight-start
+  rateLimiting:
+    perUser:
+      maxTokens: 100
+      refillPeriod: 1m0s
+  # highlight-end
+```
+
+This allows each user 100 `tools/call` requests per minute independently.
+
+## Combine shared and per-user limits
+
+You can configure both scopes together. A request must pass **all** applicable
+limits. This lets you set a per-user ceiling while also capping total server
+throughput.
+
+```yaml title="mcpserver-combined-ratelimit.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: ratelimit-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: https://my-idp.example.com
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: weather-server
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: streamable-http
+  oidcConfigRef:
+    name: ratelimit-oidc
+    audience: my-audience
+  sessionStorage:
+    provider: redis
+    address: <YOUR_REDIS_ADDRESS>
+  rateLimiting:
+    # highlight-start
+    shared:
+      maxTokens: 1000
+      refillPeriod: 1m0s
+    perUser:
+      maxTokens: 100
+      refillPeriod: 1m0s
+    # highlight-end
+```
+
+## Add per-tool overrides
+
+Individual tools can have tighter limits than the server default. Per-tool
+limits are enforced **in addition to** server-level limits.
+
+```yaml title="mcpserver-pertool-ratelimit.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: ratelimit-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: https://my-idp.example.com
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: weather-server
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: streamable-http
+  oidcConfigRef:
+    name: ratelimit-oidc
+    audience: my-audience
+  sessionStorage:
+    provider: redis
+    address: <YOUR_REDIS_ADDRESS>
+  rateLimiting:
+    perUser:
+      maxTokens: 100
+      refillPeriod: 1m0s
+    # highlight-start
+    tools:
+      - name: expensive_search
+        perUser:
+          maxTokens: 10
+          refillPeriod: 1m0s
+      - name: shared_resource
+        shared:
+          maxTokens: 50
+          refillPeriod: 1m0s
+    # highlight-end
+```
+
+In this example:
+
+- Each user can make 100 total tool calls per minute.
+- Each user can make at most 10 `expensive_search` calls per minute (and those
+  also count toward the 100 server-level limit).
+- All users combined can make 50 `shared_resource` calls per minute.
+
+## Next steps
+
+- [Token exchange](./token-exchange-k8s.mdx) to configure token exchange for
+  upstream service authentication
+- [CRD reference](../reference/crds/index.mdx) for complete field definitions

@@ -55,9 +55,9 @@ The project uses automated tooling to enforce code quality and formatting standa
 
 - **Pre-commit hooks**: lint-staged runs automatically on `git commit`, applying Prettier and appropriate linters to staged files.
 - **GitHub Actions**: All PRs trigger automated checks (ESLint, Prettier).
-- **No manual formatting needed**: The pre-commit hook handles formatting automatically - you do not need to run formatters manually.
+- **Don't rely on the pre-commit hook**: lint-staged only fires on `git commit` when Node, dependencies, and husky are all set up. It silently no-ops in CI and unattended contexts (GitHub Actions, scheduled agents) and in local environments where `npm install` hasn't been run. If you edited content, run `npm run prettier:fix` and `npm run eslint:fix` yourself to avoid lint failures on PR CI.
 
-File type to linter mapping (handled automatically by pre-commit hooks):
+File type to linter mapping (run manually if the pre-commit hook doesn't fire):
 
 - `.md` files: Prettier only
 - `.mdx` files: Prettier + ESLint
@@ -80,23 +80,79 @@ The documentation should be accessible to a wide range of technical users, inclu
 
 ## Information architecture
 
-This project follows the [Diataxis framework](https://diataxis.fr/) for documentation organization. Diataxis divides documentation into four types based on user needs:
+This project follows the [Diataxis framework](https://diataxis.fr/) for documentation authoring - each page is a tutorial, how-to guide, reference, or explanation. The site is organized by **product area**, with each section self-contained so a reader can complete their journey without leaving it. Cross-cutting content lives in dedicated shared sections.
 
-1. **Tutorials** (`/docs/toolhive/tutorials/`) - Learning-oriented, step-by-step lessons that guide users through completing a project or learning a concept.
-2. **How-to guides** (`/docs/toolhive/guides-*/`) - Task-oriented, practical guides that show how to solve specific problems or accomplish specific tasks.
-3. **Reference** (`/docs/toolhive/reference/`) - Information-oriented, technical descriptions of the machinery and how to operate it (API docs, CLI commands, configuration options).
-4. **Explanation/Concepts** (`/docs/toolhive/concepts/`) - Understanding-oriented, explanations that clarify and illuminate topics, provide background and context.
+All documentation lives under `docs/toolhive/`. Folder paths below are relative to that root.
 
-### When to create new pages
+### Design principles
 
-Create a new documentation page when:
+1. **Route readers to value fast.** The home page helps a reader figure out where to go within 10 seconds.
+2. **Each section is self-contained.** A reader in the CLI section shouldn't need to leave it to complete their task. Quickstarts, guides, and relevant reference material live together.
+3. **Forward momentum on every page.** Every page ends with a "Next steps" section linking to the next logical page.
+4. **Consistent structure across sections.** Each product area follows the same pattern: Introduction, Quickstart, how-to guides.
+5. **Progressive disclosure.** Core workflows first, advanced topics grouped separately.
 
-- The content addresses a distinct task, concept, or reference topic that doesn't fit within existing pages.
-- An existing page would become too long or cover too many disparate topics.
-- The information architecture requires it (e.g., a new MCP server guide, a new tutorial).
-- The content belongs to a different Diataxis category than existing content.
+### Top-level sections
 
-Always consider where the new page fits in the Diataxis framework and place it in the appropriate directory. Update `/sidebars.ts` to include the new page in the navigation.
+| Section | Folder | What belongs here |
+| --- | --- | --- |
+| ToolHive UI | `guides-ui/` | Desktop app guides, quickstart, and reference |
+| ToolHive CLI | `guides-cli/` | CLI guides, quickstart, command reference, API reference |
+| Kubernetes Operator | `guides-k8s/` | K8s deployment, operation, auth, telemetry, CRD reference |
+| Virtual MCP Server | `guides-vmcp/` | Gateway/aggregation guides, quickstart, optimizer |
+| Registry Server | `guides-registry/` | Registry Server deployment, config, auth, API reference |
+| Integrations | `integrations/` | Cross-cutting third-party integration guides (ngrok, Vault, OpenTelemetry, Okta, etc.) |
+| Concepts | `concepts/` | Cross-cutting explanations (MCP primer, groups, auth framework, observability, etc.) |
+| MCP server guides | `guides-mcp/` | Per-server usage guides (auto-generated index) |
+| Reference | `reference/` | Client compatibility, CLI commands, API specs, CRD specs, registry schemas |
+| Tutorials | `tutorials/` | End-to-end tutorials that span multiple components (kept small; most tutorials moved to product sections or Integrations) |
+
+### Section skeleton
+
+Each product section follows this pattern:
+
+```text
+[Product Area]           (category label)
+├── Introduction         (what it is, who it's for, where to start)
+├── Quickstart           (hands-on in <10 minutes)
+├── [How-to guides]      (organized by journey phase)
+│   ├── Install / Deploy
+│   ├── Use
+│   ├── Secure
+│   ├── Operate
+│   └── Optimize
+└── [Reference]          (inline where relevant)
+```
+
+Not every section needs every phase. The Introduction is an explicit first sidebar child, not a hidden category-link page.
+
+### Where to place new content
+
+- **Product-specific content** goes in the relevant product section (`guides-ui/`, `guides-cli/`, `guides-k8s/`, `guides-vmcp/`, `guides-registry/`).
+- **Quickstarts** live inside their product section, not in a separate top-level section.
+- **Third-party integration guides** (connecting ToolHive with external tools/services) go in `integrations/`.
+- **Cross-cutting concepts** (applicable to multiple product areas) go in `concepts/`.
+- **Per-MCP-server usage guides** go in `guides-mcp/`.
+- **Reference material** (specs, schemas, compatibility matrices) goes in `reference/`, with cross-links from the relevant product section.
+- Update `/sidebars.ts` to include any new page in the navigation.
+
+### Page requirements
+
+Every how-to guide and tutorial page must include:
+
+- Front matter with `title` and `description`.
+- A "Next steps" section with 1-3 links to the next logical pages, following the journey phases (install, use, secure, operate, optimize).
+- Cross-links to related content in other sections where relevant.
+
+#### Description field guidelines
+
+The `description` serves as both the DocCard preview (truncated at ~70-75 characters) and the page's `<meta>` description for SEO (ideally 80-150 characters total). Write descriptions so the first 70 characters stand alone as a useful summary. Lead with the action or topic, not filler like "Learn how to," "Understanding," or "A guide to." Avoid unquoted colons in YAML description values.
+
+Pages that include closing sections must use this ordering:
+
+1. **Next steps** (required for how-to guides and tutorials)
+2. **Related information** (if applicable)
+3. **Troubleshooting** (if applicable)
 
 ## Review process
 
@@ -134,7 +190,8 @@ The project's official language is US English.
 
 - Use the Oxford comma (aka serial commas) when listing items in a series.
 - Use one space between sentences.
-- Use straight double quotes and apostrophes. Replace smart quotes (“ ”) and curly apostrophes (’ ’) with straight quotes (") and straight apostrophes (').
+- Use straight double quotes and apostrophes. Replace smart quotes (“ ”) and curly apostrophes (‘ ’) with straight quotes (") and straight apostrophes (').
+- Avoid em dashes (`—`) and en dashes (`–`). They are hard to type, easy to miss in editors, and have proliferated with AI-generated content. Instead, rephrase naturally: use commas, split into two sentences, or restructure. If a separator is truly needed, use a spaced hyphen (`-`) in list-style contexts like "Related information" entries.
 
 ### Links
 
@@ -206,7 +263,43 @@ This website is built using Docusaurus, which has some specific requirements and
   - Titles are added using the `title="..."` attribute in the opening code fence.
   - Line highlights are added using comma-separated `{number}` or `{start-end}` ranges in the opening code fence, or `highlight-next-line`, `highlight-start`, and `highlight-end` comments within the code block.
 - Use admonitions for notes, tips, warnings, and other annotations. This provides a consistent look and feel across the site.
-  - Use the `:::type` syntax to define the admonition type: `note`, `tip`, `info`, `warning`, or `danger`. Use square brackets to add a custom title, e.g. `:::info[Title]`. Add empty lines around the start and end directives.
+  - Use the `:::type` syntax to define the admonition type: `note`, `tip`, `info`, `warning`, `danger`, or `enterprise`. Use square brackets to add a custom title, e.g. `:::info[Title]`. Add empty lines around the start and end directives.
+  - The `:::enterprise` admonition is for Stacklok Enterprise content only - see "Enterprise content constructs" below.
 - Place images in `static/img` using WebP, PNG, or SVG format.
 - Use the `ThemedImage` component to provide both light and dark mode screenshots for apps/UIs that support both. Typically used with the `useBaseUrl` hook to construct the image paths. Both require import statements.
 - Use the `Tabs` and `TabItem` components to create tabbed content sections. These are in the global scope and do not require imports.
+- Use the `EnterpriseBadge` component to label individual features or capabilities as enterprise-only. This is in the global scope and does not require imports. See "Enterprise content constructs" below.
+
+### Enterprise content constructs
+
+Three constructs are available for presenting Stacklok Enterprise content inline with OSS documentation. Use the right one for the context:
+
+**`:::enterprise` admonition** - for callout content within OSS pages, typically 2-4 sentences describing an Enterprise capability with a link to the Enterprise landing page. Use when Enterprise adds a meaningful capability to the topic being documented. Don't overuse - one per page is typical, two is the practical maximum.
+
+```mdx
+:::enterprise
+
+Stacklok Enterprise includes turnkey integrations for common identity providers. Instead of manually configuring OIDC, use the built-in Okta or Entra ID integration to map IdP groups directly to ToolHive roles and policy sets.
+
+[Learn more about Stacklok Enterprise](/toolhive/enterprise).
+
+:::
+```
+
+**`<EnterpriseBadge />`** - inline label for tagging individual features, capabilities, or configuration options as enterprise-only. Works next to headings, in lists, or inline with text. Use when a specific feature within a broader page is enterprise-only.
+
+```mdx
+### Session pinning <EnterpriseBadge />
+
+- **Automatic failover** <EnterpriseBadge /> - connections are automatically rerouted when a node becomes unavailable.
+```
+
+**`className: 'enterprise-only'` sidebar badge** - for marking enterprise-only pages in the sidebar navigation. Applied in `sidebars.ts`, not in the page itself. Renders a small "ENT" pill badge with a tooltip on hover.
+
+```ts title="sidebars.ts"
+{
+  type: 'doc',
+  id: 'toolhive/guides-enterprise/config-server',
+  className: 'enterprise-only',
+}
+```

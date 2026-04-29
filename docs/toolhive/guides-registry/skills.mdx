@@ -1,0 +1,258 @@
+---
+title: Manage skills
+description:
+  How to publish, list, retrieve, and delete skills in the ToolHive Registry
+  Server through the admin API or a synced source.
+---
+
+The Registry Server exposes [skills](../concepts/skills.mdx) through an
+extensions API and accepts skill entries from the same sources as MCP servers.
+This guide covers the full lifecycle: publishing, listing, retrieving, and
+deleting skills.
+
+Skills can come from two paths:
+
+- **Publish to a managed source via the admin API** (covered in depth below).
+  Good for programmatic or UI-driven publishing with per-version control.
+- **Sync from external sources** (Git, upstream API, or file) that contain
+  skills in the upstream registry format. Good for catalogs that live in a
+  repository with code review and CI.
+
+For the file-based path, the registry JSON format is identical to the one used
+for MCP servers: skills go under `data.skills` alongside `data.servers`. See
+[Publish MCP servers](./publish-servers.mdx#registry-file-format) for the file
+format, Git repository layout, and how changes reach the server. The rest of
+this page focuses on the admin API.
+
+## Prerequisites
+
+- A running Registry server with at least one **managed** source configured
+  (required for publishing via the API; synced sources provide skills
+  automatically)
+- `curl` or another HTTP client
+- If authentication is enabled, a valid bearer token (see
+  [Authentication](./authentication.mdx))
+
+## API paths
+
+Skills use two API path families:
+
+- **Browse endpoints** (list, get, search) use the registry-scoped path:
+  `/registry/{registryName}/v0.1/x/dev.toolhive/skills`
+- **Admin endpoints** (publish, delete) use the `/v1/entries` path
+
+Replace `{registryName}` with the `name` of the registry as defined in your
+[configuration file](./configuration.mdx) (for example, `my-registry` if your
+config has `registries: [{name: my-registry, ...}]`).
+
+## Publish a skill
+
+To publish a new skill version, send a `POST` request to the `/v1/entries`
+endpoint with the skill metadata wrapped in a `skill` object:
+
+:::note
+
+The example below omits claims. When authentication is enabled, requests must
+also include a top-level `claims` object - see [Claims](#claims) below.
+
+:::
+
+```bash title="Publish a skill"
+curl -X POST \
+  https://registry.example.com/v1/entries \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -d '{
+    "skill": {
+      "namespace": "io.github.acme",
+      "name": "code-review",
+      "description": "Performs structured code reviews using best practices",
+      "version": "1.0.0",
+      "status": "active",
+      "title": "Code Review Assistant",
+      "license": "Apache-2.0",
+      "packages": [
+        {
+          "registryType": "git",
+          "url": "https://github.com/acme/skills",
+          "ref": "v1.0.0",
+          "subfolder": "code-review"
+        }
+      ],
+      "repository": {
+        "url": "https://github.com/acme/skills",
+        "type": "git"
+      }
+    }
+  }'
+```
+
+**Required fields in the `skill` object:** `namespace`, `name`, `version`
+
+A successful response returns `201 Created` with the published skill. If the
+version already exists, the server returns `409 Conflict`.
+
+The `status` field accepts `active`, `deprecated`, or `archived` (case
+insensitive). The server normalizes status values to uppercase internally.
+
+### Claims
+
+When [authentication](./authentication.mdx) is enabled, publish requests must
+include a `claims` object. Skipping it returns `400 Bad Request`. Attach claims
+at the top level of the request body, alongside the `skill` object:
+
+```json
+{
+  "skill": {
+    "namespace": "io.github.acme",
+    "name": "code-review",
+    "version": "1.0.0"
+  },
+  "claims": { "org": "acme", "team": "platform" }
+}
+```
+
+The publish claims must be a subset of your JWT claims, and all subsequent
+versions of the same skill must carry the same claims as the first version. See
+[Claims on published entries](./authorization.mdx#claims-on-published-entries)
+for details.
+
+### Versioning behavior
+
+When you publish a new version, the registry compares it against the current
+latest version. If the new version is newer, the latest pointer updates
+automatically. Publishing an older version (for example, backfilling `0.9.0`
+after `1.0.0` exists) does not change the latest pointer.
+
+## List skills
+
+To list skills in a registry:
+
+```bash title="List all skills"
+curl https://registry.example.com/registry/my-registry/v0.1/x/dev.toolhive/skills
+```
+
+### Query parameters
+
+| Parameter | Type   | Default | Description                                                      |
+| --------- | ------ | ------- | ---------------------------------------------------------------- |
+| `search`  | string | -       | Filter by name or description substring                          |
+| `status`  | string | -       | Filter by status (comma-separated: active, deprecated, archived) |
+| `limit`   | int    | 50      | Maximum results per page (1-100)                                 |
+| `cursor`  | string | -       | Pagination cursor from a previous response                       |
+
+### Search example
+
+```bash title="Search for skills by keyword"
+curl "https://registry.example.com/registry/my-registry/v0.1/x/dev.toolhive/skills?search=review&limit=10"
+```
+
+### Response format
+
+```json
+{
+  "skills": [
+    {
+      "namespace": "io.github.acme",
+      "name": "code-review",
+      "description": "Performs structured code reviews using best practices",
+      "version": "1.0.0",
+      "status": "ACTIVE",
+      "title": "Code Review Assistant",
+      "license": "Apache-2.0",
+      "packages": [
+        {
+          "registryType": "git",
+          "url": "https://github.com/acme/skills",
+          "ref": "v1.0.0",
+          "subfolder": "code-review"
+        }
+      ],
+      "repository": {
+        "url": "https://github.com/acme/skills",
+        "type": "git"
+      }
+    }
+  ],
+  "metadata": {
+    "count": 1,
+    "nextCursor": ""
+  }
+}
+```
+
+Use the `nextCursor` value to fetch the next page of results. An empty
+`nextCursor` indicates there are no more pages.
+
+## Retrieve a skill
+
+### Get the latest version
+
+```bash title="Get the latest version of a skill"
+curl https://registry.example.com/registry/my-registry/v0.1/x/dev.toolhive/skills/io.github.acme/code-review
+```
+
+### Get a specific version
+
+```bash title="Get a specific version"
+curl https://registry.example.com/registry/my-registry/v0.1/x/dev.toolhive/skills/io.github.acme/code-review/versions/1.0.0
+```
+
+### List all versions
+
+```bash title="List all versions of a skill"
+curl https://registry.example.com/registry/my-registry/v0.1/x/dev.toolhive/skills/io.github.acme/code-review/versions
+```
+
+## Delete a skill version
+
+To delete a specific version, use the `/v1/entries` endpoint:
+
+```bash title="Delete a skill version"
+curl -X DELETE \
+  "https://registry.example.com/v1/entries/skill/io.github.acme%2Fcode-review/versions/1.0.0" \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+The skill name includes the namespace prefix. URL-encode the slash as `%2F` so
+the full `namespace/name` is captured as a single `{name}` path parameter.
+
+A successful delete returns `204 No Content`. Deleting a non-existent version
+returns `404 Not Found`.
+
+:::warning
+
+Deleting a skill version is permanent. If the deleted version was the latest,
+the server automatically reassigns the latest pointer to the next-highest
+remaining version.
+
+:::
+
+## Error responses
+
+The API returns standard HTTP status codes:
+
+| Code | Meaning                                                       |
+| ---- | ------------------------------------------------------------- |
+| 400  | Invalid request (missing required fields, invalid parameters) |
+| 401  | Authentication required                                       |
+| 403  | Insufficient permissions or claims, or registry is read-only  |
+| 404  | Registry, skill, or version not found                         |
+| 409  | Version already exists                                        |
+| 500  | Internal server error                                         |
+
+## Next steps
+
+- [Install skills with the CLI](../guides-cli/skills-management.mdx) to install
+  skills from the registry onto your local machine
+- [Configure telemetry](./telemetry-metrics.mdx) to monitor your registry
+  deployment
+
+## Related information
+
+- [Understanding skills](../concepts/skills.mdx) - background on the skills
+  model
+- [Registry server introduction](./intro.mdx)
+- [Authentication](./authentication.mdx) - configuring API access
+- [Authorization](./authorization.mdx) - role-based access control and
+  claims-based scoping

@@ -17,6 +17,12 @@ aim to deliver clear, concise, and valuable information to project users.
   - [Links](#links)
   - [Formatting](#formatting)
 - [Screenshots and images](#screenshots-and-images)
+- [Page structure](#page-structure)
+  - [Front matter](#front-matter)
+    - [Descriptions](#descriptions)
+  - [Closing sections](#closing-sections)
+  - [Introduction pages](#introduction-pages)
+  - [Cross-references](#cross-references)
 - [Markdown style](#markdown-style)
 - [Projects](#projects)
 - [Word list \& glossary](#word-list--glossary)
@@ -49,8 +55,8 @@ avoid overly complex jargon to make content accessible to a wide audience.
 ### Tone and voice
 
 Strive for a casual and conversational tone without becoming overly informal. We
-aim to be friendly and relatable while retaining credibility and professionalism
-– approachable yet polished.
+aim to be friendly and relatable while retaining credibility and
+professionalism, approachable yet polished.
 
 #### Active voice
 
@@ -101,6 +107,12 @@ a series.
 quotes" or "smart quotes" (the default in document editors like Word/Docs). This
 is especially important in code examples where smart quotes often cause syntax
 errors.
+
+**Dashes**: avoid em dashes (`—`) and en dashes (`–`). They are hard to type,
+easy to miss in editors, and have proliferated with AI-generated content.
+Instead, rephrase naturally: use commas, split into two sentences, or
+restructure. If a separator is truly needed (for example, between a link and its
+description in a list), use a spaced hyphen (`-`).
 
 Tip: if you are drafting in Google Docs, disable the "Use smart quotes" setting
 in the Tools → Preferences menu to avoid inadvertently copying smart quotes into
@@ -155,6 +167,93 @@ Considerations for screenshots and other images:
 - Use the primary brand colors (`#2D684B` on light backgrounds, `#BDDFC2` on
   dark backgrounds) for annotations like callouts and highlight boxes.
 
+## Page structure
+
+Every how-to guide and tutorial page follows a consistent structure. This
+ensures readers always know what to expect and never hit dead ends.
+
+### Front matter
+
+Every page must have front matter with at least a `title` and `description`.
+
+#### Descriptions
+
+The `description` field serves double duty: it appears in DocCard index pages
+(truncated at roughly 70-75 characters) and as the page's `<meta>` description
+for search engines (ideally 80-150 characters total).
+
+Write descriptions to work at both lengths:
+
+- **Front-load the value.** The first 70 characters must stand alone as a useful
+  summary, because that's all a DocCard shows before cutting off.
+- **Add SEO detail after the natural break.** Use the remaining characters for
+  keywords and context that help search engines.
+- **Lead with the action or topic, not filler.** Avoid openers like "Learn how
+  to," "Understanding," "A guide to," or "This page describes."
+- **Avoid special YAML characters in unquoted values.** Colons (`:`) inside a
+  description can break YAML parsing. Either rephrase, use a comma, or wrap the
+  value in quotes.
+
+Examples:
+
+:white_check_mark:
+`Install the ToolHive CLI and run your first MCP server in minutes.`\
+:x: `A step-by-step guide to installing the ToolHive CLI and running your first MCP server.`
+
+:white_check_mark:
+`Groups organize MCP servers into logical sets and control which clients can access them.`\
+:x:
+`Understanding when and why to use groups for organizing MCP servers and controlling client access.`
+
+### Closing sections
+
+Every how-to guide and tutorial page ends with closing sections in this order:
+
+1. `## Next steps` (required) - 1-3 links to the next logical pages, following
+   the journey phases: install, use, secure, operate, optimize.
+2. `## Related information` (optional) - links to background reading, reference
+   docs, or external resources that don't represent a next action.
+3. `## Troubleshooting` (optional) - common issues and solutions, typically
+   using collapsible `<details>` blocks.
+
+Example:
+
+```mdx
+## Next steps
+
+- [Run MCP servers](./run-mcp-servers.mdx) to deploy your first server.
+- [Client configuration](./client-configuration.mdx) to connect your IDE.
+
+## Related information
+
+- [Understanding MCP](../concepts/mcp.mdx) for background on the protocol.
+
+## Troubleshooting
+
+<details>
+<summary>Server fails to start</summary>
+
+Check that the container runtime is running...
+
+</details>
+```
+
+### Introduction pages
+
+Each product section (UI, CLI, K8s, vMCP, Registry Server) has an Introduction
+page as its first sidebar child. This page explains what the component is, who
+it's for, and where to start. It is an explicit child item in the sidebar - not
+a hidden category-link page.
+
+### Cross-references
+
+Link to related content in other sections where it adds value. Key patterns:
+
+- Product section auth pages link to the Concepts auth framework page.
+- Product section telemetry pages link to the Integrations OpenTelemetry guide.
+- The Registry Server introduction disambiguates from the built-in registry.
+- The UI "Access the CLI" page links to the CLI section.
+
 ## Markdown style
 
 Just like a consistent writing style is critical to clarity and messaging,
@@ -171,7 +270,7 @@ Our preferred style elements include:
   Heading 2, and so on); use unique headings within a document
 - Unordered lists: use hyphens (`-`), not asterisks (`*`)
 - Ordered lists: use lazy numbering (`1.` for every item and let Markdown render
-  the final order – this is more maintainable when inserting new items)
+  the final order. This is more maintainable when inserting new items)
   - Note: this is a "soft" recommendation. It is also intended only for Markdown
     documents that are read through a rendering engine. If the Markdown will be
     consumed in raw form, use real numbering.

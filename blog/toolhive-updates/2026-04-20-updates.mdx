@@ -1,0 +1,81 @@
+---
+title: Registry claims enforcement and horizontal scaling
+sidebar_label: 'Apr 20: Claims enforcement and horizontal scaling'
+description:
+  Registry Server v1.2.0 adds claims management for published entries and drops
+  the legacy registry format. New horizontal scaling guides cover
+  VirtualMCPServer and MCPServer with Redis-backed session routing.
+---
+
+This week brings Registry Server v1.2.0 with stronger access control over
+published entries and a clean break from the legacy format. Virtual MCP Server
+(vMCP) and MCP servers gain horizontal scaling support with Redis-backed session
+routing to keep sessions consistent across replicas.
+
+{/* truncate */}
+
+## Registry Server: Claims control and format standardization
+
+The **ToolHive Registry Server** v1.2.0 tightens access control on published
+entries and simplifies the configuration surface:
+
+- **Claims management for published entries** adds a new API endpoint for
+  updating the claims on an already-published entry. Authorization is
+  JWT-enforced: your token must cover both the existing and new claim sets, so
+  you can't accidentally expand access beyond what you already own. Super-admins
+  can bypass this check when needed.
+- **Enforced claims on publish** closes a gap where publishing without claims
+  while authenticated would silently create entries invisible to everyone.
+  Publishing now returns a clear error when a JWT is present and no claims are
+  provided, instead of creating an inaccessible entry.
+- **MCP registry format only** drops the legacy ToolHive-native registry format.
+  Only the upstream MCP registry format is supported going forward, improving
+  interoperability with other tools in the MCP ecosystem. Update any clients or
+  tooling that relied on the old format before upgrading.
+- **Database password via config and environment variables** adds support for
+  setting the database password through configuration files and environment
+  variables, not just connection strings - making it easier to integrate with
+  secret management tools without embedding credentials in URLs.
+- **Single managed source enforcement** rejects configurations with more than
+  one managed source, preventing a class of misconfiguration that could cause
+  inconsistent registry state.
+
+## Horizontal scaling for VirtualMCPServer and MCPServer
+
+Running multiple replicas of your VirtualMCPServer or MCPServer resources
+improves availability and handles higher request volumes. The
+[horizontal scaling guide](/toolhive/guides-vmcp/scaling-and-performance) covers
+how to keep sessions consistent across pods:
+
+- **Multi-replica vMCP deployments** are controlled by setting `replicas` in
+  your `VirtualMCPServer` spec. The operator sets a `SessionStorageWarning`
+  condition if you configure multiple replicas without Redis, but still applies
+  the replica count.
+- **Independent proxy and backend scaling for MCPServer** via `spec.replicas`
+  (proxy runner) and `spec.backendReplicas` (backend MCP server) lets you target
+  whichever tier is the actual bottleneck - connection handling or tool
+  execution.
+- **Redis session storage** is required for reliable multi-replica operation in
+  both cases. For vMCP, it keeps sessions consistent across pods. For MCPServer,
+  it stores a session-to-pod mapping so every proxy runner knows which backend
+  pod owns each active session. Without Redis, both fall back to Kubernetes
+  client-IP session affinity, which is unreliable behind NAT or shared egress
+  IPs (common in EKS, GKE, and AKS).
+- **Connection draining on MCPServer scale-down** gives terminating proxy pods
+  30 seconds to finish in-flight requests. Long-lived SSE or streaming
+  connections may be dropped if they exceed this window. Override
+  `terminationGracePeriodSeconds` via `podTemplateSpec` if your workload needs a
+  longer drain period.
+
+## Getting started
+
+For detailed release notes, check the project repositories:
+
+- [ToolHive Runtimes](https://github.com/stacklok/toolhive/releases) (CLI and
+  Kubernetes Operator)
+- [ToolHive Desktop UI](https://github.com/stacklok/toolhive-studio/releases)
+- [ToolHive Cloud UI](https://github.com/stacklok/toolhive-cloud-ui/releases)
+- [ToolHive Registry Server](https://github.com/stacklok/toolhive-registry-server/releases)
+
+You can find all ToolHive documentation on the
+[Stacklok documentation site](/toolhive).

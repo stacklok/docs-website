@@ -1,33 +1,37 @@
 ---
-title: Overview
-description: How to manage MCP servers in Kubernetes with the ToolHive operator
+title: Introduction
+description:
+  How to manage MCP servers in Kubernetes with the ToolHive Kubernetes Operator
 ---
 
-The ToolHive Kubernetes operator manages MCP servers in Kubernetes clusters. It
+The ToolHive Kubernetes Operator manages MCP servers in Kubernetes clusters. It
 lets you define MCP servers as Kubernetes resources and automates their
 deployment and management.
 
-:::info[Experimental]
-
-The Kubernetes operator is still under active development and isn't recommended
-for production use cases yet. Specifically, the Custom Resource Definitions
-(CRDs) are still in an alpha state so breaking changes to the spec and
-capabilities are possible.
+:::info
 
 See the [ToolHive Operator quickstart tutorial](./quickstart.mdx) to get started
-quickly using a local kind cluster. We'd love for you to try it out and send
-feedback!
+quickly using a local kind cluster. Try it out and
+[share your feedback](https://discord.gg/stacklok)!
 
 :::
 
-## Overview
+## How the operator works
 
 The operator introduces new Custom Resource Definitions (CRDs) into your
 Kubernetes cluster. The primary CRDs for MCP server workloads are `MCPServer`,
 which represents a single MCP server running in Kubernetes, `MCPRemoteProxy`,
-which represents an MCP server running outside the cluster that is proxied by
-ToolHive, and `VirtualMCPServer`, which represents a virtual MCP server gateway
-that aggregates multiple backend MCP servers.
+which represents an MCP server hosted outside the cluster that ToolHive proxies,
+`MCPServerEntry`, which registers a remote MCP server as a catalog entry for
+vMCP discovery, and `VirtualMCPServer`, which aggregates multiple backend MCP
+servers behind a single endpoint.
+
+All ToolHive CRDs are registered under the `toolhive` category, so you can list
+every ToolHive resource in your cluster with a single command:
+
+```bash
+kubectl get toolhive -n toolhive-system
+```
 
 When you create an `MCPServer` resource, the operator automatically:
 
@@ -62,6 +66,34 @@ The diagram shows how clients connect to MCP servers through a standard Ingress
 or Gateway. To learn how to expose your MCP servers and connect clients, see
 [Connect clients to MCP servers](./connect-clients.mdx).
 
+## Which resource type should I use?
+
+The operator introduces resource types for MCP workloads. Choose based on where
+your MCP server runs and how many servers you need to manage:
+
+| Resource             | Use when                                                                                                 |
+| -------------------- | -------------------------------------------------------------------------------------------------------- |
+| **MCPServer**        | Running an MCP server as a container inside your cluster                                                 |
+| **MCPRemoteProxy**   | Connecting to an MCP server hosted outside your cluster (SaaS tools, external APIs, remote endpoints)    |
+| **MCPServerEntry**   | Declaring a remote MCP server as a lightweight catalog entry without deploying proxy pods                |
+| **VirtualMCPServer** | Aggregating multiple MCPServer, MCPRemoteProxy, and/or MCPServerEntry resources behind a single endpoint |
+
+Most teams start with `MCPServer` for container-based servers, add
+`MCPRemoteProxy` for external SaaS tools, and graduate to `VirtualMCPServer`
+when managing five or more servers or needing centralized authentication. Use
+`MCPServerEntry` instead of `MCPRemoteProxy` when you want to include a remote
+server in vMCP discovery without the overhead of running a proxy pod.
+
+The operator also provides shared configuration CRDs that you reference from
+workload resources:
+
+| Resource                                                                                        | Purpose                                                                                                         |
+| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| [**MCPOIDCConfig**](./auth-k8s.mdx#set-up-shared-oidc-configuration-with-mcpoidcconfig)         | Shared OIDC authentication settings, referenced via `oidcConfigRef`                                             |
+| [**MCPTelemetryConfig**](./telemetry-and-metrics.mdx#shared-telemetry-configuration)            | Shared telemetry/observability settings, referenced via `telemetryConfigRef`                                    |
+| [**MCPToolConfig**](./customize-tools.mdx)                                                      | Tool filtering and renaming, referenced via `toolConfigRef`                                                     |
+| [**MCPExternalAuthConfig**](./auth-k8s.mdx#set-up-embedded-authorization-server-authentication) | Token exchange or embedded auth server configuration, referenced via `externalAuthConfigRef` or `authServerRef` |
+
 ## Installation
 
 [Deploy the ToolHive operator](./deploy-operator.mdx) in your Kubernetes
@@ -71,4 +103,5 @@ Once the operator is installed, you can create and manage MCP servers:
 
 - [Run MCP servers in Kubernetes](./run-mcp-k8s.mdx)
 - [Proxy remote MCP servers](./remote-mcp-proxy.mdx)
+- [Declare remote MCP server entries](./mcp-server-entry.mdx)
 - [Virtual MCP Server (vMCP)](../guides-vmcp/index.mdx)

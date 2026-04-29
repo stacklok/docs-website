@@ -42,13 +42,13 @@ Every feature should answer: **"What can I now do that I couldn't before, and wh
 
 **Bad**: "Added API management to Registry Server"
 
-**Good**: "API-based management lets you add, update, or remove registries programmatically—useful for CI/CD pipelines and infrastructure-as-code approaches"
+**Good**: "API-based management lets you add, update, or remove registries programmatically, making it easier to integrate with CI/CD pipelines and infrastructure-as-code workflows"
 
 ### 2. Honest About Maturity
 
 - Avoid claiming production-readiness prematurely
 - Use phrases like "adds more operational capabilities," "moves closer to production readiness," "foundational capabilities"
-- Don't oversell—these are incremental improvements showing project momentum
+- Don't oversell; most updates are incremental improvements showing project momentum
 
 ### 3. Accessible Language
 
@@ -152,7 +152,7 @@ For each major feature/component:
 
 **Before**: "Monitor which MCP servers behind vMCP are available and responding"
 
-**After**: "**Health monitoring** tracks which MCP servers behind vMCP are available and responding—the foundation for building alerts and dashboards"
+**After**: "**Health monitoring** tracks which MCP servers behind vMCP are available and responding, giving you the foundation to build alerts and dashboards"
 
 ### Issue: Too Much Technical Detail Too Soon
 
@@ -177,7 +177,7 @@ For each major feature/component:
 **Every update post must end with this exact section:**
 
 ```markdown
-### Getting started
+## Getting started
 
 For detailed release notes, check the project repositories:
 

@@ -32,7 +32,7 @@ Signed-off-by: jane marmot <jmarmot@example.org>
 
 The Signed-off-by [trailer](https://git-scm.com/docs/git-interpret-trailers) can
 be added automatically by using the
-[-s or –signoff command line option](https://git-scm.com/docs/git-commit/2.13.7#Documentation/git-commit.txt--s)
+[-s or --signoff command line option](https://git-scm.com/docs/git-commit/2.13.7#Documentation/git-commit.txt--s)
 when specifying your commit message:
 
 ```bash

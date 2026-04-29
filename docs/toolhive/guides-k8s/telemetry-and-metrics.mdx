@@ -1,15 +1,14 @@
 ---
 title: Telemetry and metrics
 description:
-  How to enable OpenTelemetry (metrics and traces) and Prometheus
-  instrumentation for ToolHive MCP servers inside of Kubernetes using the
-  ToolHive Operator
+  Enable OpenTelemetry and Prometheus metrics for ToolHive MCP servers running
+  in Kubernetes.
 ---
 
-ToolHive includes built-in instrumentation using OpenTelemetry, which gives you
-comprehensive observability for your MCP server interactions. You can export
-traces and metrics to popular observability backends like Jaeger, Honeycomb,
-Datadog, and Grafana Cloud, or expose Prometheus metrics directly.
+ToolHive includes built-in instrumentation using OpenTelemetry, providing
+comprehensive observability for your MCP server interactions. Export traces and
+metrics to popular observability backends like Jaeger, Honeycomb, Datadog, and
+Grafana Cloud, or expose Prometheus metrics directly.
 
 ## What you can monitor
 
@@ -20,15 +19,49 @@ the [observability overview](../concepts/observability.mdx).
 
 ## Enable telemetry
 
-You can enable telemetry when deploying an MCP server by specifying Telemetry
-configuration in the MCPServer or MCPRemoteProxy custom resource.
+The recommended way to configure telemetry is with a shared `MCPTelemetryConfig`
+resource referenced by `telemetryConfigRef` on each MCPServer or MCPRemoteProxy.
 
-This example runs the Fetch MCP server and exports traces to a deployed instance
-of the [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/):
+### Shared telemetry configuration
 
-```yaml {12}
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: MCPServer # or MCPRemoteProxy
+The `MCPTelemetryConfig` CRD lets you define telemetry settings once and
+reference them from multiple MCPServer resources. Each server can override its
+`serviceName` for a distinct identity in your observability backend.
+
+**Step 1: Create an MCPTelemetryConfig resource**
+
+```yaml title="shared-otel-config.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPTelemetryConfig
+metadata:
+  name: shared-otel
+  namespace: toolhive-system
+spec:
+  openTelemetry:
+    enabled: true
+    endpoint: otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4318
+    insecure: true
+    metrics:
+      enabled: true
+    tracing:
+      enabled: true
+      samplingRate: '0.05'
+  prometheus:
+    enabled: true
+```
+
+```bash
+kubectl apply -f shared-otel-config.yaml
+```
+
+**Step 2: Reference from an MCPServer or MCPRemoteProxy**
+
+Reference the config by name in `telemetryConfigRef`. Both `MCPServer` and
+`MCPRemoteProxy` support this field:
+
+```yaml {10-12} title="mcpserver-with-shared-otel.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
 metadata:
   name: gofetch
   namespace: toolhive-system
@@ -36,79 +69,131 @@ spec:
   image: ghcr.io/stackloklabs/gofetch/server
   transport: streamable-http
   proxyPort: 8080
-  mcpPort: 8080
-  # ... other spec fields ...
-  telemetry:
-    openTelemetry:
-      enabled: true
-      endpoint: otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4318
-      serviceName: mcp-fetch-server
-      insecure: true
-      metrics:
-        enabled: true
-      tracing:
-        enabled: true
-        samplingRate: '0.05'
-    prometheus:
-      enabled: true
+  telemetryConfigRef:
+    name: shared-otel
+    serviceName: mcp-fetch-server
 ```
 
-The `spec.telemetry.openTelemetry.endpoint` will be the OpenTelemetry collector
-that is deployed inside of your infrastructure, the
-`spec.telemetry.openTelemetry.serviceName` will be what you can use to identify
-your MCP server in your observability stack.
+For an `MCPRemoteProxy`, the reference works the same way:
 
-### Export metrics to an OTLP endpoint
+```yaml {8-10} title="remote-proxy-with-shared-otel.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPRemoteProxy
+metadata:
+  name: analytics-proxy
+  namespace: toolhive-system
+spec:
+  remoteUrl: https://mcp.analytics.example.com
+  telemetryConfigRef:
+    name: shared-otel
+    serviceName: analytics-mcp-proxy
+```
 
-If you want to enable ToolHive to export metrics to your OTel collector, you can
-enable the `spec.telemetry.openTelemetry.metrics.enabled` flag.
+:::tip[Service name]
 
-### Export traces to an OTLP endpoint
+Set `serviceName` to a meaningful name for each MCP server. This helps identify
+the server in your observability backend. The default is `toolhive-mcp-proxy`.
 
-If you want to enable ToolHive to export tracing information, you can enable the
-`spec.telemetry.openTelemetry.tracing.enabled` flag.
+:::
 
-You can also set the sampling rate of your traces by setting the
-`spec.telemetry.openTelemetry.tracing.sampleRate` option to a number between 0
-and 1.0. By default this will be `0.05` which equates to 5% of all requests.
+```bash
+kubectl apply -f mcpserver-with-shared-otel.yaml
+```
+
+**Step 3: Verify**
+
+```bash
+kubectl get mcpotel -n toolhive-system
+```
+
+The `REFERENCES` column shows which workloads use this config. The `READY`
+column confirms validation passed.
+
+#### Configuration details
+
+Set `spec.openTelemetry.endpoint` to the address of your OTLP-compatible
+collector or backend. ToolHive supports exporting traces, metrics, or both
+simultaneously, as shown in the example above.
 
 :::note
 
-The `spec.telemetry.openTelemetry.endpoint` is provided as a hostname and
-optional port, without a scheme or path (e.g., use `api.honeycomb.io` or
-`api.honeycomb.io:443`, not `https://api.honeycomb.io`). ToolHive automatically
-uses HTTPS unless `--otel-insecure` is specified.
+Specify the endpoint as a hostname and optional port, without a scheme or path
+(for example, `api.honeycomb.io` or `api.honeycomb.io:443`, not
+`https://api.honeycomb.io`). ToolHive uses HTTPS by default; set
+`insecure: true` to disable TLS.
 
 :::
 
-By default, the service name is set to `toolhive-mcp-proxy`, and the sampling
-rate is `0.05` (5%).
+Set `spec.openTelemetry.tracing.samplingRate` to control the percentage of
+requests traced, as a quoted string between `'0'` and `'1.0'`. The default is
+`'0.05'` (5%).
 
-:::tip[Recommendation]
+To expose a Prometheus-compatible `/metrics` endpoint for pull-based scraping,
+enable `spec.prometheus.enabled`. Access the metrics at
+`http://<HOST>:<PORT>/metrics`, where `<HOST>` is the resolvable address of the
+ToolHive ProxyRunner fronting your MCP server pod and `<PORT>` is the port the
+ProxyRunner service exposes for traffic.
 
-Set the `spec.telemetry.openTelemetry.serviceName` flag to a meaningful name for
-each MCP server. This helps you identify the server in your observability
-backend.
+#### Authentication headers
+
+If your OTLP endpoint requires authentication, add headers to the
+`MCPTelemetryConfig` resource. Use `headers` for non-secret values or
+`sensitiveHeaders` to reference credentials stored in Kubernetes Secrets. A
+header name cannot appear in both fields.
+
+```yaml title="otel-config-with-auth.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPTelemetryConfig
+metadata:
+  name: otel-with-auth
+  namespace: toolhive-system
+spec:
+  openTelemetry:
+    enabled: true
+    endpoint: <OTLP_ENDPOINT>
+    sensitiveHeaders:
+      - name: Authorization
+        secretKeyRef:
+          name: otel-credentials
+          key: api-key
+    tracing:
+      enabled: true
+    metrics:
+      enabled: true
+```
+
+#### Custom CA certificates for OTLP endpoints
+
+If your OTLP collector uses TLS with certificates signed by an internal or
+private CA, add a `caBundleRef` to your MCPTelemetryConfig. The operator mounts
+the referenced ConfigMap into the pod and configures the OTLP exporters to trust
+the custom CA alongside the system CA pool.
+
+```yaml title="telemetry-with-ca-bundle.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPTelemetryConfig
+metadata:
+  name: shared-otel
+  namespace: toolhive-system
+spec:
+  openTelemetry:
+    enabled: true
+    endpoint: otel-collector.internal:4318
+    caBundleRef:
+      configMapRef:
+        name: otel-ca-bundle
+        key: ca.crt
+    tracing:
+      enabled: true
+    metrics:
+      enabled: true
+```
+
+:::note
+
+`caBundleRef` cannot be used when `insecure` is set to `true`.
 
 :::
-
-### Enable Prometheus metrics
-
-You can expose Prometheus-style metrics at `/metrics` on the main transport port
-for local scraping by enabling the `spec.telemetry.prometheus.enabled` flag.
-
-To access the metrics, you can use `curl` or any Prometheus-compatible scraper.
-The metrics are available at `http://<HOST>:<PORT>/metrics`, where `<HOST>` is
-resolvable address of the ToolHive ProxyRunner fronting your MCP server pod and
-`<PORT>` is the port of which the ProxyRunner service is configured to expose
-for traffic.
-
-### Dual export
-
-You can export to both an OTLP endpoint and expose Prometheus metrics
-simultaneously.
-
-The `MCPServer` example at the top of this page has dual export enabled.
 
 ## Observability backends
 
@@ -116,6 +201,14 @@ ToolHive can export telemetry data to many different observability backends. It
 supports exporting traces and metrics to any backend that implements the OTLP
 protocol. Some common examples are listed below, but specific configurations
 will vary based on your environment and requirements.
+
+:::note
+
+The backend examples below use `MCPTelemetryConfig` resources. Reference them
+from your MCPServer resources using `telemetryConfigRef` as shown in the
+[shared telemetry configuration](#shared-telemetry-configuration) section above.
+
+:::
 
 ### OpenTelemetry Collector (recommended)
 
@@ -129,42 +222,80 @@ graph LR
     B --> C[AWS CloudWatch]
     B --> D[Splunk]
     B --> E[New Relic]
-    B <--> F[Prometheus]
+    F[Prometheus] -->|scrapes| B
     B --> G[Other OTLP backends]
 ```
 
-You can run the OpenTelemetry Collector inside of a Kubernetes cluster, follow
-the
-[OpenTelemetry Collector documentation](https://opentelemetry.io/docs/collector/)
-for more information.
+To deploy the OpenTelemetry Collector in a Kubernetes cluster, see the
+[OpenTelemetry Collector documentation](https://opentelemetry.io/docs/collector/).
+The following minimal configuration receives OTLP data and exports traces and
+metrics:
 
-To export data to a local OpenTelemetry Collector, set your OTLP endpoint to the
-OTLP http receiver port (default is `4318`):
+```yaml title="otel-collector.yaml"
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-collector
+  namespace: monitoring
+spec:
+  config:
+    receivers:
+      otlp:
+        protocols:
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch:
+        send_batch_size: 1024
+        timeout: 5s
+    exporters:
+      otlp/traces:
+        endpoint: <TRACE_BACKEND>:4317
+        tls:
+          insecure: true
+      prometheus:
+        endpoint: 0.0.0.0:8889
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlp/traces]
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [prometheus]
+```
+
+Then point your `MCPTelemetryConfig` at the collector's OTLP HTTP receiver port
+(default `4318`):
 
 ```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: MCPServer
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPTelemetryConfig
 metadata:
-  name: gofetch
+  name: otel-collector
   namespace: toolhive-system
 spec:
-  ...
-  ...
-  telemetry:
-    openTelemetry:
+  openTelemetry:
+    enabled: true
+    endpoint: otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4318
+    insecure: true
+    metrics:
       enabled: true
-      endpoint: otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4318
-      serviceName: mcp-fetch-server
-      insecure: true
-      metrics:
-        enabled: true
+    tracing:
+      enabled: true
 ```
 
 ### Prometheus
 
-To collect metrics using Prometheus, run your MCP server with the
-`spec.telemetry.prometheus.enabled` flag enabled and add the following to your
-Prometheus configuration:
+This example scrapes the `/metrics` endpoint exposed by each MCP server
+directly. To aggregate metrics through an OpenTelemetry Collector instead
+(ToolHive pushes to the collector, Prometheus scrapes the collector), see the
+[OpenTelemetry Collector](#opentelemetry-collector-recommended) section.
+
+To enable scraping, [enable Prometheus](#configuration-details) in your
+telemetry configuration and add the following to your Prometheus configuration:
 
 ```yaml title="prometheus.yml"
 scrape_configs:
@@ -175,68 +306,62 @@ scrape_configs:
     metrics_path: /metrics
 ```
 
-You can add multiple MCP servers to the `targets` list. Replace
+Add multiple MCP servers to the `targets` list. Replace
 `<MCP_SERVER_PROXY_SVC_URL>` with the ProxyRunner SVC name and
 `<MCP_SERVER_PORT>` with the port number exposed by the SVC.
 
 ### Jaeger
 
-[Jaeger](https://www.jaegertracing.io) is a popular open-source distributed
-tracing system. You can run it inside of a Kubernetes cluster in order to store
-tracing telemetry data exported by the ToolHive proxy.
-
-You can export traces to Jaeger by setting the OTLP endpoint to an OpenTelemetry
-collector, and then configuring the collector to export tracing data to Jaeger.
+[Jaeger](https://www.jaegertracing.io) is a popular open source distributed
+tracing system that natively supports OTLP. Point your telemetry configuration
+directly at Jaeger's OTLP HTTP port (default `4318`):
 
 ```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: MCPServer
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPTelemetryConfig
 metadata:
-  name: gofetch
+  name: jaeger-tracing
   namespace: toolhive-system
 spec:
-  ...
-  ...
-  telemetry:
-    openTelemetry:
+  openTelemetry:
+    enabled: true
+    endpoint: jaeger-collector.monitoring.svc.cluster.local:4318
+    insecure: true
+    tracing:
       enabled: true
-      endpoint: otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4318
-      serviceName: mcp-fetch-server
-      insecure: true
-      tracing:
-        enabled: true
-```
-
-Inside of your OpenTelemetry collector configuration.
-
-```yaml
-config:
-  receivers:
-    otlp:
-      protocols:
-        grpc:
-          endpoint: 0.0.0.0:4317
-        http:
-          endpoint: 0.0.0.0:4318
-
-  exporters:
-    otlp/jaeger:
-      endpoint: http://jaeger-all-in-one-collector.monitoring:4317
-
-  service:
-    pipelines:
-      traces:
-        receivers: [otlp]
-        processors: [batch]
-        exporters: [otlp/jaeger]
 ```
 
 ### Honeycomb
 
-Coming soon.
+Send OpenTelemetry data directly to
+[Honeycomb's OTLP endpoint](https://docs.honeycomb.io/send-data/opentelemetry/#using-the-honeycomb-opentelemetry-endpoint),
+or use the [OpenTelemetry Collector](#opentelemetry-collector-recommended) to
+forward data to Honeycomb. This example sends data directly:
 
-You'll need your Honeycomb API key, which you can find in your
-[Honeycomb account settings](https://ui.honeycomb.io/account).
+```yaml
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPTelemetryConfig
+metadata:
+  name: honeycomb
+  namespace: toolhive-system
+spec:
+  openTelemetry:
+    enabled: true
+    endpoint: api.honeycomb.io:443
+    sensitiveHeaders:
+      - name: x-honeycomb-team
+        secretKeyRef:
+          name: honeycomb-credentials
+          key: api-key
+    tracing:
+      enabled: true
+    metrics:
+      enabled: true
+```
+
+Find your Honeycomb API key in your
+[Honeycomb account settings](https://ui.honeycomb.io/account). Store it in a
+Kubernetes Secret referenced by `sensitiveHeaders`.
 
 ### Datadog
 
@@ -253,7 +378,39 @@ collecting OpenTelemetry data:
 
 ### Grafana Cloud
 
-Coming soon.
+Send OpenTelemetry data to Grafana Cloud using
+[Grafana Alloy](https://grafana.com/docs/opentelemetry/collector/grafana-alloy/),
+Grafana Labs' supported distribution of the OpenTelemetry Collector. This is the
+recommended method for production deployments.
+
+To send data directly to
+[Grafana Cloud's OTLP endpoint](https://grafana.com/docs/grafana-cloud/send-data/otlp/send-data-otlp/#manual-opentelemetry-setup-for-advanced-users):
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPTelemetryConfig
+metadata:
+  name: grafana-cloud
+  namespace: toolhive-system
+spec:
+  openTelemetry:
+    enabled: true
+    endpoint: <GRAFANA_OTLP_ENDPOINT>
+    sensitiveHeaders:
+      - name: Authorization
+        secretKeyRef:
+          name: grafana-cloud-credentials
+          key: auth-header
+    tracing:
+      enabled: true
+    metrics:
+      enabled: true
+```
+
+Replace `<GRAFANA_OTLP_ENDPOINT>` with the OTLP endpoint from your Grafana Cloud
+portal (for example, `otlp-gateway-prod-us-central-0.grafana.net:443`). Store
+the full `Authorization` header value in the referenced Kubernetes Secret:
+`Basic <base64(instanceID:apiToken)>`.
 
 ## Performance considerations
 
@@ -261,12 +418,9 @@ Coming soon.
 
 Adjust sampling rates based on your environment:
 
-- **Development**: `spec.telemetry.openTelemetry.tracing.samplingRate: 1.0`
-  (100% sampling)
-- **Production**: `spec.telemetry.openTelemetry.tracing.samplingRate 0.01` (1%
-  sampling for high-traffic systems)
-- **Default**: `spec.telemetry.openTelemetry.tracing.samplingRate 0.05` (5%
-  sampling)
+- **Development**: `samplingRate: '1.0'` (100% sampling)
+- **Production**: `samplingRate: '0.01'` (1% sampling for high-traffic systems)
+- **Default**: `samplingRate: '0.05'` (5% sampling)
 
 ### Network overhead
 
@@ -275,13 +429,19 @@ Telemetry adds minimal overhead when properly configured:
 - Use appropriate sampling rates for your traffic volume
 - Monitor your observability backend costs and adjust sampling accordingly
 
+## Next steps
+
+- [Set up audit logging](./logging.mdx) for structured request and authorization
+  event tracking
+- [Secure your servers](./auth-k8s.mdx) with authentication and authorization
+
 ## Related information
 
 - Tutorial:
   [Collect telemetry for MCP workloads](../integrations/opentelemetry.mdx) -
-  Step-by-step guide to set up a local observability stack
-- [Telemetry and monitoring concepts](../concepts/observability.mdx) - Overview
+  step-by-step guide to set up a local observability stack
+- [Telemetry and monitoring concepts](../concepts/observability.mdx) - overview
   of ToolHive's observability architecture
-- [Kubernetes CRD reference](../reference/crd-spec.md#apiv1alpha1mcpserver) -
-  Reference for the `MCPServer` Custom Resource Definition (CRD)
-- [Deploy the operator](./deploy-operator.mdx) - Install the ToolHive operator
+- [Kubernetes CRD reference](../reference/crds/mcpserver.mdx) - reference for
+  the `MCPServer` Custom Resource Definition (CRD)
+- [Deploy the operator](./deploy-operator.mdx) - install the ToolHive operator

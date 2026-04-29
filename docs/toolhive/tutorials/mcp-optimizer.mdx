@@ -1,50 +1,55 @@
 ---
 title: Reduce token usage with MCP Optimizer
 description:
-  Enable the MCP Optimizer to enhance tool selection and reduce token usage.
+  Deploy the MCP Optimizer on Kubernetes with Virtual MCP Server and an
+  EmbeddingServer to filter tools and reduce token usage.
+schema_type: tutorial
 ---
 
 ## Overview
 
-The ToolHive MCP Optimizer acts as an intelligent intermediary between AI
-clients and MCP servers. It provides tool discovery, unified access to multiple
-MCP servers through a single endpoint, and intelligent routing of requests to
-appropriate MCP tools.
+The MCP Optimizer acts as an intelligent intermediary between AI clients and MCP
+servers. It provides tool discovery, unified access to multiple MCP servers
+through a single endpoint, and intelligent routing of requests to appropriate
+MCP tools.
 
-:::info[Status]
+:::note[Moving to vMCP]
 
-The MCP Optimizer is currently experimental. If you try it out, please share
-your feedback on the [Stacklok Discord community](https://discord.gg/stacklok).
+The optimizer is now integrated into
+[Virtual MCP Server (vMCP)](../guides-vmcp/optimizer.mdx), which provides the
+same tool filtering and token reduction at the team level. This tutorial walks
+you through the Kubernetes deployment. To run the optimizer locally, see
+[Run vMCP locally with the CLI](../guides-vmcp/local-cli.mdx).
 
 :::
 
+In this tutorial, you deploy the optimizer on Kubernetes using Virtual MCP
+Server (vMCP) and an EmbeddingServer for semantic tool search.
+
+## What you'll learn
+
+- How to create an MCPGroup with multiple backend MCP servers
+- How to deploy an EmbeddingServer for semantic search
+- How to create a VirtualMCPServer with the optimizer enabled
+- How to connect your AI client to the optimized endpoint
+
 ## About MCP Optimizer
 
-### Benefits
-
-- **Reduced token usage**: Narrow down the toolset to only relevant tools for a
-  given task, minimizing context overload and token consumption
-- **Improved tool selection**: Find the most appropriate tools across all
-  connected MCP servers
-- **Simplified client configuration**: Connect to a single MCP Optimizer
-  endpoint instead of managing multiple MCP server connections
+Instead of exposing every backend tool to the model, the optimizer introduces
+two lightweight primitives: `find_tool` for semantic search and `call_tool` for
+routing. This keeps context small and improves tool selection accuracy. For the
+full parameter reference and configuration options, see
+[Optimize tool discovery](../guides-vmcp/optimizer.mdx).
 
 ### How it works
 
-Instead of flooding the model with all available tools, MCP Optimizer introduces
-two lightweight primitives:
-
-1. `find_tool`: Searches for the most relevant tools using hybrid semantic +
-   keyword search
-2. `call_tool`: Routes the selected tool request to the appropriate MCP server
-
 The workflow is as follows:
 
-1. You send a prompt that requires tool assistance (for example, interacting
-   with a GitHub repo)
+1. You send a prompt that requires tool assistance (for example, fetching a web
+   page)
 2. The assistant calls `find_tool` with relevant keywords extracted from the
    prompt
-3. MCP Optimizer returns the most relevant tools (up to 8 by default, but this
+3. The optimizer returns the most relevant tools (up to 8 by default, but this
    is configurable)
 4. Only those tools and their descriptions are included in the context sent to
    the model
@@ -52,280 +57,335 @@ The workflow is as follows:
 
 ```mermaid
 flowchart TB
-  subgraph optimizerGroup["MCP Optimizer group (internal)"]
+  subgraph vmcpGroup["VirtualMCPServer"]
     direction TB
-    optimizer["MCP Optimizer"]
+    vmcp["vMCP (optimizer enabled)"]
   end
-  subgraph target["ToolHive group: default"]
+  subgraph embedding["EmbeddingServer"]
+    direction TB
+    tei["Text Embeddings Inference"]
+  end
+  subgraph backends["MCPGroup backends"]
     direction TB
     mcp1["MCP server"]
     mcp2["MCP server"]
     mcp3["MCP server"]
   end
 
-  client(["Client"]) <-- connects --> optimizerGroup
-  optimizer <-. discovers/routes .-> target
+  client(["Client"]) <-- "find_tool / call_tool" --> vmcpGroup
+  vmcp <-. "semantic search" .-> embedding
+  vmcp <-. "discovers / routes" .-> backends
 ```
 
 ## Prerequisites
 
-- One of the following container runtimes:
-  - macOS: Docker Desktop, Podman Desktop, or Rancher Desktop (using dockerd)
-  - Windows: Docker Desktop or Rancher Desktop (using dockerd)
-  - Linux: Not currently supported
-- ToolHive UI version 0.12.0 or later
+Before starting this tutorial, make sure you have:
 
-## Step 1: Install MCP servers in a ToolHive group
+- A Kubernetes cluster with the ToolHive operator installed (see
+  [Quickstart: Kubernetes Operator](../guides-k8s/quickstart.mdx))
+- `kubectl` configured to communicate with your cluster
+- The [ToolHive CLI](../guides-cli/quickstart.mdx) installed on your local
+  machine (used in Step 4 to register the endpoint with your MCP clients)
+- An MCP client (Visual Studio Code with GitHub Copilot is used in this
+  tutorial)
 
-Before you can use MCP Optimizer, you need to have one or more MCP servers
-running in a ToolHive group. If you don't have any MCP servers set up yet,
-follow these steps:
+## Step 1: Create an MCPGroup and deploy backend MCP servers
 
-<Tabs groupId='mode' queryString='mode'>
-<TabItem value='ui' label='ToolHive UI' default>
+Create an MCPGroup to organize the backend MCP servers that the optimizer will
+index and route to:
 
-1. Open the ToolHive UI and go to the **MCP Servers** screen
-2. Ensure you're in the `default` group (or create a new group if desired)
-3. Run one or more MCP servers by clicking the **Add an MCP Server** button and
-   selecting from the registry or using a custom server image
-
-   For this tutorial, you can run the following example MCP servers:
-   - `github`: Provides tools for interacting with GitHub repositories
-     ([guide](../guides-mcp/github.mdx?mode=ui))
-   - `fetch`: Provides a web search tool to fetch recent news articles
-   - `time`: Provides a tool to get the current time in various time zones
-
-4. Wait for the MCP servers to start and become healthy
-
-See the [Run MCP servers](../guides-ui/run-mcp-servers.mdx) guide for more
-details.
-
-</TabItem>
-<TabItem value='cli' label='ToolHive CLI'>
-
-Run one or more MCP servers in the `default` group using the ToolHive CLI. For
-this tutorial, you can run the following example MCP servers:
-
-- `github`: Provides tools for interacting with GitHub repositories
-  ([guide](../guides-mcp/github.mdx?mode=cli))
-- `fetch`: Provides a web search tool to fetch recent news articles
-- `time`: Provides a tool to get the current time in various time zones
-
-```bash
-thv run github
-thv run fetch
-thv run time
+```yaml title="mcpgroup.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPGroup
+metadata:
+  name: optimizer-demo
+  namespace: toolhive-system
+spec:
+  description: Backend servers for the optimizer tutorial
 ```
 
-See the [Run MCP servers](../guides-cli/run-mcp-servers.mdx) guide for more
-details.
-
-Verify the MCP servers are running:
+Apply the resource:
 
 ```bash
-thv list
+kubectl apply -f mcpgroup.yaml
 ```
 
-</TabItem>
-</Tabs>
+Next, deploy two MCP servers in the group. Both reference `optimizer-demo` in
+the `groupRef` field:
 
-## Step 2: Connect your AI client
+```yaml {11-12,31-32} title="mcpservers.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: fetch
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/gofetch/server
+  transport: streamable-http
+  proxyPort: 8080
+  mcpPort: 8080
+  groupRef:
+    name: optimizer-demo
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: osv
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/osv-mcp/server
+  transport: streamable-http
+  proxyPort: 8080
+  mcpPort: 8080
+  groupRef:
+    name: optimizer-demo
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+```
 
-Connect your AI client to the ToolHive group where the MCP servers are running
-(for example, the `default` group).
+Apply the resources and wait for both servers to be ready:
+
+```bash
+kubectl apply -f mcpservers.yaml
+kubectl get mcpservers -n toolhive-system -w
+```
+
+You should see both servers with `Ready` status before continuing.
 
 :::note
 
-For best results, connect your client to only the optimized group. If you
-connect it to multiple groups, ensure there is no overlap in MCP servers between
-the groups to avoid unpredictable behavior.
+If you still have an MCPServer left over from the
+[K8s Operator Quickstart](../guides-k8s/quickstart.mdx), you can delete it first
+to avoid confusion:
+
+```bash
+kubectl delete mcpserver fetch -n toolhive-system
+```
+
+Then apply the YAML above, which creates a new `fetch` server with the correct
+`groupRef`.
 
 :::
 
-<Tabs groupId='mode' queryString='mode'>
-<TabItem value='ui' label='ToolHive UI' default>
+## Step 2: Deploy an EmbeddingServer
 
-Open the ToolHive UI and use the **Manage Clients** button on the main MCP
-Servers screen to register your AI client with the appropriate group (for
-example, `default`).
+The optimizer uses semantic search to find relevant tools. This requires an
+EmbeddingServer, which runs a text embeddings inference (TEI) server.
 
-See the [Client configuration](../guides-ui/client-configuration.mdx) guide for
-more details.
+Create an EmbeddingServer with default settings. This deploys the
+`BAAI/bge-small-en-v1.5` model. If you are running on ARM64 nodes (for example,
+Apple Silicon with kind), uncomment the `image` line to use the ARM64 build:
 
-</TabItem>
-<TabItem value='cli' label='ToolHive CLI'>
-
-Run the following command to register your AI client with the ToolHive group
-where the MCP servers are running (for example, `default`):
-
-```bash
-thv client setup
+```yaml title="embedding-server.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: EmbeddingServer
+metadata:
+  name: optimizer-embedding
+  namespace: toolhive-system
+spec:
+  # Uncomment for Apple Silicon or other ARM64 platforms
+  # image: ghcr.io/huggingface/text-embeddings-inference:cpu-arm64-latest
 ```
 
-See the [Client configuration](../guides-cli/client-configuration.mdx) guide for
-more details.
+Apply the resource:
 
-</TabItem>
-</Tabs>
+```bash
+kubectl apply -f embedding-server.yaml
+```
 
-Open your AI client and verify that it is connected to the correct MCP servers.
-If you installed the `github`, `fetch`, and `time` servers, you should see
-almost 50 tools available.
+Wait for the EmbeddingServer to reach the `Ready` phase before proceeding. The
+first startup may take a few minutes while the model downloads:
 
-## Step 3: Enable MCP Optimizer
-
-<Tabs groupId='mode' queryString='mode'>
-<TabItem value='ui' label='ToolHive UI' default>
-
-The ToolHive UI automates the setup of the MCP Optimizer.
-
-1. Open the **Settings** (⚙️) screen and enable **MCP Optimizer** under
-   **Experimental Features**
-2. Click the **Configure** button on the notification that pops up, or go to the
-   main **MCP Servers** screen and click **MCP Optimizer** in the left sidebar
-3. Select the group that contains the MCP servers you want to optimize and click
-   **Apply Changes**
-
-ToolHive automatically updates clients that were registered with the selected
-group to use the MCP Optimizer. If you want to connect a new client, go to the
-`default` group and use the **Manage Clients** button to register it.
-
-Open your AI client and check its MCP configuration. You should see a single MCP
-server named `toolhive-mcp-optimizer`.
+```bash
+kubectl get embeddingserver optimizer-embedding -n toolhive-system -w
+```
 
 :::info[What's happening?]
 
-When you enable MCP Optimizer, ToolHive automatically creates an internal group
-and runs the `mcp-optimizer` MCP server in that group.
-
-The MCP Optimizer server discovers the MCP servers in the selected group and
-builds an index of their tools for intelligent routing. Automatic polling keeps
-the index up to date as servers are added or removed from the optimized group.
-
-ToolHive also disconnects your AI clients from the original MCP server group and
-reconnects them to the MCP Optimizer group.
+The EmbeddingServer deploys a TEI container that generates vector embeddings
+from text. The optimizer uses these embeddings to perform semantic search across
+all backend tools, finding the most relevant tools for a given query even when
+the exact keywords don't match.
 
 :::
 
-</TabItem>
-<TabItem value='cli' label='ToolHive CLI'>
+## Step 3: Create a VirtualMCPServer with the optimizer
 
-The ToolHive UI is the recommended way to set up MCP Optimizer, but you can also
-do it manually with the ToolHive CLI.
+Create a VirtualMCPServer that aggregates the backend servers and enables the
+optimizer. Adding `embeddingServerRef` is the only change needed to enable the
+optimizer - sensible defaults are applied automatically:
 
-**Step 3.1: Run the API server**
-
-MCP Optimizer uses the ToolHive API server to discover MCP servers and manage
-client connections.
-
-You can run the API server in two ways. The simplest is to install and run the
-ToolHive UI, which automatically starts the API server in the background.
-
-If you prefer to run the API server manually using the CLI, open a dedicated
-terminal window and start it on a specific port:
-
-```bash
-thv serve --port 50100
+```yaml title="virtualmcpserver.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: VirtualMCPServer
+metadata:
+  name: optimizer-vmcp
+  namespace: toolhive-system
+spec:
+  # highlight-start
+  groupRef:
+    name: optimizer-demo
+  embeddingServerRef:
+    name: optimizer-embedding
+  # highlight-end
+  incomingAuth:
+    type: anonymous
+  serviceType: ClusterIP
+  config:
+    aggregation:
+      conflictResolution: prefix
+      conflictResolutionConfig:
+        prefixFormat: '{workload}_'
 ```
 
-Note the port number (`50100` in this example) for use in the next step.
-
-**Step 3.2: Create a dedicated group and run mcp-optimizer**
+Apply the resource:
 
 ```bash
-# Create the meta group
-thv group create optimizer
-
-# Run mcp-optimizer in the dedicated group
-thv run --group optimizer -e TOOLHIVE_PORT=50100 mcp-optimizer
+kubectl apply -f virtualmcpserver.yaml
 ```
 
-If you are running the API server using the ToolHive UI, omit the
-`TOOLHIVE_PORT` environment variable.
-
-**Step 3.3: Configure your AI client for the meta group**
-
-Remove your client from the `default` group. For example, to unregister Cursor:
+Check the status:
 
 ```bash
-thv client remove cursor --group default
+kubectl get virtualmcpservers -n toolhive-system
 ```
 
-Then, register your client with the `optimizer` group:
+After about 30 seconds, you should see output similar to:
 
-```bash
-# Run the group setup, select the optimizer group, and then select your client
-thv client setup
-
-# Verify the configuration
-thv client list-registered
+```text
+NAME             PHASE   URL                                                                 BACKENDS   AGE   READY
+optimizer-vmcp   Ready   http://vmcp-optimizer-vmcp.toolhive-system.svc.cluster.local:4483   2          30s   True
 ```
 
-:::note
+:::info[What's happening?]
 
-Your client now connects only to the `optimizer` group and sees only the
-`mcp-optimizer` MCP server.
+Setting `embeddingServerRef` tells the operator to enable the optimizer on this
+VirtualMCPServer. Instead of exposing all backend tools directly, the optimizer
+builds a semantic index of tools and exposes only `find_tool` and `call_tool` to
+clients. This dramatically reduces the number of tools (and tokens) sent to the
+model.
 
 :::
 
-The resulting configuration should look like this:
+## Step 4: Connect your AI client
 
-```mermaid
-flowchart TB
-  subgraph meta["ToolHive group: optimizer"]
-    direction TB
-    optimizer["mcp-optimizer"]
-  end
-  subgraph def["ToolHive group: default"]
-    direction TB
-    mcp1["github"]
-    mcp2["fetch"]
-    mcp3["time"]
-  end
+The vMCP service runs inside Kubernetes and is not directly reachable by desktop
+AI clients. This tutorial uses `kubectl port-forward` because it works with any
+cluster, but in production you would typically expose the service through an
+Ingress, Gateway API, or LoadBalancer. See
+[Expose the service](../guides-vmcp/configuration.mdx#expose-the-service) for
+the available options.
 
-  client(["Client"]) <-- connects --> meta
-  optimizer <-. discovers/routes .-> def
-  client x-. 🚫 .-x def
+In a separate terminal, port-forward the vMCP service to your local machine:
+
+```bash
+kubectl port-forward service/vmcp-optimizer-vmcp -n toolhive-system 4483:4483
 ```
 
-</TabItem>
-</Tabs>
+Test the health endpoint:
 
-## Step 4: Sample prompts
+```bash
+curl http://localhost:4483/health
+```
 
-After you configure and run MCP Optimizer, you can use the same prompts you
-would normally use with individual MCP servers. The Optimizer automatically
-discovers and routes to appropriate tools.
+You should see `{"status":"ok"}`.
 
-Using the example MCP servers above, here are some sample prompts:
+The ToolHive CLI bridges the remaining gap: it registers the port-forwarded
+endpoint as a local workload and automatically updates your MCP client
+configuration to point at it.
 
-- "Get the details of GitHub issue 1911 from the stacklok/toolhive repo"
-- "List recent PRs from the stacklok/toolhive repo"
-- "Fetch the latest news articles about AI"
-- "What is the current time in Tokyo?"
+Register the port-forwarded vMCP endpoint as a ToolHive-managed workload:
 
-Watch how MCP Optimizer intelligently selects and routes to the relevant tools
-across the connected MCP servers, reducing token usage and improving response
-quality.
+```bash
+thv run http://localhost:4483/mcp --name optimizer-vmcp
+```
 
-To check your token savings, you can ask the optimizer:
+:::tip
+
+If you haven't set up client configuration yet, run `thv client setup` to
+register your MCP clients. See
+[Client configuration](../guides-cli/client-configuration.mdx) for more details.
+
+:::
+
+Open your AI client and check its MCP configuration. You should see only two
+tools available: `find_tool` and `call_tool`. This confirms the optimizer is
+working.
+
+## Step 5: Test the optimizer
+
+Try these sample prompts to verify the optimizer is routing requests correctly
+across both backend MCP servers:
+
+- "Fetch the contents of https://docs.stacklok.com and summarize the page"
+- "Check if the Go package github.com/stacklok/toolhive has any known
+  vulnerabilities"
+
+Watch how the optimizer uses `find_tool` to locate the relevant tool across all
+backends, then `call_tool` to execute it - all through a single endpoint.
+
+To check your token savings, send this prompt to your AI client:
 
 - "How many tokens did I save using MCP Optimizer?"
 
-## What's next?
+:::note
 
-Now that you've set up MCP Optimizer, consider exploring these next steps:
+With only two backend MCP servers and a small number of tools, the optimizer may
+report minimal or no token savings. The benefit becomes more significant as you
+add more backends and tools to your MCPGroup.
 
-- Experiment with different MCP servers to see how MCP Optimizer enhances tool
-  selection and reduces token usage
-- Monitor the performance and effectiveness of MCP Optimizer in your AI
-  applications
-- Use the [ToolHive Playground](../guides-ui/playground.mdx) to test and refine
-  your prompts with MCP Optimizer
-- Provide feedback on your experience with MCP Optimizer on the
+:::
+
+## Clean up
+
+Remove the local workload and delete the Kubernetes resources when you're done:
+
+```bash
+thv rm optimizer-vmcp
+kubectl delete virtualmcpserver optimizer-vmcp -n toolhive-system
+kubectl delete embeddingserver optimizer-embedding -n toolhive-system
+kubectl delete mcpserver fetch osv -n toolhive-system
+kubectl delete mcpgroup optimizer-demo -n toolhive-system
+```
+
+To tear down the entire kind cluster from the K8s Quickstart:
+
+```bash
+kind delete cluster --name toolhive
+```
+
+## Next steps
+
+- [Tune the optimizer](../guides-vmcp/optimizer.mdx#tune-the-optimizer) to
+  adjust search parameters for your workload
+- [Configure authentication](../guides-vmcp/authentication.mdx) for production
+  deployments
+- [Monitor vMCP activity](../guides-vmcp/telemetry-and-metrics.mdx) with
+  OpenTelemetry tracing and metrics
+- [Configure failure handling](../guides-vmcp/failure-handling.mdx) for circuit
+  breakers and partial failure modes
+- Provide feedback on your experience on the
   [Stacklok Discord community](https://discord.gg/stacklok)
 
 ## Related information
 
-- [MCP Optimizer UI guide](../guides-ui/mcp-optimizer.mdx)
-- [Organize MCP servers into groups](../guides-ui/group-management.mdx)
+- [Optimize tool discovery](../guides-vmcp/optimizer.mdx) - full parameter
+  reference, high availability, and ARM64 support details
+- [Optimizing LLM context](../concepts/tool-optimization.mdx) - background on
+  tool filtering and context pollution
+- [Virtual MCP Server overview](../concepts/vmcp.mdx) - conceptual overview of
+  vMCP
+- [Quickstart: Kubernetes Operator](../guides-k8s/quickstart.mdx) - prerequisite
+  tutorial

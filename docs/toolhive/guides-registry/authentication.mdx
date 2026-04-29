@@ -10,6 +10,14 @@ OAuth mode to protect your registry. You can configure authentication to fit
 different deployment scenarios, from development environments to production
 deployments with enterprise identity providers.
 
+:::tip[Looking for authorization?]
+
+This page covers **authentication** (verifying caller identity). For
+**authorization** (controlling what callers can do), including role-based access
+control and claims-based scoping, see [Authorization](./authorization.mdx).
+
+:::
+
 ## Authentication modes
 
 The server supports two authentication modes configured via the required `auth`
@@ -124,7 +132,7 @@ auth:
 ```
 
 The server automatically detects the token format and uses the appropriate
-validation method—attempting JWT validation first and falling back to token
+validation method, attempting JWT validation first and falling back to token
 introspection if needed.
 
 ## Kubernetes authentication
@@ -247,7 +255,11 @@ registry.
 
 ## Provider-specific examples
 
-### Keycloak
+Pick the provider you use and adapt the example. Each tab includes the
+configuration and any notes specific to that provider.
+
+<Tabs groupId='idp' queryString='provider'>
+<TabItem value='keycloak' label='Keycloak' default>
 
 ```yaml
 auth:
@@ -263,7 +275,8 @@ auth:
 The `issuerUrl` should point to your Keycloak realm. The realm name is part of
 the URL path.
 
-### Auth0
+</TabItem>
+<TabItem value='auth0' label='Auth0'>
 
 ```yaml
 auth:
@@ -279,7 +292,8 @@ auth:
 For Auth0, the `issuerUrl` is your Auth0 domain. The `audience` should match the
 API identifier configured in your Auth0 dashboard.
 
-### Azure AD
+</TabItem>
+<TabItem value='azure-ad' label='Azure AD'>
 
 ```yaml
 auth:
@@ -295,7 +309,8 @@ auth:
 For Azure AD, the `issuerUrl` includes your tenant ID, and the `audience`
 typically uses the `api://` scheme with your application's client ID.
 
-### Okta
+</TabItem>
+<TabItem value='okta' label='Okta'>
 
 ```yaml
 auth:
@@ -311,6 +326,9 @@ auth:
 For Okta, the `issuerUrl` points to your Okta authorization server. Use
 `/oauth2/default` for the default authorization server or
 `/oauth2/YOUR_AUTH_SERVER_ID` for custom servers.
+
+</TabItem>
+</Tabs>
 
 ## Anonymous authentication
 
@@ -346,10 +364,13 @@ anonymous mode in production.**
 The following endpoints are **always accessible without authentication**,
 regardless of the auth mode:
 
-- `/health` - Health check endpoint
-- `/readiness` - Readiness probe endpoint
-- `/version` - Version information
+- `/openapi.json` - OpenAPI specification
 - `/.well-known/*` - OAuth discovery endpoints (RFC 9728)
+
+The `/health`, `/readiness`, and `/version` endpoints are served on a separate
+internal server (default port 8081) and are not exposed on the main API port.
+See the [command-line flags](./configuration.mdx#command-line-flags) for the
+`--internal-address` option.
 
 You can configure additional public paths using the `publicPaths` field in your
 OAuth configuration. See the
@@ -400,7 +421,7 @@ the authentication requirements.
 TOKEN="your-jwt-token-here"
 
 curl -H "Authorization: Bearer $TOKEN" \
-  https://registry.example.com/default/v0.1/servers
+  https://registry.example.com/registry/default/v0.1/servers
 ```
 
 ### Using kubectl with Kubernetes service accounts
@@ -415,7 +436,7 @@ TOKEN=$(kubectl create token <service-account-name> \
 
 # Make authenticated request
 curl -H "Authorization: Bearer $TOKEN" \
-  https://registry.example.com/registry/v0.1/servers
+  https://registry.example.com/registry/default/v0.1/servers
 ```
 
 :::tip[Projected tokens vs kubectl create token]
@@ -499,6 +520,14 @@ providers:
     caCertPath: /etc/ssl/certs/internal-ca.crt
 ```
 
+## Next steps
+
+- [Configure authorization](./authorization.mdx) to set up role-based access
+  control and claims-based scoping
+- [Set up the database](./database.mdx) for production storage and migrations
+- [Configure telemetry](./telemetry-metrics.mdx) for distributed tracing and
+  metrics collection
+
 ## Troubleshooting
 
 ### 401 Unauthorized errors
@@ -544,9 +573,3 @@ If tokens from some providers work but others don't:
 4. Review server logs to identify which specific provider validation is failing
 5. Test each provider's JWKS endpoint accessibility:
    `curl ${issuerUrl}/.well-known/openid-configuration`
-
-## Next steps
-
-- [Configure database storage](./database.mdx) for production deployments
-- [Deploy the server](./deployment.mdx) with authentication enabled
-- [Configure registry sources](./configuration.mdx) for your environment

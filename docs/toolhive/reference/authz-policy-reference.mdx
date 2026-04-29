@@ -1,0 +1,520 @@
+---
+title: Authorization policy reference
+description:
+  Complete reference for Cedar entity types, actions, attributes, and
+  annotations available when writing ToolHive authorization policies.
+---
+
+This page lists the Cedar entity types, actions, attributes, and annotations
+available when writing authorization policies for ToolHive MCP servers. It also
+covers group membership and the HTTP PDP model for external policy decision
+points.
+
+For conceptual guidance and practical examples, see
+[Cedar policies](../concepts/cedar-policies.mdx).
+
+## Cedar entity types
+
+Every Cedar authorization request involves three entity types: a principal, an
+action, and a resource. ToolHive maps MCP concepts to these Cedar entities
+automatically.
+
+| Entity type   | Format                        | Description                                                                                                                                                                            |
+| ------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Client`      | `Client::"<sub_claim>"`       | The authenticated user, identified by the `sub` claim from the access token                                                                                                            |
+| `Action`      | `Action::"<action_id>"`       | The MCP operation being performed                                                                                                                                                      |
+| `Tool`        | `Tool::"<tool_name>"`         | A tool resource (used for `tools/call`)                                                                                                                                                |
+| `Prompt`      | `Prompt::"<prompt_name>"`     | A prompt resource (used for `prompts/get`)                                                                                                                                             |
+| `Resource`    | `Resource::"<sanitized_uri>"` | A data resource (used for `resources/read`). The URI is [sanitized](#resource-uri-sanitization) for Cedar compatibility                                                                |
+| `FeatureType` | `FeatureType::"<feature>"`    | A feature category entity. Values: `tool`, `prompt`, `resource`. Not currently used for authorization; list operations are handled via [response filtering](#list-operation-filtering) |
+| `THVGroup`    | `THVGroup::"<group_name>"`    | A group membership entity. Used with Cedar's `in` operator for [group-based policies](#group-membership)                                                                               |
+
+## Cedar actions
+
+ToolHive maps MCP methods to Cedar actions. Each action corresponds to a
+specific MCP operation.
+
+### Actions that require authorization
+
+These actions are evaluated against your Cedar policies:
+
+| Action                    | MCP method       | Description                   |
+| ------------------------- | ---------------- | ----------------------------- |
+| `Action::"call_tool"`     | `tools/call`     | Call a specific tool          |
+| `Action::"get_prompt"`    | `prompts/get`    | Retrieve a specific prompt    |
+| `Action::"read_resource"` | `resources/read` | Read a specific data resource |
+
+### List operations
+
+List methods (`tools/list`, `prompts/list`, `resources/list`) bypass
+request-level authorization entirely. ToolHive allows the list request through
+and filters the response to include only items the caller is authorized to
+access using the individual-access actions above. See
+[List operation filtering](#list-operation-filtering) for details.
+
+### Always-allowed MCP methods
+
+These MCP methods bypass authorization entirely. You cannot write policies to
+restrict them:
+
+| MCP method            | Purpose                            |
+| --------------------- | ---------------------------------- |
+| `initialize`          | Protocol initialization handshake  |
+| `ping`                | Health check                       |
+| `features/list`       | Capability discovery               |
+| `roots/list`          | Root directory discovery           |
+| `logging/setLevel`    | Client logging preference          |
+| `completion/complete` | Argument auto-completion           |
+| `notifications/*`     | All server-to-client notifications |
+
+### Denied-by-default MCP methods
+
+These MCP methods are not in the authorization map and are always denied. They
+require new authorization features before they can be enabled:
+
+- `elicitation/create` -- User input prompting
+- `sampling/createMessage` -- LLM text generation
+- `tasks/list`, `tasks/get`, `tasks/cancel`, `tasks/result` -- Task management
+
+## Principal attributes
+
+The principal entity (`Client::`) receives all JWT claims from the access token
+with a `claim_` prefix. Any claim in the token becomes an attribute you can
+reference in policies.
+
+### Common principal attributes
+
+| Attribute      | Source       | Cedar type     | Description                                                       |
+| -------------- | ------------ | -------------- | ----------------------------------------------------------------- |
+| `claim_sub`    | JWT `sub`    | String         | Subject identifier (also used as the entity ID)                   |
+| `claim_name`   | JWT `name`   | String         | Display name                                                      |
+| `claim_email`  | JWT `email`  | String         | Email address                                                     |
+| `claim_roles`  | JWT `roles`  | Set of Strings | Role memberships                                                  |
+| `claim_groups` | JWT `groups` | Set of Strings | Group memberships                                                 |
+| `claim_role`   | JWT `role`   | String         | Single role (some identity providers use this instead of `roles`) |
+| `claim_<key>`  | JWT `<key>`  | Varies         | Any other JWT claim                                               |
+
+:::tip
+
+The exact attributes available depend on your identity provider and token
+configuration. Check your access token's claims to see what's available. Every
+claim becomes a `claim_`-prefixed attribute automatically.
+
+:::
+
+### Claim type mapping
+
+| JWT claim type       | Cedar type                                  |
+| -------------------- | ------------------------------------------- |
+| String               | `String`                                    |
+| Boolean              | `Bool`                                      |
+| Integer              | `Long`                                      |
+| Float                | `Decimal`                                   |
+| Array of strings     | `Set` of `String` values                    |
+| Array of mixed types | `Set` (each element converted individually) |
+
+## Resource attributes
+
+Resource attributes vary depending on the type of MCP operation. Each operation
+type provides a different set of attributes on the resource entity.
+
+### Tool call attributes (`tools/call`)
+
+When a client calls a tool, the resource entity (`Tool::`) has these attributes:
+
+| Attribute         | Type   | Description                                                                     |
+| ----------------- | ------ | ------------------------------------------------------------------------------- |
+| `name`            | String | The tool name                                                                   |
+| `operation`       | String | Always `"call"`                                                                 |
+| `feature`         | String | Always `"tool"`                                                                 |
+| `readOnlyHint`    | Bool   | From [tool annotations](#tool-annotation-attributes), if the MCP server sets it |
+| `destructiveHint` | Bool   | From tool annotations, if set                                                   |
+| `idempotentHint`  | Bool   | From tool annotations, if set                                                   |
+| `openWorldHint`   | Bool   | From tool annotations, if set                                                   |
+| `arg_<key>`       | Varies | Tool argument values (see [argument preprocessing](#argument-preprocessing))    |
+
+### Prompt get attributes (`prompts/get`)
+
+When a client retrieves a prompt, the resource entity (`Prompt::`) has these
+attributes:
+
+| Attribute   | Type   | Description            |
+| ----------- | ------ | ---------------------- |
+| `name`      | String | The prompt name        |
+| `operation` | String | Always `"get"`         |
+| `feature`   | String | Always `"prompt"`      |
+| `arg_<key>` | Varies | Prompt argument values |
+
+### Resource read attributes (`resources/read`)
+
+When a client reads a data resource, the resource entity (`Resource::`) has
+these attributes:
+
+| Attribute   | Type   | Description                               |
+| ----------- | ------ | ----------------------------------------- |
+| `name`      | String | The sanitized URI (same as the entity ID) |
+| `uri`       | String | The original, unsanitized resource URI    |
+| `operation` | String | Always `"read"`                           |
+| `feature`   | String | Always `"resource"`                       |
+| `arg_<key>` | Varies | Request argument values                   |
+
+### Feature list attributes (list operations)
+
+:::info[Not currently used]
+
+The `FeatureType` entity and its attributes are defined in the Cedar authorizer
+but are not evaluated during normal request processing. List operations bypass
+request-level authorization and use
+[response filtering](#list-operation-filtering) instead. This section is
+included for completeness.
+
+:::
+
+When a client lists tools, prompts, or resources, the `FeatureType::` entity has
+these attributes:
+
+| Attribute   | Type   | Description                                             |
+| ----------- | ------ | ------------------------------------------------------- |
+| `name`      | String | The feature type (same as the entity ID)                |
+| `type`      | String | The feature type: `"tool"`, `"prompt"`, or `"resource"` |
+| `operation` | String | Always `"list"`                                         |
+| `feature`   | String | The feature type                                        |
+
+## Tool annotation attributes
+
+MCP servers can declare behavioral hints on their tools through
+[annotations](https://modelcontextprotocol.io/docs/specification/2025-06-18/server/tools#annotations).
+ToolHive caches these annotations from `tools/list` responses and makes them
+available as resource attributes during `tools/call` authorization.
+
+| Attribute         | Type | Meaning when `true`                                                              | Meaning when `false`                                           |
+| ----------------- | ---- | -------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `readOnlyHint`    | Bool | The tool only reads data; it does not modify anything                            | The tool may modify data                                       |
+| `destructiveHint` | Bool | The tool may perform destructive or irreversible operations                      | The tool's modifications are non-destructive or reversible     |
+| `idempotentHint`  | Bool | Calling the tool multiple times with the same arguments produces the same result | Repeated calls may have different effects                      |
+| `openWorldHint`   | Bool | The tool interacts with external systems outside the MCP server's control        | The tool operates only within a closed, controlled environment |
+
+:::warning[Annotations may be absent]
+
+Not all MCP servers set all annotation fields. An annotation attribute is only
+present on the resource entity when the MCP server explicitly sets it. If a tool
+omits an annotation, that attribute does not exist on the entity.
+
+Always use Cedar's `has` operator to check for the presence of an annotation
+before accessing its value. Without `has`, accessing a missing attribute causes
+a Cedar evaluation error, which ToolHive treats as a deny.
+
+:::
+
+### The `has` operator
+
+The `has` operator is essential for writing safe annotation-based policies. It
+checks whether an attribute exists on an entity before you try to read it:
+
+```text
+// Safe: checks existence before access
+permit(
+  principal,
+  action == Action::"call_tool",
+  resource
+) when {
+  resource has readOnlyHint && resource.readOnlyHint == true
+};
+```
+
+```text
+// Unsafe: fails with an evaluation error if readOnlyHint is absent
+permit(
+  principal,
+  action == Action::"call_tool",
+  resource
+) when {
+  resource.readOnlyHint == true
+};
+```
+
+### Trust boundary
+
+Annotations are sourced exclusively from the MCP server's `tools/list` response,
+not from the client's `tools/call` request. This prevents a malicious client
+from setting `readOnlyHint: true` on a destructive tool to bypass
+annotation-based policies.
+
+## Context attributes
+
+The Cedar context record contains a merged copy of all JWT claims and tool
+arguments. This gives you an alternative way to reference these values in
+policies. Context attributes use the same prefixes as entity attributes:
+
+| Prefix        | Source                | Example                                      |
+| ------------- | --------------------- | -------------------------------------------- |
+| `claim_<key>` | JWT claims            | `context.claim_email == "admin@example.com"` |
+| `arg_<key>`   | Tool/prompt arguments | `context.arg_location == "New York"`         |
+
+You can use either entity attributes or context attributes in your policies.
+Both contain the same values:
+
+```text
+// These are equivalent:
+principal.claim_roles.contains("admin")
+context.claim_roles.contains("admin")
+
+// These are also equivalent:
+resource.arg_location == "New York"
+context.arg_location == "New York"
+```
+
+## Group membership
+
+ToolHive automatically extracts group claims from JWT tokens and creates
+`THVGroup` parent entities for the principal. This lets you write group-based
+policies using Cedar's `in` operator.
+
+### How groups are resolved
+
+ToolHive checks the following JWT claim names in order and uses the first one
+found:
+
+1. Custom claim name (if configured via `group_claim_name` in Cedar config)
+2. `groups` -- Microsoft Entra ID, Okta, Auth0, PingIdentity
+3. `roles` -- Keycloak
+4. `cognito:groups` -- AWS Cognito
+
+The claim value must be an array of strings. Each string becomes a `THVGroup`
+entity, and the principal is added as a child of each group.
+
+### Group policy examples
+
+```text
+// Allow members of the "engineering" group to call any tool
+permit(
+  principal in THVGroup::"engineering",
+  action == Action::"call_tool",
+  resource
+);
+```
+
+```text
+// Allow only the "platform" group to read infrastructure resources
+permit(
+  principal in THVGroup::"platform",
+  action == Action::"read_resource",
+  resource
+);
+```
+
+### Configuring a custom group claim
+
+If your identity provider uses a non-standard claim name for groups (for
+example, Auth0 namespaced claims), configure it in the Cedar authorization
+config:
+
+```yaml title="authz-config.yaml"
+version: '1.0'
+type: cedarv1
+cedar:
+  group_claim_name: 'https://example.com/groups'
+  policies:
+    - 'permit(principal in THVGroup::"admins", action, resource);'
+  entities_json: '[]'
+```
+
+### How roles are resolved
+
+In addition to group claims, ToolHive can extract role claims from a separate
+JWT field when `role_claim_name` is configured. This is useful when your
+identity provider separates group membership from application roles (for
+example, Microsoft Entra ID uses `groups` for directory groups and `roles` for
+app roles).
+
+When `role_claim_name` is set, ToolHive extracts the claim value and creates
+`THVGroup` parent entities for the principal, following the same pattern as
+group claims. Both groups and roles use the `THVGroup` entity type.
+
+### Server-scoped resources
+
+Each MCP server is automatically registered as an `MCP` entity. You can use this
+to write policies that restrict access to specific servers:
+
+```text
+resource in MCP::"my-server-name"
+```
+
+The server name matches the name of the MCPServer, MCPRemoteProxy, or container
+name in the ToolHive deployment.
+
+## Argument preprocessing
+
+Tool and prompt arguments are converted to Cedar-compatible types with an `arg_`
+prefix. The conversion rules depend on the argument's Go type:
+
+| Argument type           | Cedar attribute     | Cedar type           | Example                               |
+| ----------------------- | ------------------- | -------------------- | ------------------------------------- |
+| String                  | `arg_<key>`         | String               | `resource.arg_location == "NYC"`      |
+| Boolean                 | `arg_<key>`         | Bool                 | `resource.arg_verbose == true`        |
+| Integer                 | `arg_<key>`         | Long                 | `resource.arg_limit == 10`            |
+| Float                   | `arg_<key>`         | Decimal              | `resource.arg_threshold == 0.95`      |
+| Complex (object, array) | `arg_<key>_present` | Bool (always `true`) | `resource.arg_config_present == true` |
+
+Complex argument types (objects, nested arrays) cannot be represented directly
+in Cedar. Instead, ToolHive creates a boolean `arg_<key>_present` attribute set
+to `true`, which lets you check whether the argument was provided without
+inspecting its value.
+
+## Resource URI sanitization
+
+For `resources/read` operations, the resource URI is sanitized to create a valid
+Cedar entity ID. The following characters are replaced with underscores (`_`):
+`:`, `/`, `\`, `?`, `&`, `=`, `#`, `.`, and ` ` (space).
+
+For example, the URI `file:///data/config.json` becomes the entity ID
+`Resource::"file____data_config_json"`.
+
+To write policies against resource URIs, use the unsanitized `uri` attribute
+instead of matching the entity ID directly:
+
+```text
+// Use the uri attribute for readable policies
+permit(
+  principal,
+  action == Action::"read_resource",
+  resource
+) when {
+  resource.uri == "file:///data/config.json"
+};
+```
+
+## List operation filtering
+
+List operations (`tools/list`, `prompts/list`, `resources/list`) bypass
+request-level authorization entirely. ToolHive forwards the list request to the
+MCP server, then filters the response to include only items the caller is
+authorized to access.
+
+For each item in the list response, ToolHive runs a policy check using the
+corresponding individual-access action:
+
+| List method      | Per-item check uses                                                  |
+| ---------------- | -------------------------------------------------------------------- |
+| `tools/list`     | `Action::"call_tool"` against each `Tool::"<name>"`                  |
+| `prompts/list`   | `Action::"get_prompt"` against each `Prompt::"<name>"`               |
+| `resources/list` | `Action::"read_resource"` against each `Resource::"<sanitized_uri>"` |
+
+This means you don't need separate list policies. Your `call_tool`,
+`get_prompt`, and `read_resource` policies automatically control what appears in
+list responses. For resources, the per-item check uses the
+[sanitized](#resource-uri-sanitization) entity ID, while the original URI
+remains available via the `resource.uri` attribute.
+
+:::note
+
+Because list responses are filtered using `call_tool`, `get_prompt`, and
+`read_resource` policies, an item only appears in a list response when the
+corresponding individual-access policy permits it. For example, if no
+`call_tool` policy permits a given tool, that tool won't appear in `tools/list`
+responses.
+
+:::
+
+## Custom static entities
+
+You can define custom entities with arbitrary attributes using the
+`entities_json` field in your Cedar configuration. These entities are merged
+with the dynamically created entities at evaluation time. This lets you attach
+metadata to tools, prompts, or resources that you can reference in policies.
+
+```yaml title="authz-config.yaml"
+version: '1.0'
+type: cedarv1
+cedar:
+  policies:
+    - |
+      permit(
+        principal,
+        action == Action::"call_tool",
+        resource
+      ) when {
+        resource.owner == principal.claim_sub
+      };
+  entities_json: |
+    [
+      {
+        "uid": "Tool::weather",
+        "attrs": {
+          "owner": "user123",
+          "department": "engineering"
+        }
+      },
+      {
+        "uid": "Tool::billing",
+        "attrs": {
+          "owner": "finance-bot",
+          "department": "finance"
+        }
+      }
+    ]
+```
+
+:::warning
+
+Static entity attributes are merged with dynamic attributes at evaluation time.
+The dynamic attributes (`name`, `operation`, `feature`, and any `arg_` or
+annotation attributes) always take precedence over static ones. Don't define
+static attributes using reserved names.
+
+:::
+
+## HTTP PDP PORC mapping
+
+The HTTP PDP authorizer (`httpv1`) maps MCP requests to a PORC
+(Principal-Operation-Resource-Context) model for external policy decision
+points.
+
+### PORC fields
+
+| Field                                     | Format                                             | Example                           |
+| ----------------------------------------- | -------------------------------------------------- | --------------------------------- |
+| `principal.sub`                           | JWT `sub` claim                                    | `"user@example.com"`              |
+| `principal.roles` or `principal.mroles`   | Depends on [claim mapper](#http-pdp-claim-mappers) | `["developer"]`                   |
+| `principal.groups` or `principal.mgroups` | Depends on claim mapper                            | `["engineering"]`                 |
+| `principal.scopes`                        | JWT `scope` or `scopes`                            | `["read", "write"]`               |
+| `operation`                               | `mcp:<feature>:<operation>`                        | `"mcp:tool:call"`                 |
+| `resource`                                | `mrn:mcp:<server>:<feature>:<id>`                  | `"mrn:mcp:myserver:tool:weather"` |
+
+### PORC context fields
+
+Context fields are optional and controlled by the `context` configuration:
+
+| Field                                     | Config required               | Description           |
+| ----------------------------------------- | ----------------------------- | --------------------- |
+| `context.mcp.feature`                     | `include_operation: true`     | MCP feature type      |
+| `context.mcp.operation`                   | `include_operation: true`     | MCP operation type    |
+| `context.mcp.resource_id`                 | `include_operation: true`     | Resource identifier   |
+| `context.mcp.args.<key>`                  | `include_args: true`          | Tool/prompt arguments |
+| `context.mcp.annotations.readOnlyHint`    | Automatic for tool operations | Tool annotation hint  |
+| `context.mcp.annotations.destructiveHint` | Automatic for tool operations | Tool annotation hint  |
+| `context.mcp.annotations.idempotentHint`  | Automatic for tool operations | Tool annotation hint  |
+| `context.mcp.annotations.openWorldHint`   | Automatic for tool operations | Tool annotation hint  |
+
+### HTTP PDP claim mappers
+
+| Mapper        | Config value                | Principal fields                                                   | Compatible with                             |
+| ------------- | --------------------------- | ------------------------------------------------------------------ | ------------------------------------------- |
+| MPE           | `claim_mapping: "mpe"`      | `sub`, `mroles`, `mgroups`, `scopes`, `mclearance`, `mannotations` | Manetu PolicyEngine                         |
+| Standard OIDC | `claim_mapping: "standard"` | `sub`, `roles`, `groups`, `scopes`                                 | Generic PDPs expecting standard OIDC claims |
+
+## Next steps
+
+- Learn practical policy patterns and profiles in
+  [Cedar policies](../concepts/cedar-policies.mdx)
+- Set up authorization for [CLI-managed MCP servers](../guides-cli/auth.mdx) or
+  [Kubernetes-deployed MCP servers](../guides-k8s/auth-k8s.mdx)
+- Follow the end-to-end
+  [Role-based authorization with Okta](../integrations/okta.mdx) tutorial
+
+## Related information
+
+- [Authentication and authorization](../concepts/auth-framework.mdx) -- Overview
+  of the authentication and authorization framework
+- [Cedar documentation](https://docs.cedarpolicy.com/) -- Official Cedar policy
+  language reference

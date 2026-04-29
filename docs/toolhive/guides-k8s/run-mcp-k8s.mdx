@@ -1,6 +1,8 @@
 ---
 title: Run MCP servers in Kubernetes
-description: How to deploy MCP servers in Kubernetes using the ToolHive operator
+description:
+  Deploy and configure MCP servers in Kubernetes using MCPServer custom
+  resources.
 ---
 
 ## Prerequisites
@@ -127,7 +129,7 @@ cluster. This minimal example creates the
 information.
 
 ```yaml title="my-mcpserver.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: osv
@@ -208,7 +210,7 @@ This approach provides:
 
 You can customize the MCP server by adding additional fields to the `MCPServer`
 resource. The full specification is available in the
-[Kubernetes CRD reference](../reference/crd-spec.md#apiv1alpha1mcpserver).
+[Kubernetes CRD reference](../reference/crds/mcpserver.mdx).
 
 Below are some common configurations.
 
@@ -226,7 +228,7 @@ format, so you can use any valid pod specification options.
 This example sets resource limits.
 
 ```yaml {14-15} title="my-mcpserver-custom-pod.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: fetch
@@ -287,7 +289,7 @@ kubectl -n production create secret generic github-token --from-literal=token=<Y
 Next, define the `MCPServer` resource to reference the secret:
 
 ```yaml {10-13} title="my-mcpserver-with-secrets.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: github
@@ -333,7 +335,7 @@ match what you specify in the `MCPServer` resource.
 Next, define the `MCPServer` resource to reference the secret:
 
 ```yaml {10-13} title="my-mcpserver-with-secrets-eso.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: github
@@ -393,7 +395,7 @@ the `/projects` path in the Filesystem MCP server. The PVC must already exist in
 the same namespace as the MCPServer.
 
 ```yaml {12-15,19-22} title="my-mcpserver-with-volume.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: filesystem
@@ -439,29 +441,127 @@ For more details about a specific MCP server:
 kubectl -n <NAMESPACE> describe mcpserver <NAME>
 ```
 
+## Horizontal scaling
+
+MCPServer creates two separate Deployments: a proxy runner and a backend MCP
+server. You can scale each independently:
+
+- `spec.replicas` controls the proxy runner pod count
+- `spec.backendReplicas` controls the backend MCP server pod count
+
+The proxy runner handles authentication, MCP protocol framing, and session
+management; it is stateless with respect to tool execution. The backend runs the
+actual MCP server and executes tools.
+
+:::warning[Stdio transport limitation]
+
+Backends using the `stdio` transport are limited to a single replica. The
+operator rejects configurations with `backendReplicas` greater than 1 for stdio
+backends.
+
+:::
+
+### Session routing for backend replicas
+
+MCP connections are stateful: once a client establishes a session with a
+specific backend pod, all subsequent requests in that session must reach the
+same pod. When `backendReplicas > 1` and Redis session storage is configured,
+the proxy runner uses Redis to store a session-to-pod mapping so every proxy
+runner replica knows which backend pod owns each session.
+
+When Redis session storage is configured and a backend pod is restarted or
+replaced, its entry in the Redis routing table is invalidated and the next
+request reconnects to an available pod. Sessions are not automatically migrated
+between pods.
+
+Without Redis session storage, the proxy runner relies on Kubernetes `ClientIP`
+session affinity on the backend Service. `ClientIP` affinity is unreliable
+behind NAT or shared egress IPs, and there is no shared session-to-pod mapping,
+so a pod restart or replacement can cause subsequent requests to be routed to a
+different pod, which will fail for stateful sessions.
+
+Common configurations:
+
+- **Scale only the proxy** (`replicas: N`, omit `backendReplicas`): useful when
+  auth and connection overhead is the bottleneck with a single backend.
+- **Scale only the backend** (omit `replicas`, `backendReplicas: M`): useful
+  when tool execution is CPU/memory-bound and the proxy is not a bottleneck.
+  Configure Redis session storage so the proxy runner can route requests to the
+  correct backend pod.
+- **Scale both** (`replicas: N`, `backendReplicas: M`): full horizontal scale.
+  Redis session storage is required for reliable operation when `replicas > 1`,
+  and strongly recommended when `backendReplicas > 1`.
+
+```yaml title="MCPServer resource"
+spec:
+  replicas: 2
+  backendReplicas: 3
+  sessionStorage:
+    provider: redis
+    address: redis.toolhive-system.svc.cluster.local:6379
+    db: 0
+    keyPrefix: mcp-sessions
+    passwordRef:
+      name: redis-password
+      key: password
+```
+
+When running multiple replicas, configure
+[Redis session storage](./redis-session-storage.mdx#horizontal-scaling-session-storage)
+so that sessions are shared across pods. If you omit `replicas` or
+`backendReplicas`, the operator defers replica management to an HPA or other
+external controller.
+
+:::note
+
+The `SessionStorageWarning` condition fires only when `spec.replicas > 1`
+(multiple proxy runner pods). It does not fire when only
+`spec.backendReplicas > 1`, but `ClientIP` affinity is unreliable behind NAT or
+shared egress IPs. Redis session storage is strongly recommended whenever
+`spec.backendReplicas > 1`.
+
+:::
+
+### Connection draining on scale-down
+
+When a proxy runner pod is terminated (scale-in, rolling update, or node
+eviction), Kubernetes sends SIGTERM and the proxy drains in-flight requests for
+up to 30 seconds before force-closing connections. The grace period and drain
+timeout are both 30 seconds with no headroom, so long-lived SSE or streaming
+connections may be dropped if they exceed the drain window.
+
+No preStop hook is injected by the operator. If your workload requires
+additional time - for example, to let kube-proxy propagate endpoint removal
+before the pod stops accepting traffic - override
+`terminationGracePeriodSeconds` via `podTemplateSpec`:
+
+```yaml
+spec:
+  podTemplateSpec:
+    spec:
+      terminationGracePeriodSeconds: 60
+```
+
+The same 30-second default applies to the backend Deployment.
+
 ## Next steps
 
-Learn how to [connect clients to your MCP servers](./connect-clients.mdx) from
-outside the cluster using Ingress or Gateway API, or from applications running
-within the cluster. See the
-[Client compatibility](../reference/client-compatibility.mdx) reference for
-information about supported MCP clients.
-
-Learn how to customize MCP tools using
-[filters and overrides](./customize-tools.mdx).
-
-Collect telemetry data from your MCP servers by following the
-[Telemetry and metrics](./telemetry-and-metrics.mdx) guide. Configure audit
-logging by following the [Set up logging](./logging.mdx) guide.
-
-Discover your deployed MCP servers automatically using the
-[Kubernetes registry](../guides-registry/configuration.mdx#kubernetes-registry)
-feature in the ToolHive Registry Server.
+- [Connect clients to your MCP servers](./connect-clients.mdx) from outside the
+  cluster using Ingress or Gateway API, or from within the cluster
+- [Secure your servers](./auth-k8s.mdx) with OIDC authentication and Cedar
+  policies
+- [Customize MCP tools](./customize-tools.mdx) with filters and overrides
+- [Aggregate multiple servers](../guides-vmcp/index.mdx) into a single endpoint
+  with Virtual MCP Server
+- [Curate a server catalog](../guides-registry/index.mdx) for your team with the
+  Registry Server
 
 ## Related information
 
-- [Kubernetes CRD reference](../reference/crd-spec.md#apiv1alpha1mcpserver) -
-  Reference for the `MCPServer` Custom Resource Definition (CRD)
+- [Kubernetes CRD reference](../reference/crds/mcpserver.mdx) - Reference for
+  the `MCPServer` Custom Resource Definition (CRD)
+- [vMCP scaling and performance](../guides-vmcp/scaling-and-performance.mdx) -
+  Scale Virtual MCP Server deployments
 - [Deploy the operator](./deploy-operator.mdx) - Install the ToolHive operator
 - [Build MCP containers](../guides-cli/build-containers.mdx) - Create custom MCP
   server container images
@@ -661,8 +761,8 @@ To test connectivity between components:
 # Port-forward to test direct access to the proxy
 kubectl -n <NAMESPACE> port-forward service/<MCPSERVER_NAME> 8080:8080
 
-# Test the connection locally
-curl http://localhost:8080/health
+# Test the connection locally (should return {"status":"healthy",...})
+curl -s http://localhost:8080/health | jq .status
 
 # Check service endpoints
 kubectl -n <NAMESPACE> get endpoints

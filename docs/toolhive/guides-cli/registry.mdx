@@ -1,6 +1,8 @@
 ---
-title: Explore the registry
-description: How to use the built-in registry to find MCP servers.
+title: Use the registry
+description:
+  Search the built-in registry to find, inspect, and run MCP servers with one
+  command.
 ---
 
 ToolHive includes a built-in registry of MCP servers with verified
@@ -134,12 +136,28 @@ organizations that want to maintain their own private registry of MCP servers.
 
 ToolHive supports two types of custom registries:
 
-- **File-based registries**: JSON files that follow either the
-  [ToolHive registry schema](../reference/registry-schema-toolhive.mdx) or the
+- **File-based registries**: JSON files that follow the
   [upstream registry schema](../reference/registry-schema-upstream.mdx)
 - **API-based registries**: REST API endpoints that implement the
   [MCP Registry API specification](../guides-registry/index.mdx), which use the
   [upstream registry schema](../reference/registry-schema-upstream.mdx)
+
+:::warning[Legacy format no longer accepted]
+
+The legacy
+[ToolHive-native registry format](../reference/registry-schema-toolhive.mdx) is
+no longer accepted by `thv config set-registry` or by remote registries. To
+migrate an existing custom registry file, run
+[`thv registry convert`](../reference/cli/thv_registry_convert.md):
+
+```bash
+thv registry convert --in registry.json --in-place
+```
+
+The conversion is lossless: every ToolHive-specific field is mapped to a
+publisher-provided extension on the corresponding upstream server entry.
+
+:::
 
 Once you configure a custom registry, ToolHive uses it for all commands that
 interact with the registry, such as `thv registry list`, `thv registry info`,
@@ -170,6 +188,15 @@ thv config set-registry https://example.com/registry.json
 # API endpoint
 thv config set-registry https://registry.example.com
 ```
+
+:::tip[Host your own registry]
+
+You can deploy the [ToolHive Registry Server](../guides-registry/index.mdx) to
+host a registry with authentication, multiple data sources, and automatic
+synchronization. Point `thv config set-registry` to your Registry Server
+endpoint.
+
+:::
 
 ### Set a local registry file
 
@@ -225,31 +252,30 @@ groups organize running server instances for access control.
 
 ### Group structure
 
-Groups are defined as a top-level array in your custom registry:
+Groups are defined under `data.groups` in your custom registry. Each group has a
+name, description, and an array of servers:
 
 ```json
 {
-  "servers": {
-    // Individual servers
-  },
-  "groups": [
-    {
-      "name": "group-name",
-      "description": "Description of what this group provides",
-      "servers": {
-        "server-name": {
-          // Complete server definition
-        }
-      },
-      "remote_servers": {
-        "remote-server-name": {
-          // Complete remote server definition
-        }
+  "data": {
+    "servers": [
+      // Individual servers
+    ],
+    "groups": [
+      {
+        "name": "group-name",
+        "description": "Description of what this group provides",
+        "servers": [
+          // Complete server definitions
+        ]
       }
-    }
-  ]
+    ]
+  }
 }
 ```
+
+See the [upstream registry schema](../reference/registry-schema-upstream.mdx)
+for the full server object structure.
 
 ### Key characteristics
 
@@ -262,124 +288,33 @@ Groups are defined as a top-level array in your custom registry:
 - **Flexible membership**: The same server can appear in multiple groups with
   different configurations
 
-### Example: Multi-environment groups
+### Full example
 
-Here's an example showing how groups can organize servers for different
-purposes:
+For a complete custom registry file with both top-level servers and groups in
+the upstream format, see the
+[Full example](../reference/registry-schema-upstream.mdx#full-example) in the
+upstream registry schema reference.
 
-```json title='registry-with-groups.json'
-{
-  "$schema": "https://raw.githubusercontent.com/stacklok/toolhive-core/main/registry/types/data/toolhive-legacy-registry.schema.json",
-  "version": "1.0.0",
-  "last_updated": "2025-08-15T10:00:00Z",
-  "servers": {
-    "production-fetch": {
-      "description": "Production web content fetching server",
-      "image": "ghcr.io/stackloklabs/gofetch/server:latest",
-      "status": "Active",
-      "tier": "Community",
-      "transport": "streamable-http",
-      "permissions": {
-        "network": {
-          "outbound": {
-            "allow_host": [".company.com"],
-            "allow_port": [443]
-          }
-        }
-      }
-    }
-  },
-  "groups": [
-    {
-      "name": "devops-toolkit",
-      "description": "Complete DevOps toolkit for development teams",
-      "servers": {
-        "github": {
-          "description": "GitHub integration for repository and issue management",
-          "image": "ghcr.io/github/github-mcp-server:v0.15.0",
-          "status": "Active",
-          "tier": "Official",
-          "transport": "stdio",
-          "env_vars": [
-            {
-              "name": "GITHUB_PERSONAL_ACCESS_TOKEN",
-              "description": "GitHub personal access token",
-              "required": true,
-              "secret": true
-            }
-          ]
-        },
-        "heroku": {
-          "description": "Heroku platform deployment and management",
-          "image": "ghcr.io/stacklok/dockyard/npx/heroku-mcp-server:1.0.7",
-          "status": "Active",
-          "tier": "Community",
-          "transport": "stdio",
-          "env_vars": [
-            {
-              "name": "HEROKU_API_KEY",
-              "description": "Heroku API key",
-              "required": true,
-              "secret": true
-            }
-          ]
-        }
-      }
-    },
-    {
-      "name": "testing-suite",
-      "description": "Servers needed for automated testing workflows",
-      "servers": {
-        "test-fetch": {
-          "description": "Restricted fetch server for testing",
-          "image": "ghcr.io/stackloklabs/gofetch/server:latest",
-          "status": "Active",
-          "tier": "Community",
-          "transport": "streamable-http",
-          "args": ["--timeout", "5s"],
-          "permissions": {
-            "network": {
-              "outbound": {
-                "allow_host": ["test.example.com"],
-                "allow_port": [443]
-              }
-            }
-          }
-        }
-      }
-    }
-  ]
-}
-```
+### Use registry servers with groups
 
-This registry provides:
-
-- A production-ready `production-fetch` server at the top level
-- A `devops-toolkit` group with GitHub and Heroku servers for complete DevOps
-  workflows
-- A `testing-suite` group with a restricted `test-fetch` server
-
-Notice how the `devops-toolkit` group contains multiple servers that work
-together—GitHub for repository management and Heroku for
-deployment—demonstrating how groups can bundle related functionality.
-
-### Run registry groups
-
-You can run entire groups using the group command:
+You can organize registry servers into runtime groups after running them:
 
 ```bash
-# Run all servers in the devops-toolkit group (GitHub + Heroku)
-thv group run devops-toolkit
+thv group create dev-toolkit
+thv run --group dev-toolkit github
+thv run --group dev-toolkit heroku
+```
 
-# Run all servers in the testing-suite group
-thv group run testing-suite
+You can pass environment variables and secrets to each server individually:
 
-# You can also pass environment variables and secrets to specific servers in the group
-thv group run devops-toolkit --secret github-token,target=github.GITHUB_PERSONAL_ACCESS_TOKEN --secret heroku-key,target=heroku.HEROKU_API_KEY
+```bash
+thv run --group dev-toolkit --secret github-token,target=GITHUB_PERSONAL_ACCESS_TOKEN github
+thv run --group dev-toolkit --secret heroku-key,target=HEROKU_API_KEY heroku
 ```
 
 Groups provide a convenient way to start multiple related servers with a single
-command.
+command. See [Group management](./group-management.mdx) for more details on
+creating and managing groups.
 
 ## Next steps
 

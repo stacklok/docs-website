@@ -32,6 +32,9 @@ Manage the MCP server registry, including listing and getting information about 
 ### SEE ALSO
 
 * [thv](thv.md)	 - ToolHive (thv) is a lightweight, secure, and fast manager for MCP servers
+* [thv registry convert](thv_registry_convert.md)	 - Convert a legacy registry file to the upstream MCP format
 * [thv registry info](thv_registry_info.md)	 - Get information about an MCP server
 * [thv registry list](thv_registry_list.md)	 - List available MCP servers
+* [thv registry login](thv_registry_login.md)	 - Authenticate with the configured registry
+* [thv registry logout](thv_registry_logout.md)	 - Clear cached registry credentials
 

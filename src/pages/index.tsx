@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import React from 'react';
@@ -17,11 +17,23 @@ function HomepageHeader() {
   const { siteConfig } = useDocusaurusContext();
   return (
     <header className={clsx('hero hero--primary', styles.heroBanner)}>
-      <div className='container'>
-        <Heading as='h1' className='hero__title'>
-          {siteConfig.title}
-        </Heading>
-        <p className='hero__subtitle'>{siteConfig.tagline}</p>
+      <div className={clsx('container', styles.heroContainer)}>
+        <div className={styles.heroText}>
+          <Heading as='h1' className={styles.heroTitle}>
+            {siteConfig.title}
+          </Heading>
+          <p className={styles.heroSubtitle}>{siteConfig.tagline}</p>
+        </div>
+        <div className={styles.heroImageWrapper}>
+          <img
+            src='/img/stacklok-websitehero.webp'
+            alt=''
+            aria-hidden='true'
+            className={styles.heroImage}
+            width={2560}
+            height={1763}
+          />
+        </div>
       </div>
     </header>
   );
@@ -106,6 +118,27 @@ export default function Home(): ReactNode {
             Protocol (MCP) servers, ensuring ease of use, consistency, and
             security. It&apos;s available as a standalone tool or as a
             Kubernetes operator, making it versatile for various environments.
+          </ProductCard>
+          <ProductCard
+            contentType='logo'
+            href='/toolhive/enterprise'
+            logo='/img/logos/stacklok-default-black.svg'
+            logoDark='/img/logos/stacklok-default-white.svg'
+            logoAlt='Stacklok logo'
+            logoTitle='Stacklok logo'
+            linkText='Learn more'
+            icon={{
+              src: '/img/logos/stacklok-symbol-black.svg',
+              srcDark: '/img/logos/stacklok-symbol-white.svg',
+              alt: 'Stacklok symbol',
+              width: '120px',
+              style: { marginLeft: '1.5rem' },
+            }}
+          >
+            Stacklok Enterprise provides a fully managed, enterprise-grade
+            platform built on ToolHive, with advanced security, compliance, and
+            governance features for organizations deploying MCP servers at
+            scale.
           </ProductCard>
         </ProductGrid>
 
@@ -193,27 +226,9 @@ export default function Home(): ReactNode {
           </ProductCard>
         </ProductGrid>
 
-        <h1 className='text--center'>Other MCP Projects</h1>
+        <h1 className='text--center'>Other MCP projects</h1>
 
         <ProductGrid layout='fixed-3' spacing='spacious'>
-          <ProductCard
-            contentType='text'
-            href='/toolhive/tutorials/mcp-optimizer'
-            title='MCP Optimizer'
-            linkText='Read the docs'
-            icon={{
-              src: '/img/mcp-servers/stacklok-website-icons-efficiency-dark-green.svg',
-              srcDark:
-                '/img/mcp-servers/stacklok-website-icons-efficiency-light-green.svg',
-              alt: 'Stacklok efficiency icon',
-              width: '80px',
-              style: { marginLeft: '1.5rem', marginBottom: '0.5rem' },
-            }}
-          >
-            MCP Optimizer discovers the tools from your MCP servers in ToolHive
-            and optimizes token usage by intelligently filtering based on the
-            task at hand.
-          </ProductCard>
           <ProductCard
             contentType='text'
             href='https://stacklok.com/blog/policy-control-for-mcp-servers-in-claude-code-with-stacklok/'
@@ -243,6 +258,33 @@ export default function Home(): ReactNode {
             The Cursor Hook restricts MCP tool calls to servers that are managed
             by ToolHive, enabling governance on MCP server usage at execution
             time.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='https://github.com/stacklok/brood-box'
+            title='Brood Box'
+            linkText='Go to project'
+          >
+            Run coding agents in hardware-isolated microVMs. Review every change
+            before it touches your workspace.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='/toolhive/tutorials/mcp-optimizer'
+            title='MCP Optimizer'
+            linkText='Read the docs'
+            icon={{
+              src: '/img/mcp-servers/stacklok-website-icons-efficiency-dark-green.svg',
+              srcDark:
+                '/img/mcp-servers/stacklok-website-icons-efficiency-light-green.svg',
+              alt: 'Stacklok efficiency icon',
+              width: '80px',
+              style: { marginLeft: '1.5rem', marginBottom: '0.5rem' },
+            }}
+          >
+            MCP Optimizer discovers the tools from your MCP servers in ToolHive
+            and optimizes token usage by intelligently filtering based on the
+            task at hand.
           </ProductCard>
           <ProductCard
             contentType='text'

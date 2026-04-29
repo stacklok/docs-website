@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import path from 'path';
@@ -59,8 +59,10 @@ export default function mcpMetadataPlugin(
           }
 
           // Store error message as fallback
+          const message =
+            error instanceof Error ? error.message : String(error);
           serverData[serverName] = `# Error fetching data for ${serverName}
-# ${error.message}
+# ${message}
 # Please check that the server exists in the registry and thv command is available`;
         }
       }

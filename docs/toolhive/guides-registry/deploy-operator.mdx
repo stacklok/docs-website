@@ -13,7 +13,7 @@ description:
   with your cluster
 - The ToolHive operator installed in your cluster (see
   [Deploy the operator](../guides-k8s/deploy-operator.mdx))
-- A PostgreSQL database
+- PostgreSQL 14 or later
 
 ## Overview
 
@@ -41,8 +41,9 @@ flowchart LR
     subgraph Sources["Registry Sources"]
       Git["Git Repository"]
       CM["ConfigMap"]
-      PVC["PVC"]
       API["Upstream API"]
+      URL["URL Source"]
+      K8sDisc["Kubernetes Discovery"]
     end
   end
 
@@ -61,28 +62,35 @@ See
 to learn about the different deployment modes.
 
 To create a registry, define an `MCPRegistry` resource and apply it to your
-cluster. This minimal example creates a registry that syncs from the ToolHive
-Git repository.
+cluster. The recommended approach uses the `configYAML` field, which passes the
+registry server's configuration directly without the operator parsing or
+transforming it.
+
+This minimal example creates a registry that syncs from the ToolHive Git
+repository.
 
 ```yaml title="my-registry.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRegistry
 metadata:
   name: my-registry
   namespace: my-namespace # Update with your namespace
 spec:
   displayName: My MCP Registry
-  auth:
-    mode: anonymous
-  registries:
-    - name: toolhive
-      format: toolhive
-      git:
-        repository: https://github.com/stacklok/toolhive-catalog.git
-        branch: main
-        path: pkg/catalog/toolhive/data/registry.json
-      syncPolicy:
-        interval: '30m'
+  configYAML: |
+    sources:
+      - name: toolhive
+        git:
+          repository: https://github.com/stacklok/toolhive-catalog.git
+          branch: main
+          path: pkg/catalog/toolhive/data/registry-upstream.json
+        syncPolicy:
+          interval: '30m'
+    registries:
+      - name: default
+        sources: ["toolhive"]
+    auth:
+      mode: anonymous
 ```
 
 Apply the resource:
@@ -105,33 +113,49 @@ When you apply an `MCPRegistry` resource, here's what happens:
 
 :::
 
-## Configuring source Registries
+## Configure registry sources
 
-The `MCPRegistry` resource supports multiple registry source types. You can
-configure one or more of them. Each type is mutually exclusive within a single
-registry configuration.
+The registry server's `configYAML` uses a v2 configuration format that separates
+**data sources** (where registry data comes from) from **registries** (named API
+surfaces that aggregate one or more sources). Each source defines a data origin,
+and each registry references sources by name.
+
+```yaml
+configYAML: |
+  sources:
+    - name: my-source
+      git: { ... }
+  registries:
+    - name: default
+      sources: ["my-source"]
+```
+
+You must explicitly declare all sources, including Kubernetes discovery sources.
 
 ### Git repository source
 
 Clone and sync from Git repositories. Ideal for version-controlled registries.
 
-```yaml {9-14} title="registry-git.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+```yaml title="registry-git.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRegistry
 metadata:
   name: git-registry
 spec:
-  auth:
-    mode: anonymous
-  registries:
-    - name: toolhive
-      format: toolhive
-      git:
-        repository: https://github.com/stacklok/toolhive-catalog.git
-        branch: main
-        path: pkg/catalog/toolhive/data/registry.json
-      syncPolicy:
-        interval: '30m'
+  configYAML: |
+    sources:
+      - name: toolhive
+        git:
+          repository: https://github.com/stacklok/toolhive-catalog.git
+          branch: main
+          path: pkg/catalog/toolhive/data/registry-upstream.json
+        syncPolicy:
+          interval: '30m'
+    registries:
+      - name: default
+        sources: ["toolhive"]
+    auth:
+      mode: anonymous
 ```
 
 **Git source fields:**
@@ -147,96 +171,122 @@ spec:
 :::tip
 
 You can use `branch`, `tag`, or `commit` to pin to a specific version. If
-multiple are specified, `commit` takes precedence over `tag`, which takes
-precedence over `branch`.
+multiple are specified, `commit` takes precedence over `branch`, which takes
+precedence over `tag`.
 
 :::
 
 ### ConfigMap source
 
-Read from a Kubernetes ConfigMap. Ideal for registry data managed within the
-cluster.
+Read from a Kubernetes ConfigMap. Mount the ConfigMap as a volume and reference
+the file path in `configYAML`.
 
-```yaml {7-11} title="registry-configmap.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+```yaml title="registry-configmap.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRegistry
 metadata:
   name: configmap-registry
 spec:
-  auth:
-    mode: anonymous
-  registries:
-    - name: local
-      format: upstream
-      configMapRef:
+  volumes:
+    - name: registry-data
+      configMap:
         name: registry-data
-        key: registry.json
-      syncPolicy:
-        interval: '15m'
+  volumeMounts:
+    - name: registry-data
+      mountPath: /data/registry
+      readOnly: true
+  configYAML: |
+    sources:
+      - name: local
+        file:
+          path: /data/registry/registry.json
+        syncPolicy:
+          interval: '15m'
+    registries:
+      - name: default
+        sources: ["local"]
+    auth:
+      mode: anonymous
 ```
 
 The ConfigMap must exist in the same namespace as the `MCPRegistry` resource.
-
-### PersistentVolumeClaim source
-
-Read from a PersistentVolumeClaim. Useful for large registry files or shared
-storage scenarios.
-
-```yaml {7-10} title="registry-pvc.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
-kind: MCPRegistry
-metadata:
-  name: pvc-registry
-spec:
-  auth:
-    mode: anonymous
-  registries:
-    - name: shared
-      format: upstream
-      pvcRef:
-        claimName: registry-data-pvc
-        path: registries/production.json
-      syncPolicy:
-        interval: '1h'
-```
-
-**PVC source fields:**
-
-| Field       | Required | Description                                                 |
-| ----------- | -------- | ----------------------------------------------------------- |
-| `claimName` | Yes      | Name of the PersistentVolumeClaim                           |
-| `path`      | No       | Path to registry file within PVC (default: `registry.json`) |
-
-The PVC must exist in the same namespace as the `MCPRegistry` resource.
 
 ### API source
 
 Sync from an upstream MCP Registry API. Supports federation and aggregation
 scenarios.
 
-```yaml {7-10} title="registry-api.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+```yaml title="registry-api.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRegistry
 metadata:
   name: api-registry
 spec:
-  auth:
-    mode: anonymous
-  registries:
-    - name: upstream
-      format: upstream
-      api:
-        endpoint: https://registry.example.com
-      syncPolicy:
-        interval: '1h'
+  configYAML: |
+    sources:
+      - name: upstream
+        api:
+          endpoint: https://registry.example.com
+        syncPolicy:
+          interval: '1h'
+    registries:
+      - name: default
+        sources: ["upstream"]
+    auth:
+      mode: anonymous
 ```
 
 The controller automatically appends the appropriate API paths to the endpoint
 URL.
 
+### Kubernetes discovery source
+
+Discover MCP servers from running Kubernetes resources in the cluster.
+
+```yaml title="registry-k8s-discovery.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPRegistry
+metadata:
+  name: k8s-registry
+spec:
+  configYAML: |
+    sources:
+      - name: k8s
+        kubernetes: {}
+    registries:
+      - name: default
+        sources: ["k8s"]
+    auth:
+      mode: anonymous
+```
+
+### URL source
+
+Fetch registry data from an HTTP/HTTPS URL.
+
+```yaml title="registry-url.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPRegistry
+metadata:
+  name: url-registry
+spec:
+  configYAML: |
+    sources:
+      - name: remote
+        file:
+          url: https://example.com/registry.json
+        syncPolicy:
+          interval: '1h'
+    registries:
+      - name: default
+        sources: ["remote"]
+    auth:
+      mode: anonymous
+```
+
 ### Configure synchronization
 
-Each registry source can have its own sync policy that controls automatic
+Each source can have its own sync policy that controls automatic
 synchronization.
 
 ```yaml
@@ -247,112 +297,119 @@ syncPolicy:
 ### Filter registry content
 
 You can filter which servers are exposed through the API using name and tag
-patterns.
+patterns on individual sources.
 
-```yaml {13-20} title="registry-filtered.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+```yaml title="registry-filtered.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRegistry
 metadata:
   name: filtered-registry
 spec:
-  auth:
-    mode: anonymous
-  registries:
-    - name: toolhive
-      format: toolhive
-      git:
-        repository: https://github.com/stacklok/toolhive-catalog.git
-        branch: main
-        path: pkg/catalog/toolhive/data/registry.json
-      filter:
-        names:
-          include:
-            - 'official/*'
-          exclude:
-            - '*/deprecated'
-        tags:
-          include:
-            - production
-          exclude:
-            - experimental
-      syncPolicy:
-        interval: '30m'
+  configYAML: |
+    sources:
+      - name: toolhive
+        git:
+          repository: https://github.com/stacklok/toolhive-catalog.git
+          branch: main
+          path: pkg/catalog/toolhive/data/registry-upstream.json
+        filter:
+          names:
+            include:
+              - 'official/*'
+            exclude:
+              - '*/deprecated'
+          tags:
+            include:
+              - production
+            exclude:
+              - experimental
+        syncPolicy:
+          interval: '30m'
+    registries:
+      - name: default
+        sources: ["toolhive"]
+    auth:
+      mode: anonymous
 ```
 
 ## Configure database storage
 
-Configure PostgreSQL database storage for the Registry server.
+Configure PostgreSQL database storage for the Registry server. With the
+`configYAML` approach, database settings go directly into the config and you use
+`pgpassSecretRef` for password management.
 
-```yaml {17-32} title="registry-with-database.yaml"
+```yaml title="registry-with-database.yaml"
 apiVersion: v1
 kind: Secret
 metadata:
-  name: registry-api-db-passwords
+  name: registry-pgpass
 type: Opaque
 stringData:
-  db-password: app_password
-  migration-password: migrator_password
+  .pgpass: |
+    postgres.database.svc.cluster.local:5432:registry:db_app:app_password
+    postgres.database.svc.cluster.local:5432:registry:db_migrator:migrator_password
 ---
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRegistry
 metadata:
   name: production-registry
 spec:
-  auth:
-    mode: anonymous
-  databaseConfig:
-    host: postgres.database.svc.cluster.local
-    port: 5432
-    user: db_app
-    migrationUser: db_migrator
-    dbAppUserPasswordSecretRef:
-      name: registry-api-db-passwords
-      key: db-password
-    dbMigrationUserPasswordSecretRef:
-      name: registry-api-db-passwords
-      key: migration-password
-    database: registry
-    sslMode: verify-full
-    maxOpenConns: 25
-    maxIdleConns: 5
-    connMaxLifetime: '30m'
-  registries:
-    - name: toolhive
-      format: toolhive
-      git:
-        repository: https://github.com/stacklok/toolhive-catalog.git
-        branch: main
-        path: pkg/catalog/toolhive/data/registry.json
-      syncPolicy:
-        interval: '30m'
+  pgpassSecretRef:
+    name: registry-pgpass
+    key: .pgpass
+  configYAML: |
+    sources:
+      - name: toolhive
+        git:
+          repository: https://github.com/stacklok/toolhive-catalog.git
+          branch: main
+          path: pkg/catalog/toolhive/data/registry-upstream.json
+        syncPolicy:
+          interval: '30m'
+    registries:
+      - name: default
+        sources: ["toolhive"]
+    auth:
+      mode: anonymous
+    database:
+      host: postgres.database.svc.cluster.local
+      port: 5432
+      user: db_app
+      migrationUser: db_migrator
+      database: registry
+      sslMode: verify-full
+      maxOpenConns: 25
+      maxIdleConns: 5
+      connMaxLifetime: '30m'
 ```
 
 **Database configuration fields:**
 
-| Field                              | Default       | Description                                       |
-| ---------------------------------- | ------------- | ------------------------------------------------- |
-| `host`                             | `postgres`    | Database server hostname                          |
-| `port`                             | `5432`        | Database server port                              |
-| `user`                             | `db_app`      | Application user (SELECT, INSERT, UPDATE, DELETE) |
-| `migrationUser`                    | `db_migrator` | Migration user (CREATE, ALTER, DROP)              |
-| `dbAppUserPasswordSecretRef`       | ``            | Password of application user                      |
-| `dbMigrationUserPasswordSecretRef` | ``            | Password of migration user                        |
-| `database`                         | `registry`    | Database name                                     |
-| `sslMode`                          | `prefer`      | SSL mode (disable, prefer, require, verify-full)  |
-| `maxOpenConns`                     | `10`          | Maximum open connections                          |
-| `maxIdleConns`                     | `2`           | Maximum idle connections                          |
-| `connMaxLifetime`                  | `30m`         | Maximum connection lifetime                       |
+| Field             | Default       | Description                                       |
+| ----------------- | ------------- | ------------------------------------------------- |
+| `host`            | `postgres`    | Database server hostname                          |
+| `port`            | `5432`        | Database server port                              |
+| `user`            | `db_app`      | Application user (SELECT, INSERT, UPDATE, DELETE) |
+| `migrationUser`   | `db_migrator` | Migration user (CREATE, ALTER, DROP)              |
+| `database`        | `registry`    | Database name                                     |
+| `sslMode`         | `prefer`      | SSL mode (disable, prefer, require, verify-full)  |
+| `maxOpenConns`    | `10`          | Maximum open connections                          |
+| `maxIdleConns`    | `2`           | Maximum idle connections                          |
+| `connMaxLifetime` | `30m`         | Maximum connection lifetime                       |
 
 :::tip
 
-Credentials are internally configured using a pgpass file mounted as a secret.
+Use `pgpassSecretRef` on the MCPRegistry resource to provide database
+credentials. The operator handles mounting and file permissions automatically.
+Create a Kubernetes Secret containing a
+[pgpass-formatted](https://www.postgresql.org/docs/current/libpq-pgpass.html)
+file and reference it in your MCPRegistry spec.
 
 :::
 
 ## Configure authentication
 
-You can configure authentication using the `authConfig` field in your
-`MCPRegistry` resource.
+You can configure authentication in the `auth` section within `configYAML`.
 
 ### Authentication modes
 
@@ -363,42 +420,47 @@ You can configure authentication using the `authConfig` field in your
 
 :::info[Secure by default]
 
-Configuring an authentication mode is mandatory, if you're not interested you
-can set it to `anonymous`.
+Configuring an authentication mode is mandatory. If you don't need
+authentication, set it to `anonymous`.
 
 :::
 
 ### OAuth authentication
 
 OAuth mode validates JWT tokens from one or more identity providers. Configure
-providers in the `authConfig.oauth.providers` array.
+providers in the `auth.oauth.providers` array within `configYAML`.
 
 ```yaml title="registry-oauth.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRegistry
 metadata:
   name: registry
   namespace: toolhive-system
 spec:
   displayName: 'Authenticated MCP Server Registry'
-  authConfig:
-    mode: oauth
-    oauth:
-      providers:
-        - name: kubernetes
-          issuerUrl: https://kubernetes.default.svc.cluster.local
-          jwksUrl: https://kubernetes.default.svc/openid/v1/jwks
-          audience: registry-server
-          caCertPath: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-          authTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-          allowPrivateIP: true
-  registries:
-    - name: toolhive
-      format: toolhive
-      git:
-        repository: https://github.com/stacklok/toolhive-catalog.git
-        branch: main
-        path: pkg/catalog/toolhive/data/registry.json
+  configYAML: |
+    sources:
+      - name: toolhive
+        git:
+          repository: https://github.com/stacklok/toolhive-catalog.git
+          branch: main
+          path: pkg/catalog/toolhive/data/registry-upstream.json
+        syncPolicy:
+          interval: '30m'
+    registries:
+      - name: default
+        sources: ["toolhive"]
+    auth:
+      mode: oauth
+      oauth:
+        providers:
+          - name: kubernetes
+            issuerUrl: https://kubernetes.default.svc.cluster.local
+            jwksUrl: https://kubernetes.default.svc/openid/v1/jwks
+            audience: registry-server
+            caCertPath: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            authTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            allowPrivateIP: true
 ```
 
 ### OAuth configuration fields
@@ -431,22 +493,29 @@ For in-cluster deployments, you can configure OAuth to validate Kubernetes
 service account tokens:
 
 ```yaml title="registry-k8s-auth.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRegistry
 metadata:
   name: registry
 spec:
-  authConfig:
-    mode: oauth
-    oauth:
-      providers:
-        - name: kubernetes
-          issuerUrl: https://kubernetes.default.svc.cluster.local
-          jwksUrl: https://kubernetes.default.svc/openid/v1/jwks
-          audience: registry-server
-          caCertPath: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-          authTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-          allowPrivateIP: true
+  configYAML: |
+    sources:
+      - name: k8s
+        kubernetes: {}
+    registries:
+      - name: default
+        sources: ["k8s"]
+    auth:
+      mode: oauth
+      oauth:
+        providers:
+          - name: kubernetes
+            issuerUrl: https://kubernetes.default.svc.cluster.local
+            jwksUrl: https://kubernetes.default.svc/openid/v1/jwks
+            audience: registry-server
+            caCertPath: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            authTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            allowPrivateIP: true
 ```
 
 :::tip[Kubernetes provider settings]
@@ -466,27 +535,34 @@ You can configure multiple OAuth providers to accept tokens from different
 identity sources:
 
 ```yaml title="registry-multi-provider.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRegistry
 metadata:
   name: registry
 spec:
-  authConfig:
-    mode: oauth
-    oauth:
-      providers:
-        # Kubernetes service accounts (in-cluster workloads)
-        - name: kubernetes
-          issuerUrl: https://kubernetes.default.svc.cluster.local
-          jwksUrl: https://kubernetes.default.svc/openid/v1/jwks
-          audience: registry-server
-          caCertPath: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-          authTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-          allowPrivateIP: true
-        # External identity provider
-        - name: okta
-          issuerUrl: https://YOUR_DOMAIN.okta.com/oauth2/default
-          audience: registry
+  configYAML: |
+    sources:
+      - name: k8s
+        kubernetes: {}
+    registries:
+      - name: default
+        sources: ["k8s"]
+    auth:
+      mode: oauth
+      oauth:
+        providers:
+          # Kubernetes service accounts (in-cluster workloads)
+          - name: kubernetes
+            issuerUrl: https://kubernetes.default.svc.cluster.local
+            jwksUrl: https://kubernetes.default.svc/openid/v1/jwks
+            audience: registry-server
+            caCertPath: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            authTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+            allowPrivateIP: true
+          # External identity provider
+          - name: okta
+            issuerUrl: https://YOUR_DOMAIN.okta.com/oauth2/default
+            audience: registry
 ```
 
 The server validates tokens against each provider in order until one succeeds.
@@ -496,20 +572,25 @@ The server validates tokens against each provider in order until one succeeds.
 For development and testing, you can disable authentication entirely:
 
 ```yaml title="registry-anonymous.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRegistry
 metadata:
   name: registry
 spec:
-  authConfig:
-    mode: anonymous
-  registries:
-    - name: toolhive
-      format: toolhive
-      git:
-        repository: https://github.com/stacklok/toolhive-catalog.git
-        branch: main
-        path: pkg/catalog/toolhive/data/registry.json
+  configYAML: |
+    sources:
+      - name: toolhive
+        git:
+          repository: https://github.com/stacklok/toolhive-catalog.git
+          branch: main
+          path: pkg/catalog/toolhive/data/registry-upstream.json
+        syncPolicy:
+          interval: '30m'
+    registries:
+      - name: default
+        sources: ["toolhive"]
+    auth:
+      mode: anonymous
 ```
 
 :::danger[No access control]
@@ -529,8 +610,8 @@ provider-specific examples for Keycloak, Auth0, Azure AD, and Okta, see the
 You can customize the Registry server pod using the `podTemplateSpec` field.
 This gives you full control over the pod specification.
 
-```yaml {6-15} title="registry-custom-pod.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+```yaml title="registry-custom-pod.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRegistry
 metadata:
   name: custom-registry
@@ -546,17 +627,20 @@ spec:
             requests:
               cpu: '100m'
               memory: '128Mi'
-  auth:
-    mode: anonymous
-  registries:
-    - name: toolhive
-      format: toolhive
-      git:
-        repository: https://github.com/stacklok/toolhive-catalog.git
-        branch: main
-        path: pkg/catalog/toolhive/data/registry.json
-      syncPolicy:
-        interval: '30m'
+  configYAML: |
+    sources:
+      - name: toolhive
+        git:
+          repository: https://github.com/stacklok/toolhive-catalog.git
+          branch: main
+          path: pkg/catalog/toolhive/data/registry-upstream.json
+        syncPolicy:
+          interval: '30m'
+    registries:
+      - name: default
+        sources: ["toolhive"]
+    auth:
+      mode: anonymous
 ```
 
 :::info[Container name requirement]
@@ -566,7 +650,7 @@ When customizing containers in `podTemplateSpec`, you must use
 manage the Registry server. The container name is hardcoded to avoid conflict
 issues with user provided containers. Mandating a container name on the Operator
 side explicitly tells the Operator it is the main registry server container and
-any other containers provided by the use are sidecars/init containers.
+any other containers provided by the user are sidecars/init containers.
 
 :::
 
@@ -594,31 +678,53 @@ kubectl -n <NAMESPACE> describe mcpregistry <NAME>
 
 ### Registry phases
 
-| Phase         | Description                            |
-| ------------- | -------------------------------------- |
-| `Pending`     | The registry is being initialized      |
-| `Ready`       | The registry is ready and operational  |
-| `Syncing`     | The registry is currently syncing data |
-| `Failed`      | The registry has encountered an error  |
-| `Terminating` | The registry is being deleted          |
+| Phase         | Description                           |
+| ------------- | ------------------------------------- |
+| `Pending`     | The registry is being initialized     |
+| `Ready`       | The registry is ready and operational |
+| `Failed`      | The registry has encountered an error |
+| `Terminating` | The registry is being deleted         |
+
+You can also use `kubectl wait` to wait for the registry to be ready:
+
+```bash
+kubectl -n <NAMESPACE> wait --for=condition=Ready mcpregistry/<NAME>
+```
+
+## Upgrade and migration
+
+Upgrading an operator-managed Registry Server happens in two layers:
+
+- **Operator**: upgrade the ToolHive operator and its CRDs chart with
+  `helm upgrade --install` as described in
+  [Deploy the operator](../guides-k8s/deploy-operator.mdx). Always upgrade the
+  CRDs chart before the operator chart so any new CRD fields are present by the
+  time the new operator reads them.
+- **Registry Server image**: the operator reconciles the Registry Server pod
+  image from the CRD. Update the image tag in your `MCPRegistry` resource (or
+  let the operator default to its bundled version), then apply the change. The
+  operator performs a rolling update of the underlying Deployment.
+
+Database migrations run automatically when the Registry Server pod starts, using
+the migration user declared in [database configuration](./database.mdx). Review
+the
+[Registry Server release notes](https://github.com/stacklok/toolhive-registry-server/releases)
+before upgrading across a major version in case new required config fields or
+migration-user privileges are needed.
 
 ## Next steps
 
-Learn how to configure authentication for the Registry server in the
-[Authentication configuration](./authentication.mdx) guide.
-
-Configure additional registry sources and filtering options in the
-[Configuration](./configuration.mdx) guide.
-
-Discover your deployed MCP servers automatically using the
-[Kubernetes registry](./configuration.mdx#kubernetes-registry) feature. Note
-that the operator automatically creates a single Kubernetes registry named
-`default` - you cannot configure additional Kubernetes registries.
+- [Configure authentication](./authentication.mdx) to secure access to your
+  registry
+- [Set up authorization](./authorization.mdx) to control access with roles and
+  claims
+- [Configure sources and registries](./configuration.mdx) for standalone
+  configuration reference
 
 ## Related information
 
-- [Kubernetes CRD reference](../reference/crd-spec.md#apiv1alpha1mcpregistry) -
-  Reference for the `MCPRegistry` Custom Resource Definition (CRD)
+- [Kubernetes CRD reference](../reference/crds/mcpregistry.mdx) - Reference for
+  the `MCPRegistry` Custom Resource Definition (CRD)
 - [Deploy the operator](../guides-k8s/deploy-operator.mdx) - Install the
   ToolHive operator
 - [Database configuration](./database.mdx) - Configure PostgreSQL storage
@@ -659,9 +765,9 @@ Common causes include:
 </details>
 
 <details>
-<summary>Registry stuck in Pending or Syncing phase</summary>
+<summary>Registry stuck in Pending phase</summary>
 
-If the registry is stuck in `Pending` or `Syncing` phase:
+If the registry is stuck in `Pending` phase:
 
 ```bash
 # Check registry status
@@ -675,7 +781,7 @@ Common causes include:
 
 - **Git repository inaccessible**: Verify the repository URL is correct and
   accessible
-- **ConfigMap/PVC doesn't exist**: Ensure referenced resources exist in the same
+- **ConfigMap doesn't exist**: Ensure referenced resources exist in the same
   namespace
 - **Network policies**: Check if network policies are blocking external access
 - **Invalid registry file format**: Verify the registry JSON file is valid
@@ -708,13 +814,9 @@ Common causes include:
 If synchronization is failing:
 
 ```bash
-# Check sync status
-kubectl -n <NAMESPACE> get mcpregistry <NAME> -o jsonpath='{.status.syncStatus}'
-
-# Trigger manual sync to see immediate errors
-kubectl annotate mcpregistry <NAME> \
-  toolhive.stacklok.dev/sync-trigger="$(date +%s)" \
-  --overwrite
+# Check registry status and conditions
+kubectl -n <NAMESPACE> get mcpregistry <NAME> -o jsonpath='{.status.phase}'
+kubectl -n <NAMESPACE> get mcpregistry <NAME> -o jsonpath='{.status.conditions}'
 
 # Check logs
 kubectl -n <NAMESPACE> logs -l app.kubernetes.io/instance=<NAME>
@@ -724,7 +826,8 @@ Common causes include:
 
 - **Source unavailable**: Git repository, API endpoint, or file is inaccessible
 - **Invalid JSON format**: Registry file contains invalid JSON
-- **Format mismatch**: The `format` field doesn't match the actual data format
+- **Schema mismatch**: The data does not conform to the
+  [upstream MCP registry schema](../reference/registry-schema-upstream.mdx)
 - **Filter too restrictive**: Filters may be excluding all servers
 
 </details>

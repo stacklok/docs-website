@@ -1,6 +1,8 @@
 ---
 title: Run MCP servers
-description: How to run MCP servers with the ToolHive CLI.
+description:
+  Run MCP servers with the ToolHive CLI, including registry shortcuts, custom
+  images, and environment variables.
 ---
 
 This guide explains how to run Model Context Protocol (MCP) servers using
@@ -65,26 +67,19 @@ Use `thv search <NAME>` or `thv registry list` to discover available servers.
 
 :::
 
-### Run registry groups
+### Run servers in a group
 
-If you use a [custom registry](./registry.mdx#use-a-custom-registry) that
-includes groups, you can run multiple related servers together as a unit. This
-is useful when you need several servers for a specific workflow or project:
-
-```bash
-thv group run <GROUP_NAME>
-```
-
-For example, to run all servers in a group called `dev-toolkit`:
+You can organize MCP servers into groups using `thv group create` and then run
+servers within a group:
 
 ```bash
-thv group run dev-toolkit
+thv group create my-group
+thv run --group my-group fetch
+thv run --group my-group github
 ```
 
-Running a group starts all servers defined within that group simultaneously,
-saving you from running each server individually. See
-[Registry groups](./registry.mdx#organize-servers-with-registry-groups) for more
-information about organizing servers into groups in your custom registry.
+See [Group management](./group-management.mdx) for more details on creating and
+managing groups.
 
 :::info[What's happening?]
 
@@ -292,7 +287,7 @@ This is useful when you want to guide an agent toward calling a specific tool
 for particular questions.
 
 One common use case is running multiple copies of the same MCP server with
-different [network access levels](./network-isolation.mdx)—one for internal
+different [network access levels](./network-isolation.mdx), one for internal
 resources and another for public internet access. By overriding the tool names
 and descriptions, you can help your agent choose the right server for each task.
 
@@ -646,6 +641,21 @@ uses Server-Sent Events (SSE), specify the transport flag:
 thv run https://api.example.com/sse --transport sse
 ```
 
+#### Stateless remote servers
+
+Some remote MCP servers only accept POST requests and don't support SSE streams.
+For these servers, use the `--stateless` flag:
+
+```bash
+thv run https://example.com/mcp --name my-server --transport streamable-http --stateless
+```
+
+When `--stateless` is set:
+
+- GET, HEAD, and DELETE requests return HTTP 405 at the proxy instead of being
+  forwarded to the remote server
+- Health checks use a POST-based JSON-RPC ping instead of SSE
+
 :::info[What's happening?]
 
 When you run a remote MCP server, ToolHive:
@@ -723,6 +733,24 @@ Specify custom OAuth scopes for the authentication flow:
 thv run https://api.example.com/mcp \
   ... \
   --remote-auth-scopes read,write,admin
+```
+
+#### Non-standard OAuth scope parameter name
+
+Some OAuth providers use a non-standard query parameter name for scopes in the
+authorization URL. For example, Slack uses `user_scope` instead of the standard
+`scope` parameter. Use the `--remote-auth-scope-param-name` flag to override the
+parameter name:
+
+```bash
+thv run https://mcp.slack.com/mcp \
+  --name slack \
+  --transport streamable-http \
+  --remote-auth-client-id <CLIENT_ID> \
+  --remote-auth-callback-port 3118 \
+  --remote-auth-authorize-url "https://slack.com/oauth/v2_user/authorize" \
+  --remote-auth-token-url "https://slack.com/api/oauth.v2.user.access" \
+  --remote-auth-scope-param-name user_scope
 ```
 
 #### Resource indicator (RFC 8707)
@@ -888,11 +916,14 @@ The configuration file must contain all server settings.
 
 ## Next steps
 
-See [Monitor and manage MCP servers](./manage-mcp-servers.mdx) to monitor and
-control your servers.
-
-[Test your MCP server](./test-mcp-servers.mdx) using the MCP Inspector or
-`thv mcp` commands.
+- [Monitor and manage MCP servers](./manage-mcp-servers.mdx) to control your
+  running servers
+- [Test your MCP servers](./test-mcp-servers.mdx) using the MCP Inspector or
+  `thv mcp` commands
+- [Secure your servers](./auth.mdx) with OIDC authentication and Cedar policies
+- [Enable telemetry and metrics](./telemetry-and-metrics.mdx) to gain
+  observability into MCP server interactions
+- [Run the API server](./api-server.mdx) for programmatic access to ToolHive
 
 ## Related information
 

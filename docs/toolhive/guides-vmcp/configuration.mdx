@@ -5,19 +5,19 @@ description: How to configure a Virtual MCP Server for common scenarios.
 
 This guide covers common configuration patterns for vMCP using the
 VirtualMCPServer resource. For a complete field reference, see the
-[VirtualMCPServer CRD specification](../reference/crd-spec.md#apiv1alpha1virtualmcpserver).
+[VirtualMCPServer CRD specification](../reference/crds/virtualmcpserver.mdx).
 
 ## Create an MCPGroup
 
 Before creating a VirtualMCPServer, you need an
-[MCPGroup](../reference/crd-spec.md#apiv1alpha1mcpgroup) to organize the backend
-MCP servers. An MCPGroup is a logical container that groups related MCPServer
-and MCPRemoteProxy resources together.
+[MCPGroup](../reference/crds/mcpgroup.mdx) to organize the backend MCP servers.
+An MCPGroup is a logical container that groups related MCPServer,
+MCPRemoteProxy, and MCPServerEntry resources together.
 
 Create a basic MCPGroup:
 
 ```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPGroup
 metadata:
   name: my-group
@@ -27,25 +27,26 @@ spec:
 ```
 
 The MCPGroup must exist in the same namespace as your VirtualMCPServer and be in
-a Ready state before the VirtualMCPServer can stafrt. Backend resources
-reference this group using the `groupRef` field in their spec.
+a Ready state before the VirtualMCPServer can start. Backend resources reference
+this group using the `groupRef` field in their spec.
 
 ## Add backends to a group
 
-vMCP supports two types of backends that can be added to an MCPGroup:
+vMCP supports three types of backends that can be added to an MCPGroup:
 
 ### MCPServer (local containers)
 
 MCPServer resources run container-based MCP servers in your cluster:
 
 ```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: fetch
   namespace: toolhive-system
 spec:
-  groupRef: my-group # Reference to the MCPGroup
+  groupRef:
+    name: my-group # Reference to the MCPGroup
   image: ghcr.io/stackloklabs/gofetch/server
   transport: streamable-http
 ```
@@ -56,23 +57,22 @@ MCPRemoteProxy resources proxy external remote MCP servers. They can be added to
 an MCPGroup for discovery by vMCP:
 
 ```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRemoteProxy
 metadata:
   name: context7-proxy
   namespace: toolhive-system
 spec:
-  groupRef: my-group # Reference to the MCPGroup
-  remoteURL: https://mcp.context7.com/mcp
+  groupRef:
+    name: my-group # Reference to the MCPGroup
+  remoteUrl: https://mcp.context7.com/mcp
   transport: streamable-http
-  port: 8080
+  proxyPort: 8080
 
   # Validate incoming requests
-  oidcConfig:
-    type: inline
-    inline:
-      issuer: https://auth.company.com
-      audience: context7-proxy
+  oidcConfigRef:
+    name: company-oidc
+    audience: context7-proxy
 ```
 
 :::caution[Current limitation]
@@ -88,30 +88,54 @@ for details.
 For complete MCPRemoteProxy configuration options, see
 [Proxy remote MCP servers](../guides-k8s/remote-mcp-proxy.mdx).
 
+### MCPServerEntry (zero-infrastructure catalog entries)
+
+MCPServerEntry resources declare remote MCP servers as lightweight catalog
+entries without deploying proxy pods, services, or deployments. Use
+MCPServerEntry when you want to include a remote server in vMCP routing without
+the overhead of running a proxy.
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServerEntry
+metadata:
+  name: my-remote-tool
+  namespace: toolhive-system
+spec:
+  groupRef:
+    name: my-group # Reference to the MCPGroup
+  remoteUrl: https://mcp.example.com/mcp
+  transport: streamable-http # or sse
+```
+
+For complete MCPServerEntry configuration options including authentication, TLS,
+custom headers, and SSRF protection details, see
+[Declare remote MCP server entries](../guides-k8s/mcp-server-entry.mdx).
+
 ## Create a VirtualMCPServer
 
 At minimum, a VirtualMCPServer requires a reference to an MCPGroup (via
-`config.groupRef`) and an authentication type:
+`groupRef`) and an authentication type:
 
 ```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: VirtualMCPServer
 metadata:
   name: my-vmcp
   namespace: toolhive-system
 spec:
-  config:
-    groupRef: my-group
+  groupRef:
+    name: my-group
   incomingAuth:
     type: anonymous # Disables authentication; do not use in production
 ```
 
 The MCPGroup must exist in the same namespace and be in a Ready state before the
 VirtualMCPServer can start. By default, vMCP automatically discovers and
-aggregates all MCPServer and MCPRemoteProxy resources in the referenced group.
-You can also define backends explicitly in the configuration (inline mode). See
-[Backend discovery modes](./backend-discovery.mdx) for details on both
-approaches.
+aggregates all MCPServer, MCPRemoteProxy, and MCPServerEntry resources in the
+referenced group. You can also define backends explicitly in the configuration
+(inline mode). See [Backend discovery modes](./backend-discovery.mdx) for
+details on both approaches.
 
 ## Configure authentication
 
@@ -173,14 +197,15 @@ resource.
 Configure health monitoring in `spec.config.operational.failureHandling`:
 
 ```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: VirtualMCPServer
 metadata:
   name: my-vmcp
   namespace: toolhive-system
 spec:
+  groupRef:
+    name: my-group
   config:
-    groupRef: my-group
     operational:
       failureHandling:
         # Health check interval (how often to check each backend)
@@ -259,7 +284,7 @@ To enable health checks for remote workloads, set the
 `TOOLHIVE_REMOTE_HEALTHCHECKS` environment variable in the vMCP pod:
 
 ```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: VirtualMCPServer
 metadata:
   name: my-vmcp
@@ -279,19 +304,23 @@ Backend discovery guide.
 
 ## Next steps
 
-- Review [scaling and performance guidance](./scaling-and-performance.mdx) for
-  resource planning
-- Discover your deployed MCP servers automatically using the
-  [Kubernetes registry](../guides-registry/configuration.mdx#kubernetes-registry)
-  feature in the ToolHive Registry Server
+- [Configure backend discovery](./backend-discovery.mdx) to control how vMCP
+  finds and connects to MCP servers
+- [Set up authentication](./authentication.mdx) for client-to-vMCP and
+  vMCP-to-backend security
+- [Configure failure handling](./failure-handling.mdx) for circuit breakers and
+  partial failure modes
+- [Monitor vMCP activity](./telemetry-and-metrics.mdx) with OpenTelemetry
+  tracing and metrics
 
 ## Related information
 
-- [VirtualMCPServer CRD specification](../reference/crd-spec.md#apiv1alpha1virtualmcpserver)
+- [VirtualMCPServer CRD specification](../reference/crds/virtualmcpserver.mdx)
 - [Introduction to vMCP](./intro.mdx)
 - [Scaling and Performance](./scaling-and-performance.mdx)
 - [Backend discovery modes](./backend-discovery.mdx)
 - [Tool aggregation](./tool-aggregation.mdx)
+- [Optimize tool discovery](./optimizer.mdx)
 - [Composite tools](./composite-tools.mdx)
 - [Authentication](./authentication.mdx)
 - [Proxy remote MCP servers](../guides-k8s/remote-mcp-proxy.mdx)

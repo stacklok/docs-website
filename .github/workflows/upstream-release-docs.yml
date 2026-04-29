@@ -1,0 +1,1427 @@
+name: Upstream Release Docs
+
+# Reacts to Renovate-authored PRs that bump a `version:` in
+# .github/upstream-projects.yaml. For all four tracked projects
+# (toolhive, toolhive-registry-server, toolhive-studio,
+# toolhive-cloud-ui), the flow is identical:
+#
+#   1. Renovate opens a version-bump PR
+#   2. This workflow fires on the PR event, detects which project
+#      changed, shallow-clones the upstream at the new tag
+#   3. Syncs declared upstream assets into static/ via sync-assets.mjs
+#      (release-asset downloads, tarball extractions, file-from-clone
+#      copies — see `assets:` in upstream-projects.yaml)
+#   4. For toolhive specifically, downloads the CRD manifests tarball
+#      and runs extract-crd-schemas.mjs + generate-crd-pages.mjs +
+#      bundle-upstream-schema.mjs to produce our opinionated reference
+#      MDX (the CRD tarball and toolhive-core schemas are shipped as
+#      release assets by stacklok/toolhive#4982)
+#   5. Runs two Claude Opus sessions: a generation pass running the
+#      upstream-release-docs skill, then a fresh-context editorial
+#      pass running docs-review over the changed files. Both have
+#      `gh` CLI access so they can fetch PR descriptions and linked
+#      issues for product context.
+#   6. Auto-fixes prettier/eslint on the skill-touched files,
+#      commits everything to the PR branch, augments the PR body,
+#      assigns reviewers from non-bot release contributors
+#
+# Renovate is configured with rebaseWhen: never + recreateWhen: never
+# so we can push commits without force-push races.
+
+on:
+  pull_request:
+    types: [opened, reopened]
+    paths:
+      - '.github/upstream-projects.yaml'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Retry-only: PR number to re-augment (must be an open Renovate PR). Leave blank to bootstrap a new PR via project_id + new_tag.'
+        required: false
+        type: string
+      project_id:
+        description: 'Bootstrap a new PR: id from .github/upstream-projects.yaml (e.g. toolhive-registry-server). Requires new_tag.'
+        required: false
+        type: string
+      new_tag:
+        description: 'Bootstrap a new PR: the upstream tag to document (e.g. v1.3.0). Requires project_id.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  # Required by anthropics/claude-code-action@v1 for OIDC token exchange.
+  id-token: write
+
+concurrency:
+  # Workflow-level group so two simultaneous upstream releases don't
+  # run the skill in parallel on shared concept pages.
+  group: upstream-release-docs
+  cancel-in-progress: false
+
+jobs:
+  augment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Gate: two accepted entry points.
+    #   - pull_request: Renovate-authored PR touching upstream-projects.yaml
+    #     (the `paths:` filter on the trigger already narrows to YAML edits).
+    #   - workflow_dispatch: human manually retries or bootstraps.
+    # Human-authored PRs that happen to edit the YAML are out of scope and
+    # should be reviewed normally without skill augmentation.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login == 'renovate[bot]'
+      )
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Validate workflow_dispatch inputs
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          PR_NUMBER_IN: ${{ github.event.inputs.pr_number }}
+          PROJECT_ID_IN: ${{ github.event.inputs.project_id }}
+          NEW_TAG_IN: ${{ github.event.inputs.new_tag }}
+        run: |
+          # Exactly one of: (pr_number) OR (project_id + new_tag).
+          if [ -n "$PR_NUMBER_IN" ] && { [ -n "$PROJECT_ID_IN" ] || [ -n "$NEW_TAG_IN" ]; }; then
+            echo "::error::Provide either pr_number (retry) or project_id + new_tag (bootstrap), not both."
+            exit 1
+          fi
+          if [ -z "$PR_NUMBER_IN" ] && { [ -z "$PROJECT_ID_IN" ] || [ -z "$NEW_TAG_IN" ]; }; then
+            echo "::error::Bootstrap mode requires both project_id and new_tag."
+            exit 1
+          fi
+
+      - name: Resolve PR number and head ref
+        id: pr
+        env:
+          EVENT: ${{ github.event_name }}
+          DISPATCH_PR: ${{ github.event.inputs.pr_number }}
+          PROJECT_ID_IN: ${{ github.event.inputs.project_id }}
+          NEW_TAG_IN: ${{ github.event.inputs.new_tag }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          case "$EVENT" in
+            pull_request)
+              PR_NUMBER="$EVENT_PR"
+              HEAD_REF="$EVENT_HEAD_REF"
+              MODE="react"
+              ;;
+            workflow_dispatch)
+              if [ -n "$DISPATCH_PR" ]; then
+                PR_NUMBER="$DISPATCH_PR"
+                # --repo is required because this step runs before the
+                # actions/checkout below — gh otherwise looks for a
+                # local .git context and fails with "not a git repository".
+                HEAD_REF=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)
+                AUTHOR=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json author --jq '.author.login')
+                case "$AUTHOR" in
+                  app/renovate|renovate[bot]|app/github-actions|github-actions[bot])
+                    ;;
+                  *)
+                    echo "::error::PR #$PR_NUMBER author '$AUTHOR' is not an accepted bot. Retry mode accepts renovate[bot] or github-actions[bot]; use bootstrap (project_id + new_tag) for a fresh manual PR."
+                    exit 1
+                    ;;
+                esac
+                MODE="retry"
+              else
+                # Bootstrap: branch and PR are created in the next step.
+                PR_NUMBER=""
+                HEAD_REF=""
+                MODE="bootstrap"
+              fi
+              ;;
+          esac
+          {
+            echo "number=$PR_NUMBER"
+            echo "head_ref=$HEAD_REF"
+            echo "mode=$MODE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Mode: $MODE"
+
+      # Bootstrap: a human manually dispatched with project_id + new_tag.
+      # Check out the dispatching branch (main in production; any branch
+      # for pre-merge testing — just dispatch via `gh workflow run --ref
+      # <branch>`), bump the YAML, create the PR, and emit its number +
+      # branch so the rest of the workflow proceeds as if Renovate had
+      # opened it.
+      - name: Checkout dispatching branch for bootstrap
+        if: steps.pr.outputs.mode == 'bootstrap'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Setup (bootstrap)
+        if: steps.pr.outputs.mode == 'bootstrap'
+        uses: ./.github/actions/setup
+
+      - name: Set up Git (bootstrap)
+        if: steps.pr.outputs.mode == 'bootstrap'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bootstrap branch and PR
+        id: bootstrap
+        if: steps.pr.outputs.mode == 'bootstrap'
+        env:
+          PROJECT_ID: ${{ github.event.inputs.project_id }}
+          NEW_TAG: ${{ github.event.inputs.new_tag }}
+          BASE_REF: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Branch name intentionally distinct from Renovate's
+          # docs/upstream-<id> so the two paths don't collide.
+          BRANCH="manual/upstream-${PROJECT_ID}-${NEW_TAG}"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "::error::Branch $BRANCH already exists on origin. Delete it or use retry mode with the existing PR's number."
+            exit 1
+          fi
+          git checkout -b "$BRANCH"
+
+          node scripts/upstream-release/bump-yaml.mjs \
+            --id "$PROJECT_ID" \
+            --tag "$NEW_TAG"
+
+          git add .github/upstream-projects.yaml
+          git commit -m "Bump $PROJECT_ID to $NEW_TAG"
+          git push origin "$BRANCH"
+
+          # Heredoc so the YAML indent doesn't leak into the PR body.
+          # Minimal placeholder -- the augmentation step below replaces
+          # content below its <!-- upstream-release-docs:start -->
+          # marker. Everything above the separator stays as the one-
+          # line context of who triggered the PR.
+          cat > /tmp/bootstrap-body.md <<EOF
+          Manually dispatched by @$ACTOR. [Workflow run]($RUN_URL).
+          EOF
+          sed -i 's/^          //' /tmp/bootstrap-body.md
+
+          # Opens as draft; the "Flip PR to ready for review" step at
+          # the end of the job flips it once the body has been augmented
+          # and reviewers assigned.
+          gh pr create \
+            --draft \
+            --base "$BASE_REF" \
+            --head "$BRANCH" \
+            --title "Update $PROJECT_ID to $NEW_TAG (manual dispatch)" \
+            --body-file /tmp/bootstrap-body.md
+
+          PR_NUMBER=$(gh pr view "$BRANCH" --json number --jq .number)
+          echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      # Normalize the (possibly bootstrap-created) PR number, head_ref,
+      # and base_ref into a single step output so later steps reference
+      # one place. base_ref drives detect-change.mjs (the baseline to
+      # diff against) and the CRD-regen paths.
+      - name: Resolve effective PR metadata
+        id: eff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_FROM_RESOLVE: ${{ steps.pr.outputs.number }}
+          HEAD_FROM_RESOLVE: ${{ steps.pr.outputs.head_ref }}
+          PR_FROM_BOOTSTRAP: ${{ steps.bootstrap.outputs.number }}
+          HEAD_FROM_BOOTSTRAP: ${{ steps.bootstrap.outputs.head_ref }}
+          BASE_FROM_EVENT: ${{ github.event.pull_request.base.ref }}
+          DISPATCH_REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ -n "$PR_FROM_BOOTSTRAP" ]; then
+            # Bootstrap mode: the PR was just created with --base set to
+            # the dispatching branch (main in production; feat branch
+            # when testing pre-merge).
+            NUMBER="$PR_FROM_BOOTSTRAP"
+            HEAD="$HEAD_FROM_BOOTSTRAP"
+            BASE="$DISPATCH_REF_NAME"
+          elif [ "$EVENT" = "pull_request" ]; then
+            NUMBER="$PR_FROM_RESOLVE"
+            HEAD="$HEAD_FROM_RESOLVE"
+            BASE="$BASE_FROM_EVENT"
+          else
+            # workflow_dispatch retry: look up the PR's base_ref.
+            # --repo because in retry mode there's no prior checkout.
+            NUMBER="$PR_FROM_RESOLVE"
+            HEAD="$HEAD_FROM_RESOLVE"
+            BASE=$(gh pr view "$NUMBER" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
+          fi
+          {
+            echo "number=$NUMBER"
+            echo "head_ref=$HEAD"
+            echo "base_ref=$BASE"
+          } >> "$GITHUB_OUTPUT"
+
+      # Flip the PR to draft for the duration of the augmentation job.
+      # A Renovate-opened PR arrives non-draft with the default bump-
+      # only body -- reviewers could approve / merge it before the
+      # skill has written any content. Bootstrap PRs are already
+      # --draft from the create call above, but we still run this for
+      # idempotency on workflow_dispatch retries. The "Flip PR to
+      # ready for review" step at the end reverses this once the body
+      # is augmented and reviewers are assigned.
+      # --repo is required on `gh pr view` / `gh pr ready` here because
+      # this step runs before the "Checkout PR branch" step below; gh
+      # otherwise looks for local .git context and fails with "not a
+      # git repository" on pull_request and workflow_dispatch retries.
+      # (Bootstrap has already checked out the dispatching branch, but
+      # the flag is harmless there and keeps this step path-agnostic.)
+      - name: Convert PR to draft
+        if: steps.eff.outputs.number != ''
+        env:
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+        run: |
+          IS_DRAFT=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+          if [ "$IS_DRAFT" = "false" ]; then
+            gh pr ready "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --undo
+            echo "Converted PR #$PR_NUMBER to draft."
+          else
+            echo "PR #$PR_NUMBER is already a draft; nothing to do."
+          fi
+
+      - name: Checkout PR branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ steps.eff.outputs.head_ref }}
+          fetch-depth: 0
+
+      # NOTE: we inline the node/deps setup rather than calling the
+      # ./.github/actions/setup composite because that composite starts
+      # with its own actions/checkout that overwrites the PR-branch
+      # checkout above with the dispatching branch.
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '24.15.0'
+
+      - name: Cache dependencies
+        id: cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ./node_modules
+          key: modules-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Set up Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Detect changed project
+        id: detect
+        env:
+          # Pass the PR's actual base (main in production; dispatching
+          # branch when bootstrap was run via gh workflow run --ref).
+          BASE_REF: origin/${{ steps.eff.outputs.base_ref }}
+        run: node scripts/upstream-release/detect-change.mjs
+
+      - name: Verify prev_tag exists upstream
+        env:
+          REPO: ${{ steps.detect.outputs.repo }}
+          PREV_TAG: ${{ steps.detect.outputs.prev_tag }}
+        run: |
+          # Sanity check: if the pinned prev_tag doesn't exist upstream
+          # (e.g., a fake v0.0.0 seed, a retagged release, a deleted tag),
+          # fail early rather than let the skill produce a confusing diff.
+          if ! gh api "repos/$REPO/git/refs/tags/$PREV_TAG" --silent 2>/dev/null; then
+            echo "::error::prev_tag $PREV_TAG does not exist in $REPO. The pinned version in .github/upstream-projects.yaml may be wrong or the upstream tag was deleted. Fix the pinned version and re-run."
+            exit 1
+          fi
+
+      - name: Shallow-clone upstream at new tag
+        id: clone
+        env:
+          REPO: ${{ steps.detect.outputs.repo }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+        run: |
+          SCRATCH=$(mktemp -d)
+          git clone --depth 1 --branch "$NEW_TAG" \
+            "https://github.com/${REPO}.git" \
+            "$SCRATCH/upstream"
+          echo "scratch_dir=$SCRATCH/upstream" >> "$GITHUB_OUTPUT"
+
+      - name: Sync declared assets
+        env:
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          CLONE_DIR: ${{ steps.clone.outputs.scratch_dir }}
+          REPO: ${{ steps.detect.outputs.repo }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+        run: |
+          node scripts/upstream-release/sync-assets.mjs \
+            --id "$PROJECT_ID" \
+            --clone "$CLONE_DIR" \
+            --repo "$REPO" \
+            --tag "$NEW_TAG"
+
+      # toolhive ships CRD manifests as a release asset tarball (see
+      # stacklok/toolhive#4982). We extract it to a temp dir and run our
+      # opinionated transforms: extract per-CRD JSON schemas + examples,
+      # generate MDX reference pages. Bundling the upstream-registry
+      # schema (resolves the remote MCP-server $refs for our JSON-Schema
+      # viewer) also runs here.
+      - name: Extract CRDs + generate reference MDX (toolhive)
+        if: steps.detect.outputs.id == 'toolhive'
+        env:
+          REPO: ${{ steps.detect.outputs.repo }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+        run: |
+          TMP=$(mktemp -d)
+          gh release download "$NEW_TAG" --repo "$REPO" \
+            --pattern "thv-crds.tar.gz" --dir "$TMP"
+          mkdir -p "$TMP/crds"
+          tar -xzf "$TMP/thv-crds.tar.gz" -C "$TMP/crds"
+          TOOLHIVE_CRD_DIR="$TMP/crds" node scripts/extract-crd-schemas.mjs
+          node scripts/generate-crd-pages.mjs
+          node scripts/bundle-upstream-schema.mjs
+          rm -rf "$TMP"
+
+      # Commit AND PUSH the refreshed reference assets (synced release-
+      # asset files + regenerated toolhive CRD MDX if applicable) before
+      # the skill runs. Pushing here — rather than batching the push
+      # with the skill-content commit later — means refresh work is
+      # preserved on the PR even if the skill step fails or is
+      # cancelled. Also keeps the skill's content commit clean and
+      # lets the autogen-detect step below distinguish skill touches
+      # from our own legitimate refresh writes.
+      - name: Commit + push refreshed reference assets
+        id: refresh
+        env:
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+          HEAD_REF: ${{ steps.eff.outputs.head_ref }}
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No reference changes for $PROJECT_ID $NEW_TAG."
+            echo "refreshed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "Refresh reference assets for $PROJECT_ID $NEW_TAG"
+            # Someone may have pushed to HEAD_REF between our checkout
+            # and now (merges from main, etc). Rebase onto the latest
+            # tip before pushing so we don't fail with "fetch first".
+            git fetch origin "$HEAD_REF" --quiet
+            git rebase "origin/$HEAD_REF" || {
+              echo "::error::Rebase of the refresh commit onto origin/$HEAD_REF hit conflicts. Resolve manually on the PR branch."
+              exit 1
+            }
+            git push origin "HEAD:$HEAD_REF"
+            echo "refreshed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Anchor the "skill touched" set for the autofix step below.
+      # HEAD at this point is either the refresh commit (if it was
+      # non-empty) or the PR's pre-workflow tip. Either way, anything
+      # committed between this SHA and HEAD after the skill runs is
+      # attributable to the skill.
+      - name: Capture pre-skill SHA
+        id: pre_skill
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Read docs_paths hint
+        id: hints
+        env:
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+        run: |
+          HINTS=$(node -e "
+            const yaml = require('yaml');
+            const fs = require('fs');
+            const p = yaml.parse(fs.readFileSync('.github/upstream-projects.yaml','utf8')).projects.find(x=>x.id===process.env.PROJECT_ID);
+            console.log(JSON.stringify(p?.docs_paths ?? []));
+          ")
+          echo "docs_paths=$HINTS" >> "$GITHUB_OUTPUT"
+
+      # claude-code-action@v1 rejects track_progress: true on
+      # workflow_dispatch events with "track_progress is only
+      # supported for events: pull_request, issue_comment, ...".
+      # That means on manual retries and bootstrap dispatches, the
+      # PR gets no real-time "Claude is working on it" comment from
+      # the action -- a reviewer watching the PR has no visible
+      # signal that the skill is actually running. Post a static
+      # placeholder comment ourselves, scoped to workflow_dispatch
+      # runs so we don't duplicate the action's own tracking on
+      # normal Renovate-opened PRs.
+      - name: Post skill-started comment (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch' && steps.eff.outputs.number != ''
+        env:
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+        run: |
+          # `|| true` so a transient gh failure doesn't abort the run
+          # before skill_gen executes. The comment is a visibility
+          # aid, not load-bearing.
+          gh pr comment "$PR_NUMBER" --body "Generating docs for \`$PROJECT_ID\` $NEW_TAG… ([run]($RUN_URL))" || true
+
+      # Invocation 1: generation. Runs /upstream-release-docs end-to-
+      # end (all 6 phases, including the skill's own internal
+      # docs-review in Phase 5). Uses Opus 4.7 — generation benefits
+      # from the stronger model on long multi-file edits and source
+      # verification.
+      - name: Run upstream-release-docs skill (generation)
+        id: skill_gen
+        # Wall-clock ceiling. Observed gen runs take 15–22 min depending
+        # on release scope; 45 min kills a stuck process before it
+        # burns the full 90-minute job budget. Paired with --max-turns
+        # below for a runaway-cost ceiling.
+        timeout-minutes: 45
+        uses: anthropics/claude-code-action@567fe954a4527e81f132d87d1bdbcc94f7737434 # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          additional_permissions: |
+            actions: read
+          # Allow the action to run when the triggering PR was opened
+          # by Renovate. Without this, claude-code-action refuses to
+          # run for bot-initiated workflows as a safety default.
+          allowed_bots: 'renovate'
+          # Real-time visibility into skill progress during long runs.
+          # track_progress posts a sticky tracking comment on the PR
+          # that updates as the skill works through each phase —
+          # BUT it's only supported for pull_request / issue_comment
+          # /* events. Setting it on workflow_dispatch fails the
+          # action with "track_progress is only supported for events
+          # ... Current event: workflow_dispatch", so gate it on the
+          # triggering event.
+          # display_report surfaces the Claude Code Report in the
+          # Actions Step Summary regardless of trigger.
+          track_progress: ${{ github.event_name == 'pull_request' }}
+          display_report: true
+          # Grant the `gh` CLI so the skill can fetch PR descriptions,
+          # compare ranges, and view linked issues as it was designed
+          # to. Without this, Claude Code's default Bash allowlist
+          # rejects gh and the skill has to work from commit messages
+          # only, which misses most of the "why" narrative that PR
+          # authors write at open time. GH_TOKEN for auth is already
+          # in the job env at the top of this workflow.
+          #
+          # --max-turns 1000: observed gen baselines are 20 turns
+          # (silent) to 152 (full content rebuild). 500 was the
+          # initial cap; bumped to 1000 for extra headroom on
+          # multi-feature releases and to stay well above the
+          # suspected-looping 397-turn v3-test run (still clips
+          # genuine runaways). Hitting the cap produces a loud
+          # failure -- raise deliberately if a release needs more.
+          claude_args: |
+            --model claude-opus-4-7
+            --max-turns 1000
+            --allowed-tools "Bash(gh:*) Bash(npm run build) Bash(npm run prettier) Bash(npm run prettier:fix) Bash(npm run eslint) Bash(npm run eslint:fix)"
+          prompt: |
+            You are running in GitHub Actions with no interactive user. Follow
+            these steps exactly and do NOT ask clarifying questions -- proceed
+            best-effort at every decision point.
+
+            PROJECT:    ${{ steps.detect.outputs.id }}
+            REPO:       ${{ steps.detect.outputs.repo }}
+            PREV_TAG:   ${{ steps.detect.outputs.prev_tag }}
+            NEW_TAG:    ${{ steps.detect.outputs.new_tag }}
+            CLONE:      ${{ steps.clone.outputs.scratch_dir }}
+            DOCS_HINTS: ${{ steps.hints.outputs.docs_paths }}
+
+            Run /upstream-release-docs ${{ steps.detect.outputs.repo }} ${{ steps.detect.outputs.new_tag }}
+            Execute all 6 phases. Prefer reading source code from the
+            local clone at ${{ steps.clone.outputs.scratch_dir }}
+            instead of `gh api contents?ref=<tag>` -- it's already at
+            the tag and doesn't consume API quota.
+
+            For Phase 2 step 4 (context on major new features), do the
+            following INSTEAD of the skill's default "ask the user"
+            behavior (there is no interactive user here):
+              1. Use `gh pr view <NUMBER> --repo ${{ steps.detect.outputs.repo }}
+                 --json title,body,author` to fetch the PR description
+                 for each major new feature. The PR body typically
+                 contains the "why" framing the author wrote when
+                 opening the PR -- motivation, intended consumers,
+                 design decisions.
+              2. If the PR body references linked issues (look for
+                 "Closes #N", "Fixes #N", "Refs #N"), fetch those
+                 with `gh issue view <N> --repo ${{ steps.detect.outputs.repo }}`
+                 when they are likely to contain product context.
+              3. Write the "why"/consumer narrative directly in the
+                 relevant docs page using what you learned. This is a
+                 best-effort pass -- reviewers will refine it during
+                 normal review.
+              4. Only defer to GAPS.md when the rationale demonstrably
+                 cannot be derived from available sources. Genuine
+                 examples: the PR body points to an internal design
+                 doc or product spec you cannot access; multiple
+                 plausible consumer narratives exist and picking one
+                 would mislead readers; a release timeline or
+                 commitment needs product-team confirmation.
+
+            GAPS.md contract (only if you genuinely need to defer):
+              - ONLY include content gaps a human reviewer must fill
+                in. Do NOT include environment/sandbox limitations
+                (e.g. "couldn't run npm build") -- those are
+                infrastructure concerns; the PR's CI handles them.
+                Do NOT include "not a gap, documented for clarity"
+                commentary.
+              - Each entry MUST include a "Helper prompt for local
+                Claude" block a reviewer can paste verbatim into
+                their local Claude Code to resolve the gap. The
+                prompt must reference the specific file(s) to edit,
+                the PR number that provides context, and the narrow
+                piece of information the human needs to supply or
+                confirm.
+              - Each entry MUST @-mention the PR author (skip this
+                for bot authors: renovate[bot], github-actions[bot],
+                stacklokbot).
+
+            GAPS.md entry format:
+              ```
+              ### <Feature name> (PR #123 by @alice)
+
+              <One paragraph: what's missing, why you couldn't
+              resolve it from available sources.>
+
+              **File(s):** path/to/file.mdx
+
+              **Helper prompt for local Claude:**
+              > <Paste-ready prompt. Self-contained. References the
+              > specific file(s), the PR number, and the narrow
+              > piece of info needed. A human should be able to
+              > paste this into `claude` locally and get a usable
+              > response without additional context.>
+              ```
+
+            Do NOT create GAPS.md if every feature's "why" was
+            resolvable from PR descriptions. An empty GAPS.md is
+            worse than no file.
+
+            Follow the skill's own guidance on auto-generated reference
+            files (Phase 4 step 5, Phase 4 step 6) -- do not hand-edit
+            docs/toolhive/reference/cli/, static/api-specs/, or
+            docs/toolhive/reference/crds/. Those are synced or
+            regenerated from release assets by earlier steps in this
+            workflow; if a release genuinely needs hand-written
+            reference updates, note that in GAPS.md.
+
+            If you conclude there are no doc-relevant changes for this
+            release (Phase 3 impact map is empty), stop and write
+            NO_CHANGES.md at repo root with a one-line explanation.
+            Still do not hand-edit any file.
+
+            BEFORE the final commit in Phase 6, write SUMMARY.md at
+            repo root with a concise bullet list of changes you made
+            on the docs side. This surfaces directly in the PR body
+            as a "Summary of changes" section so reviewers see what
+            actually shipped without clicking the diff.
+
+            Format each bullet as one of:
+              - `Added <what> at <path>` -- new pages/sections
+              - `Updated <what> in <path>` -- meaningful prose edits
+              - `Swept <what> across N files in <area>` -- repo-wide
+                renames, apiVersion bumps, etc.
+              - `Removed <what> from <path>` -- deletions
+
+            Keep the list to 3-8 bullets. Focus on what a reviewer
+            needs to know, not how you did it. If many files are
+            touched as one logical change (e.g. a v1alpha1 ->
+            v1beta1 apiVersion sweep), describe it as one bullet --
+            do not enumerate each file. Do NOT include bullets for
+            auto-generated reference files the refresh step
+            updated; only describe your hand-written edits.
+
+            Skip SUMMARY.md only when you wrote NO_CHANGES.md or
+            made zero hand-edits.
+
+      # Capture skill_gen's execution stats BEFORE skill_review runs
+      # and overwrites the shared execution-output JSON at the
+      # canonical claude-code-action location. Lets us report
+      # per-invocation turns/cost in the PR body and the workflow_
+      # dispatch summary comment. Missing-file defaults to 0 so a
+      # failed run still emits plausible outputs.
+      - name: Capture skill_gen stats
+        id: skill_gen_stats
+        if: always() && steps.skill_gen.conclusion == 'success'
+        run: |
+          LOG="/home/runner/work/_temp/claude-execution-output.json"
+          # claude-code-action writes a top-level JSON array of
+          # messages (init, assistant turns, tool calls, result).
+          # The final entry is a "result" object with the session
+          # summary (num_turns, total_cost_usd, etc.). Use recursive
+          # descent with a last-match tail so we pick up the summary
+          # regardless of where in the structure it lives, and so
+          # the query still works if the upstream format shifts
+          # between array and object. `|| echo 0` guards against
+          # jq errors on missing/malformed files.
+          if [ -f "$LOG" ]; then
+            TURNS=$(jq -r '[.. | .num_turns? // empty] | last // 0' "$LOG" 2>/dev/null || echo 0)
+            COST=$(jq -r '[.. | .total_cost_usd? // empty] | last // 0' "$LOG" 2>/dev/null || echo 0)
+            DENIALS=$(jq -r '[.. | .permission_denials_count? // empty] | last // 0' "$LOG" 2>/dev/null || echo 0)
+          else
+            TURNS=0
+            COST=0
+            DENIALS=0
+          fi
+          # Format cost with 4 decimal places for readability.
+          COST_FMT=$(printf '%.4f' "$COST")
+          {
+            echo "turns=$TURNS"
+            echo "cost_usd=$COST_FMT"
+            echo "denials=$DENIALS"
+          } >> "$GITHUB_OUTPUT"
+          echo "skill_gen stats: turns=$TURNS cost=\$$COST_FMT denials=$DENIALS"
+
+      # Invocation 2: editorial re-review with FRESH CONTEXT. Running
+      # docs-review in a separate session — with no exposure to the
+      # generation session's internal reasoning — tends to catch style
+      # and structure issues the generation pass rationalized away.
+      # Also uses Opus 4.7 since docs-review benefits from the same
+      # model quality.
+      - name: Run docs-review on skill output (fresh context)
+        id: skill_review
+        if: always() && steps.skill_gen.conclusion == 'success'
+        # Editorial review is a short pass: 1-2 min wall clock, 4-5
+        # turns in every run so far. 10 / 30 are 5-6x buffers over
+        # baseline -- cheap safety net for the rare case where review
+        # spirals on a file it can't stop "improving".
+        timeout-minutes: 10
+        uses: anthropics/claude-code-action@567fe954a4527e81f132d87d1bdbcc94f7737434 # v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          additional_permissions: |
+            actions: read
+          allowed_bots: 'renovate'
+          track_progress: ${{ github.event_name == 'pull_request' }}
+          display_report: true
+          # gh access parallels skill_gen so the review pass can
+          # re-verify claims against PR descriptions and linked
+          # issues if needed.
+          #
+          # --max-turns 200: initial cap of 30 was sized against
+          # silent-release baselines (4-6 turns) and was too tight
+          # for real content reviews. v0.24.0 (PR #788) hit it at
+          # turn 31 mid-review and failed the run; the editorial
+          # pass genuinely needs ~30-100 turns to walk a multi-
+          # file content PR. 200 gives 2x-6x headroom over that
+          # working range while still clipping a runaway.
+          claude_args: |
+            --model claude-opus-4-7
+            --max-turns 200
+            --allowed-tools "Bash(gh:*) Bash(npm run build) Bash(npm run prettier) Bash(npm run prettier:fix) Bash(npm run eslint) Bash(npm run eslint:fix)"
+          prompt: |
+            You are running in GitHub Actions with no interactive user. Follow
+            these steps exactly and do NOT ask clarifying questions -- proceed
+            best-effort at every decision point.
+
+            A previous Claude session just generated content for the
+            upstream release ${{ steps.detect.outputs.repo }} ${{ steps.detect.outputs.new_tag }}.
+            You are a fresh reviewer with no prior context from that
+            session. Your job is purely editorial.
+
+            Run /docs-review over every file the previous commit
+            changed (use `git show --name-only HEAD` or `git diff
+            --name-only HEAD~1 HEAD` to find them). Apply every
+            actionable fix per the skill's standard guidance.
+
+            If you spot a factual concern, re-verify against the
+            local clone at ${{ steps.clone.outputs.scratch_dir }}
+            first. You also have gh CLI access -- use `gh pr view
+            <N> --repo ${{ steps.detect.outputs.repo }}` to pull
+            context from the upstream PR if needed. Don't introduce
+            new claims; only refine what's already there.
+
+            Do NOT re-run /upstream-release-docs. Do NOT touch files
+            under docs/toolhive/reference/cli/, static/api-specs/,
+            or docs/toolhive/reference/crds/ — those are
+            regenerated from release assets and aren't yours to edit.
+
+            Do NOT touch GAPS.md, NO_CHANGES.md, or SUMMARY.md at
+            the repo root if they exist -- they're signal files
+            handed off to the next workflow step, not part of the
+            docs.
+
+      # claude-code-action works in a sibling scratch checkout (the
+      # .claude-pr/ dir we gitignore) and pushes commits to origin
+      # directly, without advancing the outer workflow checkout's
+      # HEAD. Without an explicit sync, every subsequent step that
+      # reads local git state (skill_commits counter, autofix's git
+      # diff) sees stale HEAD at the pre-skill SHA -- which is what
+      # caused PR #780's "skill_commits=0 despite a real skill
+      # commit" + unformatted files landing on CI unformatted.
+      #
+      # Fetch + fast-forward-merge origin so local HEAD reflects
+      # whatever the skill pushed. Fail loudly on fetch or merge
+      # errors -- silently continuing on stale HEAD reintroduces
+      # the exact skill_commits=0 + autofix-skips-files bugs this
+      # step is meant to prevent. Gated on skill_gen success; if
+      # gen didn't run, there's nothing for the skill to have
+      # pushed and this step is skipped.
+      # A no-op fast-forward (local already at origin, e.g. skill
+      # made no commits) exits 0 cleanly.
+      - name: Sync local branch with skill-pushed commits
+        if: always() && steps.skill_gen.conclusion == 'success'
+        env:
+          HEAD_REF: ${{ steps.eff.outputs.head_ref }}
+        run: |
+          git fetch origin "$HEAD_REF" --quiet
+          git merge --ff-only "origin/$HEAD_REF"
+          echo "Local HEAD after sync: $(git rev-parse HEAD)"
+
+      # Mirror of skill_gen_stats for skill_review. Reads the same
+      # canonical log path, which skill_review overwrote on exit.
+      - name: Capture skill_review stats
+        id: skill_review_stats
+        if: always() && steps.skill_review.conclusion == 'success'
+        run: |
+          LOG="/home/runner/work/_temp/claude-execution-output.json"
+          # claude-code-action writes a top-level JSON array of
+          # messages (init, assistant turns, tool calls, result).
+          # The final entry is a "result" object with the session
+          # summary (num_turns, total_cost_usd, etc.). Use recursive
+          # descent with a last-match tail so we pick up the summary
+          # regardless of where in the structure it lives, and so
+          # the query still works if the upstream format shifts
+          # between array and object. `|| echo 0` guards against
+          # jq errors on missing/malformed files.
+          if [ -f "$LOG" ]; then
+            TURNS=$(jq -r '[.. | .num_turns? // empty] | last // 0' "$LOG" 2>/dev/null || echo 0)
+            COST=$(jq -r '[.. | .total_cost_usd? // empty] | last // 0' "$LOG" 2>/dev/null || echo 0)
+            DENIALS=$(jq -r '[.. | .permission_denials_count? // empty] | last // 0' "$LOG" 2>/dev/null || echo 0)
+          else
+            TURNS=0
+            COST=0
+            DENIALS=0
+          fi
+          COST_FMT=$(printf '%.4f' "$COST")
+          {
+            echo "turns=$TURNS"
+            echo "cost_usd=$COST_FMT"
+            echo "denials=$DENIALS"
+          } >> "$GITHUB_OUTPUT"
+          echo "skill_review stats: turns=$TURNS cost=\$$COST_FMT denials=$DENIALS"
+
+      # Count the commits the skill itself added between pre_skill
+      # and now. Zero commits means skill_gen and skill_review both
+      # concluded there was nothing to change -- e.g. because main
+      # already has the content for this release (a re-run or test
+      # after the same content was merged via a different PR), or
+      # because the release genuinely had no doc-relevant impact
+      # but the skill didn't produce NO_CHANGES.md. Either way the
+      # resulting PR is silent and reviewers can't tell that from
+      # a successful run with content -- we emit a visible note in
+      # the PR body when this is the case.
+      - name: Count skill commits
+        id: skill_commits
+        if: always() && steps.skill_gen.conclusion == 'success'
+        env:
+          BASELINE_SHA: ${{ steps.pre_skill.outputs.sha }}
+        run: |
+          COUNT=$(git rev-list "$BASELINE_SHA..HEAD" --count)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Skill produced $COUNT commit(s) between pre_skill and now."
+
+      # Auto-apply the same formatters the project's pre-commit hook
+      # runs. The skill's sandbox doesn't include npm run
+      # prettier/eslint, so without this step any formatting drift
+      # lands on PR CI as a "Lint and format checks" failure
+      # requiring a human push. Run the repo-wide scripts: they
+      # already exclude auto-generated reference paths via
+      # .prettierignore and eslint.config.mjs, and a whole-repo
+      # scan is robust to deletions and renames in the skill's
+      # diff (which a per-file xargs invocation is not).
+      - name: Auto-fix prettier and eslint
+        id: autofix
+        if: always() && steps.skill_gen.conclusion == 'success'
+        run: |
+          npm run prettier:fix
+          npm run eslint:fix || \
+            echo "::warning::eslint --fix reported non-zero; proceeding."
+          if git diff --quiet; then
+            echo "No formatting changes needed."
+          else
+            git add -A
+            git commit -m "Apply prettier and eslint fixups to skill output"
+          fi
+
+      - name: Capture skill signal files
+        id: signals
+        env:
+          BASELINE_SHA: ${{ steps.pre_skill.outputs.sha }}
+        run: |
+          GAPS_BODY=""
+          NO_CHANGES_BODY=""
+          SUMMARY_BODY=""
+          if [ -f GAPS.md ]; then
+            GAPS_BODY=$(cat GAPS.md)
+            rm GAPS.md
+          fi
+          if [ -f NO_CHANGES.md ]; then
+            NO_CHANGES_BODY=$(cat NO_CHANGES.md)
+            rm NO_CHANGES.md
+          fi
+          if [ -f SUMMARY.md ]; then
+            SUMMARY_BODY=$(cat SUMMARY.md)
+            rm SUMMARY.md
+          fi
+
+          # Fallback summary from skill-authored commit titles when
+          # the skill didn't write SUMMARY.md. Extracted from the
+          # range between the pre-skill baseline and HEAD so it
+          # captures the skill's commits only (refresh commit is
+          # before the baseline). Each line is pre-formatted as a
+          # markdown bullet so downstream just has to echo.
+          COMMIT_FALLBACK=""
+          if [ -z "$SUMMARY_BODY" ] && [ -n "$BASELINE_SHA" ]; then
+            # Raw "<sha> <subject>" lines; awk reformats each as a
+            # markdown bullet with the short SHA in backticks.
+            # Backticks via awk's \x60 to avoid shellcheck SC2016
+            # on a single-quoted git-log format string.
+            COMMIT_FALLBACK=$(git log --reverse --format='%h %s' "$BASELINE_SHA..HEAD" 2>/dev/null | \
+              awk '{ sha=$1; sub("^" sha " *", ""); printf "- %s (\x60%s\x60)\n", $0, sha }' || true)
+          fi
+
+          # Build full markdown fragments here so the PR body edit
+          # step can treat them as plain strings.
+          {
+            echo "note_block<<NOTE_EOF"
+            if [ -n "$NO_CHANGES_BODY" ]; then
+              echo "> [!NOTE]"
+              echo "> The skill reported no doc-relevant changes for this"
+              echo "> release. This PR only bumps the version reference"
+              echo "> and any pin_files substitutions."
+              echo ">"
+              echo "> $NO_CHANGES_BODY"
+            fi
+            echo "NOTE_EOF"
+
+            echo "gaps_block<<GAPS_EOF"
+            if [ -n "$GAPS_BODY" ]; then
+              echo "## Gaps needing human context"
+              echo ""
+              echo "$GAPS_BODY"
+            fi
+            echo "GAPS_EOF"
+
+            # summary_block carries either the skill's hand-written
+            # SUMMARY.md body, or the commit-title fallback when the
+            # skill didn't write one. Empty when neither applies
+            # (e.g. silent run / NO_CHANGES case). The Augment step
+            # renders a "Summary of changes" section iff non-empty.
+            echo "summary_block<<SUMMARY_EOF"
+            if [ -n "$SUMMARY_BODY" ]; then
+              echo "$SUMMARY_BODY"
+            elif [ -n "$COMMIT_FALLBACK" ]; then
+              echo "_Auto-generated from commit titles -- skill did not write SUMMARY.md._"
+              echo ""
+              echo "$COMMIT_FALLBACK"
+            fi
+            echo "SUMMARY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Apply pin_files substitutions
+        env:
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+        run: |
+          node scripts/upstream-release/apply-pin-files.mjs \
+            --id "$PROJECT_ID" \
+            --tag "$NEW_TAG"
+
+      - name: Detect touches to auto-generated paths
+        id: autogen
+        # Runs AFTER the skill and AFTER the refresh commit above, so
+        # the staged diff represents skill-introduced changes only.
+        # The Augment step consumes `touched` directly and composes
+        # the CAUTION alert itself -- no note block assembled here.
+        run: |
+          git add -A
+          TOUCHED=$(git diff --cached --name-only -- \
+            'docs/toolhive/reference/cli/' \
+            'static/api-specs/' \
+            'docs/toolhive/reference/crds/' | paste -sd, - || true)
+          echo "touched=$TOUCHED" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push
+        id: push
+        env:
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+          HEAD_REF: ${{ steps.eff.outputs.head_ref }}
+        run: |
+          # Stage any skill content and add a content commit if non-empty.
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Add upstream-release-docs content for $PROJECT_ID $NEW_TAG"
+          else
+            echo "No skill content changes to commit."
+          fi
+
+          # Skill can take 20-45 min; during that window someone may
+          # push merges-from-main or other commits to the PR branch.
+          # Handle that safely:
+          #   - If our local HEAD is already on origin (no new work
+          #     to push), exit cleanly.
+          #   - Otherwise rebase any local-only commits onto the
+          #     latest origin tip, then push. Conflicts fail loudly.
+          git fetch origin "$HEAD_REF" --quiet
+          if git merge-base --is-ancestor HEAD "origin/$HEAD_REF" 2>/dev/null; then
+            echo "Origin is at or ahead of local; nothing to push."
+          else
+            git rebase "origin/$HEAD_REF" || {
+              echo "::error::Rebase of local commits onto origin/$HEAD_REF hit conflicts. Resolve manually on the PR branch."
+              exit 1
+            }
+            git push origin "HEAD:$HEAD_REF"
+          fi
+
+      # Reviewer assignment is deliberately at the end of the job (not
+      # at skill-start). Placement rationale: GitHub fires the
+      # "review-requested" email the moment `gh pr edit --add-reviewer`
+      # runs. If we assign early, reviewers land on a half-written,
+      # draft PR whose body is still the default Renovate bump-only
+      # text. Running this right before the body augmentation and
+      # flip-to-ready gives reviewers a single coherent notification
+      # on a PR that's actually reviewable.
+      - name: Assign reviewers and prepare contributor mentions
+        id: reviewers
+        env:
+          REPO: ${{ steps.detect.outputs.repo }}
+          PREV: ${{ steps.detect.outputs.prev_tag }}
+          NEW: ${{ steps.detect.outputs.new_tag }}
+          REVIEW_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+        run: |
+          # Get non-bot commit authors in the release range.
+          if COMPARE=$(gh api "repos/$REPO/compare/$PREV...$NEW" \
+              --jq '[.commits[].author.login? // empty] | unique | .[]' 2>/dev/null); then
+            echo "compare_ok=true" >> "$GITHUB_OUTPUT"
+          else
+            COMPARE=""
+            echo "compare_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Filter out bot accounts.
+          CANDIDATES=$(echo "$COMPARE" |
+            grep -Ev '(\[bot\]$|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)' || true)
+
+          # Attempt to assign each candidate as a reviewer individually,
+          # rather than filtering upfront and batching. Rationale:
+          #   - `gh pr edit --add-reviewer "a,b,c"` is atomic. A single
+          #     422 on any name aborts the whole call, dropping valid
+          #     names alongside invalid ones.
+          #   - `gh api repos/X/collaborators/Y` as a pre-filter is
+          #     unreliable from a GITHUB_TOKEN in Actions: on PR #759
+          #     the check returned 404 for Stacklok employees who ARE
+          #     collaborators via the `stackers` team (push perm on
+          #     this repo), and only `rdimitrov` slipped through. We
+          #     suspect the collaborator endpoint treats team-based
+          #     access differently for GITHUB_TOKEN vs PATs with
+          #     read:org, but haven't nailed down the exact rule.
+          # Per-user attempts sidestep both issues: the authoritative
+          # answer is "does GitHub accept this as a reviewer right now"
+          # and we ask the API that question directly.
+          #
+          # Cap attempts at 5 to avoid review fatigue on big releases.
+          TRIED=0
+          ASSIGN_LIST=""
+          MENTION_LIST=""
+          while IFS= read -r login; do
+            [ -z "$login" ] && continue
+            if [ "$TRIED" -ge 5 ]; then
+              # Over the review-fatigue cap -- mention any additional
+              # contributors instead of trying to assign them.
+              MENTION_LIST="${MENTION_LIST:+$MENTION_LIST }@$login"
+              continue
+            fi
+            TRIED=$((TRIED + 1))
+            if gh pr edit "$PR_NUMBER" --add-reviewer "$login" 2>/dev/null; then
+              ASSIGN_LIST="${ASSIGN_LIST:+$ASSIGN_LIST,}$login"
+              echo "Assigned: $login"
+            else
+              MENTION_LIST="${MENTION_LIST:+$MENTION_LIST }@$login"
+              echo "Mention (assignment rejected by GitHub): $login"
+            fi
+          done <<< "$CANDIDATES"
+
+          # Exposed for diagnostic visibility in the PR body (e.g.,
+          # "Auto-assigned: @alice @bob") and for the next workflow_
+          # dispatch retry to know what was attempted.
+          echo "list=$ASSIGN_LIST" >> "$GITHUB_OUTPUT"
+          {
+            echo "mention_block<<MENTION_EOF"
+            if [ -n "$MENTION_LIST" ]; then
+              echo "Release contributors we couldn't auto-assign as reviewers (review fatigue cap or GitHub rejected the assignment). Mentioning them so they see the PR documenting their work:"
+              echo ""
+              echo "$MENTION_LIST"
+            fi
+            echo "MENTION_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Auto-assigned: ${ASSIGN_LIST:-<none>}"
+          echo "Mentioned:     ${MENTION_LIST:-<none>}"
+
+      - name: Augment PR body (marker-delimited section)
+        # Runs even if earlier steps soft-failed so the augmentation
+        # survives partial failures; a subsequent workflow_dispatch
+        # retry will re-enter here.
+        if: always() && steps.detect.outputs.id != ''
+        env:
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+          PREV_TAG: ${{ steps.detect.outputs.prev_tag }}
+          REPO: ${{ steps.detect.outputs.repo }}
+          NOTE_BLOCK: ${{ steps.signals.outputs.note_block }}
+          GAPS_BLOCK: ${{ steps.signals.outputs.gaps_block }}
+          SUMMARY_BLOCK: ${{ steps.signals.outputs.summary_block }}
+          AUTOGEN_TOUCHED: ${{ steps.autogen.outputs.touched }}
+          COMPARE_OK: ${{ steps.reviewers.outputs.compare_ok }}
+          MENTION_BLOCK: ${{ steps.reviewers.outputs.mention_block }}
+          ASSIGN_LIST: ${{ steps.reviewers.outputs.list }}
+          SKILL_COMMIT_COUNT: ${{ steps.skill_commits.outputs.count }}
+          GEN_CONCLUSION: ${{ steps.skill_gen.conclusion }}
+          REVIEW_CONCLUSION: ${{ steps.skill_review.conclusion }}
+          GEN_TURNS: ${{ steps.skill_gen_stats.outputs.turns }}
+          GEN_COST: ${{ steps.skill_gen_stats.outputs.cost_usd }}
+          REVIEW_TURNS: ${{ steps.skill_review_stats.outputs.turns }}
+          REVIEW_COST: ${{ steps.skill_review_stats.outputs.cost_usd }}
+          REFRESHED: ${{ steps.refresh.outputs.refreshed }}
+        run: |
+          START='<!-- upstream-release-docs:start -->'
+          END='<!-- upstream-release-docs:end -->'
+
+          # Compose in three phases so the body reads top-to-bottom:
+          #   1. Top alert (at most one, ordered by severity)
+          #   2. At-a-glance table (the reviewer's first 5-second scan)
+          #   3. Gaps / contributors / cost / process-lore details
+          #
+          # Derive some small things upfront so the table logic stays
+          # readable:
+
+          # Compare URL for the table's "Upstream" row.
+          COMPARE_URL="https://github.com/${REPO}/compare/${PREV_TAG}...${NEW_TAG}"
+
+          # Gaps count: grep for the "### " entry headings inside GAPS_BLOCK.
+          if [ -n "$GAPS_BLOCK" ]; then
+            GAPS_COUNT=$(printf '%s\n' "$GAPS_BLOCK" | grep -cE '^### ' || true)
+          else
+            GAPS_COUNT=0
+          fi
+
+          # Autogen-drift gate: AUTOGEN_TOUCHED is a comma-separated
+          # list of paths the skill edited under auto-generated roots.
+          # Non-empty means drift -- surfaced as the top-of-section
+          # CAUTION alert.
+          AUTOGEN_DRIFT="$AUTOGEN_TOUCHED"
+
+          # Silent-run check: both skill steps ran OK and produced 0
+          # commits. NOTE_BLOCK covers the NO_CHANGES.md path; we only
+          # emit our own silent-run note when NOTE_BLOCK is empty.
+          SILENT_RUN=false
+          if [ "$SKILL_COMMIT_COUNT" = "0" ] \
+             && [ -z "$NOTE_BLOCK" ] \
+             && [ "$GEN_CONCLUSION" = "success" ] \
+             && [ "$REVIEW_CONCLUSION" = "success" ]; then
+            SILENT_RUN=true
+          fi
+
+          # Action-required verdict drives the At-a-glance table's
+          # last row. Priority: autogen-drift > gaps > silent > content > none.
+          if [ -n "$AUTOGEN_DRIFT" ]; then
+            ACTION_REQUIRED="**Yes** — revert auto-generated-path drift (see above)"
+          elif [ "$GAPS_COUNT" -gt 0 ]; then
+            ACTION_REQUIRED="**Yes** — resolve $GAPS_COUNT gap(s), then spot-check prose"
+          elif [ "$SILENT_RUN" = "true" ]; then
+            ACTION_REQUIRED="**None** — approve and merge if the silent-run signal is expected"
+          elif [ "$SKILL_COMMIT_COUNT" != "0" ] && [ -n "$SKILL_COMMIT_COUNT" ]; then
+            ACTION_REQUIRED="Spot-check skill-authored prose for accuracy"
+          else
+            ACTION_REQUIRED="—"
+          fi
+
+          # Hand-written-changes cell: either a commit count, or a
+          # placeholder when the skill step didn't run.
+          if [ -n "$SKILL_COMMIT_COUNT" ]; then
+            CHANGES_CELL="$SKILL_COMMIT_COUNT commit(s)"
+          else
+            CHANGES_CELL="—"
+          fi
+
+          # Reference-assets cell.
+          case "$REFRESHED" in
+            true)  REFRESH_CELL="refreshed (separate commit)" ;;
+            false) REFRESH_CELL="unchanged" ;;
+            *)     REFRESH_CELL="—" ;;
+          esac
+
+          # Contributor counts. Auto-assigned folks already appear in
+          # GitHub's reviewer sidebar, so we don't also list them in
+          # the PR body -- that would duplicate info across three
+          # places (sidebar, at-a-glance cell, dedicated section).
+          # Only the overflow (non-collaborator) mentions need a
+          # render target, so the dedicated section is skipped when
+          # MENTION_COUNT is zero.
+          if [ -n "$ASSIGN_LIST" ]; then
+            ASSIGN_COUNT=$(echo "$ASSIGN_LIST" | tr ',' '\n' | grep -c . || true)
+          else
+            ASSIGN_COUNT=0
+          fi
+          if [ -n "$MENTION_BLOCK" ]; then
+            MENTION_COUNT=$(printf '%s\n' "$MENTION_BLOCK" | grep -oE '@[A-Za-z0-9_-]+' | wc -l | tr -d ' ')
+          else
+            MENTION_COUNT=0
+          fi
+
+          # COMPARE_OK tri-state:
+          #   "true"  -> compare succeeded, contributor list is populated
+          #   "false" -> compare was attempted and failed (pinned prev_tag
+          #              missing upstream)
+          #   ""      -> reviewers step never ran (earlier step in the job
+          #              failed and short-circuited before we got there).
+          #              The augment step itself is `if: always()`, so it
+          #              still renders the PR body -- but the contributor
+          #              cell must say "not attempted" rather than claim
+          #              a compare failure that never happened.
+          if [ -z "$COMPARE_OK" ]; then
+            CONTRIB_CELL="**Not attempted** — run failed before reviewer assignment"
+          elif [ "$COMPARE_OK" != "true" ]; then
+            CONTRIB_CELL="**Compare failed** — pinned \`$PREV_TAG\` missing upstream, no auto-assignment"
+          elif [ "$ASSIGN_COUNT" -gt 0 ] && [ "$MENTION_COUNT" -gt 0 ]; then
+            CONTRIB_CELL="$ASSIGN_COUNT auto-assigned · $MENTION_COUNT mentioned below"
+          elif [ "$ASSIGN_COUNT" -gt 0 ]; then
+            CONTRIB_CELL="$ASSIGN_COUNT auto-assigned (see sidebar)"
+          elif [ "$MENTION_COUNT" -gt 0 ]; then
+            CONTRIB_CELL="$MENTION_COUNT mentioned below"
+          else
+            CONTRIB_CELL="none in release range"
+          fi
+
+          {
+            echo "$START"
+            echo ""
+            echo "## Docs update for \`$PROJECT_ID\` $NEW_TAG"
+            echo ""
+
+            # ----- TOP ALERT (at most one, by severity) -----
+            if [ -n "$AUTOGEN_DRIFT" ]; then
+              echo "> [!CAUTION]"
+              echo "> **Auto-generated-path drift**: the skill edited files that should"
+              echo "> only come from the refresh step. Review and revert:"
+              echo ">"
+              printf '%s\n' "$AUTOGEN_DRIFT" | tr ',' '\n' | awk '{ print "> - \x60" $0 "\x60" }'
+              echo ""
+            elif [ -n "$NOTE_BLOCK" ]; then
+              # NO_CHANGES.md path -- the skill explicitly said no doc-
+              # relevant changes. Simpler than the silent-run case.
+              echo "> [!NOTE]"
+              echo "> Skill reported **no doc-relevant changes** for this release."
+              echo "> This PR only bumps the version pin and any pin_files edits."
+              echo ""
+            elif [ "$SILENT_RUN" = "true" ]; then
+              echo "> [!NOTE]"
+              echo "> **Silent run** — skill produced no content commits. The docs are"
+              echo "> likely already up-to-date (e.g. \`main\` ahead of pin, or a re-run"
+              echo "> after a previous PR for this tag merged). Only the version bump"
+              echo "> and refreshed reference assets are included."
+              echo ""
+            fi
+
+            # ----- AT-A-GLANCE TABLE -----
+            echo "### At a glance"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| **Upstream** | \`$REPO\` [\`$PREV_TAG\` → \`$NEW_TAG\`]($COMPARE_URL) |"
+            echo "| **Hand-written changes** | $CHANGES_CELL |"
+            echo "| **Reference assets** | $REFRESH_CELL |"
+            echo "| **Gaps** | $GAPS_COUNT |"
+            echo "| **Release contributors** | $CONTRIB_CELL |"
+            echo "| **Action required** | $ACTION_REQUIRED |"
+            echo ""
+
+            # ----- SUMMARY OF CHANGES -----
+            # Renders either the skill's hand-written SUMMARY.md body
+            # or the commit-title fallback from the signals step.
+            # Skipped entirely on silent / NO_CHANGES runs where the
+            # signals step leaves SUMMARY_BLOCK empty.
+            if [ -n "$SUMMARY_BLOCK" ]; then
+              echo "### Summary of changes"
+              echo ""
+              echo "$SUMMARY_BLOCK"
+              echo ""
+            fi
+
+            # ----- GAPS (when present) -----
+            if [ -n "$GAPS_BLOCK" ]; then
+              # Skill's GAPS.md starts at H2 ("## Gaps needing human
+              # context") with per-entry H3s inside. To nest correctly
+              # under our H2 ("Docs update for …"), demote each
+              # heading one level (## -> ###, ### -> ####), except the
+              # section heading itself stays at ### so the entries
+              # still appear as distinct subsections.
+              awk '
+                /^## Gaps needing human context$/ { print "### Gaps needing human context"; next }
+                /^### / { sub(/^### /, "#### "); print; next }
+                /^## / { sub(/^## /, "### "); print; next }
+                { print }
+              ' <<<"$GAPS_BLOCK"
+              echo ""
+            fi
+
+            # ----- OVERFLOW CONTRIBUTORS (not auto-assigned) -----
+            # Skipped entirely when everyone who should review got
+            # auto-assigned -- GitHub's sidebar covers that case. This
+            # section exists only to render @-mentions for contributors
+            # GitHub refused to accept as reviewers (usually because
+            # they're not collaborators on this repo).
+            if [ "$MENTION_COUNT" -gt 0 ]; then
+              echo "### Additional release contributors"
+              echo ""
+              echo "Couldn't be auto-assigned as reviewers on this repo, but cc'd below so they see the PR:"
+              echo ""
+              MENTIONS_ONLY=$(printf '%s\n' "$MENTION_BLOCK" | grep -oE '@[A-Za-z0-9_-]+' | paste -sd' ' -)
+              echo "$MENTIONS_ONLY"
+              echo ""
+            fi
+
+            # ----- RUN COST -----
+            if [ -n "$GEN_TURNS" ] || [ -n "$REVIEW_TURNS" ]; then
+              echo "### Run cost"
+              echo ""
+              echo "| Session | Turns | Cost (USD) |"
+              echo "| --- | ---: | ---: |"
+              if [ -n "$GEN_TURNS" ]; then
+                echo "| Generation | $GEN_TURNS | \$$GEN_COST |"
+              fi
+              if [ -n "$REVIEW_TURNS" ]; then
+                echo "| Editorial review | $REVIEW_TURNS | \$$REVIEW_COST |"
+              fi
+              if [ -n "$GEN_TURNS" ] && [ -n "$REVIEW_TURNS" ]; then
+                TOTAL_TURNS=$((GEN_TURNS + REVIEW_TURNS))
+                TOTAL_COST=$(awk -v a="$GEN_COST" -v b="$REVIEW_COST" 'BEGIN { printf "%.4f", a + b }')
+                echo "| **Total** | **$TOTAL_TURNS** | **\$$TOTAL_COST** |"
+              fi
+              echo ""
+            fi
+
+            # ----- PROCESS DETAILS (collapsed) -----
+            echo "<details><summary>How this PR was built</summary>"
+            echo ""
+            echo "Two Claude Opus sessions run per release: a generation pass"
+            echo "(\`upstream-release-docs\` skill, 6 phases) followed by a fresh-"
+            echo "context editorial pass (\`docs-review\`). Prettier/ESLint"
+            echo "auto-fixes are applied after."
+            echo ""
+            echo "Auto-synced paths — do not hand-edit these in review:"
+            echo "- \`docs/toolhive/reference/cli/\`"
+            echo "- \`docs/toolhive/reference/crds/\`"
+            echo "- \`static/api-specs/\`"
+            echo ""
+            echo "If a \"Gaps needing human context\" section is present above,"
+            echo "each entry includes a paste-ready **Helper prompt for local"
+            echo "Claude** a reviewer can use to resolve the gap."
+            echo ""
+            echo "</details>"
+            echo ""
+
+            echo "$END"
+          } > /tmp/section.md
+
+          # Read existing body, replace or append our marked section.
+          EXISTING=$(gh pr view "$PR_NUMBER" --json body --jq .body)
+          if echo "$EXISTING" | grep -qF "$START"; then
+            # Replace existing section.
+            printf '%s\n' "$EXISTING" | awk -v start="$START" -v end="$END" -v repl_file=/tmp/section.md '
+              BEGIN { in_section = 0 }
+              $0 == start { in_section = 1; while ((getline line < repl_file) > 0) print line; next }
+              $0 == end   { if (in_section) { in_section = 0; next } }
+              !in_section { print }
+            ' > /tmp/pr-body.md
+          else
+            # Append.
+            {
+              printf '%s\n\n---\n\n' "$EXISTING"
+              cat /tmp/section.md
+            } > /tmp/pr-body.md
+          fi
+
+          gh pr edit "$PR_NUMBER" --body-file /tmp/pr-body.md
+
+      # Counterpart to the "Convert PR to draft" step at the top of
+      # the job. Uses success() (not always()) on purpose: a failed
+      # run leaves the PR as draft so nobody merges a half-written
+      # augmentation. The existing failure-comment step at the end of
+      # the job points reviewers to the retry command.
+      - name: Flip PR to ready for review
+        if: success() && steps.eff.outputs.number != ''
+        env:
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+        run: |
+          IS_DRAFT=$(gh pr view "$PR_NUMBER" --json isDraft --jq .isDraft)
+          if [ "$IS_DRAFT" = "true" ]; then
+            gh pr ready "$PR_NUMBER"
+            echo "Flipped PR #$PR_NUMBER to ready for review."
+          else
+            echo "PR #$PR_NUMBER is already ready for review; nothing to do."
+          fi
+
+      # Post-run summary for workflow_dispatch, mirroring the pre-run
+      # placeholder comment above. Gives reviewers a single point in
+      # the PR timeline that says "here's what happened, and where to
+      # see the full report" without them having to hunt through the
+      # Actions tab. Skipped on pull_request runs where claude-code-
+      # action already posts its own completion comment.
+      - name: Post skill-completed summary (workflow_dispatch only)
+        if: always() && github.event_name == 'workflow_dispatch' && steps.eff.outputs.number != ''
+        env:
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          NEW_TAG: ${{ steps.detect.outputs.new_tag }}
+          GEN_CONCLUSION: ${{ steps.skill_gen.conclusion }}
+          REVIEW_CONCLUSION: ${{ steps.skill_review.conclusion }}
+          AUTOFIX_CONCLUSION: ${{ steps.autofix.conclusion }}
+          GEN_TURNS: ${{ steps.skill_gen_stats.outputs.turns }}
+          GEN_COST: ${{ steps.skill_gen_stats.outputs.cost_usd }}
+          REVIEW_TURNS: ${{ steps.skill_review_stats.outputs.turns }}
+          REVIEW_COST: ${{ steps.skill_review_stats.outputs.cost_usd }}
+        run: |
+          # Tight one-line summary. Detail lives in the PR body's
+          # At-a-glance table and Run cost section. Pick status icon
+          # by whether any step failed.
+          STATUS=""
+          if [ "$GEN_CONCLUSION" = "success" ] \
+             && [ "$REVIEW_CONCLUSION" = "success" ] \
+             && [ "$AUTOFIX_CONCLUSION" != "failure" ]; then
+            STATUS="Done"
+          else
+            # Flag the first failing session so a reviewer knows
+            # which one died.
+            if [ "$GEN_CONCLUSION" != "success" ]; then
+              STATUS="Failed at generation (\`$GEN_CONCLUSION\`)"
+            elif [ "$REVIEW_CONCLUSION" != "success" ]; then
+              STATUS="Failed at editorial review (\`$REVIEW_CONCLUSION\`)"
+            elif [ "$AUTOFIX_CONCLUSION" = "failure" ]; then
+              STATUS="Autofix failed"
+            else
+              STATUS="Incomplete"
+            fi
+          fi
+          # Total turns/cost when both reported.
+          EXTRAS=""
+          if [ -n "$GEN_TURNS" ] && [ -n "$REVIEW_TURNS" ]; then
+            TT=$((GEN_TURNS + REVIEW_TURNS))
+            TC=$(awk -v a="$GEN_COST" -v b="$REVIEW_COST" 'BEGIN { printf "%.2f", a + b }')
+            EXTRAS=" · $TT turns · \$$TC"
+          fi
+          gh pr comment "$PR_NUMBER" --body "$STATUS$EXTRAS · [run]($RUN_URL) · see PR body for details" || true
+
+      - name: Comment on augmentation failure
+        # Runs only when a preceding step failed. Comments a retry
+        # pointer on the PR so a human can see the run URL.
+        if: failure()
+        env:
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "> [!CAUTION]
+          > Docs augmentation **failed**. [Run log]($RUN_URL).
+          > Retry: \`gh workflow run upstream-release-docs.yml -f pr_number=$PR_NUMBER\`" || true

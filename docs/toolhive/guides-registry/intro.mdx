@@ -1,53 +1,94 @@
 ---
-title: Overview
-sidebar_label: Introduction
+title: Introduction
 description:
-  How to use the ToolHive Registry server to discover and access MCP servers
+  Architecture, features, and registry source types for the ToolHive Registry
+  Server
 ---
 
-The ToolHive Registry server is a standards-compliant implementation of the MCP
-Registry API specification. It provides a REST API for discovering and accessing
-MCP servers from multiple backend sources.
+The ToolHive Registry Server gives you a way to publish, curate, and control a
+catalog of MCP servers and skills for your organization. Use it when you want a
+trusted catalog for discoverability, team-scoped access, publishing, or
+multi-source aggregation.
 
-## Overview
+It pulls entries from multiple sources, stores them centrally, and exposes them
+through a standard MCP Registry API that ToolHive and other clients can consume.
 
-The Registry server aggregates MCP server metadata from various sources and
-exposes it through a standardized API. When you start the server, it:
+:::note[Registry Server vs. built-in registry]
+
+This section covers the **Registry Server** for hosting and curating your own
+MCP server and skills catalog.
+
+ToolHive also ships with a **built-in registry** for browsing and discovering
+MCP servers from the default catalog. That's a different feature: see
+[Use the registry](../guides-cli/registry.mdx) (CLI) or
+[Use the registry](../guides-ui/registry.mdx) (UI).
+
+:::
+
+## Why use the Registry Server?
+
+Use the Registry Server when you need to:
+
+- Curate a private or team-specific catalog instead of relying only on the
+  default public catalog
+- Publish MCP servers or [skills](../concepts/skills.mdx) for internal use
+- Aggregate entries from multiple sources behind one registry API
+- Apply authentication and authorization policies to registry access
+- Surface cluster-hosted workloads to users through a managed catalog
+
+## Key concepts
+
+The Registry Server is built around three core concepts:
+
+- A **source** is where data comes from: a Git repository, an upstream API, a
+  local file, a Kubernetes cluster, or a managed API endpoint. Each source syncs
+  or receives MCP servers and skills.
+- An **entry** is an individual MCP server or skill stored in the database.
+  Sources produce entries; each entry belongs to exactly one source.
+- A **registry** is a named API surface that aggregates entries from one or more
+  sources. Clients access entries through a registry name in the URL (for
+  example, `GET /registry/default/v0.1/servers`). You can create multiple
+  registries from the same sources to serve different audiences or apply
+  different access controls.
+
+## How the Registry Server works
+
+The Registry Server aggregates MCP server and skills metadata from various
+sources and exposes it through a standardized API. When you start the server,
+it:
 
 1. Loads configuration from a YAML file
 2. Runs database migrations automatically
 3. Immediately fetches registry data from the configured sources
-4. Starts background sync coordinator for automatic updates (for synced
-   registries)
+4. Starts a background sync coordinator for automatic updates (for synced
+   sources)
 5. Serves MCP Registry API endpoints on the configured address
 
 ```mermaid
 flowchart LR
-  subgraph Sources["Registry sources"]
+  subgraph Sources["Sources"]
     direction LR
-    Managed["Managed registry"]
-    API["Upstream registry"]
-    Kubernetes["Kubernetes cluster"]
-    Git["Git repository"]
-    File["Local file"]
+    Managed["Managed"]
+    API["Upstream API"]
+    Kubernetes["Kubernetes"]
+    Git["Git"]
+    File["File"]
   end
   subgraph Server["Registry server"]
     direction TB
-    Config["Configuration"]
     Sync["Sync manager"]
-    Storage["Storage layer"]
-    APIHandler["API handler"]
+    Entries[("Entries")]
+    Registries["Registries"]
   end
   subgraph Clients["Clients"]
     direction LR
     ToolHive["ToolHive"]
     MCPClient["MCP clients"]
   end
-  Sources -->|sync| Server
-  Config --> Sync
-  Sync --> Storage
-  Storage --> APIHandler
-  Server -->|REST API| Clients
+  Sources -->|"sync / publish"| Sync
+  Sync --> Entries
+  Entries --> Registries
+  Registries -->|"REST API"| Clients
 ```
 
 ## Features
@@ -55,7 +96,7 @@ flowchart LR
 - **Standards-compliant**: Implements the official MCP Registry API
   specification
 - **Multiple registry sources**: Git repositories, API endpoints, local files,
-  managed registries, and Kubernetes discovery
+  managed sources, and Kubernetes discovery
 - **Automatic synchronization**: Background sync with configurable intervals and
   retry logic for Git, API, and File sources
 - **Container-ready**: Designed for deployment in Kubernetes clusters, but can
@@ -66,41 +107,71 @@ flowchart LR
   status persistence
 - **Kubernetes-aware**: Automatic discovery of MCP servers deployed via ToolHive
   Operator
+- **Multi-tenant authorization**: Claims-based access control with role-based
+  administration, enabling team-scoped registries and entry visibility
+- **Skills registry**: Publish and discover reusable
+  [skills](../concepts/skills.mdx) via the extensions API and synced sources
 
 ## Registry sources
 
-The server supports five registry source types:
+The server supports five source types:
 
-1. **Managed Registry** - A fully-managed MCP Registry
-   - Ideal for private repositories
+1. **Managed** - A fully-managed MCP source
+   - Ideal for hosting private MCP server catalogs
    - Automatically exposes entries following upstream MCP Registry format
-   - Supports adding new MCP servers via `/publish` endpoint
+   - Supports publishing MCP servers and skills via the `/v1/entries` admin API
 
-2. **Upstream Registry** - Sync from upstream MCP Registry APIs
+2. **Upstream API** - Sync from upstream MCP Registry APIs
    - Supports federation and aggregation scenarios
-   - Format conversion from upstream to ToolHive format
+   - Syncs both MCP servers and skills from upstream sources
    - Does not support publishing
 
-3. **Kubernetes Cluster** - Automatically creates registry entries for running
-   workloads
-   - Ideal to quickly grant access to running MCP servers to knowledge workers
-   - Useful for bigger organizations where MCP server developers differ from
-     users
+3. **Kubernetes** - Automatically creates registry entries for running workloads
+   - Ideal for surfacing running MCP servers to end users without manual
+     registration
+   - Useful for larger organizations where MCP server developers differ from
+     consumers
    - Does not support publishing
 
-4. **Git Repository** - Clone and sync from Git repositories
+4. **Git** - Clone and sync from Git repositories
    - Supports branch, tag, or commit pinning
-   - Ideal for version-controlled registries
+   - Syncs both MCP servers and skills (upstream format)
    - Does not support publishing
 
-5. **Local File** - Read from filesystem
+5. **File** - Read from filesystem
    - Ideal for local development and testing
-   - Supports mounted volumes in containers
+   - Syncs both MCP servers and skills (upstream format)
    - Does not support publishing
+
+## Registry Server and the rest of ToolHive
+
+The Registry Server is one part of the broader ToolHive platform. It is
+different from the built-in catalog that the ToolHive CLI and UI ship with for
+browsing public MCP servers, but the pieces work together:
+
+- The CLI's [`thv search`](../reference/cli/thv_search.md) and
+  [`thv registry`](../guides-cli/registry.mdx) commands query the built-in
+  catalog by default, but can also be pointed at a Registry Server you host with
+  [`thv config set-registry`](../reference/cli/thv_config_set-registry.md).
+- Kubernetes deployments driven by the
+  [ToolHive operator](../guides-k8s/deploy-operator.mdx) can register discovered
+  `MCPServer` workloads as entries in a Registry Server through the Kubernetes
+  source type.
+
+If you want a private or team-scoped catalog with publishing, claims-based
+access control, and multi-source aggregation, deploy a Registry Server. If you
+only need to browse the public ToolHive catalog, the built-in registry is
+enough.
 
 ## Next steps
 
-- [Configure registry sources](./configuration.mdx) to set up your registry
-- [Deploy the server](./deployment.mdx) in your environment
+- [Configure sources and registries](./configuration.mdx) to set up your data
+  sources, sync policies, and entry filtering
+- [Publish MCP servers](./publish-servers.mdx) to a Git, file, or managed source
+- [Set up authentication](./authentication.mdx) to secure access to your
+  registry
+- [Configure authorization](./authorization.mdx) to control access with roles
+  and claims
+- [Manage skills](./skills.mdx) to publish and discover reusable skills
 - [View the API reference](../reference/registry-api.mdx) for endpoint
   documentation

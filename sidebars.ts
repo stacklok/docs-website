@@ -1,5 +1,10 @@
 import type { SidebarsConfig } from '@docusaurus/plugin-content-docs';
 import { buildCliReferenceSidebar } from './src/utils/buildHierarchicalSidebar';
+import crdSidebarJson from './static/api-specs/crds/sidebar.json';
+
+type SidebarItemConfig = SidebarsConfig[string] extends (infer T)[] ? T : never;
+
+const crdSidebar = crdSidebarJson as SidebarItemConfig;
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
@@ -16,6 +21,12 @@ import { buildCliReferenceSidebar } from './src/utils/buildHierarchicalSidebar';
 const sidebars: SidebarsConfig = {
   toolhiveSidebar: [
     'toolhive/index',
+    {
+      type: 'html',
+      value: 'Run ToolHive',
+      className: 'sidebar-title',
+      defaultStyle: false,
+    },
 
     {
       type: 'category',
@@ -47,8 +58,24 @@ const sidebars: SidebarsConfig = {
           ],
         },
         'toolhive/guides-ui/client-configuration',
+        {
+          type: 'category',
+          label: 'Skills',
+          description:
+            'How to install, build, and manage agent skills from the ToolHive UI',
+          collapsed: false,
+          collapsible: false,
+          link: {
+            type: 'doc',
+            id: 'toolhive/guides-ui/skills',
+          },
+          items: [
+            'toolhive/guides-ui/skills-browse-install',
+            'toolhive/guides-ui/skills-build',
+            'toolhive/guides-ui/skills-manage',
+          ],
+        },
         'toolhive/guides-ui/cli-access',
-        'toolhive/guides-ui/mcp-optimizer',
         'toolhive/guides-ui/playground',
       ],
     },
@@ -82,6 +109,7 @@ const sidebars: SidebarsConfig = {
           ],
         },
         'toolhive/guides-cli/client-configuration',
+        'toolhive/guides-cli/skills-management',
         {
           type: 'category',
           label: 'Permissions and security',
@@ -107,6 +135,7 @@ const sidebars: SidebarsConfig = {
           items: [
             'toolhive/guides-cli/auth',
             'toolhive/guides-cli/token-exchange',
+            'toolhive/guides-cli/webhooks',
             'toolhive/guides-cli/telemetry-and-metrics',
             'toolhive/guides-cli/test-mcp-servers',
             'toolhive/guides-cli/build-containers',
@@ -147,14 +176,25 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-k8s/deploy-operator',
         'toolhive/guides-k8s/run-mcp-k8s',
         'toolhive/guides-k8s/remote-mcp-proxy',
+        'toolhive/guides-k8s/mcp-server-entry',
         'toolhive/guides-k8s/connect-clients',
         'toolhive/guides-k8s/customize-tools',
         'toolhive/guides-k8s/auth-k8s',
+        'toolhive/guides-k8s/redis-session-storage',
+        'toolhive/guides-k8s/rate-limiting',
         'toolhive/guides-k8s/token-exchange-k8s',
         'toolhive/guides-k8s/telemetry-and-metrics',
         'toolhive/guides-k8s/logging',
-        'toolhive/reference/crd-spec',
+        'toolhive/guides-k8s/migrate-to-v1beta1',
+        crdSidebar,
       ],
+    },
+
+    {
+      type: 'html',
+      value: 'Platform capabilities',
+      className: 'sidebar-title',
+      defaultStyle: false,
     },
 
     {
@@ -174,10 +214,12 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-vmcp/authentication',
         'toolhive/guides-vmcp/tool-aggregation',
         'toolhive/guides-vmcp/composite-tools',
+        'toolhive/guides-vmcp/optimizer',
         'toolhive/guides-vmcp/failure-handling',
         'toolhive/guides-vmcp/telemetry-and-metrics',
         'toolhive/guides-vmcp/audit-logging',
         'toolhive/guides-vmcp/scaling-and-performance',
+        'toolhive/guides-vmcp/local-cli',
       ],
     },
 
@@ -185,24 +227,46 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Registry Server',
       description:
-        'How to deploy and use the ToolHive Registry server to discover and access MCP servers',
+        'How to deploy and use the ToolHive Registry server to discover and access MCP servers and skills',
       link: {
         type: 'doc',
         id: 'toolhive/guides-registry/index',
       },
       items: [
         'toolhive/guides-registry/intro',
-        'toolhive/guides-registry/deployment',
-        'toolhive/guides-registry/deploy-operator',
-        'toolhive/guides-registry/deploy-manual',
+        'toolhive/guides-registry/quickstart',
+        {
+          type: 'category',
+          label: 'Deploy the Registry Server',
+          link: {
+            type: 'doc',
+            id: 'toolhive/guides-registry/deployment',
+          },
+          collapsible: false,
+          items: [
+            'toolhive/guides-registry/deploy-operator',
+            'toolhive/guides-registry/deploy-helm',
+            'toolhive/guides-registry/deploy-manual',
+          ],
+        },
         'toolhive/guides-registry/configuration',
+        'toolhive/guides-registry/publish-servers',
         'toolhive/guides-registry/authentication',
+        'toolhive/guides-registry/authorization',
         'toolhive/guides-registry/database',
+        'toolhive/guides-registry/skills',
         'toolhive/guides-registry/telemetry-metrics',
         'toolhive/reference/registry-api',
         'toolhive/reference/registry-schema-upstream',
         'toolhive/reference/registry-schema-toolhive',
       ],
+    },
+
+    {
+      type: 'html',
+      value: 'Shared guides',
+      className: 'sidebar-title',
+      defaultStyle: false,
     },
 
     {
@@ -224,7 +288,9 @@ const sidebars: SidebarsConfig = {
         'toolhive/concepts/auth-framework',
         'toolhive/concepts/cedar-policies',
         'toolhive/concepts/backend-auth',
+        'toolhive/concepts/embedded-auth-server',
         'toolhive/concepts/vmcp',
+        'toolhive/concepts/skills',
       ],
     },
 
@@ -278,9 +344,38 @@ const sidebars: SidebarsConfig = {
       items: [{ type: 'autogenerated', dirName: 'toolhive/guides-mcp' }],
     },
 
-    'toolhive/reference/client-compatibility',
-    'toolhive/reference/index',
+    {
+      type: 'html',
+      value: 'Reference',
+      className: 'sidebar-title',
+      defaultStyle: false,
+    },
+    {
+      type: 'category',
+      label: 'Technical reference',
+      link: {
+        type: 'doc',
+        id: 'toolhive/reference/index',
+      },
+      collapsible: false,
+      collapsed: false,
+      items: [
+        'toolhive/reference/client-compatibility',
+        {
+          type: 'doc',
+          id: 'toolhive/reference/authz-policy-reference',
+          label: 'Authorization policies',
+        },
+      ],
+    },
+    {
+      type: 'html',
+      value: 'Help',
+      className: 'sidebar-title',
+      defaultStyle: false,
+    },
     'toolhive/faq',
+    'toolhive/enterprise',
     'toolhive/support',
     'toolhive/contributing',
   ],

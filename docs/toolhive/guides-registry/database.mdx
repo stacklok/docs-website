@@ -9,6 +9,13 @@ The Registry server requires a PostgreSQL database for storing registry state
 and metadata. This enables persistence across restarts and provides a foundation
 for advanced features.
 
+## Supported versions
+
+PostgreSQL 14 or later is required. The server runs database migrations
+automatically on startup, so the migration user needs schema-modification
+privileges. See [Migration user privileges](#migration-user-privileges) for the
+full privilege model.
+
 ## Configuration
 
 ### Basic database configuration
@@ -23,41 +30,80 @@ database:
   maxOpenConns: 25
   maxIdleConns: 5
   connMaxLifetime: '5m'
-  maxMetaSize: 65536
+  maxMetaSize: 262144
 ```
 
 ### Configuration fields
 
-| Field             | Type   | Required | Default   | Description                                                                                        |
-| ----------------- | ------ | -------- | --------- | -------------------------------------------------------------------------------------------------- |
-| `host`            | string | Yes      | -         | Database server hostname or IP address                                                             |
-| `port`            | int    | Yes      | -         | Database server port                                                                               |
-| `user`            | string | Yes      | -         | Database username for normal operations                                                            |
-| `migrationUser`   | string | No       | `user`    | Database username for running migrations (should have elevated privileges)                         |
-| `database`        | string | Yes      | -         | Database name                                                                                      |
-| `sslMode`         | string | No       | `require` | SSL mode (`disable`, `require`, `verify-ca`, `verify-full`)                                        |
-| `maxOpenConns`    | int    | No       | `25`      | Maximum number of open connections to the database                                                 |
-| `maxIdleConns`    | int    | No       | `5`       | Maximum number of idle connections in the pool                                                     |
-| `connMaxLifetime` | string | No       | `5m`      | Maximum lifetime of a connection (e.g., "1h", "30m")                                               |
-| `maxMetaSize`     | int    | No       | `65536`   | Maximum allowed size in bytes for publisher-provided metadata extensions                           |
-| `dynamicAuth`     | object | No       | -         | Dynamic authentication configuration (see [Dynamic authentication](#dynamic-authentication) below) |
+| Field               | Type   | Required | Default   | Description                                                                                        |
+| ------------------- | ------ | -------- | --------- | -------------------------------------------------------------------------------------------------- |
+| `host`              | string | Yes      | -         | Database server hostname or IP address                                                             |
+| `port`              | int    | Yes      | -         | Database server port                                                                               |
+| `user`              | string | Yes      | -         | Database username for normal operations                                                            |
+| `migrationUser`     | string | No       | `user`    | Database username for running migrations (should have elevated privileges)                         |
+| `password`          | string | No       | -         | Password for the application user. Mutually exclusive with `dynamicAuth`                           |
+| `migrationPassword` | string | No       | -         | Password for the migration user. Defaults to `password` when `migrationUser` equals `user`         |
+| `database`          | string | Yes      | -         | Database name                                                                                      |
+| `sslMode`           | string | No       | `require` | SSL mode (`disable`, `require`, `verify-ca`, `verify-full`)                                        |
+| `maxOpenConns`      | int    | No       | `25`      | Maximum number of open connections to the database                                                 |
+| `maxIdleConns`      | int    | No       | `5`       | Maximum number of idle connections in the pool                                                     |
+| `connMaxLifetime`   | string | No       | `5m`      | Maximum lifetime of a connection (e.g., "1h", "30m")                                               |
+| `maxMetaSize`       | int    | No       | `262144`  | Maximum allowed size in bytes for publisher-provided metadata extensions (256 KB)                  |
+| `dynamicAuth`       | object | No       | -         | Dynamic authentication configuration (see [Dynamic authentication](#dynamic-authentication) below) |
 
-\* Password configuration is required but has multiple sources (see Password
-Security and Dynamic authentication below)
+Passwords are optional in the config file; see
+[Password configuration](#password-configuration) for the full precedence order.
 
-## Password security
+## Password configuration
 
-The server supports secure password management with separate credentials for
-migrations and normal operations. This follows the principle of least privilege
-by using elevated privileges only when necessary.
+The server supports several mechanisms for providing database credentials.
+`dynamicAuth` is mutually exclusive with the static password options: setting
+both a `password` (or `migrationPassword`) field and a `dynamicAuth` block fails
+startup validation.
 
-Password configuration is done using a
-[Postgres Password File](https://www.postgresql.org/docs/current/libpq-pgpass.html)
-and exporting the `PGPASSFILE` environment variable.
+When more than one source is configured, the server resolves them in this order
+of precedence:
 
-### Recommended setup
+1. **Dynamic authentication** (e.g., AWS RDS IAM) - short-lived tokens generated
+   automatically via the `dynamicAuth` config block
+2. **Config field or environment variable** - the `password` and
+   `migrationPassword` fields, or the `THV_REGISTRY_DATABASE_PASSWORD` and
+   `THV_REGISTRY_DATABASE_MIGRATIONPASSWORD` environment variables
+3. **pgpass file** - PostgreSQL's standard `~/.pgpass` or `$PGPASSFILE`
+   mechanism (used when no password is configured via the methods above)
 
-For production deployments, use separate database users:
+### Configure passwords via environment variables
+
+Environment variables are convenient for containerized deployments because they
+let you inject secrets from Kubernetes Secrets, Docker secrets, or your CI/CD
+system without baking passwords into config files:
+
+```bash
+export THV_REGISTRY_DATABASE_PASSWORD=app_password
+export THV_REGISTRY_DATABASE_MIGRATIONPASSWORD=migrator_password
+thv-registry-api serve --config config.yaml
+```
+
+The environment variable takes precedence over a value set in the YAML config
+file. When `migrationUser` equals `user` and `migrationPassword` is not set, the
+server reuses `password` for migrations.
+
+:::tip[Kubernetes Secrets]
+
+In Kubernetes, reference a Secret via `envFrom` or `secretKeyRef` rather than
+storing the password in a ConfigMap. See the
+[operator deploy guide](./deploy-operator.mdx) for complete examples.
+
+:::
+
+### Configure passwords via a pgpass file
+
+As an alternative, the server supports PostgreSQL's standard pgpass file. This
+approach works well for traditional VM deployments or when you want the server
+to pick up credentials without any environment configuration.
+
+For production, use separate database users regardless of how you provide
+passwords:
 
 1. **Application user** (`user`): Limited privileges for normal operations
    - SELECT, INSERT, UPDATE, DELETE on application tables
@@ -67,7 +113,7 @@ For production deployments, use separate database users:
    - CREATE, ALTER, DROP on schemas and tables
    - Used only during migration operations
 
-### Example configuration with separate users
+Example configuration:
 
 ```yaml title="config-production.yaml"
 database:
@@ -89,8 +135,6 @@ echo "db.example.com:5432:registry:db_migrator:migrator_password" >> /etc/secret
 # Mandatory: restrict permissions to 0600, will be ignored otherwise
 chmod 600 /etc/secrets/pgpassfile
 ```
-
-**Using the pgpass file:**
 
 Set the `PGPASSFILE` environment variable when running the server:
 
@@ -306,5 +350,6 @@ If you see permission errors during normal operations:
 
 ## Next steps
 
-- [Deploy the server](./deployment.mdx) with database configuration
-- [Configure data sources](./configuration.mdx) to populate the registry
+- [Configure telemetry](./telemetry-metrics.mdx) for distributed tracing and
+  metrics collection
+- [Deploy the server](./deployment.mdx) to your Kubernetes environment

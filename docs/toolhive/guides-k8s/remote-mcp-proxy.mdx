@@ -105,31 +105,39 @@ This example creates a remote proxy for a fictional enterprise analytics MCP
 server with OIDC authentication:
 
 ```yaml title="analytics-proxy.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: analytics-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    # Your identity provider's issuer URL
+    issuer: https://auth.company.com/realms/production
+    # Optional: Client ID if using introspection
+    clientId: analytics-proxy
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRemoteProxy
 metadata:
   name: analytics-proxy
   namespace: toolhive-system
 spec:
   # Remote MCP server URL
-  remoteURL: https://mcp.analytics.example.com
+  remoteUrl: https://mcp.analytics.example.com
 
   # Port to expose the proxy on
-  port: 8080
+  proxyPort: 8080
 
   # Transport method (sse or streamable-http)
   transport: streamable-http
 
   # OIDC authentication configuration
-  oidcConfig:
-    type: inline
-    inline:
-      # Your identity provider's issuer URL
-      issuer: https://auth.company.com/realms/production
-      # Expected audience claim in tokens
-      audience: analytics-mcp-proxy
-      # Optional: Client ID if using introspection
-      clientId: analytics-proxy
+  oidcConfigRef:
+    name: analytics-oidc
+    # Expected audience claim in tokens
+    audience: analytics-mcp-proxy
 
   # Authorization policies
   authzConfig:
@@ -192,62 +200,73 @@ When you apply an `MCPRemoteProxy` resource, here's what happens:
 
 ### Authentication configuration
 
-The `oidcConfig` field validates incoming tokens from users. The proxy supports
-multiple authentication methods:
+The `oidcConfigRef` field references an MCPOIDCConfig resource that validates
+incoming tokens from users. The proxy supports multiple authentication methods:
 
 <Tabs groupId='auth-method' queryString='auth-method'>
-<TabItem value='inline' label='Inline OIDC' default>
+<TabItem value='inline' label='MCPOIDCConfig (inline)' default>
 
-Inline OIDC configuration is the simplest approach and works with most identity
-providers:
+Create an MCPOIDCConfig resource with inline OIDC settings and reference it from
+the MCPRemoteProxy. This works with most identity providers:
 
-```yaml {4-6}
+```yaml {1-12,21-25}
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: company-oidc
+  namespace: toolhive-system
 spec:
-  remoteURL: https://mcp.example.com
-
-  oidcConfig:
-    type: inline
-    inline:
-      issuer: https://auth.company.com/realms/production
-      audience: mcp-proxy
-      # Optional: For token introspection
-      clientId: mcp-proxy-client
-      clientSecretRef:
-        name: mcp-proxy-secret
-        key: client-secret
+  type: inline
+  inline:
+    issuer: https://auth.company.com/realms/production
+    clientId: mcp-proxy-client
+    clientSecretRef:
+      name: mcp-proxy-secret
+      key: client-secret
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPRemoteProxy
+metadata:
+  name: my-proxy
+  namespace: toolhive-system
+spec:
+  remoteUrl: https://mcp.example.com
+  oidcConfigRef:
+    name: company-oidc
+    audience: mcp-proxy
 ```
 
 The proxy automatically discovers the JWKS URL from the issuer's OIDC discovery
 endpoint (`/.well-known/openid-configuration`).
 
 </TabItem>
-<TabItem value='configmap' label='ConfigMap'>
+<TabItem value='k8s-sa' label='Kubernetes service account'>
 
-For more complex configurations or when you need to share OIDC settings across
-multiple proxies, use a ConfigMap:
+For in-cluster clients, create an MCPOIDCConfig that validates Kubernetes
+service account tokens:
 
-```yaml {21-24} title="oidc-config.yaml"
-apiVersion: v1
-kind: ConfigMap
+```yaml title="k8s-sa-oidc.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
 metadata:
-  name: company-oidc-config
+  name: k8s-sa-oidc
   namespace: toolhive-system
-data:
-  issuer: 'https://auth.company.com/realms/production'
-  audience: 'mcp-proxy'
-  clientId: 'mcp-proxy-client'
+spec:
+  type: kubernetesServiceAccount
+  kubernetesServiceAccount:
+    serviceAccount: mcp-client
+    namespace: client-apps
 ---
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRemoteProxy
 metadata:
   name: analytics-proxy
   namespace: toolhive-system
 spec:
-  remoteURL: https://mcp.analytics.example.com
-  oidcConfig:
-    type: configMap
-    configMap:
-      name: company-oidc-config
+  remoteUrl: https://mcp.analytics.example.com
+  oidcConfigRef:
+    name: k8s-sa-oidc
+    audience: mcp-proxy
 ```
 
 </TabItem>
@@ -259,7 +278,7 @@ For production deployments:
 
 - Always use HTTPS for the issuer URL
 - Store client secrets in Kubernetes Secrets, not inline
-- Use certificate validation (set `thvCABundlePath` if using custom CAs)
+- Use certificate validation (set `caBundleRef` if using custom CAs)
 - Never set `insecureAllowHTTP: true` in production
 
 :::
@@ -274,9 +293,9 @@ This example shows different policy patterns:
 
 ```yaml {6-9}
 spec:
-  remoteURL: https://mcp.example.com
-  oidcConfig:
-    # ... OIDC config ...
+  remoteUrl: https://mcp.example.com
+  oidcConfigRef:
+    # ... OIDC config ref ...
 
   authzConfig:
     type: inline
@@ -341,7 +360,7 @@ available attributes depend on your identity provider's token configuration:
 Use `MCPToolConfig` to filter or rename tools from the remote server:
 
 ```yaml {2,31-32} title="analytics-tools.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPToolConfig
 metadata:
   name: analytics-tools-filter
@@ -363,13 +382,13 @@ spec:
       name: analytics_get_report
       description: Retrieve a generated analytics report
 ---
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRemoteProxy
 metadata:
   name: analytics-proxy
   namespace: toolhive-system
 spec:
-  remoteURL: https://mcp.analytics.example.com
+  remoteUrl: https://mcp.analytics.example.com
   # ... other config ...
   toolConfigRef:
     name: analytics-tools-filter
@@ -386,7 +405,7 @@ configure token exchange to convert company tokens into service-specific tokens:
 First, create an `MCPExternalAuthConfig`:
 
 ```yaml title="external-auth-config.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPExternalAuthConfig
 metadata:
   name: analytics-token-exchange
@@ -394,8 +413,8 @@ metadata:
 spec:
   type: tokenExchange
   tokenExchange:
-    tokenURL: https://auth.company.com/protocol/openid-connect/token
-    clientID: token-exchange-client
+    tokenUrl: https://auth.company.com/protocol/openid-connect/token
+    clientId: token-exchange-client
     clientSecretRef:
       name: token-exchange-creds
       key: client-secret
@@ -408,15 +427,15 @@ spec:
 Then reference it in your proxy:
 
 ```yaml {11-12}
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRemoteProxy
 metadata:
   name: analytics-proxy
   namespace: toolhive-system
 spec:
-  remoteURL: https://mcp.analytics.example.com
-  oidcConfig:
-    # ... Company IDP config ...
+  remoteUrl: https://mcp.analytics.example.com
+  oidcConfigRef:
+    # ... Company IDP config ref ...
 
   externalAuthConfigRef:
     name: analytics-token-exchange
@@ -447,7 +466,7 @@ For non-sensitive values like tenant IDs or correlation headers, use
 
 ```yaml {6-9}
 spec:
-  remoteURL: https://mcp.analytics.example.com
+  remoteUrl: https://mcp.analytics.example.com
   # ... other config ...
 
   headerForward:
@@ -473,13 +492,13 @@ stringData:
 Then reference the Secret in your MCPRemoteProxy:
 
 ```yaml title="analytics-proxy.yaml" {12-17}
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRemoteProxy
 metadata:
   name: analytics-proxy
   namespace: toolhive-system
 spec:
-  remoteURL: https://mcp.analytics.example.com
+  remoteUrl: https://mcp.analytics.example.com
   # ... other config ...
 
   headerForward:
@@ -494,7 +513,7 @@ You can combine plaintext and secret-backed headers:
 
 ```yaml {6-14}
 spec:
-  remoteURL: https://mcp.analytics.example.com
+  remoteUrl: https://mcp.analytics.example.com
   # ... other config ...
 
   headerForward:
@@ -527,22 +546,30 @@ spec:
 For testing and development, you can use the public MCP specification server:
 
 ```yaml title="mcp-spec-proxy.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: test-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: https://auth.company.com/realms/test
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRemoteProxy
 metadata:
   name: mcp-spec-proxy
   namespace: toolhive-system
 spec:
-  remoteURL: https://modelcontextprotocol.io/mcp
-  port: 8080
+  remoteUrl: https://modelcontextprotocol.io/mcp
+  proxyPort: 8080
   transport: streamable-http
 
   # For testing - use your IDP's configuration
-  oidcConfig:
-    type: inline
-    inline:
-      issuer: https://auth.company.com/realms/test
-      audience: mcp-test
+  oidcConfigRef:
+    name: test-oidc
+    audience: mcp-test
 
   # Simple allow-all policy for testing
   authzConfig:
@@ -688,47 +715,34 @@ Audit logs are structured JSON written to stdout:
 }
 ```
 
-### Prometheus metrics
+### Shared telemetry configuration
 
-Enable Prometheus metrics to monitor proxy health and usage:
+The preferred way to enable telemetry is to reference a shared
+`MCPTelemetryConfig` resource using `telemetryConfigRef`. This lets you define
+telemetry settings once and reuse them across multiple proxies and MCP servers:
 
-```yaml {6-8}
+```yaml {6-8} title="analytics-proxy.yaml"
 spec:
-  remoteURL: https://mcp.example.com
+  remoteUrl: https://mcp.example.com
   # ... other config ...
 
-  telemetry:
-    prometheus:
-      enabled: true
+  telemetryConfigRef:
+    name: shared-otel
+    serviceName: analytics-mcp-proxy
 ```
 
-Metrics are exposed at `/metrics` and include:
+The `MCPTelemetryConfig` resource is created separately. See
+[Telemetry and metrics](./telemetry-and-metrics.mdx) for the full configuration
+reference and examples.
+
+### Available Prometheus metrics
+
+When Prometheus is enabled, metrics are exposed at `/metrics` and include:
 
 - `toolhive_mcp_requests_total` - Total MCP requests
 - `toolhive_mcp_request_duration_seconds` - Request duration
 - `toolhive_mcp_tool_calls_total` - Tool call operations
 - `toolhive_mcp_active_connections` - Number of active connections
-
-### OpenTelemetry
-
-For distributed tracing and metrics export:
-
-```yaml {6-15}
-spec:
-  remoteURL: https://mcp.example.com
-  # ... other config ...
-
-  telemetry:
-    openTelemetry:
-      enabled: true
-      endpoint: https://otel-collector.company.com:4317
-      serviceName: analytics-mcp-proxy
-      tracing:
-        enabled: true
-        samplingRate: '0.1'
-      metrics:
-        enabled: true
-```
 
 See [Telemetry and metrics](./telemetry-and-metrics.mdx) for more information.
 
@@ -742,9 +756,9 @@ container-based MCPServer resources into a single unified endpoint.
 
 vMCP can discover MCPRemoteProxy backends in a group, but authentication between
 vMCP and MCPRemoteProxy is not yet fully implemented. Since MCPRemoteProxy
-requires `oidcConfig` to validate incoming requests, and vMCP does not currently
-forward authentication tokens to backends, vMCP cannot communicate with
-MCPRemoteProxy backends that require authentication.
+requires `oidcConfigRef` to validate incoming requests, and vMCP does not
+currently forward authentication tokens to backends, vMCP cannot communicate
+with MCPRemoteProxy backends that require authentication.
 
 This limitation will be addressed in a future release. For now, MCPRemoteProxy
 works best when accessed directly by clients rather than through vMCP
@@ -758,21 +772,30 @@ To include a remote proxy in an MCPGroup for future vMCP aggregation, add the
 `groupRef` field to your MCPRemoteProxy spec:
 
 ```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: company-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: https://auth.company.com
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPRemoteProxy
 metadata:
   name: context7-proxy
   namespace: toolhive-system
 spec:
-  groupRef: my-group # Reference to an MCPGroup
-  remoteURL: https://mcp.context7.com/mcp
+  groupRef:
+    name: my-group # Reference to an MCPGroup
+  remoteUrl: https://mcp.context7.com/mcp
   transport: streamable-http
-  port: 8080
-  oidcConfig:
-    type: inline
-    inline:
-      issuer: https://auth.company.com
-      audience: context7-proxy
+  proxyPort: 8080
+  oidcConfigRef:
+    name: company-oidc
+    audience: context7-proxy
 ```
 
 ### Planned benefits of vMCP aggregation
@@ -801,13 +824,13 @@ Learn how to customize MCP tools using
 [filters and overrides](./customize-tools.mdx).
 
 Discover your deployed MCP servers automatically using the
-[Kubernetes registry](../guides-registry/configuration.mdx#kubernetes-registry)
+[Kubernetes source](../guides-registry/configuration.mdx#kubernetes-source)
 feature in the ToolHive Registry Server.
 
 ## Related information
 
-- [Kubernetes CRD reference](../reference/crd-spec.md#apiv1alpha1mcpremoteproxy) -
-  Full MCPRemoteProxy specification
+- [Kubernetes CRD reference](../reference/crds/mcpremoteproxy.mdx) - Full
+  MCPRemoteProxy specification
 - [Deploy the operator](./deploy-operator.mdx) - Install the ToolHive operator
 - [Run MCP servers in Kubernetes](./run-mcp-k8s.mdx) - Deploy local MCP servers
 
@@ -828,10 +851,10 @@ kubectl logs -n toolhive-system -l app.kubernetes.io/instance=analytics-proxy
 
 Common causes:
 
-- **Invalid OIDC configuration**: Verify the issuer URL is accessible and
-  returns valid OIDC discovery metadata
-- **Certificate validation issues**: If using a custom CA, ensure
-  `thvCABundlePath` is set correctly
+- **Invalid OIDC configuration**: Verify the MCPOIDCConfig resource is valid and
+  the issuer URL is accessible
+- **Certificate validation issues**: If using a custom CA, ensure `caBundleRef`
+  is set correctly
 - **Resource limits**: Check if the pod has sufficient CPU and memory
 
 </details>
@@ -850,7 +873,7 @@ Common causes:
 
 - **Missing audience claim**: Ensure tokens include the expected `aud` claim
 - **Token expired**: Check token expiration time
-- **Issuer mismatch**: Verify token `iss` claim matches `oidcConfig.issuer`
+- **Issuer mismatch**: Verify token `iss` claim matches the MCPOIDCConfig issuer
 - **JWKS fetch failure**: Check proxy can reach the OIDC provider's JWKS
   endpoint
 

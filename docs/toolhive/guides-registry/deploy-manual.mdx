@@ -2,22 +2,24 @@
 title: Deploy manually
 description:
   How to deploy the ToolHive Registry Server in Kubernetes using raw manifests
+  and RBAC configuration
 ---
 
 :::info
 
-For an alternative deployment approach using Kubernetes custom resources, see
-[Deploy with the ToolHive Operator](./deploy-operator.mdx).
+For alternative deployment approaches, see
+[Deploy with the ToolHive Operator](./deploy-operator.mdx) or
+[Deploy with Helm](./deploy-helm.mdx).
 
 :::
 
 Below is an example Kubernetes Deployment configuring the ToolHive Registry
 Server to expose a single static registry based on a Git repository.
 
-This example assumes that a Postgres database is available at `db.example.com`
-and the necessary users for migration and application execution are configured
-and able to connect to a `registry` database. It also assumes that you have a
-keycloak instance configured to act as identity provider.
+This example assumes that a PostgreSQL 14 or later database is available at
+`db.example.com` and the necessary users for migration and application execution
+are configured and able to connect to a `registry` database. It also assumes
+that you have a keycloak instance configured to act as identity provider.
 
 All resources are created in the `toolhive-system` namespace. This namespace
 must exist before applying the deployment.
@@ -72,6 +74,8 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+            - containerPort: 8081
+              name: internal-http
           volumeMounts:
             - name: thv
               mountPath: /thv
@@ -79,13 +83,13 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 8080
+              port: 8081
             initialDelaySeconds: 30
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /readiness
-              port: 8080
+              port: 8081
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
@@ -111,16 +115,17 @@ metadata:
   namespace: toolhive-system
 data:
   config.yaml: |
-    registryName: my-registry
+    sources:
+      - name: toolhive
+        git:
+          repository: https://github.com/stacklok/toolhive-catalog.git
+          branch: main
+          path: pkg/catalog/toolhive/data/registry-upstream.json
+        syncPolicy:
+          interval: "15m"
     registries:
-    - name: git-registry
-      format: toolhive
-      git:
-        repository: https://github.com/stacklok/toolhive-catalog.git
-        branch: main
-        path: pkg/catalog/toolhive/data/registry.json
-      syncPolicy:
-        interval: "15m"
+      - name: default
+        sources: ["toolhive"]
     auth:
       mode: oauth
       oauth:
@@ -360,3 +365,33 @@ each instance to avoid leader election lease conflicts. The Helm chart handles
 this automatically.
 
 :::
+
+## Upgrade and migration
+
+To upgrade a manually-managed Registry Server, update the container image tag in
+your Deployment manifest and re-apply:
+
+```bash
+kubectl apply -f registry-deployment.yaml
+```
+
+Kubernetes performs a rolling update using the Deployment's configured strategy.
+The new pod runs database migrations on startup, so the migration user needs
+schema-modification privileges at the time of the upgrade. Review the
+[Registry Server release notes](https://github.com/stacklok/toolhive-registry-server/releases)
+before upgrading across a major version in case new required config fields or
+migration-user privileges are needed.
+
+If the new image introduces new configuration fields, update your ConfigMap and
+re-apply it before or alongside the Deployment change. See
+[Configuration](./configuration.mdx) for the current field reference.
+
+## Next steps
+
+- [Configure sources and registries](./configuration.mdx) to set up your data
+  sources and sync policies
+- [Set up authentication](./authentication.mdx) to secure access to your
+  registry
+- [Set up authorization](./authorization.mdx) to control access with roles and
+  claims
+- [Configure telemetry](./telemetry-metrics.mdx) to monitor your deployment

@@ -72,14 +72,14 @@ servers. This is the default mode.
 ### Discovered mode configuration
 
 ```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: VirtualMCPServer
 metadata:
   name: my-vmcp
   namespace: toolhive-system
 spec:
-  config:
-    groupRef: my-group
+  groupRef:
+    name: my-group
   incomingAuth:
     type: anonymous
   outgoingAuth:
@@ -91,10 +91,11 @@ spec:
 When vMCP starts in discovered mode:
 
 1. **Group verification**: Verifies the referenced MCPGroup exists
-2. **Workload discovery**: Queries all MCPServer and MCPRemoteProxy resources in
-   the group
+2. **Workload discovery**: Queries all MCPServer, MCPRemoteProxy, and
+   MCPServerEntry resources in the group
 3. **Backend conversion**: For each workload:
-   - Extracts service URL and transport type
+   - Extracts endpoint URL (service URL for in-cluster workloads or `remoteUrl`
+     for MCPServerEntry) and transport type
    - Resolves authentication from `externalAuthConfigRef` if configured
    - Adds metadata labels
 4. **Capability querying**: Calls each backend's `initialize` method to discover
@@ -110,7 +111,8 @@ For reference, the vMCP service account needs read access to:
 
 - `configmaps`, `secrets`: Read OIDC configs and auth secrets
 - `mcpgroups`: Verify group exists and list members
-- `mcpservers`, `mcpremoteproxies`: Discover backend workloads
+- `mcpservers`, `mcpremoteproxies`, `mcpserverentries`: Discover backend
+  workloads
 - `mcpexternalauthconfigs`: Resolve authentication configurations
 - `mcptoolconfigs`: Resolve tool filtering and renaming
 - `virtualmcpservers/status`: Update status with discovered backends
@@ -136,14 +138,15 @@ updates), reducing the attack surface.
 ### Inline mode configuration
 
 ```yaml
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: VirtualMCPServer
 metadata:
   name: my-vmcp
   namespace: toolhive-system
 spec:
+  groupRef:
+    name: my-group
   config:
-    groupRef: my-group
     # highlight-start
     backends:
       - name: github-mcp
@@ -161,7 +164,7 @@ spec:
     # highlight-end
     backends:
       github-mcp:
-        type: external_auth_config_ref
+        type: externalAuthConfigRef
         externalAuthConfigRef:
           name: github-token-config
 ```
@@ -178,10 +181,10 @@ the group.
 :::info
 
 Backend authentication in `outgoingAuth.backends` uses references to
-[MCPExternalAuthConfig](../reference/crd-spec.md#apiv1alpha1mcpexternalauthconfig)
-resources, not inline configuration. Create the MCPExternalAuthConfig resource
-first, then reference it by name. See the
-[Authentication guide](./authentication.mdx) for complete examples.
+[MCPExternalAuthConfig](../reference/crds/mcpexternalauthconfig.mdx) resources,
+not inline configuration. Create the MCPExternalAuthConfig resource first, then
+reference it by name. See the [Authentication guide](./authentication.mdx) for
+complete examples.
 
 :::
 
@@ -277,13 +280,28 @@ Response format:
 
 **Health states:**
 
-| State             | Description                                                                                                  | CRD Status    |
-| ----------------- | ------------------------------------------------------------------------------------------------------------ | ------------- |
-| `healthy`         | Backend responds to health checks successfully and quickly (under 5s)                                        | `ready`       |
-| `degraded`        | Health checks succeed but response times exceed 5 seconds (slow), or backend recently recovered from failure | `degraded`    |
-| `unhealthy`       | Backend not responding or health checks timing out (timeout controlled by `healthCheckTimeout`, default 10s) | `unavailable` |
-| `unauthenticated` | Authentication to backend failed (internal tracking only)                                                    | `unavailable` |
-| `unknown`         | Health check not yet performed (initial state)                                                               | `unknown`     |
+| State             | Description                                                                                                  | CRD Status        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------ | ----------------- |
+| `healthy`         | Backend responds to health checks successfully and quickly (under 5s)                                        | `ready`           |
+| `degraded`        | Health checks succeed but response times exceed 5 seconds (slow), or backend recently recovered from failure | `degraded`        |
+| `unhealthy`       | Backend not responding or health checks timing out (timeout controlled by `healthCheckTimeout`, default 10s) | `unavailable`     |
+| `unauthenticated` | Misconfiguration: backend returned 401/403 but no outgoing auth strategy is configured on the backend target | `unauthenticated` |
+| `unknown`         | Health check not yet performed (initial state)                                                               | `unknown`         |
+
+:::note[Auth challenges count as healthy]
+
+Health probes deliberately run with no user context, so a 401/403 from a backend
+that **does** have an outgoing auth strategy configured (for example
+`upstream_inject` or `token_exchange`) is reported as `healthy`. The challenge
+proves reachability and a working auth layer; per-request user authentication
+happens later when an authenticated user session drives discovery.
+
+`unauthenticated` is reserved for the misconfiguration case where the backend
+demands authentication but no outgoing auth strategy was wired up. Backends in
+this state are excluded from capability aggregation and do **not** count toward
+the `/status` `healthy: true` aggregate.
+
+:::
 
 :::note[Status terminology]
 
@@ -291,11 +309,8 @@ The `/status` HTTP endpoint uses internal health values (`healthy`, `degraded`,
 `unhealthy`, `unauthenticated`, `unknown`) for debugging.
 
 The VirtualMCPServer CRD uses user-facing status values (`ready`, `degraded`,
-`unavailable`, `unknown`) as shown in the "CRD Status" column above.
-
-Note: `unauthenticated` is tracked separately for diagnostics but represents an
-authentication failure reason, not a distinct health state—it maps to
-`unavailable` in the CRD.
+`unavailable`, `unauthenticated`, `unknown`) as shown in the "CRD Status" column
+above.
 
 :::
 
@@ -334,8 +349,9 @@ restarting the vMCP pod.
 
    ```yaml
    spec:
+     groupRef:
+       name: my-group
      config:
-       groupRef: my-group
        backends:
          - name: github-mcp
            url: http://github-mcp.toolhive-system.svc.cluster.local:8080
@@ -347,20 +363,21 @@ restarting the vMCP pod.
 
 3. The operator automatically restarts the vMCP pod with the new configuration
 
-4. Optionally reduce RBAC permissions by removing read access to MCPServer and
-   MCPRemoteProxy resources (keep status update permissions)
+4. Optionally reduce RBAC permissions by removing read access to MCPServer,
+   MCPRemoteProxy, and MCPServerEntry resources (keep status update permissions)
 
 ### From inline to discovered
 
-1. Ensure backend MCPServer and MCPRemoteProxy resources exist in the group
+1. Ensure backend MCPServer, MCPRemoteProxy, and/or MCPServerEntry resources
+   exist in the group
 
 2. Update the VirtualMCPServer to discovered mode:
 
    ```yaml
    spec:
-     config:
-       groupRef: my-group
-       # Remove backends array
+     groupRef:
+       name: my-group
+     # Remove config.backends array if present
      outgoingAuth:
        source: discovered
    ```
@@ -384,7 +401,7 @@ with authentication:
 ```yaml
 ---
 # 1. Create the MCPGroup
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPGroup
 metadata:
   name: engineering-tools
@@ -393,8 +410,20 @@ spec:
   description: Engineering team MCP servers
 
 ---
-# 2. Create authentication config for GitHub backend
-apiVersion: toolhive.stacklok.dev/v1alpha1
+# 2. Create shared OIDC config for incoming client authentication
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: engineering-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: https://auth.example.com
+
+---
+# 3. Create authentication config for GitHub backend
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPExternalAuthConfig
 metadata:
   name: github-token-config
@@ -410,33 +439,34 @@ spec:
     audience: github-api
 
 ---
-# 3. Create backend MCPServer
-apiVersion: toolhive.stacklok.dev/v1alpha1
+# 4. Create backend MCPServer
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: github-mcp
   namespace: toolhive-system
 spec:
-  groupRef: engineering-tools
+  groupRef:
+    name: engineering-tools
   image: ghcr.io/example/github-mcp-server:v1.2.3
   transport: sse
   externalAuthConfigRef:
     name: github-token-config
 
 ---
-# 4. Create VirtualMCPServer (discovered mode)
-apiVersion: toolhive.stacklok.dev/v1alpha1
+# 5. Create VirtualMCPServer (discovered mode)
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: VirtualMCPServer
 metadata:
   name: engineering-vmcp
   namespace: toolhive-system
 spec:
-  config:
-    groupRef: engineering-tools
+  groupRef:
+    name: engineering-tools
   incomingAuth:
     type: oidc
-    oidc:
-      issuer: https://auth.company.com
+    oidcConfigRef:
+      name: engineering-oidc
       audience: engineering-vmcp
   outgoingAuth:
     source: discovered # Discovers github-mcp and its auth config
@@ -478,12 +508,12 @@ kubectl get virtualmcpserver engineering-vmcp -n toolhive-system \
 2. **Backend resources not referencing the correct group**
 
    ```bash
-   kubectl get mcpserver,mcpremoteproxy -n toolhive-system \
+   kubectl get mcpserver,mcpremoteproxy,mcpserverentry -n toolhive-system \
      -o custom-columns=NAME:.metadata.name,GROUP:.spec.groupRef
    ```
 
    Ensure all backends have `spec.groupRef` matching the VirtualMCPServer's
-   `spec.config.groupRef`.
+   `spec.groupRef`.
 
 3. **vMCP pod not restarted after backend changes**
 
@@ -592,7 +622,8 @@ resource "mcpservers"
 
    Required permissions for discovered mode:
    - `configmaps`, `secrets`: get, list, watch
-   - `mcpgroups`, `mcpservers`, `mcpremoteproxies`: get, list, watch
+   - `mcpgroups`, `mcpservers`, `mcpremoteproxies`, `mcpserverentries`: get,
+     list, watch
    - `mcpexternalauthconfigs`, `mcptoolconfigs`: get, list, watch
    - `virtualmcpservers/status`: update, patch
 
@@ -673,10 +704,10 @@ spec:
 **Missing groupRef:**
 
 ```text
-Error: spec.config.groupRef is required
+Error: spec.groupRef is required
 ```
 
-**Fix:** Add `spec.config.groupRef` referencing an existing MCPGroup.
+**Fix:** Add `spec.groupRef` referencing an existing MCPGroup.
 
 **Invalid backend URL in inline mode:**
 
@@ -728,8 +759,14 @@ remove the auth reference.
 
 </details>
 
+## Next steps
+
+- [Set up authentication](./authentication.mdx) for client-to-vMCP and
+  vMCP-to-backend security
+- [Configure tool aggregation](./tool-aggregation.mdx) to manage how tools from
+  multiple backends are presented to clients
+
 ## Related information
 
 - [Configure vMCP servers](./configuration.mdx)
-- [Authentication](./authentication.mdx)
-- [VirtualMCPServer CRD specification](../reference/crd-spec.md#apiv1alpha1virtualmcpserver)
+- [VirtualMCPServer CRD specification](../reference/crds/virtualmcpserver.mdx)

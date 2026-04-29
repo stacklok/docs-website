@@ -8,17 +8,17 @@ description:
 Without authorization, every authenticated user has access to every tool an MCP
 server exposes. By the end of this tutorial, you'll have a GitHub MCP server on
 Kubernetes secured with Okta OpenID Connect (OIDC) authentication and Cedar
-role-based access control (RBAC) policies — writers get full access while
-readers see only read-only tools.
+role-based access control (RBAC) policies. Writers get full access while readers
+see only read-only tools.
 
 :::tip[Using a different identity provider?]
 
 This tutorial uses Okta, but the pattern applies to any OIDC provider. Only Step
-1 is Okta-specific — it covers creating an OIDC application, setting up groups,
+1 is Okta-specific. It covers creating an OIDC application, setting up groups,
 and adding a groups claim to the token. If you use a different provider
 (Keycloak, Entra ID, Auth0, etc.), complete the equivalent setup in your
 provider, then pick up from [Step 2](#step-2-deploy-the-github-mcp-server)
-onward. The Kubernetes manifests, Cedar policies, and `oidcConfig` fields all
+onward. The Kubernetes manifests, Cedar policies, and `oidcConfigRef` fields all
 consume standard OIDC values regardless of which provider issued them.
 
 :::
@@ -129,7 +129,7 @@ Create the MCPServer resource without authentication to verify the basic
 deployment works:
 
 ```yaml title="github-mcpserver.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: github
@@ -166,10 +166,10 @@ You should see output similar to:
 
 ```text
 NAME     STATUS   URL                                                              AGE
-github   Running  http://mcp-github-proxy.toolhive-system.svc.cluster.local:8080   30s
+github   Ready    http://mcp-github-proxy.toolhive-system.svc.cluster.local:8080   30s
 ```
 
-Wait until the status shows `Running` before continuing to the next step. If the
+Wait until the status shows `Ready` before continuing to the next step. If the
 server remains in a pending state, check the operator logs for errors:
 
 ```bash
@@ -178,12 +178,23 @@ kubectl logs -n toolhive-system deployment/toolhive-operator
 
 ## Step 3: Add Okta OIDC authentication
 
-Update the MCPServer to include an `oidcConfig` section. Replace the placeholder
-values with the configuration values you collected in
-[Step 1](#collect-your-configuration-values):
+Create an MCPOIDCConfig resource with your Okta OIDC settings, then update the
+MCPServer to reference it. Replace the placeholder values with the configuration
+values you collected in [Step 1](#collect-your-configuration-values):
 
 ```yaml title="github-mcpserver-oidc.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: okta-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: 'YOUR_ISSUER_URL'
+    jwksUrl: 'YOUR_JWKS_URL'
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: github
@@ -196,12 +207,9 @@ spec:
       key: token
       targetEnvName: GITHUB_PERSONAL_ACCESS_TOKEN
   # highlight-start
-  oidcConfig:
-    type: inline
-    inline:
-      issuer: 'YOUR_ISSUER_URL'
-      audience: 'YOUR_AUDIENCE'
-      jwksUrl: 'YOUR_JWKS_URL'
+  oidcConfigRef:
+    name: okta-oidc
+    audience: 'YOUR_AUDIENCE'
   # highlight-end
   # ... resources same as before
 ```
@@ -287,7 +295,7 @@ Add the `authzConfig` section to reference the ConfigMap you just created. The
 highlighted lines show the new addition:
 
 ```yaml title="github-mcpserver-authz.yaml"
-apiVersion: toolhive.stacklok.dev/v1alpha1
+apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
   name: github
@@ -299,12 +307,9 @@ spec:
     - name: github-pat
       key: token
       targetEnvName: GITHUB_PERSONAL_ACCESS_TOKEN
-  oidcConfig:
-    type: inline
-    inline:
-      issuer: 'YOUR_ISSUER_URL'
-      audience: 'YOUR_AUDIENCE'
-      jwksUrl: 'YOUR_JWKS_URL'
+  oidcConfigRef:
+    name: okta-oidc
+    audience: 'YOUR_AUDIENCE'
   # highlight-start
   authzConfig:
     type: configMap
@@ -397,7 +402,7 @@ curl -X POST http://localhost:8080/mcp \
 ```
 
 The proxy denies the request and returns a `403 Forbidden` response. Sending the
-same request with a writer's token succeeds — the proxy forwards the request to
+same request with a writer's token succeeds. The proxy forwards the request to
 the MCP server and returns the tool's response.
 
 ## Clean up
@@ -430,7 +435,7 @@ kubectl delete secret -n toolhive-system github-pat
 If clients can't authenticate:
 
 1. Check that the JWT is valid and not expired.
-2. Verify that the audience and issuer match your `oidcConfig` values.
+2. Verify that the audience and issuer match your MCPOIDCConfig values.
 3. Ensure the JWKS URL is accessible from within the cluster.
 4. Check the operator and proxy logs for specific errors:
 
@@ -481,7 +486,7 @@ policies if needed.
 </details>
 
 <details>
-<summary>401 after adding oidcConfig</summary>
+<summary>401 after adding OIDC configuration</summary>
 
 Verify that the issuer URL includes the full authorization server path. For the
 default Okta authorization server, the issuer URL should end with
