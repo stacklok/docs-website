@@ -568,222 +568,260 @@ The same 30-second default applies to the backend Deployment.
 
 ## Troubleshooting
 
-<details>
-<summary>MCPServer resource not creating pods</summary>
+Troubleshooting an MCPServer typically falls into one of three failure modes,
+depending on how far the resource has progressed: the operator never picks it
+up, the operator accepts it but pods fail, or pods run but clients can't reach
+the server. Start with `kubectl describe mcpserver <NAME>` to see which stage
+your server is stuck at, then jump to the matching section below.
 
-If your `MCPServer` resource is created but no pods appear, first ensure you
-created the `MCPServer` resource in an allowed namespace. If the operator runs
-in namespace mode and you didn't include the namespace in the
-`allowedNamespaces` list, the operator ignores the resource. Check the
-operator's configuration:
+### MCPServer not picked up by the operator
+
+The resource exists in the cluster but no proxy pod or backend pod is created,
+and `kubectl describe mcpserver` shows no events from the operator.
+
+<details>
+<summary>MCPServer resource is ignored by the operator</summary>
+
+The most common cause is that the operator runs in namespace mode and the
+MCPServer is in a namespace that isn't in `allowedNamespaces`. Check the
+operator configuration:
 
 ```bash
 helm get values toolhive-operator -n toolhive-system
 ```
 
-Check the `operator.rbac.scope` and `operator.rbac.allowedNamespaces`
-properties. If the operator runs in `namespace` mode, add the namespace where
-you created the `MCPServer` to the `allowedNamespaces` list. See
+Look at `operator.rbac.scope` and `operator.rbac.allowedNamespaces`. If the
+scope is `namespace`, add the MCPServer's namespace to `allowedNamespaces` and
+upgrade the chart. See
 [Operator deployment modes](./deploy-operator.mdx#operator-deployment-modes).
 
-If the operator runs in `cluster` mode (default) or the `MCPServer` is in an
-allowed namespace, check the operator logs and resource status:
+If the scope is `cluster` (the default) or the namespace is already allowed,
+verify the operator is actually running and isn't crash-looping:
 
 ```bash
-# Check MCPServer status
-kubectl -n <NAMESPACE> describe mcpserver <NAME>
-
-# Check operator logs
-kubectl -n toolhive-system logs -l app.kubernetes.io/name=toolhive-operator
-
-# Verify the operator is running
 kubectl -n toolhive-system get pods -l app.kubernetes.io/name=toolhive-operator
+kubectl -n toolhive-system logs -l app.kubernetes.io/name=toolhive-operator --tail=100
 ```
 
-Other common causes include:
+Also confirm the CRDs are installed and match the API version your manifest
+uses:
 
-- **Operator not running**: Ensure the ToolHive operator is deployed and running
-- **Invalid image reference**: Verify the container image exists and is
-  accessible
-- **RBAC issues**: The operator automatically creates RBAC resources, but check
-  for cluster-level permission issues
-- **Resource quotas**: Check if namespace resource quotas prevent pod creation
+```bash
+kubectl api-resources --api-group=toolhive.stacklok.dev
+```
+
+If `mcpservers` doesn't appear, the CRDs aren't installed. See
+[Install the CRDs](./deploy-operator.mdx#install-the-crds).
 
 </details>
 
 <details>
-<summary>MCP server pod fails to start</summary>
+<summary>MCPServer status shows a validation error</summary>
 
-If the MCP server pod is created but fails to start or is in `CrashLoopBackOff`:
+If the operator did reconcile but rejected the resource, `kubectl describe`
+shows the reason in events or status conditions:
 
 ```bash
-# Check pod status
-kubectl -n <NAMESPACE> get pods
-
-# Describe the failing pod
-kubectl -n <NAMESPACE> describe pod <POD_NAME>
-
-# Check pod logs
-kubectl -n <NAMESPACE> logs <POD_NAME> -c mcp
+kubectl -n <NAMESPACE> describe mcpserver <NAME>
 ```
 
-Common causes include:
+Common validation failures:
 
-- **Image pull errors**: Verify the container image is accessible and the image
-  name is correct
-- **Missing secrets**: Ensure required secrets exist and are properly referenced
-- **Resource constraints**: Check if the pod has sufficient CPU and memory
-  resources
-- **Permission issues**: Verify the security context and RBAC permissions are
-  correctly configured
-- **Invalid arguments**: Check if the `args` field contains valid arguments for
-  the MCP server
+- A referenced ConfigMap or Secret (for example, `oidcConfigRef`,
+  `toolConfigRef`, `secrets[*].name`) doesn't exist in the same namespace
+- `transport: stdio` is set with `backendReplicas > 1`, which the operator
+  rejects
+- The container name in `podTemplateSpec.containers` is not `mcp`
+
+Fix the referenced field, then reapply the resource.
 
 </details>
 
-<details>
-<summary>Proxy pod connection issues</summary>
+### Resource accepted but pods are failing
 
-If the proxy pod is running but clients cannot connect:
+The operator created the proxy and backend Deployments, but one or both pods are
+not Running. Check pod status first:
 
 ```bash
-# Check proxy pod status
 kubectl -n <NAMESPACE> get pods -l app.kubernetes.io/instance=<MCPSERVER_NAME>
-
-# Check proxy logs
-kubectl -n <NAMESPACE> logs -l app.kubernetes.io/instance=<MCPSERVER_NAME>
-
-# Verify service is created
-kubectl -n <NAMESPACE> get services
-```
-
-Common causes include:
-
-- **Service not created**: Ensure the proxy service exists and has the correct
-  selectors
-- **Port configuration**: Verify the `port` field matches the MCP server's
-  listening port
-- **Transport mismatch**: Ensure the `transport` field
-  (stdio/sse/streamable-http) matches the MCP server's capabilities
-- **Network policies**: Check if network policies are blocking communication
-
-</details>
-
-<details>
-<summary>Secret mounting issues</summary>
-
-If secrets are not being properly mounted or environment variables are missing:
-
-```bash
-# Check if secret exists
-kubectl -n <NAMESPACE> get secret <SECRET_NAME>
-
-# Verify secret content
-kubectl -n <NAMESPACE> describe secret <SECRET_NAME>
-
-# Check environment variables in the pod
-kubectl -n <NAMESPACE> exec <POD_NAME> -c mcp -- env | grep <ENV_VAR_NAME>
-```
-
-Common causes include:
-
-- **Secret doesn't exist**: Create the secret in the correct namespace
-- **Wrong key name**: Ensure the `key` field matches the actual key in the
-  secret
-- **Namespace mismatch**: Secrets must be in the same namespace as the
-  `MCPServer`
-- **Permission issues**: The operator automatically creates the necessary RBAC
-  resources, but verify the ServiceAccount has access to read secrets
-
-</details>
-
-<details>
-<summary>Volume mounting problems</summary>
-
-If persistent volumes or other volumes are not mounting correctly:
-
-```bash
-# Check PVC status
-kubectl -n <NAMESPACE> get pvc
-
-# Describe the PVC
-kubectl -n <NAMESPACE> describe pvc <PVC_NAME>
-
-# Check volume mounts in the pod
 kubectl -n <NAMESPACE> describe pod <POD_NAME>
 ```
 
-Common causes include:
+`kubectl describe pod` surfaces image pull errors, scheduling problems,
+out-of-memory kills, and missing Secret/ConfigMap mounts directly in the events
+section, so check there before drilling deeper.
 
-- **PVC not bound**: Ensure the PersistentVolumeClaim is bound to a
-  PersistentVolume
-- **Namespace mismatch**: The PVC must be in the same namespace as the MCPServer
-- **Storage class issues**: Verify the storage class exists and is available
-- **Access mode conflicts**: Check that the access mode is compatible with your
-  setup
-- **Mount path conflicts**: Ensure mount paths don't conflict with existing
-  directories
+<details>
+<summary>Pod stuck in ImagePullBackOff or ErrImagePull</summary>
+
+The cluster can't pull the container image. Verify the image reference and
+authentication:
+
+```bash
+kubectl -n <NAMESPACE> describe pod <POD_NAME> | grep -A3 -i "failed to pull"
+```
+
+Check that:
+
+- The `spec.image` value is correct, including the registry, repository, and tag
+- The image exists and is publicly accessible, or the cluster has an
+  `imagePullSecrets` reference for a private registry
+- Cluster nodes have network egress to the registry
 
 </details>
 
 <details>
-<summary>Resource limit issues</summary>
+<summary>Pod in CrashLoopBackOff</summary>
 
-If pods are being killed due to resource constraints:
+The container starts but exits repeatedly. Check the logs from the failing
+container, including the previous instance:
 
 ```bash
-# Check resource usage
-kubectl -n <NAMESPACE> top pods
+kubectl -n <NAMESPACE> logs <POD_NAME> -c mcp
+kubectl -n <NAMESPACE> logs <POD_NAME> -c mcp --previous
+```
 
-# Check for resource limit events
+Typical causes:
+
+- Missing or wrong environment variables. If you reference a Secret in
+  `spec.secrets`, confirm the Secret exists in the same namespace and the `key`
+  matches:
+
+  ```bash
+  kubectl -n <NAMESPACE> get secret <SECRET_NAME> -o yaml
+  ```
+
+- Invalid `args` for the MCP server. Many servers fail fast on bad CLI
+  arguments. Compare your `args` to the upstream image documentation.
+- The MCP server expects a writable filesystem or specific volume mounts that
+  aren't provided.
+
+</details>
+
+<details>
+<summary>Pod stuck in Pending</summary>
+
+The pod was created but never scheduled. `kubectl describe pod` shows the
+reason. Common cases:
+
+- A namespace ResourceQuota or LimitRange is blocking pod creation. The events
+  section names the limit that was exceeded.
+- The pod requests more CPU or memory than any node can satisfy. Lower
+  `resources.requests` or add nodes.
+- A `nodeSelector`, `affinity`, or `tolerations` rule in your `podTemplateSpec`
+  doesn't match any node.
+- A PersistentVolumeClaim is unbound. Check PVC status:
+
+  ```bash
+  kubectl -n <NAMESPACE> get pvc
+  ```
+
+</details>
+
+<details>
+<summary>Pod is OOMKilled or terminated by the kubelet</summary>
+
+If `kubectl describe pod` shows `Last State: Terminated, Reason: OOMKilled`, the
+container exceeded its memory limit. Either raise `resources.limits.memory` on
+the MCPServer (or on the `mcp` container in `podTemplateSpec` for the backend),
+or reduce the workload's memory use. Check recent events for context:
+
+```bash
 kubectl -n <NAMESPACE> get events --sort-by='.lastTimestamp'
-
-# Describe the pod for resource information
-kubectl -n <NAMESPACE> describe pod <POD_NAME>
 ```
-
-Solutions:
-
-- **Increase resource limits**: Adjust `resources.limits` in the `MCPServer`
-  spec
-- **Optimize resource requests**: Set appropriate `resources.requests` values
-- **Check node capacity**: Ensure cluster nodes have sufficient resources
-- **Review resource quotas**: Check namespace resource quotas and limits
 
 </details>
 
-<details>
-<summary>Debugging connectivity</summary>
+### Pods running but the server is unreachable
 
-To test connectivity between components:
+Both the proxy and backend pods are Ready, but clients see connection failures
+or empty tool lists. Verify the path from client to proxy to backend.
+
+<details>
+<summary>Client gets connection refused or no response from the Service</summary>
+
+Check the Service exists and has endpoints:
 
 ```bash
-# Port-forward to test direct access to the proxy
-kubectl -n <NAMESPACE> port-forward service/<MCPSERVER_NAME> 8080:8080
+kubectl -n <NAMESPACE> get svc -l app.kubernetes.io/instance=<MCPSERVER_NAME>
+kubectl -n <NAMESPACE> get endpoints -l app.kubernetes.io/instance=<MCPSERVER_NAME>
+```
 
-# Test the connection locally (should return {"status":"healthy",...})
+If endpoints are empty, the Service selector doesn't match any Ready pod.
+Confirm the proxy pod is Ready and not failing readiness probes.
+
+Port-forward and test the proxy locally to isolate cluster networking from the
+proxy itself:
+
+```bash
+kubectl -n <NAMESPACE> port-forward service/mcp-<MCPSERVER_NAME>-proxy 8080:8080
 curl -s http://localhost:8080/health | jq .status
-
-# Check service endpoints
-kubectl -n <NAMESPACE> get endpoints
 ```
+
+A `"healthy"` response confirms the proxy is up. If port-forward works but
+external clients can't reach the Service, see
+[Connect clients to MCP servers](./connect-clients.mdx) for Ingress and Gateway
+API configuration.
 
 </details>
 
 <details>
-<summary>Getting more debug information</summary>
+<summary>Client connects but sees no tools</summary>
 
-For additional debugging information:
+The proxy is reachable but `tools/list` returns nothing, or your MCP client
+shows zero tools. Use the ToolHive CLI's debug subcommand against the
+port-forwarded URL to confirm the server side:
 
 ```bash
-# Get all resources related to your MCP server
+kubectl -n <NAMESPACE> port-forward service/mcp-<MCPSERVER_NAME>-proxy 8080:8080
+thv mcp list tools --server http://localhost:8080/mcp
+```
+
+If `thv mcp list tools` returns the expected tools, the issue is on the client
+or in the path between the client and the cluster (Ingress, network policy,
+auth). If it also returns nothing, check:
+
+- The proxy logs for backend connection errors:
+
+  ```bash
+  kubectl -n <NAMESPACE> logs -l app.kubernetes.io/instance=<MCPSERVER_NAME> -c toolhive
+  ```
+
+- That `transport` matches what the upstream MCP server actually speaks
+  (`stdio`, `sse`, or `streamable-http`)
+- Whether a `toolConfigRef` is filtering tools more aggressively than expected
+
+</details>
+
+<details>
+<summary>NetworkPolicy is blocking traffic</summary>
+
+If the cluster uses NetworkPolicies, a policy may block ingress to the proxy or
+egress from the proxy to the backend. List policies in both namespaces:
+
+```bash
+kubectl -n <NAMESPACE> get networkpolicy
+kubectl -n <CLIENT_NAMESPACE> get networkpolicy
+```
+
+Allow traffic from the client namespace to the proxy Service on `proxyPort`, and
+from the proxy pod to the backend pod on `mcpPort`. See
+[Connect clients to MCP servers](./connect-clients.mdx#network-policies-for-cross-namespace-access)
+for example rules.
+
+</details>
+
+<details>
+<summary>Gather more debug information</summary>
+
+To collect everything related to a single MCPServer for a bug report or deeper
+investigation:
+
+```bash
 kubectl -n <NAMESPACE> get all -l app.kubernetes.io/instance=<MCPSERVER_NAME>
-
-# Check operator events
 kubectl -n <NAMESPACE> get events --field-selector involvedObject.kind=MCPServer
-
-# Export MCPServer resource for inspection
 kubectl -n <NAMESPACE> get mcpserver <NAME> -o yaml
+kubectl -n toolhive-system logs -l app.kubernetes.io/name=toolhive-operator --tail=200
 ```
 
 </details>
