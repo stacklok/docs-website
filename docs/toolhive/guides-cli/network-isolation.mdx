@@ -335,26 +335,34 @@ default behavior of allowing traffic only from the container's own hostname,
 <details>
 <summary>Network connectivity issues</summary>
 
-If your MCP server can't connect to external services:
+If your MCP server can't reach an external service when network isolation is
+enabled, the egress proxy is the source of truth for what's allowed and what
+gets denied.
 
-1. Verify that your profile allows the necessary hosts and ports
-2. Check that the transport protocol (TCP/UDP) is allowed
-3. Check the logs of the egress proxy container for blocked requests:
+1. Confirm your profile lists the host and port the server is trying to reach.
+   Network isolation only supports HTTP and HTTPS, so direct TCP/UDP connections
+   (databases, custom protocols) won't work behind the egress proxy.
+
+2. Check the egress proxy logs for the blocked request. ToolHive launches the
+   egress container as `<SERVER_NAME>-egress`:
 
    ```bash
    docker logs <SERVER_NAME>-egress
    ```
 
-   Look for messages indicating denied connections.
+   Look for denied or `403`-style entries that name the host and port the server
+   attempted to reach.
 
-4. Try temporarily using the default `network` profile to confirm it's a
-   permissions issue:
+3. To prove it's a permissions issue and not a different failure, run the server
+   temporarily with the built-in `network` profile, which allows all outbound
+   HTTP/HTTPS:
 
    ```bash
    thv run --isolate-network --permission-profile network <SERVER>
    ```
 
-5. If the default profile works, review the egress proxy logs to identify which
-   specific permissions are missing in your custom profile.
+   If the server works with this profile, copy the host and port from the denied
+   entries in step 2 into your custom profile's `network.outbound.allow_host`
+   and `allow_port` lists.
 
 </details>

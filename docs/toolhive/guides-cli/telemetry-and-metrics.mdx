@@ -430,37 +430,60 @@ Telemetry adds minimal overhead when properly configured:
 
 If traces aren't showing up in your backend:
 
-1. Verify the endpoint URL and authentication headers
-2. Check network connectivity to the OTLP endpoint
-3. Ensure sampling rate isn't too low (set to `1.0` temporarily for testing)
-4. Check the ToolHive log file for errors related to telemetry (the log file
-   path is displayed when you start a server with `thv run`)
-5. If your endpoint uses a self-signed certificate or a certificate from a
-   custom CA, use the `--thv-ca-bundle` flag to add your CA or self-signed
-   certificate.
+1. Confirm the endpoint URL and authentication headers. The `--otel-endpoint`
+   flag takes a hostname and optional port, with no scheme or path. For example,
+   `api.honeycomb.io`, not `https://api.honeycomb.io/v1/traces`.
+2. Set the sampling rate to `1.0` temporarily so you can rule out a sampling
+   issue:
+
+   ```bash
+   thv run --otel-sampling-rate 1.0 --otel-endpoint <ENDPOINT> <SERVER>
+   ```
+
+3. Check the ToolHive log file for telemetry export errors. The log path is
+   printed when you start a server with `thv run`, and you can also view it
+   with:
+
+   ```bash
+   thv logs <SERVER_NAME>
+   ```
+
+4. If your endpoint uses a self-signed certificate or a certificate from a
+   custom CA, pass the bundle with `--thv-ca-bundle`. For local collectors
+   served over plain HTTP, use `--otel-insecure` instead.
 
 </details>
 
 <details>
 <summary>Prometheus metrics not available</summary>
 
-If the `/metrics` endpoint isn't accessible:
+If the `/metrics` endpoint isn't reachable:
 
-1. Confirm `--otel-enable-prometheus-metrics-path` is set
-2. Check that you're accessing the correct port
-3. Verify no firewall is blocking the port
+1. Confirm the server was started with `--otel-enable-prometheus-metrics-path`.
+   You can verify by re-checking `thv list` and curling the URL it shows with
+   `/metrics` appended:
+
+   ```bash
+   thv list
+   curl http://127.0.0.1:<PORT>/metrics
+   ```
+
+2. The `/metrics` endpoint is served on the same proxy port as the MCP server.
+   If `curl` returns connection refused, the server isn't running on that port
+   at all - check `thv list` again and look for the actual port.
 
 </details>
 
 <details>
 <summary>High CPU or memory usage</summary>
 
-If telemetry is consuming too many resources on your system:
+If telemetry is consuming too many resources:
 
-1. Reduce the sampling rate with `--otel-sampling-rate` for specific servers or
-   globally with `thv config otel set-sampling-rate`
-2. Only enable telemetry for servers you need to monitor
-3. Monitor the resource usage of the OpenTelemetry Collector or other backend
-   services
+1. Lower the sampling rate, either per-server with `--otel-sampling-rate` or
+   globally with `thv config otel set-sampling-rate`. A rate of `0.01` (1%) is a
+   reasonable starting point for high-traffic servers.
+2. Only enable telemetry for the servers you actually need to observe.
+3. If the load is on your collector or backend, check its own resource metrics,
+   not ToolHive's.
 
 </details>
