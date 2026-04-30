@@ -897,28 +897,27 @@ MCP server usage and performance.
 <details>
 <summary>Ingress returns 503 Service Unavailable</summary>
 
-If your Ingress returns a 503 error:
+A 503 from the Ingress means the controller has no healthy backend to forward
+to. Check the Service exists and has endpoints:
 
 ```bash
-# Check if the service exists
-kubectl get service -n toolhive-system mcp-fetch-proxy
-
-# Check the proxy pod is running
-kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=fetch
-
-# Check pod logs for errors
+kubectl describe svc -n toolhive-system mcp-fetch-proxy
+kubectl get endpoints -n toolhive-system mcp-fetch-proxy
+kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=fetch --show-labels
 kubectl logs -n toolhive-system -l app.kubernetes.io/instance=fetch
 ```
 
-Common causes:
+If the Service is missing, the operator hasn't reconciled the MCPServer yet (see
+[Run MCP servers in Kubernetes › Troubleshooting](./run-mcp-k8s.mdx#troubleshooting)).
+If endpoints are empty, possible causes include:
 
-- **Proxy pod not running**: Ensure the MCPServer resource was created
-  successfully
-- **Wrong service name**: The Ingress backend service name must follow the
-  naming conventions defined above
-- **Wrong port**: The Ingress backend port must match the `proxyPort` in the
-  MCPServer spec
-- **Pod health check failing**: Check the proxy pod logs for errors
+- The proxy pod isn't Ready. The pod logs show why.
+- The Service selector doesn't match the proxy pod's labels (compare
+  `kubectl describe svc` selector with `kubectl get pods --show-labels`).
+- The Ingress backend Service name doesn't match the
+  [service naming convention](#connect-from-outside-the-cluster) (for example,
+  `mcp-<MCPSERVER_NAME>-proxy`).
+- The Ingress backend port doesn't match `spec.proxyPort` on the MCPServer.
 
 </details>
 
@@ -994,52 +993,41 @@ For detailed OAuth setup and troubleshooting, see the
 </details>
 
 <details>
-<summary>Cannot connect from within cluster</summary>
+<summary>Cannot connect from within the cluster</summary>
 
-If pods cannot connect to the MCP server service:
+If a pod can't reach the proxy Service, first confirm the Service exists and has
+endpoints:
 
 ```bash
-# Verify service exists
-kubectl get service -n toolhive-system mcp-fetch-proxy
+kubectl describe svc -n toolhive-system mcp-fetch-proxy
+kubectl get endpoints -n toolhive-system mcp-fetch-proxy
+kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=fetch --show-labels
+```
 
-# Check that pods are running
-kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=fetch
+If endpoints are empty, the proxy pod isn't Ready, or the Service selector
+doesn't match the proxy pod's labels (compare the `Selector:` line from
+`describe svc` with the labels from `get pods`). If endpoints look correct, test
+DNS and connectivity from a temporary pod:
 
-# Test DNS resolution from a pod
+```bash
 kubectl run test-dns -n toolhive-system --image=busybox --restart=Never -- \
   nslookup mcp-fetch-proxy.toolhive-system.svc.cluster.local
-
-# Check the DNS test results
 kubectl logs -n toolhive-system test-dns
-
-# Clean up the test pod
 kubectl delete pod -n toolhive-system test-dns
 
-# Test connectivity from a pod
 kubectl run test-curl -n toolhive-system --image=curlimages/curl --restart=Never -- \
-  curl -X POST http://mcp-fetch-proxy:8080/mcp \
+  curl -sS -X POST http://mcp-fetch-proxy:8080/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
-
-# Check the connectivity test results
 kubectl logs -n toolhive-system test-curl
-
-# Clean up the test pod
 kubectl delete pod -n toolhive-system test-curl
 ```
 
-Common causes:
-
-- **Network policies blocking traffic**: Check for network policies that might
-  prevent pod-to-pod communication
-- **Wrong namespace**: Ensure you're using the correct service DNS name for
-  cross-namespace access
-- **Service not created**: The operator automatically creates services, but
-  verify it exists
-- **Wrong port**: Ensure you're using the `proxyPort` value from the MCPServer
-  spec
-- **Wrong service name**: Remember the service name follows the naming
-  conventions defined above
+If DNS fails, verify the [service naming convention](#service-dns-names) and use
+the full `<SERVICE>.<NAMESPACE>.svc.cluster.local` form for cross-namespace
+calls. If DNS resolves but the request hangs or is refused, a NetworkPolicy is
+the most likely cause - see
+[Network policies for cross-namespace access](#network-policies-for-cross-namespace-access).
 
 </details>
 
