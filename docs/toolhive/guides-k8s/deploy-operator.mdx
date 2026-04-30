@@ -181,6 +181,40 @@ To see all available configuration options, run:
 helm show values oci://ghcr.io/stacklok/toolhive/toolhive-operator
 ```
 
+### Pull workload images from a private registry
+
+If your MCP server, proxy runner, vMCP, registry API, or embedding server images
+live in a private container registry, use `operator.defaultImagePullSecrets` to
+apply pull credentials to every workload the operator spawns:
+
+```yaml title="values.yaml"
+operator:
+  defaultImagePullSecrets:
+    - regcred
+    - name: backup-regcred
+```
+
+Each entry is the name of a Kubernetes Secret of type
+`kubernetes.io/dockerconfigjson` (or another image-pull-secret type) that must
+exist in the namespace where each workload is created. Plain string and object
+forms are equivalent.
+
+The secrets propagate to the pod spec and the operator-managed ServiceAccount of
+every workload-spawning controller: `MCPServer`, `MCPRemoteProxy`,
+`MCPRegistry`, `VirtualMCPServer`, and `EmbeddingServer`. Chart-level entries
+are appended to any per-CR `imagePullSecrets` already configured on the
+resource. Common per-CR fields are:
+
+- `spec.imagePullSecrets` on `MCPRegistry` and `VirtualMCPServer`
+- `spec.resourceOverrides.proxyDeployment.imagePullSecrets` on `MCPServer` and
+  `MCPRemoteProxy`
+
+Per-CR entries take precedence when a secret name appears in both places.
+
+The chart also exposes `operator.imagePullSecrets`, which controls only the
+operator's own pod. Use it when the operator image itself is in a private
+registry; use `defaultImagePullSecrets` for the workloads the operator manages.
+
 ## Operator deployment modes
 
 The ToolHive operator supports two distinct deployment modes to accommodate
