@@ -1,0 +1,279 @@
+---
+title: Client configuration
+description: How to configure AI agent clients to work with ToolHive MCP servers.
+---
+
+import ClientIntro from '../_partials/_client-config-intro.mdx';
+
+<ClientIntro term='Register' />
+
+## Register clients
+
+The easiest way to register clients is to run the
+[setup command](../reference/cli/thv_client_setup.md):
+
+```bash
+thv client setup
+```
+
+ToolHive discovers supported clients installed on your system and lets you
+select which ones to register. ToolHive detects clients based on the presence of
+the client's configuration file in its default location. See the
+[Client compatibility reference](../reference/client-compatibility.mdx) for
+details on which clients ToolHive supports and how it detects them.
+
+To view the current status of detected and configured clients, run:
+
+```bash
+thv client status
+```
+
+:::note
+
+ToolHive previously included an "auto-discovery" mode. We removed this mode in
+v0.1.0 to simplify client configuration and ensure consistent control and
+behavior. If you previously enabled client auto-discovery, ToolHive will
+explicitly register all detected clients the first time you run v0.1.0 and
+higher.
+
+Going forward, use the `thv client setup` command to manage your client
+configurations.
+
+:::
+
+## Alternative client registration
+
+If you prefer to register clients manually or in an automated script, use the
+`thv client register` command:
+
+```bash
+thv client register <CLIENT_NAME>
+```
+
+Replace `<CLIENT_NAME>` with the name of your client. Common client names
+include:
+
+- `claude-code` - Claude Code CLI
+- `cursor` - Cursor IDE
+- `roo-code` - Roo Code extension for Visual Studio Code
+- `cline` - Cline extension for Visual Studio Code
+- `vscode` - Visual Studio Code (GitHub Copilot)
+- `vscode-insider` - VS Code Insiders edition
+
+Example:
+
+```bash
+thv client register vscode
+```
+
+You can register a client with a specific group using the `--group` option:
+
+```bash
+thv client register <CLIENT_NAME> --group <GROUP_NAME>
+```
+
+Run [`thv client register --help`](../reference/cli/thv_client_register.md) for
+the latest list of supported clients.
+
+To list currently registered clients:
+
+```bash
+thv client list-registered
+```
+
+Repeat the registration step for any additional clients you want to configure.
+
+You might need to restart your client application for the configuration to take
+effect.
+
+To remove a client configuration:
+
+```bash
+thv client remove <CLIENT_NAME>
+```
+
+To remove a client configuration from a specific group:
+
+```bash
+thv client remove <CLIENT_NAME> --group <GROUP_NAME>
+```
+
+## Other clients or tools
+
+If you have other clients or development libraries that ToolHive doesn't
+directly support, you can still configure them to use ToolHive-managed MCP
+servers if they support the SSE or Streamable HTTP protocol. Check your client
+or library documentation for configuration details.
+
+List your running MCP servers to get the URL:
+
+```bash
+thv list
+```
+
+Example output (some fields omitted for brevity):
+
+```text
+NAME     PACKAGE                                         STATUS    URL                                 PORT
+github   ghcr.io/github/github-mcp-server:latest         running   http://127.0.0.1:55264/mcp          55264
+sqlite   ghcr.io/stackloklabs/sqlite-mcp/server:latest   running   http://127.0.0.1:22089/sse#sqlite   22089
+```
+
+In this example, the `github` server uses the Streamable HTTP transport (URL
+ends in `/mcp`), and the `sqlite` server uses SSE (URL ends in `/sse`).
+
+You can also get the list in JSON format, which works with many clients that use
+the standard configuration format:
+
+```bash
+thv list --format mcpservers
+```
+
+Example output:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "url": "http://127.0.0.1:55264/mcp"
+    },
+    "sqlite": {
+      "url": "http://127.0.0.1:22089/sse#sqlite"
+    }
+  }
+}
+```
+
+Configure your client or library to connect to the MCP server using the URL
+ToolHive provides.
+
+## Related information
+
+- [`thv client` command reference](../reference/cli/thv_client.md)
+- [`thv config` command reference](../reference/cli/thv_config.md)
+- [Client compatibility](../reference/client-compatibility.mdx)
+- [Run MCP servers](./run-mcp-servers.mdx)
+
+## Troubleshooting
+
+<details>
+<summary>Client is not detected by `thv client setup`</summary>
+
+If ToolHive doesn't detect your client:
+
+1. Verify ToolHive supports your client in the
+   [Client compatibility reference](../reference/client-compatibility.mdx).
+
+2. Make sure you installed the client in its default location. ToolHive detects
+   clients based on their configuration files. If the client isn't in its
+   default location, ToolHive can't detect it.
+
+3. Try manually registering the client:
+
+   ```bash
+   thv client register <CLIENT_NAME>
+   ```
+
+</details>
+
+<details>
+<summary>Client can't connect to MCP server</summary>
+
+If your client can't connect to the MCP server:
+
+1. Verify the MCP server is running:
+
+   ```bash
+   thv list
+   ```
+
+   See [Test MCP servers](./test-mcp-servers.mdx) for help testing the MCP
+   server's availability.
+
+2. Check if the client is registered:
+
+   ```bash
+   thv client status
+   ```
+
+3. Restart your client application.
+
+</details>
+
+<details>
+<summary>Client can connect but tools aren't available</summary>
+
+If your client connects to the MCP server but tools aren't available:
+
+1. Make sure the MCP server is running and accessible:
+
+   ```bash
+   thv list
+   ```
+
+   See [Test MCP servers](./test-mcp-servers.mdx) for help testing the MCP
+   server's functionality.
+
+2. Check the MCP server logs:
+
+   ```bash
+   thv logs <SERVER_NAME>
+   ```
+
+3. Make sure you properly configured the MCP server in your client.
+4. If the MCP server requires authentication or has authorization policies
+   applied, make sure the client has the necessary permissions to access the
+   tools.
+
+</details>
+
+<details>
+<summary>Containerized client can't connect to MCP server</summary>
+
+When your MCP client runs in a container (like containerized LibreChat), it
+can't reach the ToolHive proxy on your host machine using `localhost` due to
+container network isolation. The ToolHive proxy runs as an OS process on the
+host and provides access to containerized MCP servers.
+
+Configure your containerized client to use the appropriate host address for your
+platform:
+
+- **Docker Desktop (macOS/Windows)**: `host.docker.internal`
+- **Podman Desktop**: `host.containers.internal`
+- **Docker Engine (Linux)**: `172.17.0.1` (or your custom bridge gateway IP)
+
+For example, change the MCP server URL from `http://localhost:8080/mcp` to
+`http://host.docker.internal:8080/mcp` in your client configuration.
+
+</details>
+
+<details>
+<summary>VS Code can't connect to some streamable-http servers</summary>
+
+You might encounter errors with Visual Studio Code connecting to some
+Python-based MCP servers using the Streamable HTTP transport protocol:
+
+```text
+[info] Connection state: Error Error sending message to http://localhost:49574/mcp: TypeError: fetch failed
+[error] Server exited before responding to `initialize` request.
+```
+
+This is a known interaction between VS Code and certain versions of the FastMCP
+SDK used by Python-based MCP servers. If you inspect the HTTP connection, you'll
+see a `307 Temporary Redirect` response, which VS Code doesn't handle correctly.
+
+This
+[issue is resolved](https://github.com/modelcontextprotocol/python-sdk/pull/781)
+in the latest versions of the SDK, but if you're using an older version of a
+Python-based MCP server, you might still encounter it.
+
+There are two workarounds:
+
+1. Change the URL in your VS Code settings to add a trailing slash to the MCP
+   server URL. For example, change `http://localhost:49574/mcp` to
+   `http://localhost:49574/mcp/`. You'll need to re-apply this if you stop and
+   restart the MCP server.
+2. If the MCP server supports SSE, switch to using the SSE transport instead of
+   Streamable HTTP.
+
+</details>

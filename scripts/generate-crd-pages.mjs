@@ -194,25 +194,29 @@ function kindsByGroup() {
 
 function renderLandingPage() {
   const grouped = kindsByGroup();
-  const sections = groupOrder.map((group) => {
+  const sections = groupOrder.map((group, index) => {
     const label = groupLabels[group];
     const cards = grouped[group]
       .map(
         (item) => `<DocCard
   item={{
     type: 'link',
-    href: '/toolhive/reference/crds/${item.slug}',
+    href: './${item.slug}',
     label: '${item.kind}',
     description: '${item.summary.replace(/'/g, "\\'")}',
   }}
 />`
       )
       .join('\n\n');
+    const rationale =
+      index === 0
+        ? `{/* Use relative hrefs so cards resolve to the correct version when this page is snapshotted into a versioned build. */}\n\n`
+        : '';
     return `## ${label}
 
 <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem', margin: '1rem 0'}}>
 
-${cards}
+${rationale}${cards}
 
 </div>`;
   });

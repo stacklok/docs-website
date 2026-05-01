@@ -1,0 +1,609 @@
+---
+title: Redis Sentinel session storage
+description:
+  How to deploy Redis Sentinel and configure persistent session storage for the
+  ToolHive embedded authorization server.
+---
+
+Deploy Redis Sentinel and configure it as the session storage backend for the
+ToolHive embedded authorization server. By default, sessions are stored in
+memory, which means upstream tokens are lost when pods restart and users must
+re-authenticate. Redis Sentinel provides persistent storage with automatic
+master discovery, ACL-based access control, and optional failover when replicas
+are configured.
+
+:::info[Prerequisites]
+
+Before you begin, ensure you have:
+
+- A Kubernetes cluster with the ToolHive Operator installed
+- `kubectl` configured to access your cluster
+- Familiarity with the
+  [embedded authorization server](./auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
+  setup
+
+If you need help installing the ToolHive Operator, see the
+[Kubernetes quickstart guide](./quickstart.mdx).
+
+:::
+
+## Deploy Redis Sentinel
+
+Deploy a Redis master and a three-node Sentinel cluster. The following manifests
+create the Redis and Sentinel StatefulSets with ACL authentication and
+persistent storage.
+
+Create the `redis` namespace:
+
+```bash
+kubectl create namespace redis
+```
+
+Save the following manifests to a file called `redis-sentinel.yaml`.
+
+The ACL Secret defines a `toolhive-auth` user with permissions restricted to the
+`thv:auth:*` key pattern that ToolHive uses for session data. An init container
+copies the ACL file into the Redis data directory so it persists across
+restarts.
+
+:::tip[Generate a strong ACL password]
+
+Generate a random password and use it in the ACL Secret and Kubernetes Secret
+below:
+
+```bash
+openssl rand -base64 32
+```
+
+In the ACL entry, the `>` prefix before the password is
+[Redis ACL syntax](https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/#acl-rules)
+meaning "set this user's password." Replace `YOUR_REDIS_ACL_PASSWORD` with the
+generated value.
+
+:::
+
+```yaml title="redis-sentinel.yaml — Redis master and ACL"
+# --- Redis ACL Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-acl
+  namespace: redis
+type: Opaque
+stringData:
+  # highlight-start
+  users.acl: >-
+    user toolhive-auth on >YOUR_REDIS_ACL_PASSWORD ~thv:auth:* &* +GET +SET
+    +SETNX +DEL +EXISTS +EXPIRE +SADD +SREM +SMEMBERS +EVAL +MULTI +EXEC
+    +EVALSHA +PING
+  # highlight-end
+---
+# --- Redis headless Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: redis
+spec:
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+---
+# --- Redis master StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: redis
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      initContainers:
+        - name: init-acl
+          image: redis:7-alpine
+          command: ['cp', '/etc/redis-acl/users.acl', '/data/users.acl']
+          volumeMounts:
+            - name: redis-acl
+              mountPath: /etc/redis-acl
+            - name: redis-data
+              mountPath: /data
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          command:
+            - redis-server
+            - --bind
+            - '0.0.0.0'
+            - --aclfile
+            - /data/users.acl
+          readinessProbe:
+            exec:
+              command: ['redis-cli', 'PING']
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+            - name: redis-acl
+              mountPath: /etc/redis-acl
+              readOnly: true
+      volumes:
+        - name: redis-acl
+          secret:
+            secretName: redis-acl
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+```
+
+The next section deploys a three-node Sentinel cluster that monitors the Redis
+master and handles automatic failover:
+
+```yaml title="redis-sentinel.yaml — Sentinel cluster (append to same file)"
+# --- Sentinel configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-sentinel-config
+  namespace: redis
+data:
+  sentinel.conf: |
+    sentinel resolve-hostnames yes
+    sentinel announce-hostnames yes
+    # quorum: 2 of 3 sentinels must agree to trigger failover
+    sentinel monitor mymaster redis-0.redis.redis.svc.cluster.local 6379 2
+    sentinel down-after-milliseconds mymaster 5000
+    sentinel failover-timeout mymaster 10000
+    sentinel parallel-syncs mymaster 1
+---
+# --- Sentinel headless Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-sentinel
+  namespace: redis
+spec:
+  clusterIP: None
+  selector:
+    app: redis-sentinel
+  ports:
+    - name: sentinel
+      port: 26379
+---
+# --- Sentinel StatefulSet (3 replicas for quorum)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-sentinel
+  namespace: redis
+spec:
+  serviceName: redis-sentinel
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis-sentinel
+  template:
+    metadata:
+      labels:
+        app: redis-sentinel
+    spec:
+      initContainers:
+        - name: copy-config
+          image: redis:7-alpine
+          command:
+            ['cp', '/etc/sentinel-ro/sentinel.conf', '/data/sentinel.conf']
+          volumeMounts:
+            - name: sentinel-config-ro
+              mountPath: /etc/sentinel-ro
+            - name: sentinel-data
+              mountPath: /data
+      containers:
+        - name: sentinel
+          image: redis:7-alpine
+          ports:
+            - containerPort: 26379
+              name: sentinel
+          command: ['redis-sentinel', '/data/sentinel.conf']
+          readinessProbe:
+            exec:
+              command: ['redis-cli', '-p', '26379', 'PING']
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: sentinel-data
+              mountPath: /data
+      volumes:
+        - name: sentinel-config-ro
+          configMap:
+            name: redis-sentinel-config
+  volumeClaimTemplates:
+    - metadata:
+        name: sentinel-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 100Mi
+```
+
+Apply the manifests and wait for all pods to be ready:
+
+```bash
+kubectl apply -f redis-sentinel.yaml
+```
+
+```bash
+kubectl wait --for=condition=ready pod \
+  -l 'app in (redis, redis-sentinel)' \
+  --namespace redis \
+  --timeout=300s
+```
+
+:::warning
+
+The manifests above don't disable the Redis default user, which has full access
+with no password. For production deployments, add `user default off` to the
+`users.acl` entry in the `redis-acl` Secret. If you disable the default user,
+you must also configure Sentinel to authenticate to Redis by adding
+`sentinel auth-user` and `sentinel auth-pass` to the Sentinel ConfigMap, and
+update the readiness probe commands to authenticate.
+
+:::
+
+## Create Kubernetes secrets
+
+Create a Secret in the ToolHive namespace containing the Redis ACL credentials.
+The username and password must match the ACL user defined above:
+
+```bash
+kubectl create secret generic redis-acl-secret \
+  --namespace toolhive-system \
+  --from-literal=username=toolhive-auth \
+  --from-literal=password="YOUR_REDIS_ACL_PASSWORD"
+```
+
+## Configure MCPExternalAuthConfig
+
+Add the `storage` block to your `MCPExternalAuthConfig` resource. The following
+example shows a working configuration with Redis Sentinel storage using Sentinel
+service discovery, which automatically resolves Sentinel endpoints from the
+headless Service deployed above:
+
+```yaml title="embedded-auth-with-redis.yaml"
+apiVersion: toolhive.stacklok.dev/v1alpha1
+kind: MCPExternalAuthConfig
+metadata:
+  name: embedded-auth-server
+  namespace: toolhive-system
+spec:
+  type: embeddedAuthServer
+  embeddedAuthServer:
+    issuer: 'https://mcp.example.com'
+    signingKeySecretRefs:
+      - name: auth-server-signing-key
+        key: signing-key
+    hmacSecretRefs:
+      - name: auth-server-hmac-secret
+        key: hmac-key
+    # highlight-start
+    storage:
+      type: redis
+      redis:
+        sentinelConfig:
+          masterName: mymaster
+          sentinelService:
+            name: redis-sentinel
+            namespace: redis
+        aclUserConfig:
+          usernameSecretRef:
+            name: redis-acl-secret
+            key: username
+          passwordSecretRef:
+            name: redis-acl-secret
+            key: password
+    # highlight-end
+    upstreamProviders:
+      - name: google
+        type: oidc
+        oidcConfig:
+          issuerUrl: 'https://accounts.google.com'
+          clientId: '<YOUR_GOOGLE_CLIENT_ID>'
+          clientSecretRef:
+            name: upstream-idp-secret
+            key: client-secret
+          scopes:
+            - openid
+            - profile
+            - email
+```
+
+```bash
+kubectl apply -f embedded-auth-with-redis.yaml
+```
+
+### Using explicit Sentinel addresses
+
+:::note
+
+`sentinelAddrs` and `sentinelService` are mutually exclusive. Use
+`sentinelService` when your Sentinel instances run in the same cluster, or
+`sentinelAddrs` when you need to specify exact endpoints.
+
+:::
+
+Instead of service discovery, you can list Sentinel addresses explicitly. This
+is useful when Sentinel instances are in a different namespace or outside the
+cluster:
+
+```yaml title="storage block with sentinelAddrs"
+storage:
+  type: redis
+  redis:
+    sentinelConfig:
+      masterName: mymaster
+      sentinelAddrs:
+        - redis-sentinel-0.redis-sentinel.redis.svc.cluster.local:26379
+        - redis-sentinel-1.redis-sentinel.redis.svc.cluster.local:26379
+        - redis-sentinel-2.redis-sentinel.redis.svc.cluster.local:26379
+    aclUserConfig:
+      usernameSecretRef:
+        name: redis-acl-secret
+        key: username
+      passwordSecretRef:
+        name: redis-acl-secret
+        key: password
+```
+
+For the complete list of storage configuration fields, see the
+[Kubernetes CRD reference](../reference/crd-spec.md#apiv1alpha1authserverstorageconfig).
+
+## Enable TLS
+
+Without TLS, Redis credentials and session tokens travel in plaintext between
+ToolHive and Redis. You should enable TLS for any deployment beyond local
+development.
+
+Configure the `tls` block in your storage config. ToolHive needs the CA
+certificate that signed the Redis server certificate so it can verify the
+connection.
+
+:::note
+
+This step only covers the ToolHive client-side TLS configuration. Your Redis and
+Sentinel instances must also be configured to serve TLS — see the
+[Redis TLS documentation](https://redis.io/docs/latest/operate/oss_and_stack/management/security/encryption/)
+for server-side setup.
+
+:::
+
+### Create a CA certificate Secret
+
+Store your CA certificate in a Secret in the ToolHive namespace:
+
+```bash
+kubectl create secret generic redis-ca-cert \
+  --namespace toolhive-system \
+  --from-file=ca.crt=<PATH_TO_CA_CERTIFICATE>
+```
+
+### Configure TLS in MCPExternalAuthConfig
+
+Add the `tls` block to the `redis` section of your storage config:
+
+```yaml title="storage block with TLS"
+storage:
+  type: redis
+  redis:
+    sentinelConfig:
+      masterName: mymaster
+      sentinelService:
+        name: redis-sentinel
+        namespace: redis
+    aclUserConfig:
+      usernameSecretRef:
+        name: redis-acl-secret
+        key: username
+      passwordSecretRef:
+        name: redis-acl-secret
+        key: password
+    # highlight-start
+    tls:
+      caCertSecretRef:
+        name: redis-ca-cert
+        key: ca.crt
+    # highlight-end
+```
+
+When you set only `tls`, ToolHive automatically uses the same TLS configuration
+for Sentinel connections. This is the recommended setup when both Redis and
+Sentinel use certificates from the same CA.
+
+### Separate TLS config for Sentinel
+
+If your Sentinel instances use a different CA or require different TLS settings,
+add a `sentinelTls` block:
+
+```yaml title="storage block with separate Sentinel TLS"
+storage:
+  type: redis
+  redis:
+    sentinelConfig:
+      masterName: mymaster
+      sentinelService:
+        name: redis-sentinel
+        namespace: redis
+    aclUserConfig:
+      usernameSecretRef:
+        name: redis-acl-secret
+        key: username
+      passwordSecretRef:
+        name: redis-acl-secret
+        key: password
+    # highlight-start
+    tls:
+      caCertSecretRef:
+        name: redis-ca-cert
+        key: ca.crt
+    sentinelTls:
+      caCertSecretRef:
+        name: sentinel-ca-cert
+        key: ca.crt
+    # highlight-end
+```
+
+When `sentinelTls` is set, ToolHive uses separate TLS configurations for master
+and Sentinel connections. Each connection type uses its own CA certificate for
+verification.
+
+## Verify the integration
+
+After applying the configuration, verify that ToolHive can connect to Redis. The
+examples below use `weather-server-embedded` as the MCPServer name — substitute
+your own.
+
+Check that the MCPServer pod is running:
+
+```bash
+kubectl get pods -n toolhive-system \
+  -l app.kubernetes.io/name=weather-server-embedded
+```
+
+Check the proxy logs for Redis connection messages:
+
+```bash
+kubectl logs -n toolhive-system \
+  -l app.kubernetes.io/name=weather-server-embedded \
+  | grep -i redis
+```
+
+Look for log entries that confirm a successful Redis Sentinel connection. If the
+connection fails, the proxy logs contain error details.
+
+Test the OAuth flow end-to-end by connecting with an MCP client. After
+authenticating, restart the proxy pod and verify that your session persists
+without requiring re-authentication:
+
+```bash
+# Restart the proxy pod
+kubectl rollout restart deployment \
+  -n toolhive-system weather-server-embedded-proxy
+
+# Wait for the new pod to be ready
+kubectl rollout status deployment \
+  -n toolhive-system weather-server-embedded-proxy
+```
+
+If your MCP client can continue making requests without re-authenticating, Redis
+session storage is working correctly.
+
+## Troubleshooting
+
+<details>
+<summary>Connection refused or timeout errors</summary>
+
+- Verify the Redis Sentinel pods are running: `kubectl get pods -n redis`
+- Check that the Sentinel addresses in your config match the actual pod DNS
+  names: `kubectl get endpoints -n redis`
+- Ensure network policies allow traffic from the `toolhive-system` namespace to
+  the `redis` namespace
+- Verify the `masterName` matches the name in your Sentinel configuration
+  (`mymaster` in the example manifests above)
+
+</details>
+
+<details>
+<summary>ACL authentication failures</summary>
+
+- Verify the Secret exists and contains the correct credentials:
+  `kubectl get secret redis-acl-secret -n toolhive-system -o yaml`
+- Connect to Redis directly to verify the ACL user exists:
+  ```bash
+  kubectl exec -n redis redis-0 -- redis-cli ACL LIST
+  ```
+- Ensure the ACL user has the required permissions (`~thv:auth:*` key pattern
+  and the commands listed in the ACL Secret)
+
+</details>
+
+<details>
+<summary>TLS handshake or certificate errors</summary>
+
+- Verify the CA certificate Secret exists in the `toolhive-system` namespace:
+  `kubectl get secret redis-ca-cert -n toolhive-system`
+- Confirm the CA certificate matches the one that signed the Redis server
+  certificate
+- Check proxy logs for TLS-specific errors:
+  ```bash
+  kubectl logs -n toolhive-system \
+    -l app.kubernetes.io/name=weather-server-embedded \
+    | grep -i "tls\|x509\|certificate"
+  ```
+- If using self-signed certificates for testing, you can set
+  `insecureSkipVerify: true` to bypass verification (not recommended for
+  production)
+- When using separate Sentinel TLS, ensure both `tls` and `sentinelTls` are
+  configured with the correct CA certificates for their respective services
+
+</details>
+
+<details>
+<summary>Sessions lost after Redis failover</summary>
+
+- Check Sentinel logs for failover events:
+  `kubectl logs -n redis -l app=redis-sentinel`
+- Verify that the master is reachable from Sentinel:
+  ```bash
+  kubectl exec -n redis redis-sentinel-0 -- \
+    redis-cli -p 26379 SENTINEL masters
+  ```
+- Ensure Sentinel quorum is met (at least 2 of 3 Sentinel instances must be
+  running)
+
+</details>
+
+## Next steps
+
+- [Configure token exchange](./token-exchange-k8s.mdx) to let MCP servers
+  authenticate to backend services
+- [Monitor server activity](./telemetry-and-metrics.mdx) with OpenTelemetry and
+  Prometheus
+
+## Related information
+
+- [Set up embedded authorization server authentication](./auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
+- [Backend authentication](../concepts/backend-auth.mdx)
+- [Kubernetes CRD reference](../reference/crd-spec.md#apiv1alpha1authserverstorageconfig)

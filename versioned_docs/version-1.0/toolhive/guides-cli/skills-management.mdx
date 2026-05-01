@@ -1,0 +1,434 @@
+---
+title: Manage agent skills
+sidebar_label: Agent skills
+description: How to install, distribute, and manage agent skills with the ToolHive CLI.
+---
+
+[Agent skills](https://agentskills.io/) are reusable bundles of instructions,
+scripts, and resources that teach AI agents how to perform specific tasks. While
+MCP servers provide **tools** (the raw capabilities an agent can call), skills
+provide the **knowledge** of when, why, and how to use those tools effectively.
+
+ToolHive lets you install skills from a
+[ToolHive Registry Server](../guides-registry/skills.mdx) (by name), OCI
+registries (by reference), or Git repositories (by URL), and manages their
+lifecycle across multiple AI clients.
+
+:::tip[New to skills?]
+
+If you're not sure what skills are or how they relate to MCP servers, see
+[Understanding skills](../concepts/skills.mdx) for a conceptual overview.
+
+:::
+
+## Prerequisites
+
+- The [ToolHive API server](./api-server.mdx) must be running. Start it in a
+  separate terminal window (the command blocks while running):
+
+  ```bash
+  thv serve
+  ```
+
+  The server must remain running while you use `thv skill` commands.
+
+  :::tip[Using the ToolHive desktop app?]
+
+  If the ToolHive desktop app is already running, the API server is available
+  automatically. You can skip the `thv serve` step and use `thv skill` commands
+  directly.
+
+  :::
+
+- A supported AI client installed. See the
+  [client compatibility reference](../reference/client-compatibility.mdx) for
+  which clients support skills.
+
+## Install a skill
+
+You can install skills from a ToolHive Registry Server (by name), an OCI
+registry (by reference), or a Git repository (by URL).
+
+### Install from the registry
+
+The simplest way to install a skill is by name. ToolHive looks up the skill in
+the configured Registry Server and installs it automatically:
+
+```bash
+thv skill install <SKILL_NAME>
+```
+
+For example:
+
+```bash
+thv skill install toolhive-cli-user
+```
+
+### Install from an OCI registry
+
+To install a specific version of a skill from an OCI registry, provide the full
+OCI reference:
+
+```bash
+thv skill install ghcr.io/<OWNER>/skills/<SKILL_NAME>:<TAG>
+```
+
+### Install from a Git repository
+
+To install a skill directly from a Git repository:
+
+```bash
+thv skill install git://github.com/anthropics/skills@main#skills/webapp-testing
+```
+
+The URL format is `git://host/owner/repo[@ref][#path/to/skill]`, where `@ref` is
+a branch, tag, or commit hash, and `#path` points to the skill subdirectory.
+
+:::info[What's happening?]
+
+When you install a skill, ToolHive:
+
+1. Resolves the skill source (registry, OCI, or Git)
+2. Downloads and extracts the skill files
+3. Writes the `SKILL.md` and supporting files to your AI client's skills
+   directory
+4. Records the installation in its database
+
+Your AI client discovers the skill automatically by reading from its skills
+directory.
+
+:::
+
+### Overwrite an existing skill
+
+If a skill is already installed and you want to replace it, use the `--force`
+flag:
+
+```bash
+thv skill install my-skill --force
+```
+
+### Target a specific client
+
+If you have multiple supported clients, ToolHive installs the skill for the
+first one it detects. To control which client receives the skill, use the
+`--client` flag:
+
+```bash
+thv skill install my-skill --client claude-code
+```
+
+See the [client compatibility reference](../reference/client-compatibility.mdx)
+for the full list of clients that support skills.
+
+### Add a skill to a group
+
+You can organize skills into groups, just like MCP servers. Skills in a group
+are automatically installed to clients registered with that group:
+
+```bash
+thv skill install my-skill --group development
+```
+
+## Choose a scope
+
+Skills support two scopes that control where the skill files are installed:
+
+- **User scope** (default): Installs the skill globally for your user account.
+  The skill is available across all projects.
+- **Project scope**: Installs the skill in a specific project directory. The
+  skill is only available when working in that project.
+
+### Install a user-scoped skill
+
+```bash
+thv skill install my-skill
+```
+
+This installs the skill to your home directory (for example,
+`~/.claude/skills/my-skill/` for Claude Code).
+
+### Install a project-scoped skill
+
+```bash
+thv skill install my-skill --scope project --project-root /path/to/project
+```
+
+This installs the skill to the project directory (for example,
+`/path/to/project/.claude/skills/my-skill/` for Claude Code).
+
+:::note
+
+The project root must be a Git repository. ToolHive validates this to prevent
+installing skills in arbitrary directories.
+
+:::
+
+## List installed skills
+
+To see all installed skills:
+
+```bash
+thv skill list
+```
+
+The output shows the name, version, scope, status, clients, and source reference
+for each skill.
+
+### Filter the list
+
+You can filter skills by scope, client, or group:
+
+```bash
+thv skill list --scope user
+thv skill list --client claude-code
+thv skill list --group development
+```
+
+### Get JSON output
+
+```bash
+thv skill list --format json
+```
+
+## View skill details
+
+To see detailed information about a specific skill:
+
+```bash
+thv skill info <SKILL_NAME>
+```
+
+This shows the skill's name, version, description, scope, status, source
+reference, installation date, and associated clients.
+
+## Uninstall a skill
+
+To remove an installed skill:
+
+```bash
+thv skill uninstall <SKILL_NAME>
+```
+
+For project-scoped skills, specify the scope and project root:
+
+```bash
+thv skill uninstall my-skill --scope project --project-root /path/to/project
+```
+
+This removes the skill files from all associated client directories and deletes
+the database record.
+
+## Create a skill
+
+Every skill requires a `SKILL.md` file at the root of its directory. At a
+minimum, the file needs `name` and `description` fields in YAML frontmatter,
+followed by Markdown instructions for the agent:
+
+```yaml title="my-skill/SKILL.md"
+---
+name: my-skill
+description: >-
+  What this skill does and when to use it. Include keywords that help agents
+  identify relevant tasks.
+---
+# Instructions
+
+Step-by-step instructions for the agent...
+```
+
+The `name` must be lowercase alphanumeric with hyphens, must match the directory
+name, and must not start or end with a hyphen.
+
+You can also add optional files in `scripts/`, `references/`, and `assets/`
+subdirectories for executable code, documentation, and static resources.
+
+For the full list of frontmatter fields (version, license, allowed-tools, and
+more) and directory structure details, see
+[Understanding skills](../concepts/skills.mdx#skill-structure).
+
+## Build and publish skills
+
+Once you've created a skill, you can package it as an OCI artifact and publish
+it to a registry for others to install.
+
+### Validate a skill
+
+Before building, validate your skill directory to check for errors:
+
+```bash
+thv skill validate ./my-skill
+```
+
+This verifies that:
+
+- A `SKILL.md` file exists with valid frontmatter
+- The `name` and `description` fields are present
+- The `name` matches the directory name
+- No symlinks or path traversal issues exist
+
+### Build an OCI artifact
+
+Package your skill into an OCI artifact:
+
+```bash
+thv skill build ./my-skill
+```
+
+To specify a custom tag:
+
+```bash
+thv skill build ./my-skill --tag ghcr.io/my-org/skills/my-skill:v1.0.0
+```
+
+The build command stores the artifact in your local OCI store and prints the
+reference.
+
+### Push to a registry
+
+After building, push the artifact to a remote OCI registry:
+
+```bash
+thv skill push ghcr.io/my-org/skills/my-skill:v1.0.0
+```
+
+:::note
+
+Pushing to a remote registry uses your existing container registry credentials
+(for example, from `docker login` or `podman login`). Make sure you're
+authenticated before pushing.
+
+:::
+
+## List and remove locally-built skill artifacts
+
+After building skills locally, you can view and manage the artifacts stored in
+your local OCI store.
+
+### List locally-built artifacts
+
+```bash
+thv skill builds
+```
+
+This lists all OCI skill artifacts built locally with `thv skill build`. The
+output shows the tag, digest, name, and version of each artifact:
+
+```text
+TAG                                       DIGEST              NAME        VERSION
+ghcr.io/my-org/skills/my-skill:v1.0.0     sha256:a1b2c3d4...  my-skill    1.0.0
+my-skill:latest                           sha256:e5f6a7b8...  my-skill
+```
+
+For JSON output:
+
+```bash
+thv skill builds --format json
+```
+
+### Remove a locally-built artifact
+
+To remove an artifact from the local OCI store:
+
+```bash
+thv skill builds remove <TAG>
+```
+
+For example:
+
+```bash
+thv skill builds remove my-skill:latest
+```
+
+This removes the artifact and cleans up its blobs from the local store. If
+multiple tags share the same digest, the blobs are retained until all tags
+pointing to that digest are removed.
+
+## Next steps
+
+- [Configure your AI client](./client-configuration.mdx) to register clients
+  with ToolHive for automatic MCP server and skill configuration
+- [Manage skills in the registry](../guides-registry/skills.mdx) to publish
+  skills for your team
+
+## Related information
+
+- [Understanding skills](../concepts/skills.mdx) for a conceptual overview
+- [`thv skill` command reference](../reference/cli/thv_skill.md)
+- [`thv serve` command reference](../reference/cli/thv_serve.md)
+- [Agent Skills specification](https://agentskills.io/specification)
+
+## Troubleshooting
+
+<details>
+<summary>Skill command fails with a connection error</summary>
+
+All skill commands require the ToolHive API server to be running. Start it with:
+
+```bash
+thv serve
+```
+
+Then retry your skill command.
+
+</details>
+
+<details>
+<summary>Skill not discovered by your AI client</summary>
+
+If your AI client doesn't see an installed skill:
+
+1. Verify the skill is installed:
+
+   ```bash
+   thv skill list
+   ```
+
+2. Check that the skill was installed for the correct client:
+
+   ```bash
+   thv skill info <SKILL_NAME>
+   ```
+
+3. Verify the skill files exist in the expected directory. For Claude Code,
+   user-scoped skills are at `~/.claude/skills/<SKILL_NAME>/` and project-scoped
+   skills are at `<PROJECT_ROOT>/.claude/skills/<SKILL_NAME>/`.
+
+4. Restart your AI client to trigger skill discovery.
+
+</details>
+
+<details>
+<summary>Skill validation fails</summary>
+
+Run `thv skill validate` to see specific errors:
+
+```bash
+thv skill validate ./my-skill
+```
+
+Common issues include:
+
+- Missing `SKILL.md` file in the directory
+- Missing `name` or `description` in the frontmatter
+- Skill `name` doesn't match the directory name
+- Symlinks present in the skill directory (not allowed for security)
+
+</details>
+
+<details>
+<summary>Push to registry fails with authentication error</summary>
+
+Make sure you're authenticated with your container registry:
+
+```bash
+# For GitHub Container Registry
+echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+
+# For Docker Hub
+docker login
+```
+
+Then retry the push command.
+
+</details>
