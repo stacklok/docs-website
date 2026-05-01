@@ -18,9 +18,9 @@ Collect these values as you complete the steps below:
 - [ ] Application (client) ID
 - [ ] Client Secret
 - [ ] Tenant ID
-- [ ] Application ID URI (e.g. `api://<client-id>`)
-- [ ] Issuer URL: `https://login.microsoftonline.com/{tenant-id}/v2.0`
-- [ ] Redirect URI: `https://<your-vmcp-endpoint>/oauth/callback`
+- [ ] Application ID URI (e.g. `api://<CLIENT_ID>`)
+- [ ] Issuer URL: `https://login.microsoftonline.com/<TENANT_ID>/v2.0`
+- [ ] Redirect URI: `https://<VMCP_ENDPOINT>/oauth/callback`
 
 ## Configure Entra ID
 
@@ -29,8 +29,7 @@ Collect these values as you complete the steps below:
 - **Entra ID > App registrations > New registration**
 - Name: e.g. `toolhive-engineering`
 - Supported account types: **Single tenant**
-- Redirect URI: platform **Web**, URI
-  `https://<your-vmcp-endpoint>/oauth/callback`
+- Redirect URI: platform **Web**, URI `https://<VMCP_ENDPOINT>/oauth/callback`
 - Note the **Application (client) ID** and **Directory (tenant) ID**
 
 :::note
@@ -45,7 +44,7 @@ The redirect URI must be an exact match - no wildcards, no trailing slashes.
 ```bash
 TENANT_ID=$(az account show --query tenantId -o tsv)
 DISPLAY_NAME="toolhive-engineering"
-REDIRECT_URI="https://<your-vmcp-endpoint>/oauth/callback"
+REDIRECT_URI="https://<VMCP_ENDPOINT>/oauth/callback"
 
 # --sign-in-audience: AzureADMyOrg = single-tenant
 # Alternatives: AzureADMultipleOrgs, AzureADandPersonalMicrosoftAccount
@@ -73,12 +72,12 @@ PATCH calls). These are different values.
 
 By default, Entra issues access tokens for Microsoft Graph, not for your app.
 App Roles only appear in tokens where your app is the audience. Exposing a
-custom scope under `api://<client-id>/` forces the embedded auth server to
+custom scope under `api://<CLIENT_ID>/` forces the embedded auth server to
 request a token with your app as the audience.
 
 - **App registrations > your app > Expose an API**
 - Click **Add** next to "Application ID URI" - accept the default
-  `api://<client-id>`
+  `api://<CLIENT_ID>`
 - Click **Add a scope**:
   - Scope name: `mcp.access`
   - Who can consent: **Admins and users**
@@ -327,8 +326,8 @@ az ad app update \
 
 | Item                         | Value                                                                      |
 | ---------------------------- | -------------------------------------------------------------------------- |
-| Scopes requested from Entra  | `api://<client-id>/mcp.access` `openid` `profile` `email` `offline_access` |
-| Access token claims produced | `roles: ["mcp-developers"]`, `sub`, `iss`, `aud: "api://<client-id>"`      |
+| Scopes requested from Entra  | `api://<CLIENT_ID>/mcp.access` `openid` `profile` `email` `offline_access` |
+| Access token claims produced | `roles: ["mcp-developers"]`, `sub`, `iss`, `aud: "api://<CLIENT_ID>"`      |
 
 ### Consistency checklist
 
@@ -357,8 +356,8 @@ Register a dedicated Entra application for this VirtualMCPServer. See
 
 ```bash
 kubectl create secret generic idp-client-secret \
-  -n <your-namespace> \
-  --from-literal=client-secret=<YOUR_CLIENT_SECRET>
+  -n <NAMESPACE> \
+  --from-literal=client-secret=<CLIENT_SECRET>
 ```
 
 :::note
@@ -391,7 +390,7 @@ metadata:
 spec:
   type: inline
   inline:
-    issuer: 'https://<your-vmcp-endpoint>'
+    issuer: 'https://<VMCP_ENDPOINT>'
 ---
 apiVersion: toolhive.stacklok.dev/v1beta1
 kind: VirtualMCPServer
@@ -402,19 +401,19 @@ spec:
     name: engineering-tools
 
   authServerConfig:
-    issuer: 'https://<your-vmcp-endpoint>'
+    issuer: 'https://<VMCP_ENDPOINT>'
     upstreamProviders:
       - name: entra
         type: oidc
         oidcConfig:
           issuerUrl: 'https://login.microsoftonline.com/<TENANT_ID>/v2.0'
-          clientId: '<YOUR_CLIENT_ID>'
+          clientId: '<CLIENT_ID>'
           clientSecretRef:
             name: idp-client-secret
             key: client-secret
-          redirectUri: 'https://<your-vmcp-endpoint>/oauth/callback'
+          redirectUri: 'https://<VMCP_ENDPOINT>/oauth/callback'
           scopes:
-            - 'api://<client-id>/mcp.access'
+            - 'api://<CLIENT_ID>/mcp.access'
             - openid
             - profile
             - email
@@ -424,8 +423,8 @@ spec:
     type: oidc
     oidcConfigRef:
       name: engineering-tools-oidc
-      audience: 'https://<your-vmcp-endpoint>'
-      resourceUrl: 'https://<your-vmcp-endpoint>'
+      audience: 'https://<VMCP_ENDPOINT>'
+      resourceUrl: 'https://<VMCP_ENDPOINT>'
     authzConfig:
       type: inline
       inline:
@@ -460,7 +459,7 @@ spec:
 ```
 
 The highlighted lines are Entra-specific. `issuerUrl` uses your tenant's v2.0
-endpoint, and `scopes` must include `api://<client-id>/mcp.access` to get an
+endpoint, and `scopes` must include `api://<CLIENT_ID>/mcp.access` to get an
 access token with your app as the audience (and thus the `roles` claim).
 
 - **MCPOIDCConfig**: validates tokens issued by the embedded auth server to
