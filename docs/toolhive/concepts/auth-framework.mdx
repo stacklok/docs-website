@@ -45,16 +45,20 @@ and securely.
 ## Why ToolHive centralizes authentication
 
 The
-[official MCP specification](https://modelcontextprotocol.io/docs/tutorials/security/authorization)
-recommends OAuth 2.1-based authorization for HTTP transports, where each MCP
-server acts as an OAuth resource server. In practice, this model creates
-significant operational challenges:
+[official MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
+defines an OAuth 2.1 authorization profile for HTTP transports, where each MCP
+server acts as an OAuth resource server. While authorization is optional in MCP,
+HTTP-transport implementations that adopt it must follow this profile. In
+practice, this model creates significant operational challenges:
 
-- **OAuth client registration burden:** OAuth 2.0 requires pre-registered
-  redirect URIs at each identity provider. Many providers (such as Google,
-  GitHub, and Atlassian) require manual registration of OAuth clients to obtain
-  a client ID and client secret. If each user client (for example, an IDE) were
-  its own OAuth client, the registration burden would be impractical at scale.
+- **OAuth client registration burden:** Many identity providers (such as Google,
+  GitHub, and Atlassian) require manual pre-registration of OAuth clients to
+  obtain a client ID and client secret. The MCP specification addresses this gap
+  with a priority order of registration mechanisms (pre-registered client info,
+  Client ID Metadata Documents, and Dynamic Client Registration), but most
+  existing identity providers don't yet implement the latter two. If each user
+  client (for example, an IDE) had to pre-register at every provider, the burden
+  would be impractical at scale.
 - **No federation with external services:** While token exchange (RFC 8693) and
   federated identity providers work when the upstream service is in the same
   trust domain as the MCP server or has an established trust relationship with
@@ -72,30 +76,32 @@ management.
 
 The [embedded authorization server](#embedded-authorization-server) addresses
 the remaining challenges. It exposes standard OAuth endpoints and handles the
-full OAuth web flow, eliminating the client registration burden through Dynamic
-Client Registration (DCR) and solving the federation gap by obtaining tokens
-directly from external providers like GitHub or Atlassian. ToolHive delegates
+full OAuth web flow, and solves the federation gap by obtaining tokens directly
+from external providers like GitHub or Atlassian. ToolHive delegates
 authentication to the upstream provider and issues its own tokens, giving MCP
 clients a spec-compliant OAuth experience while centralizing the complexity of
 token acquisition and management.
 
+To eliminate the client registration burden, the embedded authorization server
+currently implements Dynamic Client Registration (DCR), which the MCP
+specification lists as the backward compatibility fallback. Support for Client
+ID Metadata Documents, the spec's preferred mechanism for clients and servers
+without an existing relationship, is planned.
+
 ## Authentication framework
 
-ToolHive uses OAuth-based authentication with support for both OAuth 2.1 and
-OpenID Connect (OIDC), enabling both JWT tokens and opaque token validation.
-This lets you connect ToolHive to any OAuth 2.1 or OIDC-compliant identity
-provider (IdP), such as Google, GitHub, Microsoft Entra ID (Azure AD), Okta,
-Auth0, or even Kubernetes service accounts. ToolHive never handles your raw
-passwords or credentials; instead, it relies on access tokens issued by your
-trusted provider, either self-contained JWT tokens or opaque tokens validated
-through token introspection.
+ToolHive uses OAuth-based authentication and accepts access tokens issued by any
+OAuth 2.0 or OIDC-compliant identity provider (IdP), such as Google, GitHub,
+Microsoft Entra ID (Azure AD), Okta, Auth0, or Kubernetes service accounts.
+ToolHive supports both self-contained JWT tokens and opaque tokens (validated
+through introspection), and never handles your raw passwords or credentials.
 
 ### Why use OAuth-based authentication?
 
 OAuth-based authentication provides several key advantages for securing MCP
 servers:
 
-- **Standard and interoperable:** You can connect ToolHive to any OAuth 2.1 or
+- **Standard and interoperable:** You can connect ToolHive to any OAuth 2.0 or
   OIDC-compliant IdP without custom code, supporting both human users and
   automated services.
 - **Proven and secure:** Authentication is delegated to battle-tested identity
@@ -134,7 +140,8 @@ information within the token itself. JWTs are validated locally using
 cryptographic signatures and consist of three parts:
 
 1. **Header:** Metadata about the token
-2. **Payload:** Claims about the entity (typically you or your service)
+2. **Payload:** Claims about the subject and the token, such as issuer,
+   audience, and expiration
 3. **Signature:** Ensures the token hasn't been altered
 
 **Opaque tokens:** Reference tokens that don't contain identity information
@@ -151,8 +158,9 @@ The authentication process follows these steps:
 
 1. **Token acquisition:** You obtain an access token from your identity
    provider.
-2. **Token presentation:** You include the token in your requests to ToolHive
-   (typically in the Authorization header).
+2. **Token presentation:** You include the token in the `Authorization` header
+   on every request to ToolHive. Per the MCP specification, access tokens must
+   not appear in URI query strings.
 3. **Token validation:** ToolHive validates the token using either:
    - **Local validation:** For JWT tokens, verifying the signature, expiration,
      and claims using the provider's public keys (JWKS)
@@ -194,7 +202,7 @@ For Kubernetes setup instructions, see
 
 ### Identity providers
 
-ToolHive can integrate with any provider that supports OAuth 2.1 or OIDC,
+ToolHive can integrate with any provider that supports OAuth 2.0 or OIDC,
 including:
 
 - Google
@@ -217,10 +225,13 @@ identity providers:
   tokens locally using the provider's JWKS endpoint. This verifies the token's
   signature, expiration, and claims without calling the identity provider for
   each request.
-- **Token introspection:** For providers that issue opaque tokens, ToolHive
-  validates tokens by querying the provider's introspection endpoint. This
-  supports RFC 7662 (OAuth 2.0 Token Introspection), Google's tokeninfo API, and
-  GitHub's token validation API.
+- **Remote token validation:** For providers that issue opaque tokens, ToolHive
+  validates tokens by calling the provider's token-validation endpoint. For
+  OAuth-compliant providers, this is RFC 7662 (OAuth 2.0 Token Introspection).
+  ToolHive also supports provider-specific endpoints, such as Google's
+  `tokeninfo` endpoint and GitHub's token-check REST API. The vendor endpoints
+  are not OAuth introspection in the RFC 7662 sense; they're proprietary APIs
+  that return similar information.
 
 ToolHive automatically detects the token type. It first attempts JWT validation,
 and if that fails, it falls back to token introspection. This means you don't
@@ -317,13 +328,12 @@ focus primarily on local, unauthenticated MCP servers for development workflows,
 while others provide enterprise-grade authentication for production deployments.
 
 When selecting an MCP client for authenticated workflows, look for clients that
-support the MCP authentication standards, including OAuth 2.1 and
-transport-level authentication mechanisms.
+implement the OAuth 2.1 authorization profile defined by the MCP specification.
 
-ToolHive's OIDC-based authentication approach aligns with industry standards and
-works with clients that support modern authentication protocols. As the MCP
-ecosystem continues to mature, we expect authentication support to become more
-standardized across clients.
+ToolHive's OAuth/OIDC-based authentication approach aligns with industry
+standards and works with clients that support modern authentication protocols.
+As the MCP ecosystem continues to mature, we expect authentication support to
+become more standardized across clients.
 
 ## Related information
 
