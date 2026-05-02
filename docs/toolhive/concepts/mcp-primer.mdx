@@ -1,72 +1,189 @@
 ---
-title: 'Model Context Protocol (MCP): A friendly primer for builders'
+title: 'Model Context Protocol (MCP): A primer for builders'
 sidebar_label: MCP primer
 description:
-  Model Context Protocol (MCP) connects AI assistants to external tools and data
-  sources through a standard interface.
+  What MCP is, how it works, and how it fits into the ecosystem ToolHive
+  manages.
 ---
 
-**TL;DR:** MCP offers a pragmatic, language-friendly bridge between
-probabilistic code generators and the real-world systems where your source of
-truth lives. It's young, but it already solves pain points around context size,
-adapter sprawl, and brittle prompts—thanks largely to an open, welcoming
-developer community. If you're building next-gen coding tools, now's the ideal
-moment to give MCP a spin and leave your fingerprints on the spec.
+The Model Context Protocol (MCP) is an open standard for connecting AI
+applications to external data, tools, and workflows. With MCP, an AI application
+like Claude, ChatGPT, or Cursor can read files, query databases, call APIs, or
+trigger workflows through one well-defined protocol instead of a custom
+integration per service.
 
-## Why we needed something new
+This is the first integration layer the AI ecosystem has actually rallied
+behind. Earlier attempts stayed vendor-specific or model-specific; MCP landed at
+the right moment with a small, opinionated spec and broad early adoption from
+the major host applications. As of December 2025, MCP is also a Linux Foundation
+project under the new Agentic AI Foundation, jointly stewarded by Anthropic,
+AWS, Block, Bloomberg, Cloudflare, Google, Microsoft, and OpenAI as Founding
+Platinum members - meaningful because earlier integration attempts had no
+equivalent neutral home.
 
-Modern code-generation models work by guessing the next token from probability
-space. By nature they are powerful but probabilistic and work with natural
-language. Context drives everything and they can only work on what they can see.
-Most real-world context developers use lives outside the model: in GitHub repos,
-API docs, RFCs, and issue trackers. Bridging that gap has been messy:
+ToolHive runs and manages MCP servers. Stacklok, the company behind ToolHive, is
+a Silver member of AAIF and an active contributor to the MCP spec. This primer
+explains what MCP is, how it works, and what's happening in the ecosystem around
+it. If you're new to MCP, read this before diving into the
+[ToolHive UI quickstart](../guides-ui/quickstart.mdx) or
+[CLI quickstart](../guides-cli/quickstart.mdx).
 
-| Traditional approach                                | Pain point for GenAI tools                                                                             |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Custom adapters / plugins per data source           | Hard to keep in sync; brittle when schemas change                                                      |
-| Prompt stuffing (copy-pasting docs into the prompt) | Dilutes effectiveness and reduces response acceptance rates, bloats token budget, hurts latency & cost |
-| REST APIs with rigid schemas                        | Fine for deterministic code, awkward for probabilistic LLMs that prefer natural language               |
+## Why MCP exists
 
-MCP tackles these headaches by letting a model **ask external systems for facts
-or files using a concise, natural syntax that itself is easy for generative
-models to emit and parse.**
+Large language models (LLMs) are powerful, but they only work with the context
+they can see. The context developers care about - source code, documentation,
+tickets, metrics, internal APIs - lives outside the model. Bridging that gap
+used to mean one of three uncomfortable options:
 
-## What problems does MCP solve?
+| Approach                                   | Problem                                                                           |
+| ------------------------------------------ | --------------------------------------------------------------------------------- |
+| Custom plugin or adapter per data source   | Every host application needed its own integration; brittle as schemas changed     |
+| Stuffing context into the prompt           | Burned tokens, hurt latency, and degraded answers as the prompt grew              |
+| Calling REST APIs directly from agent code | Pushed authentication, error handling, and tool descriptions into the application |
 
-- **Token-efficient context retrieval** \
-  _One-shot, structured queries_ (e.g.,
-  `mcp://github?repo=owner/project\&path=README.md`) let the model fetch exactly
-  what it needs—no boilerplate, no giant system prompts.
-- **Natural-language-friendly envelope** \
-  The URI-like syntax is short, deterministic, yet readable enough that an LLM
-  can generate it without dedicated training. Embeddings created before MCP work
-  just fine with MCP.
-- **Uniform surface over heterogeneous data** \
-  Git blobs, Swagger files, Confluence pages, or a private vector store all look
-  like "resources" under the same scheme. Tool builders write one resolver and
-  get many back-ends without additional work.
-- **Graceful failure semantics** \
-  Every MCP response carries both _content_ and a lightweight _provenance_
-  object (source, timestamp, hash). Models can decide to retry, ignore, or cite.
+MCP replaces these with a single protocol that an AI application speaks once and
+reuses across any compliant server. The protocol handles capability discovery,
+structured tool invocation, and authorization, so server authors can focus on
+the integration itself.
 
-## The emergence of open community
+What's different this time is what the spec leaves out. MCP is small enough to
+read in one sitting, uses JSON-RPC instead of inventing a new wire format, and
+treats capability negotiation as extensibility rather than versioning. Hosts can
+adopt it incrementally; simple servers can be a few hundred lines of code. That
+low ceiling on the easy case is most of why MCP spread the way it did.
 
-A community has sprung up around the MCP protocol incredibly quickly.
+## How MCP works
 
-The spec is Apache-licensed and refreshingly small, clean, and simple, which
-makes the whole thing pretty easy to grok. SDK's abound and thousands of
-examples exist. The efforts of communities like golang with the go-mcp release
-in April 2025 are moving server development beyond the boundaries of the
-traditional JavaScript and Python ecosystems. The Golang portfolio servers
-inventory is growing incredibly quickly and with it comes a wealth of production
-oriented access to resources.
+MCP uses [JSON-RPC 2.0](https://www.jsonrpc.org/) over a stateful session. The
+spec borrows from the Language Server Protocol: standardize the wire format and
+the lifecycle once, and a whole ecosystem of clients and servers becomes
+interoperable.
 
-There's no governing foundation yet, but a lightweight steering group triages
-PRs and publishes version tags.
+### Architecture
+
+MCP defines three roles:
+
+- **Host** - the AI application itself (Claude Desktop, Visual Studio Code (VS
+  Code) with GitHub Copilot, Cursor, a custom agent). The host enforces user
+  consent, manages credentials, and routes context to the model.
+- **Client** - a connector inside the host. Each client maintains a 1:1
+  connection with one server and isolates that server from the rest of the
+  session.
+- **Server** - a process that exposes capabilities through the MCP interface.
+  Servers can run locally or remotely.
+
+A session begins with _capability negotiation_: client and server each declare
+which features they support, and only those features are available for the rest
+of the connection. This keeps the protocol extensible without breaking older
+implementations.
+
+### Protocol primitives
+
+Servers expose three primitives to clients:
+
+- **Tools** - functions the model can call (for example, "search the codebase"
+  or "create a Jira ticket"). Tool calls are structured, with JSON schemas for
+  inputs and outputs. Tools may also carry annotations that hint at behavior -
+  read-only, idempotent, destructive - which hosts can use to gate or surface
+  the call. The spec treats those hints as advisory rather than authoritative,
+  so they're only as trustworthy as the server providing them.
+- **Resources** - data the host or model can read (files, database rows, API
+  responses). Resources are addressable and can be subscribed to for updates.
+- **Prompts** - templated workflows the user can invoke (for example, "summarize
+  this PR").
+
+Clients can also expose primitives back to servers:
+
+- **Sampling** - lets a server ask the host's model to complete a prompt, with
+  user approval.
+- **Roots** - tells the server which directories or URIs it's allowed to operate
+  on.
+- **Elicitation** - lets a server request additional input from the user
+  mid-session.
+
+### Transports
+
+The current spec defines two standard transports:
+
+- **stdio** - the host launches the server as a subprocess and exchanges
+  newline-delimited JSON-RPC messages over stdin and stdout. This is the
+  preferred transport for local servers.
+- **Streamable HTTP** - the server runs as an independent HTTP service exposing
+  a single endpoint that handles JSON-RPC over POST and GET. The server can open
+  a Server-Sent Events (SSE) stream as part of a response when it needs to push
+  multiple messages back. This is the current transport for remote and networked
+  servers.
+
+The earlier HTTP+SSE transport (separate POST and SSE endpoints, defined in the
+2024-11-05 revision) is deprecated; Streamable HTTP replaced it in 2025-03-26.
+Custom transports are allowed as long as they preserve the JSON-RPC message
+format and lifecycle.
+
+### Authorization
+
+For HTTP transports, MCP defines an OAuth 2.1-based authorization flow. The MCP
+server acts as an OAuth resource server; the client obtains a token from an
+authorization server and presents it as a bearer token on each request. PKCE,
+audience-bound tokens (RFC 8707), and Protected Resource Metadata (RFC 9728) are
+required to prevent token misuse and confused-deputy attacks. The stdio
+transport doesn't use OAuth - servers read credentials from the environment.
+
+The auth model is sound, but it's a lot for a single server to get right:
+discovery, dynamic registration, token validation, audience binding, scope
+handling. ToolHive sits in front of MCP servers as a gateway and absorbs that
+complexity centrally, so individual servers don't each need to reimplement the
+protocol's hard parts. See
+[Authentication and authorization](./auth-framework.mdx) for the details.
+
+## The ecosystem
+
+MCP support is broad across host applications: Claude, ChatGPT, GitHub Copilot
+in VS Code, Cursor, MCPJam, and many others. Official SDKs cover the major
+languages, including TypeScript, Python, Go, Java, Kotlin, C#, and Rust, with
+community ports beyond that.
+
+The official [MCP Registry](https://modelcontextprotocol.io/registry/about) is
+the canonical metadata index for publicly accessible servers, backed by
+Anthropic, GitHub, PulseMCP, and Microsoft. The registry doesn't host server
+code - it stores `server.json` metadata pointing to the underlying package (npm,
+PyPI, Docker Hub) or remote endpoint, with namespace authentication via DNS or
+GitHub identity. The registry is consumed primarily by downstream aggregators
+and host applications. ToolHive's
+[Registry Server](../guides-registry/index.mdx) is one such aggregator, and
+combines the official registry with the curated ToolHive catalog.
 
 ## Where MCP is headed
 
-Expect iterative, community-driven releases—v1.0 is slated for late 2025 with a
-stable core and optional capability sets (search, write-back, streaming). The
-protocol's youth means rough edges, but that also means **you can still shape
-it**: file issues, prototype adapters, or just lurk and learn.
+The spec uses dated revisions (2024-11-05, 2025-03-26, 2025-06-18, 2025-11-25)
+rather than semver, with the `MCP-Protocol-Version` header allowing clients and
+servers to negotiate compatibility. The core protocol is deliberately small; new
+capabilities arrive as additive extensions, including a separate
+[authorization extensions](https://github.com/modelcontextprotocol/ext-auth)
+track for advanced auth scenarios.
+
+The shape-from-scratch moment has passed. The current roadmap puts
+production-readiness ahead of protocol greenfield: scaling Streamable HTTP
+statelessly behind load balancers, hardening the new Tasks primitive for
+long-running async tool calls, and formalizing the gateway and proxy patterns
+enterprises are already building. Surrounding-layer work continues - MCP Apps,
+structured tool output, conformance test suites, and the registry - and a
+horizon track covers triggers, result streaming, and finer-grained auth.
+Builders who get familiar with MCP now will be early to those layers as they
+land. The spec is openly maintained on
+[GitHub](https://github.com/modelcontextprotocol/specification); proposals and
+issues are welcome.
+
+## Next steps
+
+- [ToolHive UI quickstart](../guides-ui/quickstart.mdx) - run your first MCP
+  server through the desktop app.
+- [ToolHive CLI quickstart](../guides-cli/quickstart.mdx) - run MCP servers from
+  the command line.
+- [Authentication and authorization](./auth-framework.mdx) - how ToolHive
+  secures MCP servers.
+
+## Related information
+
+- [Official MCP documentation](https://modelcontextprotocol.io)
+- [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25)
+- [MCP Registry](https://modelcontextprotocol.io/registry/about)
