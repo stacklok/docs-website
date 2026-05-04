@@ -267,33 +267,55 @@ backends into a single endpoint.
 <details>
 <summary>VirtualMCPServer stuck in Pending</summary>
 
-Check that the MCPGroup exists and backend MCPServers are running:
+The vMCP pod won't become Ready until the MCPGroup is in `Ready` state and at
+least one backend MCPServer is `Ready`. Check both:
 
 ```bash
 kubectl get mcpgroups,mcpservers -n toolhive-system
 ```
 
-Check the operator logs:
+If a backend is stuck, check the operator logs for reconciliation errors:
 
 ```bash
 kubectl logs -n toolhive-system -l app.kubernetes.io/name=toolhive-operator
 ```
 
+For a deeper walkthrough of discovery failures and RBAC issues, see
+[Backend discovery troubleshooting](./backend-discovery.mdx#troubleshooting).
+
 </details>
 
 <details>
-<summary>Only some tools appearing</summary>
+<summary>A backend's tools aren't showing up through the vMCP</summary>
 
-Verify both backends are discovered:
-
-```bash
-kubectl get virtualmcpserver demo-vmcp -n toolhive-system -o jsonpath='{.status.discoveredBackends[*].name}'
-```
-
-Check backend health in the status:
+First, confirm the backend is actually discovered:
 
 ```bash
 kubectl describe virtualmcpserver demo-vmcp -n toolhive-system
 ```
+
+Look for the backend in `status.discoveredBackends` and check its `status` and
+`message` fields. If the backend is missing or unhealthy, see
+[Backend discovery troubleshooting](./backend-discovery.mdx#troubleshooting).
+
+If the backend is healthy but tools still aren't appearing, compare what the
+vMCP exposes against what the individual backend exposes using the ToolHive CLI.
+Port-forward each in turn, then list tools:
+
+```bash
+# Port-forward the vMCP
+kubectl port-forward service/vmcp-demo-vmcp -n toolhive-system 4483:4483
+
+# In another terminal, list what the vMCP exposes
+thv mcp list tools --server http://localhost:4483/mcp
+
+# Then port-forward the backend directly and list its tools
+kubectl port-forward service/mcp-fetch-proxy -n toolhive-system 8080:8080
+thv mcp list tools --server http://localhost:8080/mcp
+```
+
+If the backend exposes a tool that the vMCP doesn't, check your tool aggregation
+configuration for filters that might be excluding it. See
+[Tool aggregation](./tool-aggregation.mdx) for filter and override rules.
 
 </details>

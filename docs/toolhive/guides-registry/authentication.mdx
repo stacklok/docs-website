@@ -530,46 +530,71 @@ providers:
 
 ## Troubleshooting
 
-### 401 Unauthorized errors
+<details>
+<summary>401 Unauthorized responses</summary>
 
-If you receive 401 Unauthorized responses:
+A 401 means the server rejected the bearer token. Decode the token (for example,
+paste it into [jwt.io](https://jwt.io/), and never use a production token), then
+verify:
 
-1. **Verify the token is valid**: Check expiration, issuer, and audience claims
-2. **Check the Authorization header**: Must be `Authorization: Bearer <TOKEN>`
-3. **Verify issuer URL**: Must exactly match the `iss` claim in your token
-4. **Check audience**: The `aud` claim must match your configured `audience`
-5. **Review server logs**: Look for specific validation error messages
+- **Header format.** The `Authorization` header must be
+  `Authorization: Bearer <TOKEN>` with no extra whitespace or quoting.
+- **Issuer (`iss`) matches.** The `iss` claim must exactly match the configured
+  `issuerUrl` for one of your providers, including any path components (for
+  example, `/realms/production` for Keycloak or `/oauth2/default` for Okta).
+- **Audience (`aud`) matches.** The `aud` claim must match the configured
+  `audience` for that provider.
+- **Token hasn't expired.** Check the `exp` claim is in the future.
 
-### Token validation errors
+If those all check out, look at the Registry Server logs for the specific
+validation error, which usually pinpoints the failing claim or signature
+problem.
 
-If you see authentication failures in server logs:
+</details>
 
-1. **Issuer URL accessibility**: Verify the server can reach the issuer's JWKS
-   endpoint (typically `${issuerUrl}/.well-known/openid-configuration`)
-2. **Network connectivity**: Check DNS resolution and firewall rules
-3. **CA certificates**: If using custom CAs, ensure `caCertPath` is correct
-4. **Token expiration**: Ensure your token hasn't expired (check `exp` claim)
+<details>
+<summary>Server can't reach the identity provider's JWKS endpoint</summary>
 
-### Provider connectivity issues
+The Registry Server first fetches the OIDC discovery document from
+`${issuerUrl}/.well-known/openid-configuration`, then fetches signing keys from
+the `jwks_uri` listed in that document. Either fetch can fail. If logs show
+`failed to fetch JWKS`, `connection refused`, or
+`x509: certificate signed by unknown authority`, check the URL in the error to
+identify which fetch failed:
 
-If the server cannot connect to the OAuth provider:
+1. **DNS and network egress.** Confirm the Registry Server pod or host can
+   resolve and reach both the issuer hostname and the JWKS hostname (often the
+   same, but providers like Auth0 host JWKS on a separate domain). Test with
+   `curl` against the URL in the error message.
+2. **Firewall rules.** Ensure outbound HTTPS (port 443) to the provider is
+   permitted.
+3. **Custom CA.** If your provider uses an internal CA, set `caCertPath` on the
+   provider config to a file containing the trust chain. Mount that file into
+   the pod.
+4. **Kubernetes API server provider.** For the Kubernetes provider, set
+   `allowPrivateIP: true`, point `caCertPath` at
+   `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`, and confirm the
+   Service Account has the `system:auth-delegator` role.
 
-1. Verify network connectivity to the issuer URL from the server
-2. Check DNS resolution for the provider's domain
-3. Ensure firewall rules allow outbound HTTPS (port 443) to the provider
-4. For Kubernetes providers, verify the API server is reachable at
-   `https://kubernetes.default.svc`
-5. Check CA certificate configuration if using self-signed certificates
+</details>
 
-### Multiple providers not working
+<details>
+<summary>Tokens from one provider work but tokens from another don't</summary>
 
-If tokens from some providers work but others don't:
+When you configure multiple providers, the server tries each in order and
+accepts the first match. If only one provider works:
 
-1. Verify each provider's configuration independently using curl
-2. Check that audience claims differ between providers if needed (or are
-   intentionally the same)
-3. Ensure issuer URLs are correct and include the full path (including realm for
-   Keycloak)
-4. Review server logs to identify which specific provider validation is failing
-5. Test each provider's JWKS endpoint accessibility:
-   `curl ${issuerUrl}/.well-known/openid-configuration`
+1. **Confirm `iss` matches exactly.** A trailing slash mismatch is a common
+   culprit; the `iss` claim and the configured `issuerUrl` must be byte-for-
+   byte identical.
+2. **Confirm `aud` is correct per provider.** Each provider can have a different
+   audience; verify the failing provider's tokens have the audience you
+   configured for it.
+3. **Verify each issuer's discovery endpoint.** Run
+   `curl ${issuerUrl}/.well-known/openid-configuration` for each provider to
+   confirm it's reachable from the server and returns valid JSON.
+4. **Check the logs.** The server logs which provider is being tried and why
+   validation failed. That tells you whether the issue is reachability,
+   signature validation, or claim mismatch.
+
+</details>

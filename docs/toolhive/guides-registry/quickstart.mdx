@@ -400,9 +400,20 @@ kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=my-registry
 kubectl logs -n toolhive-system -l app.kubernetes.io/instance=my-registry
 ```
 
-The most common causes are database connectivity problems and malformed registry
-JSON. Verify that the `postgres` pod is ready and that the ConfigMap contains
-valid JSON.
+The most common startup failures are:
+
+- **Database not reachable.** Look for `connection refused` or
+  `could not connect to server` in the logs. Confirm the `postgres` pod is Ready
+  (`kubectl get pods -l app=postgres -n toolhive-system`) and that the pgpass
+  Secret matches the credentials you set on the PostgreSQL Deployment.
+- **Migration user lacks privileges.** Look for
+  `permission denied for schema public` or similar SQL errors. The quickstart
+  uses a single user with full privileges, so this is unusual here, but it can
+  happen if you reused an existing PostgreSQL instance with a restricted user.
+- **Malformed registry JSON.** Look for `failed to parse registry` or JSON
+  decoding errors. Re-apply the ConfigMap with valid JSON, then either wait for
+  the next sync interval or restart the Registry Server pod with
+  `kubectl rollout restart deployment my-registry-api -n toolhive-system`.
 
 </details>
 
@@ -418,6 +429,17 @@ kubectl describe mcpregistry my-registry -n toolhive-system
 The status conditions report sync state. If the source reports a parse error,
 re-apply the ConfigMap with corrected JSON and wait for the next sync interval,
 or restart the pod to force an immediate sync.
+
+</details>
+
+<details>
+<summary>ConfigMap or volume mount errors</summary>
+
+If pod events show `MountVolume.SetUp failed` or
+`configmap "registry-data" not found`, the `MCPRegistry` resource references a
+ConfigMap that doesn't exist in the same namespace. Apply `registry-data.yaml`
+from Step 4 before applying `my-registry.yaml` from Step 5. Both must be in the
+`toolhive-system` namespace for this quickstart.
 
 </details>
 

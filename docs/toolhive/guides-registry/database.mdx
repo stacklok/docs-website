@@ -320,36 +320,67 @@ database:
 - `maxIdleConns`: Typically 20-25% of `maxOpenConns`
 - `connMaxLifetime`: Set to less than your database server's connection timeout
 
-## Troubleshooting
-
-### Connection errors
-
-If you encounter connection errors:
-
-1. Verify database credentials are correct
-2. Check network connectivity to the database server
-3. Ensure the database server allows connections from your host
-4. Verify SSL/TLS configuration matches your database server settings
-
-### Migration errors
-
-If migrations fail:
-
-1. Check that the migration user has sufficient privileges
-2. Verify the database exists and is accessible
-3. Check migration logs for specific error messages
-4. Ensure no other processes are modifying the schema concurrently
-
-### Permission errors
-
-If you see permission errors during normal operations:
-
-1. Verify the application user has the required privileges
-2. Check that migrations completed successfully
-3. Ensure the application user can access all required tables
-
 ## Next steps
 
 - [Configure telemetry](./telemetry-metrics.mdx) for distributed tracing and
   metrics collection
 - [Deploy the server](./deployment.mdx) to your Kubernetes environment
+
+## Troubleshooting
+
+<details>
+<summary>Connection errors on startup</summary>
+
+If the Registry Server fails to connect to PostgreSQL on startup, the logs
+typically show `connection refused`, `password authentication failed`, or TLS
+errors. Work through these in order:
+
+1. **Credentials match.** Confirm the username, password, and database name in
+   your config (or pgpass file, or `dynamicAuth` block) match what PostgreSQL
+   was provisioned with. For Kubernetes, check that the Secret referenced by
+   `pgpassSecretRef` decodes to the right values.
+2. **Network reachability.** From the Registry Server pod or host, confirm you
+   can reach the database host and port. In Kubernetes, port-forward the
+   PostgreSQL Service and try `psql` from your local machine to rule out
+   credentials before debugging cluster networking.
+3. **`pg_hba.conf` allows the client.** PostgreSQL must be configured to accept
+   connections from the Registry Server's source IP and authentication method.
+4. **SSL mode matches the server.** A mismatch between client `sslMode` and
+   server SSL configuration produces specific errors:
+   `pq: SSL is not enabled on the server` if the client requires SSL but the
+   server doesn't offer it, or `x509: certificate signed by unknown authority`
+   for `verify-ca` / `verify-full` against an unknown CA.
+
+</details>
+
+<details>
+<summary>Migration errors</summary>
+
+If migrations fail on startup, the logs show errors like
+`permission denied for schema public` or `relation "..." already exists`. Check:
+
+1. **Migration user privileges.** The migration user needs CREATE/ALTER/DROP on
+   the target database. See
+   [Migration user privileges](#migration-user-privileges) for the SQL template.
+2. **Concurrent migrations.** Running multiple Registry Server replicas against
+   an unmigrated database can produce conflicts. For first-time setup, scale to
+   a single replica until migrations complete, then scale back up.
+3. **Failed prior migration.** If a previous migration left the database in a
+   partial state, the migration tracking table may be inconsistent. Check
+   migration logs for the specific failed step. You can also run migrations
+   manually with `thv-registry-api migrate up --config config.yaml` to see the
+   failure outside of the server startup path.
+
+</details>
+
+<details>
+<summary>Permission errors during normal operations</summary>
+
+If queries succeed during migrations but fail at runtime with
+`permission denied`, the application user is missing privileges on tables
+created by the migration user. Grant the application user (`db_app` by default)
+SELECT/INSERT/UPDATE/DELETE on the schema's tables, or grant it membership in
+the `toolhive_registry_server` role used by the
+[SQL template above](#application-user-privileges).
+
+</details>
