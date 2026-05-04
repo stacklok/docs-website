@@ -941,28 +941,67 @@ The configuration file must contain all server settings.
 
 If a server fails to start:
 
-1. Check if Docker, Podman, or Colima is running
-2. Verify you have internet access to pull images
-3. Check if the port is already in use
-4. Look at the error message for specific issues
-
-</details>
-
-<details>
-<summary>Server starts but isn't accessible</summary>
-
-If a server starts but isn't accessible:
-
-1. Check the server logs:
+1. Check that Docker, Podman, or Colima is running.
+2. Verify you have internet access to pull the image.
+3. Check whether the proxy port is already in use. To pick a specific port, use
+   `--proxy-port`.
+4. Inspect the server logs for the specific error:
 
    ```bash
    thv logs <SERVER_NAME>
    ```
 
-2. Verify the port isn't blocked by a firewall
+</details>
 
-3. Make sure clients are properly configured (see
-   [Client configuration](./client-configuration.mdx))
+<details>
+<summary>Server runs but no tools appear in the client</summary>
+
+If `thv list` shows the server as running but your AI client sees no tools, ask
+the server directly what it advertises:
+
+```bash
+thv mcp list tools --server <SERVER_NAME>
+```
+
+You can also list the prompts and resources the server exposes:
+
+```bash
+thv mcp list prompts --server <SERVER_NAME>
+thv mcp list resources --server <SERVER_NAME>
+```
+
+If the server returns the tools you expect, the issue is on the client side:
+remove the client by running
+[`thv client remove <CLIENT_IDENTIFIER>`](../reference/cli/thv_client_remove.md),
+re-register the client by running
+[`thv client register <CLIENT_IDENTIFIER>`](../reference/cli/thv_client_register.md),
+and restart it. If the server returns nothing or errors, check
+`thv logs <SERVER_NAME>` for missing environment variables, failed
+authentication, or other startup problems.
+
+If you're using `--tools` to filter the tool list, make sure the names you
+passed match the tools the server actually advertises.
+
+</details>
+
+<details>
+<summary>Server starts but isn't accessible from the client</summary>
+
+If the server is running but a client can't reach it:
+
+1. Confirm the server is healthy and check what it exposes:
+
+   ```bash
+   thv list
+   thv mcp list tools --server <SERVER_NAME>
+   ```
+
+2. Check the proxy URL and port shown by `thv list` and try reaching it
+   directly. For Streamable HTTP servers, a quick `curl -I` against the URL
+   confirms the proxy is reachable.
+
+3. Make sure the client is registered for this server. See
+   [Client configuration](./client-configuration.mdx).
 
 </details>
 
@@ -983,9 +1022,15 @@ If a server crashes or exits unexpectedly:
    thv logs <SERVER_NAME>
    ```
 
-3. Check if the server requires any secrets or environment variables
+   Look for missing environment variable, secret, or argument errors. Many MCP
+   servers exit immediately if a required token isn't set.
 
-4. Verify the server's configuration and arguments
+3. Confirm the server's required secrets and arguments against its registry
+   entry:
+
+   ```bash
+   thv registry info <SERVER_NAME>
+   ```
 
 </details>
 
@@ -996,15 +1041,14 @@ If a remote MCP server authentication fails:
 
 1. Check the server logs for authentication errors (see
    [View server logs](./manage-mcp-servers.mdx#view-server-logs) for the correct
-   log file path on your platform)
+   log file path on your platform).
 
-2. Verify the issuer URL is correct and accessible
+2. Verify the issuer URL is correct and reachable from your machine.
 
-3. Check if the OAuth client ID and secret are valid
+3. Confirm the OAuth client ID and secret are valid and that the redirect URI
+   matches what's registered with your identity provider.
 
-4. Ensure the remote server supports the OAuth flow you're using
-
-5. Try re-authenticating by restarting the server:
+4. Re-authenticate by restarting the server:
 
    ```bash
    thv restart <SERVER_NAME>
@@ -1017,23 +1061,28 @@ If a remote MCP server authentication fails:
 
 If you can't connect to a remote MCP server:
 
-1. Verify the remote server URL is correct and accessible
-
-2. Check your network connectivity:
+1. Confirm the remote server URL is correct and reachable from your machine:
 
    ```bash
    curl -I https://api.example.com/mcp
    ```
 
-3. Check if the remote server requires specific headers or authentication
+2. Check what the remote server is actually advertising through ToolHive. For
+   remote-backed servers, pass the proxy URL from `thv list` rather than the
+   server name (the `--server` flag currently resolves names only for local
+   servers; see [Test MCP servers](./test-mcp-servers.mdx)):
 
-4. Review the server logs for connection errors:
+   ```bash
+   thv mcp list tools --server <PROXY_URL>
+   ```
+
+3. Review the server logs for connection or authentication errors:
 
    ```bash
    thv logs <SERVER_NAME>
    ```
 
-5. Try running with debug mode for more detailed logs:
+4. Re-run with debug logging if you need more detail:
 
    ```bash
    thv run --debug https://api.example.com/mcp --name my-server

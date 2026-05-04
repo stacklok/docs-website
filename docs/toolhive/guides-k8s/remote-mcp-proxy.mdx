@@ -839,23 +839,21 @@ feature in the ToolHive Registry Server.
 <details>
 <summary>Proxy pod in CrashLoopBackOff</summary>
 
-If the proxy pod is restarting continuously:
+Check the logs of both the current and previous container instance:
 
 ```bash
-# Check pod status
-kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=analytics-proxy
-
-# Check pod logs
 kubectl logs -n toolhive-system -l app.kubernetes.io/instance=analytics-proxy
+kubectl logs -n toolhive-system -l app.kubernetes.io/instance=analytics-proxy --previous
 ```
 
-Common causes:
+Typical causes:
 
-- **Invalid OIDC configuration**: Verify the MCPOIDCConfig resource is valid and
-  the issuer URL is accessible
-- **Certificate validation issues**: If using a custom CA, ensure `caBundleRef`
-  is set correctly
-- **Resource limits**: Check if the pod has sufficient CPU and memory
+- The MCPOIDCConfig issuer URL isn't reachable from inside the cluster, so JWKS
+  discovery fails on startup. Confirm cluster egress and DNS for the issuer.
+- The remote server uses a private CA but `caBundleRef` is missing or points to
+  a Secret/ConfigMap that doesn't exist.
+- The pod was OOMKilled. `kubectl describe pod` shows `Reason: OOMKilled` in the
+  last terminated state - raise `resources.limits`.
 
 </details>
 
@@ -899,24 +897,19 @@ add padding to the payload.
 <details>
 <summary>Remote server unreachable</summary>
 
-If the proxy cannot connect to the remote MCP server:
+Test connectivity from inside the proxy pod to isolate cluster egress from proxy
+logic:
 
 ```bash
-# Check proxy logs
-kubectl logs -n toolhive-system -l app.kubernetes.io/instance=analytics-proxy
-
-# Test connectivity from the pod
 kubectl exec -n toolhive-system <POD_NAME> -- \
   curl -v https://mcp.analytics.example.com
 ```
 
-Common causes:
-
-- **Network policies**: Check if network policies allow egress to the remote
-  server
-- **DNS resolution**: Verify the remote URL resolves correctly
-- **Firewall rules**: Ensure the cluster can reach the remote server
-- **Certificate issues**: If using HTTPS, verify certificates are valid
+If `curl` fails, the cluster can't reach the remote server. Check for
+NetworkPolicies that block egress from the proxy namespace, and confirm any
+upstream firewall or VPC egress rules permit the destination. If `curl` succeeds
+but the proxy still reports errors, check the proxy logs for the exact failure
+(TLS handshake, HTTP status, transport mismatch).
 
 </details>
 

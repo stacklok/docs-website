@@ -418,31 +418,39 @@ thv build --tag my-server:dev go:///path/to/my-project
 <details>
 <summary>Build fails with network errors</summary>
 
-If builds fail with network connectivity issues:
+If `thv build` can't reach a package registry, the build runs inside a container
+and uses the same network the container runtime sees:
 
-1. **Check internet connectivity** for downloading packages
-2. **Configure CA certificates** for corporate environments:
+1. Confirm you can reach the registry from your machine. The build container
+   inherits the host's DNS and networking through Docker or Podman.
+2. In corporate environments with TLS inspection, configure ToolHive to trust
+   your CA certificate:
 
    ```bash
    thv config set-ca-cert /path/to/corporate-ca.crt
    ```
 
-3. **Use proxy settings** if required by your network
-4. **Verify package names** and versions exist in the respective registries
+3. If your network requires HTTP/HTTPS proxy settings, set them in the container
+   runtime (for example, in Docker Desktop's proxy settings) so the build
+   container picks them up.
+4. Inspect the generated Dockerfile to confirm the package reference is what you
+   expect. Pass the full protocol URI, not just the scheme:
+
+   ```bash
+   thv build --dry-run uvx://<PACKAGE>
+   # or npx://<PACKAGE>, go://<PACKAGE>, go://./<LOCAL_PATH>
+   ```
 
 </details>
 
 <details>
 <summary>Invalid image tag format</summary>
 
-If you get image tag validation errors:
+If `thv build --tag` rejects your tag, the value must be a valid Docker
+reference: `name:tag` or `registry/name:tag`, with lowercase names and only
+hyphens, underscores, and dots as separators.
 
-1. **Use valid Docker image tag format**: `name:tag` or `registry/name:tag`
-2. **Avoid special characters** except hyphens, underscores, and dots
-3. **Use lowercase names** for compatibility
-4. **Check tag length limits** (typically 128 characters)
-
-Example valid tags:
+Examples that work:
 
 ```bash
 thv build --tag my-server:latest uvx://package
@@ -454,23 +462,25 @@ thv build --tag ghcr.io/org/server:v1.0.0 npx://package
 <details>
 <summary>Package not found errors</summary>
 
-If the build fails because a package cannot be found:
+If the build fails because a package can't be found, the package reference in
+your protocol scheme is most likely wrong.
 
-1. **Verify package exists** in the respective registry:
-   - Python: Check [PyPI](https://pypi.org/)
-   - Node.js: Check [npm](https://www.npmjs.com/)
-   - Go: Verify the module path and version
+1. Confirm the package exists in the right registry:
+   - Python (`uvx://`): [PyPI](https://pypi.org/)
+   - Node.js (`npx://`): [npm](https://www.npmjs.com/)
+   - Go (`go://`): the module path must resolve through the Go proxy
 
-2. **Check version specifiers**:
+2. Check the version syntax. The `@` separator picks a version, and `latest`
+   resolves to the most recent published version where supported:
 
    ```bash
-   # Correct version formats
    thv build uvx://package@1.0.0
    thv build npx://package@latest
    thv build go://github.com/user/repo@v1.0.0
    ```
 
-3. **For Go modules**, ensure the path includes the correct import path
+3. For Go modules, the path must point at a `main` package. Building a library
+   path will fail.
 
 </details>
 
@@ -479,23 +489,25 @@ If the build fails because a package cannot be found:
 
 If your custom package registry configuration isn't being applied:
 
-1. **Verify your build environment configuration**:
+1. Verify the build environment variables are set:
 
    ```bash
    thv config get-build-env
    ```
 
-2. **Check the environment variable names** match what your package manager
-   expects (for example, `NPM_CONFIG_REGISTRY` for npm, `GOPROXY` for Go)
+2. Check the variable names match what your package manager expects. For
+   example, `NPM_CONFIG_REGISTRY` for npm, `GOPROXY` for Go, `PIP_INDEX_URL` for
+   pip/uv.
 
-3. **Use `--dry-run` to inspect the generated Dockerfile** and verify your
-   environment variables are being injected:
+3. Use `--dry-run` to inspect the generated Dockerfile and confirm the variables
+   are being injected into the build:
 
    ```bash
    thv build --dry-run uvx://my-package
    ```
 
-4. **Ensure network connectivity** to your custom registry from inside the
-   container build environment
+4. Make sure the build container can reach your custom registry. If your
+   registry requires VPN or proxy access, configure that at the container
+   runtime level.
 
 </details>

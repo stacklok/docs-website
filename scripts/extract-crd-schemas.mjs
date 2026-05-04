@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 import yaml from 'yaml';
+import { intros } from './lib/crd-intros.mjs';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -45,12 +46,36 @@ if (!fs.existsSync(srcDir)) {
 
 fs.mkdirSync(outDir, { recursive: true });
 
+// Pattern-aware string placeholders. The default `<string>` token doesn't
+// satisfy schema-level `pattern` validators, which makes the example fail
+// admission for fields like `spec.remoteUrl` (^https?://...). Add entries
+// here as new patterns surface in required-field positions; we don't try to
+// generate a value from an arbitrary regex.
+const PATTERN_PLACEHOLDERS = [
+  {
+    test: (p) => p.startsWith('^https?://') || p.startsWith('^https://'),
+    value: 'https://example.com',
+  },
+  // DNS-1123 label (lowercase alphanumeric + hyphens, edge anchored).
+  {
+    test: (p) => p === '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$',
+    value: 'example',
+  },
+];
+
 // Placeholder values for leaf types with no default/enum.
 function placeholder(schema) {
   const t = schema.type;
   if (schema.default !== undefined) return schema.default;
   if (Array.isArray(schema.enum) && schema.enum.length) return schema.enum[0];
-  if (t === 'string') return '<string>';
+  if (t === 'string') {
+    if (typeof schema.pattern === 'string') {
+      for (const { test, value } of PATTERN_PLACEHOLDERS) {
+        if (test(schema.pattern)) return value;
+      }
+    }
+    return '<string>';
+  }
   if (t === 'integer' || t === 'number') return 0;
   if (t === 'boolean') return false;
   if (t === 'array') return [];
@@ -58,7 +83,49 @@ function placeholder(schema) {
   return '<value>';
 }
 
-function buildRequiredExample(schema) {
+// When an array has `minItems`, an empty list fails admission. Generate that
+// many copies of an example item so the skeleton stays valid. Items typically
+// have their own required-fields shape, which we recurse into.
+function arrayExample(schema) {
+  const minItems = schema.minItems ?? 0;
+  if (minItems <= 0 || !schema.items) return [];
+  const item =
+    schema.items.type === 'object' && schema.items.properties
+      ? buildRequiredExample(schema.items)
+      : placeholder(schema.items);
+  return Array.from({ length: minItems }, () => item);
+}
+
+// Match CEL rules whose true branch is `has(self.<sibling>)` - the
+// kubebuilder discriminator idiom, regardless of whether the false branch
+// is `!has(self.<sibling>)` (exclusive-or) or `true` (constraint-only).
+// In both cases the rule means "when discriminator equals value, the
+// sibling must be present", which is all we need to know to materialize
+// the sibling on top of what `required` alone would emit. Other CEL
+// shapes (cross-field guards, !has preconditions, leaf range checks) are
+// ignored.
+const DISCRIMINATOR_RULE_RE =
+  /^\s*self\.(\w+)\s*==\s*'([^']+)'\s*\?\s*has\(self\.(\w+)\)/;
+
+function parseDiscriminatorRules(schema) {
+  const validations = schema['x-kubernetes-validations'];
+  if (!Array.isArray(validations)) return [];
+  const rules = [];
+  for (const v of validations) {
+    if (typeof v?.rule !== 'string') continue;
+    const m = v.rule.match(DISCRIMINATOR_RULE_RE);
+    if (!m) continue;
+    rules.push({ discriminator: m[1], value: m[2], sibling: m[3] });
+  }
+  return rules;
+}
+
+// `picks` lets callers override which enum value gets emitted for a given
+// required property. Used to swap `spec.type` away from `enum[0]` when an
+// intros entry sets `preferredType`. Only applied at the level it's passed in
+// at; we don't recurse it because every override case so far targets the spec
+// discriminator directly.
+function buildRequiredExample(schema, picks = {}) {
   if (schema.type !== 'object' || !schema.properties)
     return placeholder(schema);
   const required = Array.isArray(schema.required) ? schema.required : [];
@@ -66,12 +133,33 @@ function buildRequiredExample(schema) {
   for (const key of required) {
     const child = schema.properties[key];
     if (!child) continue;
-    if (child.type === 'object' && child.properties) {
+    if (
+      Object.prototype.hasOwnProperty.call(picks, key) &&
+      Array.isArray(child.enum) &&
+      child.enum.includes(picks[key])
+    ) {
+      out[key] = picks[key];
+    } else if (child.type === 'object' && child.properties) {
       out[key] = buildRequiredExample(child);
     } else if (child.type === 'array') {
-      out[key] = [];
+      out[key] = arrayExample(child);
     } else {
       out[key] = placeholder(child);
+    }
+  }
+  for (const { discriminator, value, sibling } of parseDiscriminatorRules(
+    schema
+  )) {
+    if (out[discriminator] !== value) continue;
+    if (sibling in out) continue;
+    const siblingSchema = schema.properties[sibling];
+    if (!siblingSchema) continue;
+    if (siblingSchema.type === 'array') {
+      out[sibling] = arrayExample(siblingSchema);
+    } else if (siblingSchema.type === 'object' && siblingSchema.properties) {
+      out[sibling] = buildRequiredExample(siblingSchema);
+    } else {
+      out[sibling] = placeholder(siblingSchema);
     }
   }
   return out;
@@ -87,7 +175,9 @@ function buildYamlSkeleton({ group, version, kind, scope, schema }) {
     },
   };
   if (schema.properties?.spec) {
-    example.spec = buildRequiredExample(schema.properties.spec);
+    const preferredType = intros[kind]?.preferredType;
+    const picks = preferredType ? { type: preferredType } : {};
+    example.spec = buildRequiredExample(schema.properties.spec, picks);
     if (example.spec === undefined) example.spec = {};
   }
   return yaml.stringify(example, { indent: 2, lineWidth: 0 });
