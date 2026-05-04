@@ -385,7 +385,7 @@
                         "type": "object"
                       },
                       "userInfo": {
-                        "description": "UserInfo contains configuration for fetching user information from the upstream provider.\nRequired for OAuth2 providers to resolve user identity.",
+                        "description": "UserInfo contains configuration for fetching user information from the upstream provider.\nWhen omitted, the embedded auth server runs in synthesis mode for this\nupstream: a non-PII subject derived from the access token, no Name/Email.\nUse this shape for upstreams with no userinfo surface (e.g., MCP\nauthorization servers per the MCP spec).",
                         "properties": {
                           "additionalHeaders": {
                             "additionalProperties": {
@@ -447,8 +447,7 @@
                     "required": [
                       "authorizationEndpoint",
                       "clientId",
-                      "tokenEndpoint",
-                      "userInfo"
+                      "tokenEndpoint"
                     ],
                     "type": "object"
                   },
@@ -1327,6 +1326,74 @@
                   "additionalProperties": {
                     "description": "BackendAuthStrategy defines how to authenticate to a specific backend.\n\nThis struct provides type-safe configuration for different authentication strategies\nusing HeaderInjection or TokenExchange fields based on the Type field.",
                     "properties": {
+                      "awsSts": {
+                        "description": "AwsSts contains configuration for AWS STS auth strategy.\nUsed when Type = \"aws_sts\".",
+                        "properties": {
+                          "fallbackRoleArn": {
+                            "description": "FallbackRoleArn is the IAM role ARN to assume when no role mappings match.",
+                            "type": "string"
+                          },
+                          "region": {
+                            "description": "Region is the AWS region for the STS endpoint and service.",
+                            "type": "string"
+                          },
+                          "roleClaim": {
+                            "description": "RoleClaim is the JWT claim to use for role mapping evaluation.",
+                            "type": "string"
+                          },
+                          "roleMappings": {
+                            "description": "RoleMappings defines claim-based role selection rules.",
+                            "items": {
+                              "description": "RoleMapping defines a rule for mapping JWT claims to IAM roles.\nMappings are evaluated in priority order (lower number = higher priority).",
+                              "properties": {
+                                "claim": {
+                                  "description": "Claim is a simple claim value to match against the RoleClaim field.",
+                                  "type": "string"
+                                },
+                                "matcher": {
+                                  "description": "Matcher is a CEL expression for complex matching against JWT claims.",
+                                  "type": "string"
+                                },
+                                "priority": {
+                                  "description": "Priority determines evaluation order (lower values = higher priority).\nMirrors awssts.RoleMapping.Priority, which is *int because the role mapper\nuses math.MaxInt for nil-priority semantics in effectivePriority.",
+                                  "type": "integer"
+                                },
+                                "roleArn": {
+                                  "description": "RoleArn is the IAM role ARN to assume when this mapping matches.",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "roleArn"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array",
+                            "x-kubernetes-list-type": "atomic"
+                          },
+                          "service": {
+                            "description": "Service is the AWS service name for SigV4 signing.",
+                            "type": "string"
+                          },
+                          "sessionDuration": {
+                            "description": "SessionDuration is the duration in seconds for the STS session.",
+                            "format": "int32",
+                            "type": "integer"
+                          },
+                          "sessionNameClaim": {
+                            "description": "SessionNameClaim is the JWT claim to use for the role session name.",
+                            "type": "string"
+                          },
+                          "subjectProviderName": {
+                            "description": "SubjectProviderName selects which upstream provider's token to use as the\nweb identity token for AssumeRoleWithWebIdentity. When set, the token is\nlooked up from Identity.UpstreamTokens instead of the request's\nAuthorization header.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "region"
+                        ],
+                        "type": "object"
+                      },
                       "headerInjection": {
                         "description": "HeaderInjection contains configuration for header injection auth strategy.\nUsed when Type = \"header_injection\".",
                         "properties": {
@@ -1393,7 +1460,7 @@
                         "type": "object"
                       },
                       "type": {
-                        "description": "Type is the auth strategy: \"unauthenticated\", \"header_injection\", \"token_exchange\", \"upstream_inject\"",
+                        "description": "Type is the auth strategy: \"unauthenticated\", \"header_injection\", \"token_exchange\", \"upstream_inject\", \"aws_sts\"",
                         "type": "string"
                       },
                       "upstreamInject": {
@@ -1421,6 +1488,74 @@
                 "default": {
                   "description": "Default is the default auth strategy for backends without explicit config.",
                   "properties": {
+                    "awsSts": {
+                      "description": "AwsSts contains configuration for AWS STS auth strategy.\nUsed when Type = \"aws_sts\".",
+                      "properties": {
+                        "fallbackRoleArn": {
+                          "description": "FallbackRoleArn is the IAM role ARN to assume when no role mappings match.",
+                          "type": "string"
+                        },
+                        "region": {
+                          "description": "Region is the AWS region for the STS endpoint and service.",
+                          "type": "string"
+                        },
+                        "roleClaim": {
+                          "description": "RoleClaim is the JWT claim to use for role mapping evaluation.",
+                          "type": "string"
+                        },
+                        "roleMappings": {
+                          "description": "RoleMappings defines claim-based role selection rules.",
+                          "items": {
+                            "description": "RoleMapping defines a rule for mapping JWT claims to IAM roles.\nMappings are evaluated in priority order (lower number = higher priority).",
+                            "properties": {
+                              "claim": {
+                                "description": "Claim is a simple claim value to match against the RoleClaim field.",
+                                "type": "string"
+                              },
+                              "matcher": {
+                                "description": "Matcher is a CEL expression for complex matching against JWT claims.",
+                                "type": "string"
+                              },
+                              "priority": {
+                                "description": "Priority determines evaluation order (lower values = higher priority).\nMirrors awssts.RoleMapping.Priority, which is *int because the role mapper\nuses math.MaxInt for nil-priority semantics in effectivePriority.",
+                                "type": "integer"
+                              },
+                              "roleArn": {
+                                "description": "RoleArn is the IAM role ARN to assume when this mapping matches.",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "roleArn"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array",
+                          "x-kubernetes-list-type": "atomic"
+                        },
+                        "service": {
+                          "description": "Service is the AWS service name for SigV4 signing.",
+                          "type": "string"
+                        },
+                        "sessionDuration": {
+                          "description": "SessionDuration is the duration in seconds for the STS session.",
+                          "format": "int32",
+                          "type": "integer"
+                        },
+                        "sessionNameClaim": {
+                          "description": "SessionNameClaim is the JWT claim to use for the role session name.",
+                          "type": "string"
+                        },
+                        "subjectProviderName": {
+                          "description": "SubjectProviderName selects which upstream provider's token to use as the\nweb identity token for AssumeRoleWithWebIdentity. When set, the token is\nlooked up from Identity.UpstreamTokens instead of the request's\nAuthorization header.",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "region"
+                      ],
+                      "type": "object"
+                    },
                     "headerInjection": {
                       "description": "HeaderInjection contains configuration for header injection auth strategy.\nUsed when Type = \"header_injection\".",
                       "properties": {
@@ -1487,7 +1622,7 @@
                       "type": "object"
                     },
                     "type": {
-                      "description": "Type is the auth strategy: \"unauthenticated\", \"header_injection\", \"token_exchange\", \"upstream_inject\"",
+                      "description": "Type is the auth strategy: \"unauthenticated\", \"header_injection\", \"token_exchange\", \"upstream_inject\", \"aws_sts\"",
                       "type": "string"
                     },
                     "upstreamInject": {
@@ -1654,6 +1789,23 @@
             "name"
           ],
           "type": "object"
+        },
+        "imagePullSecrets": {
+          "description": "ImagePullSecrets allows specifying image pull secrets for the vMCP workload.\nThese are applied to both the vMCP Deployment's PodSpec.ImagePullSecrets\nand to the operator-managed ServiceAccount the vMCP server runs as, so private\nimages are pullable through either path.\n\nMerge semantics with PodTemplateSpec:\nThe deployed PodSpec.ImagePullSecrets is the Kubernetes-native strategic-merge\nunion of this field and spec.podTemplateSpec.spec.imagePullSecrets, merged by\nthe patchStrategy:\"merge\" / patchMergeKey:\"name\" tags on corev1.PodSpec.\n  - This field is rendered first as the controller-generated default.\n  - spec.podTemplateSpec.spec.imagePullSecrets is then strategic-merge-patched\n    on top, keyed by Name. Distinct names from the two sources are unioned in\n    the resulting list; entries with the same Name are deduplicated and the\n    PodTemplateSpec entry wins on overlap (user override).\n  - Order in the resulting list is not guaranteed and should not be relied on:\n    strategic merge by name is order-insensitive.\n  - The operator-managed ServiceAccount's imagePullSecrets list is populated\n    ONLY from this field. spec.podTemplateSpec.spec.imagePullSecrets does not\n    reach the ServiceAccount because PodTemplateSpec has no notion of a\n    ServiceAccount. To make a secret usable via the ServiceAccount path\n    (e.g. for sidecars or init containers that pull images independently),\n    list it here rather than under spec.podTemplateSpec.\n\nNote on cross-CRD consistency:\nMCPRegistry currently uses an atomic-replace strategy for its imagePullSecrets\n(the user-provided value replaces the controller-generated list rather than\nbeing merged on top). VirtualMCPServer follows the Kubernetes-native\nstrategic-merge-by-name behavior described above. Aligning the two is tracked\nas a separate follow-up; until then, manifests that set imagePullSecrets on\nboth CRDs will see different override behavior between them.",
+          "items": {
+            "description": "LocalObjectReference contains enough information to let you locate the\nreferenced object inside the same namespace.",
+            "properties": {
+              "name": {
+                "default": "",
+                "description": "Name of the referent.\nThis field is effectively required, but due to backwards compatibility is\nallowed to be empty. Instances of this type with an empty value here are\nalmost certainly wrong.\nMore info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names",
+                "type": "string"
+              }
+            },
+            "type": "object",
+            "x-kubernetes-map-type": "atomic"
+          },
+          "type": "array",
+          "x-kubernetes-list-type": "atomic"
         },
         "incomingAuth": {
           "description": "IncomingAuth configures authentication for clients connecting to the Virtual MCP server.\nMust be explicitly set - use \"anonymous\" type when no authentication is required.\nThis field takes precedence over config.IncomingAuth and should be preferred because it\nsupports Kubernetes-native secret references (SecretKeyRef, ConfigMapRef) for secure\ndynamic discovery of credentials, rather than requiring secrets to be embedded in config.",

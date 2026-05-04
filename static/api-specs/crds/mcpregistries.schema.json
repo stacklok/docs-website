@@ -24,6 +24,23 @@
           "description": "DisplayName is a human-readable name for the registry.",
           "type": "string"
         },
+        "imagePullSecrets": {
+          "description": "ImagePullSecrets allows specifying image pull secrets for the registry API workload.\nThese are applied to both the registry-api Deployment's PodSpec.ImagePullSecrets\nand to the operator-managed ServiceAccount the registry API runs as, so private\nimages are pullable through either path.\n\nUse this field for new manifests.\n\nImportant: this is the ONLY way to attach image-pull credentials to the\noperator-managed ServiceAccount. The legacy\nspec.podTemplateSpec.spec.imagePullSecrets path populates the Deployment's pod\nspec ONLY — it does NOT touch the ServiceAccount. On managed Kubernetes\nplatforms that rely on ServiceAccount-level credential injection (for example\nGKE Workload Identity, OpenShift's per-SA dockercfg secrets, EKS IRSA), using\nonly the legacy PodTemplateSpec path can fail to pull private images even when\nthe secret exists in the namespace. Always set spec.imagePullSecrets when\nSA-level credentials matter.\n\nPrecedence with PodTemplateSpec:\n  - This field is applied first as the controller-generated default.\n  - Values set under spec.podTemplateSpec.spec.imagePullSecrets are user overrides\n    and win on overlap. If the user supplies imagePullSecrets via PodTemplateSpec,\n    those replace the default list on the Deployment (the list is treated atomically).\n  - The ServiceAccount is always populated from this field — PodTemplateSpec does not\n    affect the ServiceAccount.\n\nAn omitted field and an explicitly empty list are equivalent: both leave the\nServiceAccount's existing ImagePullSecrets unchanged. This preserves\nplatform-managed pull secrets (for example OpenShift's per-SA dockercfg\nentries) when overlays or patches emit an empty list. Truly clearing the\nServiceAccount's pull secrets requires recreating the resource.",
+          "items": {
+            "description": "LocalObjectReference contains enough information to let you locate the\nreferenced object inside the same namespace.",
+            "properties": {
+              "name": {
+                "default": "",
+                "description": "Name of the referent.\nThis field is effectively required, but due to backwards compatibility is\nallowed to be empty. Instances of this type with an empty value here are\nalmost certainly wrong.\nMore info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names",
+                "type": "string"
+              }
+            },
+            "type": "object",
+            "x-kubernetes-map-type": "atomic"
+          },
+          "type": "array",
+          "x-kubernetes-list-type": "atomic"
+        },
         "pgpassSecretRef": {
           "description": "PGPassSecretRef references a Secret containing a pre-created pgpass file.\n\nWhy this is a dedicated field instead of a regular volume/volumeMount:\nPostgreSQL's libpq rejects pgpass files that aren't mode 0600. Kubernetes\nsecret volumes mount files as root-owned, and the registry-api container\nruns as non-root (UID 65532). A root-owned 0600 file is unreadable by\nUID 65532, and using fsGroup changes permissions to 0640 which libpq also\nrejects. The only solution is an init container that copies the file to an\nemptyDir as the app user and runs chmod 0600. This cannot be expressed\nthrough volumes/volumeMounts alone -- it requires an init container, two\nextra volumes (secret + emptyDir), a subPath mount, and an environment\nvariable, all wired together correctly.\n\nWhen specified, the operator generates all of that plumbing invisibly.\nThe user creates the Secret with pgpass-formatted content; the operator\nhandles only the Kubernetes permission mechanics.\n\nExample Secret:\n\n\tapiVersion: v1\n\tkind: Secret\n\tmetadata:\n\t  name: my-pgpass\n\tstringData:\n\t  .pgpass: |\n\t    postgres:5432:registry:db_app:mypassword\n\t    postgres:5432:registry:db_migrator:otherpassword\n\nThen reference it:\n\n\tpgpassSecretRef:\n\t  name: my-pgpass\n\t  key: .pgpass",
           "properties": {
