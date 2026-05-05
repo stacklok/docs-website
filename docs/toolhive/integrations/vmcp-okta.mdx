@@ -1,0 +1,350 @@
+---
+title: Connect ToolHive to Okta
+description:
+  Connect a VirtualMCPServer to Okta using the embedded auth server and Cedar
+  policies for group-based tool access.
+---
+
+This guide covers the full setup for connecting a
+[VirtualMCPServer](../guides-vmcp/intro.mdx) to Okta. Okta Groups are the
+standard mechanism for application-level access control; this guide uses them to
+place group values in the `groups` claim of the access token, which vMCP then
+uses for Cedar policy evaluation.
+
+:::note
+
+For a single MCPServer without vMCP, see the
+[Role-based authorization with Okta](./okta.mdx) tutorial. It covers the same
+Okta-side setup applied directly to a backend MCPServer.
+
+:::
+
+## What you'll need
+
+Collect these values as you complete the steps below:
+
+- [ ] Client ID
+- [ ] Client Secret
+- [ ] Okta domain (e.g. `your-org.okta.com`)
+- [ ] Authorization Server ID (or `default`)
+- [ ] Issuer URL: `https://<OKTA_DOMAIN>/oauth2/<AUTH_SERVER_ID>`
+- [ ] Redirect URI: `https://<VMCP_ENDPOINT>/oauth/callback`
+
+## Configure Okta
+
+### Step 1: Create a custom authorization server
+
+You **must** use a custom authorization server, not the
+[Org authorization server](https://developer.okta.com/docs/concepts/auth-servers/#org-authorization-server).
+The Org authorization server is Okta's built-in, non-customizable server
+intended for SSO with Okta-managed apps and access to Okta's own APIs. Its
+tokens are not designed for validation by external resource servers, and its
+claims, scopes, and policies cannot be customized.
+
+- **Security > API > Authorization Servers > Add Authorization Server**
+- Name: e.g. `toolhive-engineering`
+- Audience: `https://<VMCP_ENDPOINT>` (this becomes the `aud` claim)
+- Note the **Issuer URI**
+
+:::note
+
+Creating a custom authorization server requires the Okta API Access Management
+add-on in production orgs. A dedicated AS gives each application its own
+audience, preventing tokens issued for one app from being accepted by another.
+If you use the `default` AS instead, set its audience to your vMCP endpoint URL.
+Note that it is a shared resource.
+
+:::
+
+### Step 2: Create an OIDC application
+
+- Okta Admin > Applications > **Create App Integration**
+- Sign-in method: **OIDC - OpenID Connect**
+- Application type: **Web Application** (confidential client)
+- Grant types: check **Authorization Code** and **Refresh Token**
+- Sign-in redirect URI: `https://<VMCP_ENDPOINT>/oauth/callback`
+- Assignments: select **Limit access to selected groups** (you will assign
+  groups in step 5)
+- Note **Client ID** and **Client Secret**
+
+:::warning
+
+Enable **Refresh Token** on the application. The embedded auth server uses
+refresh tokens to maintain long-lived sessions. Without them, user sessions
+expire when the upstream access token expires (typically 1 hour), requiring
+users to re-authenticate.
+
+:::
+
+### Step 3: Create a `groups` scope
+
+The scope controls whether clients can request group data; the claim (step 4)
+defines what gets embedded in the token. Both are required.
+
+Check the Scopes tab on your authorization server first. `groups` is a reserved
+scope name in Okta and may already exist. If it does, skip to step 4. If not,
+add it now:
+
+- **Security > API > Authorization Servers > [your server] > Scopes tab > Add
+  Scope**
+- Name: `groups`
+- Check **Include in public metadata**
+- Save
+
+### Step 4: Add a groups claim to the access token
+
+- **Security > API > Authorization Servers > [your server] > Claims tab > Add
+  Claim**
+
+| Field                 | Value                  |
+| --------------------- | ---------------------- |
+| Name                  | `groups`               |
+| Include in token type | **Access Token**       |
+| Value type            | **Groups**             |
+| Filter                | **Starts with** `mcp-` |
+| Include in            | **Any scope**          |
+| Disable claim         | **unchecked**          |
+
+Use a prefix convention (e.g., `mcp-`) and name your Okta groups accordingly
+(`mcp-developers`, `mcp-platform`). This keeps tokens small and avoids leaking
+unrelated group memberships (admin groups, infrastructure groups, etc.) into
+every access token. Note that the groups claim has a hard limit of 100 groups.
+If the filter matches more than 100, the token request fails.
+
+:::warning[Filter type matters]
+
+The filter dropdown defaults to "Starts with". If you switch to "Matches regex",
+make sure to enter `.*` (not leave it blank). If you accidentally leave the
+filter type on "Starts with" while entering `.*`, Okta tries to match group
+names literally starting with `.*`, which matches nothing.
+
+:::
+
+### Step 5: Create groups and assign users
+
+- **Directory > Groups > Add Group**
+- Create `mcp-developers` and `mcp-platform` groups (with descriptions)
+- Click each group > **People** tab > **Assign people** > add users > click
+  **Done**
+- **Applications > your app > Assignments > Assign > Assign to Groups** > search
+  for each group, click **Assign**, then click **Done**
+
+:::warning
+
+**This is the most commonly missed step.** Both conditions are required: the
+groups must be assigned to the app, and users must be members of those groups.
+Without group assignment, users get "not assigned to the application" errors.
+
+:::
+
+:::note
+
+Okta's app assignment is permissive: a user in any assigned group is granted
+access. Fine-grained allow and deny logic (e.g., allowing one group but blocking
+another from a specific tool) is handled by Cedar policies, not Okta assignment.
+See [Cedar policies](../concepts/cedar-policies.mdx).
+
+:::
+
+### Step 6: Add an access policy
+
+On your custom authorization server: **Access Policies tab > Add Policy**
+
+- Name: `default-policy`
+- Assign to: **All clients**
+- Click **Create Policy**, then **Add Rule**:
+  - Name: `allow-authcode`
+  - Grant type: **Authorization Code**
+  - Scopes: `openid`, `profile`, `groups`, `offline_access`
+  - Access token lifetime: **1 hour** (or your preference)
+  - Refresh token lifetime: **24 hours** (must exceed expected user session
+    duration; the embedded auth server uses Okta refresh tokens to maintain
+    long-lived sessions)
+
+:::note
+
+The `groups` scope must already exist (step 3) for it to appear in the scope
+picker. `offline_access` is a built-in OIDC scope; it does not need to be
+created, but must be listed in the rule for refresh tokens to be issued. Both
+this and the Refresh Token grant type enabled in step 2 are required. Either
+alone is not sufficient.
+
+:::
+
+| Item                         | Value                                                             |
+| ---------------------------- | ----------------------------------------------------------------- |
+| Scopes requested from Okta   | `openid` `profile` `groups` `offline_access`                      |
+| Access token claims produced | `groups: ["mcp-developers", "mcp-platform"]`, `sub`, `iss`, `aud` |
+
+### Consistency checklist
+
+Group names must match exactly in three places. A mismatch in any one causes
+silent authorization failures (Cedar default-deny):
+
+1. **Okta group names** (step 5): e.g., `mcp-developers`
+2. **Claim filter** (step 4): must match the group name prefix (e.g.,
+   `Starts with mcp-`)
+3. **Cedar policies** (see [Deploy to ToolHive](#deploy-to-toolhive)):
+   `THVGroup::"mcp-developers"` must match the Okta group name exactly,
+   including case
+
+:::warning
+
+Register a dedicated Okta application for this VirtualMCPServer. See
+[One application per VirtualMCPServer](./vmcp-idp-overview.mdx#one-application-per-virtualmcpserver).
+
+:::
+
+## Deploy to ToolHive
+
+All resources in this section are assumed to live in the same namespace. Either
+set `namespace:` on each resource or apply them with
+`kubectl apply -n <NAMESPACE>`.
+
+### Step 1: Create the IdP client secret
+
+```bash
+kubectl create secret generic idp-client-secret \
+  -n <NAMESPACE> \
+  --from-literal=client-secret=<CLIENT_SECRET>
+```
+
+:::note
+
+For production, configure persistent signing keys so tokens survive pod
+restarts. See
+[Configure the embedded auth server](../guides-vmcp/authentication.mdx#configure-the-embedded-auth-server).
+
+:::
+
+### Step 2: Create an MCPGroup and backend MCPServers
+
+If you haven't already set up your backends, follow the
+[vMCP quickstart](../guides-vmcp/quickstart.mdx) steps 1 and 2 to create an
+MCPGroup and deploy your MCPServers into it. The examples below assume a group
+named `engineering-tools`.
+
+### Step 3: Create the VirtualMCPServer
+
+The VirtualMCPServer ties everything together: it references the backend group,
+configures the embedded auth server with Okta as the upstream provider, sets up
+incoming OIDC validation, and defines Cedar policies for group-based access
+control.
+
+```yaml {24,30-34}
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: engineering-tools-oidc
+spec:
+  type: inline
+  inline:
+    issuer: 'https://<VMCP_ENDPOINT>'
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: VirtualMCPServer
+metadata:
+  name: engineering-tools
+spec:
+  groupRef:
+    name: engineering-tools
+
+  authServerConfig:
+    issuer: 'https://<VMCP_ENDPOINT>'
+    upstreamProviders:
+      - name: okta
+        type: oidc
+        oidcConfig:
+          issuerUrl: 'https://<OKTA_DOMAIN>/oauth2/<AUTH_SERVER_ID>'
+          clientId: '<CLIENT_ID>'
+          clientSecretRef:
+            name: idp-client-secret
+            key: client-secret
+          redirectUri: 'https://<VMCP_ENDPOINT>/oauth/callback'
+          scopes:
+            - openid
+            - profile
+            - groups
+            - offline_access
+
+  incomingAuth:
+    type: oidc
+    oidcConfigRef:
+      name: engineering-tools-oidc
+      audience: 'https://<VMCP_ENDPOINT>'
+      resourceUrl: 'https://<VMCP_ENDPOINT>'
+    authzConfig:
+      type: inline
+      inline:
+        policies:
+          - |
+            permit(
+              principal in THVGroup::"mcp-developers",
+              action,
+              resource
+            );
+          - |
+            forbid(
+              principal in THVGroup::"mcp-developers",
+              action == Action::"call_tool",
+              resource == Tool::"delete_namespace"
+            );
+          - |
+            permit(
+              principal in THVGroup::"mcp-platform",
+              action,
+              resource
+            );
+          - |
+            permit(
+              principal in THVGroup::"mcp-admin",
+              action,
+              resource
+            );
+
+  outgoingAuth:
+    source: discovered
+```
+
+The highlighted lines are Okta-specific. `issuerUrl` uses your custom
+authorization server's issuer, and `scopes` must include `groups` to get group
+membership in the access token.
+
+- **MCPOIDCConfig**: validates tokens issued by the embedded auth server to
+  incoming MCP client requests. The `issuer` must match
+  `authServerConfig.issuer`.
+- **groupRef**: the MCPGroup containing your backend MCPServers.
+- **authServerConfig**: configures the embedded auth server with Okta as the
+  upstream IdP.
+- **incomingAuth**: applies Cedar policies to each tool call. Group values in
+  `THVGroup::"mcp-developers"` must match the Okta group names from step 5
+  exactly.
+- **outgoingAuth**: `source: discovered` means vMCP automatically forwards
+  credentials to backend MCPServers that require authentication.
+
+## Next steps
+
+- [Connect clients to MCP servers](../guides-k8s/connect-clients.mdx)
+- [Authentication](../guides-vmcp/authentication.mdx)
+- [Cedar policies](../concepts/cedar-policies.mdx)
+- [Authentication and authorization](../concepts/auth-framework.mdx)
+
+## Troubleshooting
+
+**`default` vs custom authorization server**: Custom authorization servers
+support groups claims in access tokens. The Org authorization server can only
+add groups claims to ID tokens, not access tokens.
+
+**Groups claim empty**: Common causes: (1) the claim filter prefix does not
+match the Okta group names (e.g., filter says `mcp-` but groups are named
+`developers` without the prefix); (2) the app is not assigned to the groups; (3)
+when using "Matches regex", the dropdown was left on "Starts with" by accident
+(see the filter type warning in step 4).
+
+**`invalid_grant` on token exchange**: Common causes: (1) the Refresh Token
+grant type is not enabled on the application (edit the app and check Refresh
+Token); (2) the refresh token has expired or been revoked, so the user must
+re-authenticate.
+
+**Scope not available in policy rule**: The `groups` scope must be created
+(Scopes tab) before it can be referenced in a policy rule.
