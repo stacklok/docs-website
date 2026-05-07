@@ -202,26 +202,49 @@ that include `org: "acme"` and `team: "platform"`. Otherwise, the server returns
 The server uses **containment** (superset check) for claim validation: the
 caller's claims must be a superset of the resource's claims. For example:
 
-| Resource claims                   | Caller JWT claims                 | Result  |
-| --------------------------------- | --------------------------------- | ------- |
-| `{org: "acme"}`                   | `{org: "acme", team: "platform"}` | Allowed |
-| `{org: "acme", team: "platform"}` | `{org: "acme"}`                   | Denied  |
-| `{}` (no claims)                  | `{org: "acme"}`                   | Allowed |
-| `{org: "acme"}`                   | `{org: "contoso"}`                | Denied  |
+| Resource claims                   | Caller JWT claims                 | Result                                 |
+| --------------------------------- | --------------------------------- | -------------------------------------- |
+| `{org: "acme"}`                   | `{org: "acme", team: "platform"}` | Allowed                                |
+| `{org: "acme", team: "platform"}` | `{org: "acme"}`                   | Denied                                 |
+| `{}` (no claims)                  | `{org: "acme"}`                   | Denied (default-deny on unlabeled)     |
+| `{org: "acme"}`                   | `{org: "contoso"}`                | Denied                                 |
 
-Registries and sources with no claims are accessible to all authenticated
-callers.
+:::warning[Unlabeled resources are invisible when authorization is enabled]
 
-:::warning[Entries without claims are invisible when authorization is enabled]
+When `auth.authz` is configured, sources, registries, and entries with no
+claims are treated as **default-deny**: invisible to every authenticated
+caller except a super-admin. The list endpoints and the single-resource gate
+agree, so a resource is either visible everywhere or nowhere.
 
-Entries with no claims are visible in anonymous mode and
-[auth-only mode](#auth-only-mode), but **invisible** when full authorization is
-enabled. The per-entry filter requires both sides to have claims for a match.
-Entries without claims are filtered out. To make entries visible, attach claims
-to the source (for synced sources) or to individual entries (via the publish
-payload or the
-[`authz-claims` annotation](./configuration.mdx#per-entry-claims-via-annotation)
-for Kubernetes sources).
+Anonymous mode and [auth-only mode](#auth-only-mode) bypass the gate
+entirely, so unlabeled resources remain accessible there.
+
+To make a resource reachable under full authorization, attach claims to it:
+
+- **Sources and registries**: set the `claims` field on the source or registry
+  in your configuration file.
+- **Entries from synced sources**: tag the source so its claims are inherited
+  during sync.
+- **Entries on Kubernetes sources**: use the
+  [`authz-claims` annotation](./configuration.mdx#per-entry-claims-via-annotation)
+  on the CRD.
+- **Entries on managed sources**: include `claims` in the publish payload or
+  call `PUT /v1/entries/{type}/{name}/claims` from a super-admin.
+
+:::
+
+:::info[Upgrading from earlier releases]
+
+Releases before v1.4.1 treated an unlabeled resource as visible to every
+authenticated caller, but only on single-resource paths like
+`GET /v1/sources/{name}`. List endpoints already filtered them out, so the
+same row could appear via one path and not another.
+
+After upgrading to v1.4.1 or later with `auth.authz` configured, those
+unlabeled rows become invisible to every non-super-admin caller. To restore
+access, a super-admin can tag them in place via the per-entry claims
+endpoint, or operators can add a tenant-wide claim to the source so synced
+entries inherit it on the next sync.
 
 :::
 
@@ -398,6 +421,8 @@ sources:
 
   - name: shared
     managed: {}
+    claims:
+      org: 'acme'
 
 registries:
   - name: platform
@@ -441,17 +466,21 @@ With this configuration:
   `shared`.
 - **Data team members** (JWT with `org: "acme"`, `team: "data"`) can access the
   `data` registry and see entries from `data-tools` and `shared`.
-- **Writers** (JWT with `role: "writer"`) can publish to the `shared` managed
-  source.
+- **Writers** in the `acme` org (JWT with `org: "acme"`, `role: "writer"`) can
+  publish to the `shared` managed source. The `org: "acme"` claim on the source
+  is what makes it reachable to non-super-admin callers under default-deny.
 - **Admins** (JWT with `org: "acme"`, `role: "admin"`) can manage sources and
   registries within the `acme` org.
 - **Super-admins** (JWT with `role: "super-admin"`) can access and manage
   everything.
 
-Entries published to the `shared` source without claims are visible through any
-registry that includes it, subject only to the registry-level claims gate. To
-restrict visibility further, attach claims when
-[publishing entries](#claims-on-published-entries).
+Every entry published to the `shared` source must carry claims (publishing
+without claims is rejected when authentication is enabled), and those claims
+must be a subset of the publisher's JWT. To narrow visibility within a registry,
+publish with team-scoped claims like `{org: "acme", team: "platform"}` so
+only that team's registry surfaces the entry. See
+[Claims on published entries](#claims-on-published-entries) for the full
+rules.
 
 ## Next steps
 
