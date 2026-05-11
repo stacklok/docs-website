@@ -1,50 +1,49 @@
 ---
-title:
-  Run Redis the way your platform already runs it, and CIMD support in the CLI
-sidebar_label: 'May 11: Redis flexibility and CIMD in the CLI'
+title: Run on your existing Redis, and skip dynamic client registration
+sidebar_label: 'May 11: Existing Redis topologies and CIMD'
 description:
-  The embedded auth server now supports Redis standalone and Redis Cluster
-  alongside Sentinel, plus CIMD authentication in the ToolHive CLI.
+  Run the embedded auth server on whichever Redis your platform already uses,
+  and authenticate MCP clients without per-client registration via CIMD.
 ---
 
-This week, the embedded auth server's session storage works with whichever Redis
-topology your platform already runs, and the ToolHive CLI gains Client ID
-Metadata Document (CIMD) support for authenticating MCP clients to upstream
-identity providers.
+This week, the embedded auth server runs on the Redis topology your platform
+already uses (standalone, cluster, or Sentinel), and the ToolHive CLI
+authenticates MCP clients without dynamic client registration.
 
 {/* truncate */}
 
-## Run Redis the way your platform already runs it
+## Plug ToolHive into the Redis your platform already runs
 
-Session storage for the embedded authorization server previously required Redis
-Sentinel. As of this release, the `MCPExternalAuthConfig` resource accepts three
-Redis topologies:
+If your team standardizes on Redis Cluster for scale or a single standalone
+Redis for simplicity, the embedded authorization server can now sit on top of
+either, alongside the original Sentinel path:
 
-- **Standalone Redis** for simpler deployments where high availability isn't a
-  hard requirement. A single Redis instance with a password is enough.
-- **Redis Cluster** for sharded deployments that scale horizontally across
-  multiple nodes.
-- **Redis Sentinel** for HA with automatic failover (already supported, and
-  still the recommended default for production).
+- **Standalone Redis** for simpler operations when high availability isn't a
+  hard requirement.
+- **Redis Cluster** for sharded scale-out across multiple nodes.
+- **Redis Sentinel** for HA with automatic failover (still the recommended
+  default for production).
 
-Configure the `storage` block on your `MCPExternalAuthConfig` to match your
-topology. See
+No more shoehorning a Sentinel topology into a cluster that doesn't otherwise
+need it, or skipping the embedded auth server because your standard Redis
+doesn't match. Configure the `storage` block on your `MCPExternalAuthConfig` to
+match the topology you already run. See
 [Redis session storage](/toolhive/guides-k8s/redis-session-storage#configure-mcpexternalauthconfig)
 for the YAML and TLS examples.
 
-## CIMD support in the ToolHive CLI
+## Skip dynamic client registration with CIMD
 
-The ToolHive CLI (`thv`) now supports the
+If you've watched your IdP fill up with one-off client registrations for
+short-lived MCP agents and developer environments, the ToolHive CLI (`thv`) now
+lets you authenticate MCP clients without registering them first. It uses the
 [Client ID Metadata Document](https://datatracker.ietf.org/doc/draft-parecki-oauth-client-id-metadata-document/)
-(CIMD) approach for authenticating MCP clients to upstream identity providers.
-Instead of going through dynamic client registration, which leaves stale client
-entries in the IdP for clients that come and go, `thv` can present a hosted
-metadata document describing itself, and the IdP verifies it on the fly.
+(CIMD) draft spec: `thv` presents a hosted metadata document describing itself,
+and the IdP verifies it on the fly.
 
 Use it when:
 
 - You're running a short-lived or stateless MCP client and don't want a
-  permanent client registration to manage.
+  permanent registration to manage.
 - You want to identify a class of clients (for example, every developer on your
   team) without registering each one individually.
 - Your IdP supports the draft CIMD spec.
