@@ -151,4 +151,13 @@ export const intros = {
     intro:
       '`EmbeddingServer` defines a containerized embedding model server managed by the ToolHive operator. The [VirtualMCPServer](./virtualmcpserver.mdx) optimizer references an `EmbeddingServer` to generate vector embeddings for tool discovery.',
   },
+  MCPWebhookConfig: {
+    slug: 'mcpwebhookconfig',
+    group: 'shared',
+    summary: 'Delegate MCP tool authorization to an external webhook.',
+    description:
+      'Schema reference for MCPWebhookConfig, which configures validating and mutating webhook middleware for MCP servers.',
+    intro:
+      '`MCPWebhookConfig` defines validating and mutating webhook middleware that intercepts MCP tool calls. [MCPServer](./mcpserver.mdx) references an `MCPWebhookConfig` via `spec.webhookConfigRef` to delegate tool-call authorization or request transformation to an external HTTPS service. This is the Kubernetes equivalent of the CLI [`--webhook-config`](../../guides-cli/webhooks.mdx) flag, configured declaratively as a custom resource.',
+  },
 };
