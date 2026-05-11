@@ -280,6 +280,14 @@ components:
           type: string
         bearer_token_file:
           type: string
+        cached_cimd_client_id:
+          description: |-
+            CachedCIMDClientID stores the CIMD metadata URL used as client_id when CIMD
+            authentication was used. Kept separate from CachedClientID (which holds
+            DCR-issued IDs) so the two can have independent lifecycles — DCR credential
+            rotation clears CachedClientID without touching the stable CIMD URL.
+            Read by resolveClientCredentials to send the correct client_id on token refresh.
+          type: string
         cached_client_id:
           description: |-
             Cached DCR client credentials for persistence across restarts.
@@ -415,9 +423,21 @@ components:
       properties:
         discovery_url:
           description: |-
-            DiscoveryURL is the RFC 8414 / OIDC Discovery URL from which the
-            registration_endpoint is resolved at runtime. Mutually exclusive with
-            RegistrationEndpoint.
+            DiscoveryURL is the exact RFC 8414 / OIDC Discovery document URL to
+            fetch at runtime. The resolver issues a single GET against this URL
+            (no well-known-path fallback) and reads registration_endpoint,
+            authorization_endpoint, token_endpoint,
+            token_endpoint_auth_methods_supported, and scopes_supported from the
+            response. Per RFC 8414 §3.3, the document's "issuer" field must
+            exactly match the upstream issuer configured on the parent
+            run-config.
+
+            Use this field when the upstream publishes discovery metadata at a
+            path that differs from the issuer-derived well-known paths — for
+            example a multi-tenant IdP whose metadata lives at
+            https://idp.example.com/tenants/acme/.well-known/openid-configuration.
+
+            Mutually exclusive with RegistrationEndpoint.
           type: string
         initial_access_token_env_var:
           description: |-
@@ -435,7 +455,14 @@ components:
         registration_endpoint:
           description: |-
             RegistrationEndpoint is the RFC 7591 registration endpoint URL used
-            directly, bypassing discovery. Mutually exclusive with DiscoveryURL.
+            directly, bypassing discovery. Because no discovery is performed,
+            server-capability fields (token_endpoint_auth_methods_supported,
+            scopes_supported) are unavailable on this code path; the caller is
+            expected to also supply AuthorizationEndpoint, TokenEndpoint, and an
+            explicit Scopes list on the parent OAuth2UpstreamRunConfig. Auth
+            method falls back to the resolver's default (client_secret_basic).
+
+            Mutually exclusive with DiscoveryURL.
           type: string
         software_id:
           description: |-
@@ -791,10 +818,19 @@ components:
       properties:
         acl_user_config:
           $ref: '#/components/schemas/github_com_stacklok_toolhive_pkg_authserver_storage.ACLUserRunConfig'
+        addr:
+          description: |-
+            Addr is the Redis server address (host:port). Required for standalone and cluster modes.
+            Mutually exclusive with SentinelConfig.
+          type: string
         auth_type:
           description: AuthType must be "aclUser" - only ACL user authentication is
             supported.
           type: string
+        cluster_mode:
+          description: ClusterMode enables the Redis Cluster protocol. Requires Addr
+            to be set.
+          type: boolean
         dial_timeout:
           description: DialTimeout is the timeout for establishing connections (e.g.,
             "5s").
@@ -816,9 +852,8 @@ components:
           type: string
       type: object
     github_com_stacklok_toolhive_pkg_authserver_storage.RedisTLSRunConfig:
-      description: |-
-        SentinelTLS configures TLS for Sentinel connections.
-        Falls back to TLS config when nil.
+      description: SentinelTLS configures TLS for Sentinel connections. Only applies
+        when SentinelConfig is set.
       properties:
         ca_cert_file:
           description: CACertFile is the path to a PEM-encoded CA certificate file.
@@ -839,7 +874,9 @@ components:
           type: string
       type: object
     github_com_stacklok_toolhive_pkg_authserver_storage.SentinelRunConfig:
-      description: SentinelConfig contains Sentinel-specific configuration.
+      description: |-
+        SentinelConfig contains Sentinel-specific configuration.
+        Mutually exclusive with Addr.
       properties:
         db:
           description: 'DB is the Redis database number (default: 0).'

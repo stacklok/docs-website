@@ -103,7 +103,7 @@
                           "type": "object"
                         },
                         "usernameSecretRef": {
-                          "description": "UsernameSecretRef references a Secret containing the Redis ACL username.",
+                          "description": "UsernameSecretRef references a Secret containing the Redis ACL username.\nWhen omitted, connections use legacy password-only AUTH. Omit for managed\nRedis tiers that do not support ACL users (e.g. GCP Memorystore Basic/Standard\nHA, Azure Cache for Redis). Set for services that support ACL users (e.g. AWS\nElastiCache non-cluster with Redis 6+ RBAC).",
                           "properties": {
                             "key": {
                               "description": "Key is the key within the secret",
@@ -122,10 +122,17 @@
                         }
                       },
                       "required": [
-                        "passwordSecretRef",
-                        "usernameSecretRef"
+                        "passwordSecretRef"
                       ],
                       "type": "object"
+                    },
+                    "addr": {
+                      "description": "Addr is the Redis server address (host:port). Required for standalone and cluster modes.\nUse for managed Redis services that expose a single endpoint (GCP Memorystore basic tier,\nAWS ElastiCache without cluster mode, or cluster-mode services when clusterMode is true).\nMutually exclusive with sentinelConfig.",
+                      "type": "string"
+                    },
+                    "clusterMode": {
+                      "description": "ClusterMode enables the Redis Cluster protocol. Set to true when addr points to a\nRedis Cluster discovery endpoint (e.g., GCP Memorystore Cluster, AWS ElastiCache\ncluster mode enabled). Requires addr to be set.",
+                      "type": "boolean"
                     },
                     "dialTimeout": {
                       "default": "5s",
@@ -140,7 +147,7 @@
                       "type": "string"
                     },
                     "sentinelConfig": {
-                      "description": "SentinelConfig holds Redis Sentinel configuration.",
+                      "description": "SentinelConfig holds Redis Sentinel configuration.\nUse for self-managed Redis with Sentinel-based HA. Mutually exclusive with addr.",
                       "properties": {
                         "db": {
                           "default": 0,
@@ -190,7 +197,7 @@
                       "type": "object"
                     },
                     "sentinelTls": {
-                      "description": "SentinelTLS configures TLS for connections to Sentinel instances.\nPresence of this field enables TLS. Omit to use plaintext.\nWhen omitted, sentinel connections use plaintext (no fallback to TLS config).",
+                      "description": "SentinelTLS configures TLS for connections to Sentinel instances.\nOnly applies when sentinelConfig is set. Presence of this field enables TLS.",
                       "properties": {
                         "caCertSecretRef": {
                           "description": "CACertSecretRef references a Secret containing a PEM-encoded CA certificate\nfor verifying the server. When not specified, system root CAs are used.",
@@ -253,10 +260,19 @@
                     }
                   },
                   "required": [
-                    "aclUserConfig",
-                    "sentinelConfig"
+                    "aclUserConfig"
                   ],
-                  "type": "object"
+                  "type": "object",
+                  "x-kubernetes-validations": [
+                    {
+                      "message": "exactly one of addr or sentinelConfig must be set",
+                      "rule": "(has(self.addr) && self.addr.size() > 0) != has(self.sentinelConfig)"
+                    },
+                    {
+                      "message": "clusterMode requires addr to be set",
+                      "rule": "!(has(self.clusterMode) && self.clusterMode) || (has(self.addr) && self.addr.size() > 0)"
+                    }
+                  ]
                 },
                 "type": {
                   "default": "memory",
@@ -294,7 +310,7 @@
             "upstreamProviders": {
               "description": "UpstreamProviders configures connections to upstream Identity Providers.\nThe embedded auth server delegates authentication to these providers.\nMCPServer and MCPRemoteProxy support a single upstream; VirtualMCPServer supports multiple.",
               "items": {
-                "description": "UpstreamProviderConfig defines configuration for an upstream Identity Provider.",
+                "description": "UpstreamProviderConfig defines configuration for an upstream Identity Provider.\n\nExactly one of OIDCConfig or OAuth2Config must be set and must match the\ndeclared Type: oidc-typed providers set OIDCConfig, oauth2-typed providers\nset OAuth2Config. The CEL rule below enforces the pairing at admission; the\nmatching Go-level check in validateUpstreamProvider provides defense-in-depth\nfor stored objects.\n\nThe rule is structured as a chain of equality checks ending in an explicit\n`false`, so adding a new UpstreamProviderType value without extending this\nrule fails admission instead of silently demanding the OAuth2 shape. When\nadding a new type, extend both this rule and validateUpstreamProvider.",
                 "properties": {
                   "name": {
                     "description": "Name uniquely identifies this upstream provider.\nUsed for routing decisions and session binding in multi-upstream scenarios.\nMust be lowercase alphanumeric with hyphens (DNS-label-like).",
@@ -320,7 +336,7 @@
                         "type": "string"
                       },
                       "clientId": {
-                        "description": "ClientID is the OAuth 2.0 client identifier registered with the upstream IDP.",
+                        "description": "ClientID is the OAuth 2.0 client identifier registered with the upstream IDP.\nMutually exclusive with DCRConfig: when DCRConfig is set, ClientID is obtained\nat runtime via RFC 7591 Dynamic Client Registration and must be left empty.",
                         "type": "string"
                       },
                       "clientSecretRef": {
@@ -340,6 +356,58 @@
                           "name"
                         ],
                         "type": "object"
+                      },
+                      "dcrConfig": {
+                        "description": "DCRConfig enables RFC 7591 Dynamic Client Registration against the upstream\nauthorization server. When set, the client credentials are obtained at\nruntime rather than being pre-provisioned, and ClientID must be left empty.\nMutually exclusive with ClientID.",
+                        "properties": {
+                          "discoveryUrl": {
+                            "description": "DiscoveryURL is the RFC 8414 / OIDC Discovery document URL. The resolver\nissues a single GET against this URL (no well-known-path fallback) and\nreads registration_endpoint, authorization_endpoint, token_endpoint,\ntoken_endpoint_auth_methods_supported, and scopes_supported from the\nresponse.\nMutually exclusive with RegistrationEndpoint.\nHTTPS is required because the registration endpoint resolved from this\ndocument carries the initial access token and the issued client_secret\n(RFC 7591 §3, RFC 8414 §3). MaxLength is a defensive size cap (etcd\nobject budget, regex evaluation cost) and matches the conventional URL\nlength cap.",
+                            "maxLength": 2048,
+                            "pattern": "^https://[^\\s?#]+[^/\\s?#]$",
+                            "type": "string"
+                          },
+                          "initialAccessTokenRef": {
+                            "description": "InitialAccessTokenRef is an optional reference to a Kubernetes Secret\ncarrying an RFC 7591 §3 initial access token. When set, the resolver\npresents the token value as a Bearer credential on the registration\nrequest. Mirrors the ClientSecretRef pattern.",
+                            "properties": {
+                              "key": {
+                                "description": "Key is the key within the secret",
+                                "type": "string"
+                              },
+                              "name": {
+                                "description": "Name is the name of the secret",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "name"
+                            ],
+                            "type": "object"
+                          },
+                          "registrationEndpoint": {
+                            "description": "RegistrationEndpoint is the RFC 7591 registration endpoint URL used\ndirectly, bypassing discovery. When using this field, the caller is\nexpected to also supply AuthorizationEndpoint, TokenEndpoint, and an\nexplicit Scopes list on the parent OAuth2UpstreamConfig.\nMutually exclusive with DiscoveryURL.\nHTTPS is required because the registration endpoint carries the initial\naccess token and the issued client_secret (RFC 7591 §3, RFC 8414 §3).\nMaxLength is a defensive size cap (etcd object budget, regex evaluation\ncost) and matches the conventional URL length cap.",
+                            "maxLength": 2048,
+                            "pattern": "^https://[^\\s?#]+[^/\\s?#]$",
+                            "type": "string"
+                          },
+                          "softwareId": {
+                            "description": "SoftwareID is the RFC 7591 \"software_id\" registration metadata value,\nidentifying the client software independent of any particular\nregistration instance. Typically a UUID or short identifier.",
+                            "maxLength": 255,
+                            "type": "string"
+                          },
+                          "softwareStatement": {
+                            "description": "SoftwareStatement is the RFC 7591 \"software_statement\" JWT asserting\nmetadata about the client software, signed by a party the authorization\nserver trusts.\n\nStored inline on the CR. The JWT is signed but not encrypted, so its\ncontents are visible to anyone with get/list/watch on this resource and\nappear in etcd backups in plaintext. Treat the value as non-confidential\n(signed attestation, not a secret). Operators that rotate software\nstatements like bearer credentials should keep them at the authorization\nserver side and rely on the registration endpoint's initial access\ntoken (see InitialAccessTokenRef) instead of placing them on the CR.\n\nBounded to 16384 characters as a defensive size cap (etcd object\nbudget, regex evaluation cost). Real-world signed statements with\nembedded x5c certificate chains, JWKS keys, or OIDC-Federation\ntrust-framework metadata routinely exceed 4 KB.",
+                            "maxLength": 16384,
+                            "type": "string"
+                          }
+                        },
+                        "type": "object",
+                        "x-kubernetes-validations": [
+                          {
+                            "message": "exactly one of discoveryUrl or registrationEndpoint must be set",
+                            "rule": "has(self.discoveryUrl) != has(self.registrationEndpoint)"
+                          }
+                        ]
                       },
                       "redirectUri": {
                         "description": "RedirectURI is the callback URL where the upstream IDP will redirect after authentication.\nWhen not specified, defaults to `{resourceUrl}/oauth/callback` where `resourceUrl` is the\nURL associated with the resource (e.g., MCPServer or vMCP) using this config.",
@@ -446,10 +514,19 @@
                     },
                     "required": [
                       "authorizationEndpoint",
-                      "clientId",
                       "tokenEndpoint"
                     ],
-                    "type": "object"
+                    "type": "object",
+                    "x-kubernetes-validations": [
+                      {
+                        "message": "exactly one of clientId or dcrConfig must be set",
+                        "rule": "(has(self.clientId) && size(self.clientId) > 0) ? !has(self.dcrConfig) : has(self.dcrConfig)"
+                      },
+                      {
+                        "message": "clientSecretRef must not be set when dcrConfig is set; the client_secret is obtained at runtime via Dynamic Client Registration",
+                        "rule": "!(has(self.dcrConfig) && has(self.clientSecretRef))"
+                      }
+                    ]
                   },
                   "oidcConfig": {
                     "description": "OIDCConfig contains OIDC-specific configuration.\nRequired when Type is \"oidc\", must be nil when Type is \"oauth2\".",
@@ -580,7 +657,13 @@
                   "name",
                   "type"
                 ],
-                "type": "object"
+                "type": "object",
+                "x-kubernetes-validations": [
+                  {
+                    "message": "type must be 'oidc' or 'oauth2'; oidcConfig must be set when type is 'oidc' and oauth2Config must be set when type is 'oauth2' (and the other must not be set)",
+                    "rule": "self.type == 'oidc' ? (has(self.oidcConfig) && !has(self.oauth2Config)) : self.type == 'oauth2' ? (has(self.oauth2Config) && !has(self.oidcConfig)) : false"
+                  }
+                ]
               },
               "minItems": 1,
               "type": "array",
@@ -1847,6 +1930,13 @@
                       "minItems": 1,
                       "type": "array",
                       "x-kubernetes-list-type": "atomic"
+                    },
+                    "primaryUpstreamProvider": {
+                      "description": "PrimaryUpstreamProvider names the upstream IDP whose access token's claims\nCedar should evaluate. Currently honored only when the parent\nAuthzConfigRef.Type is \"inline\"; configMap-sourced policies will support\nthis in a future release (see #5208). Only meaningful for VirtualMCPServer\nwith an embedded auth server. When empty and an embedded auth server has\nupstreams configured, the controller defaults to the first upstream\nprovider. The name must match one of the upstreams declared on\nspec.authServerConfig.upstreamProviders; otherwise the VirtualMCPServer is\nrejected with AuthServerConfigValidated=False. MCPServer and MCPRemoteProxy\nhave no embedded auth server; setting this field on those CRs surfaces an\nAuthzPrimaryUpstreamProviderIgnored advisory condition on the resource.",
+                      "maxLength": 63,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+                      "type": "string"
                     }
                   },
                   "required": [

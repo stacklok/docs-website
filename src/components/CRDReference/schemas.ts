@@ -12,6 +12,7 @@ import MCPServerEntry from '@site/static/api-specs/crds/mcpserverentries.schema.
 import MCPServer from '@site/static/api-specs/crds/mcpservers.schema.json';
 import MCPTelemetryConfig from '@site/static/api-specs/crds/mcptelemetryconfigs.schema.json';
 import MCPToolConfig from '@site/static/api-specs/crds/mcptoolconfigs.schema.json';
+import MCPWebhookConfig from '@site/static/api-specs/crds/mcpwebhookconfigs.schema.json';
 import VirtualMCPCompositeToolDefinition from '@site/static/api-specs/crds/virtualmcpcompositetooldefinitions.schema.json';
 import VirtualMCPServer from '@site/static/api-specs/crds/virtualmcpservers.schema.json';
 
@@ -26,6 +27,7 @@ export const schemas = {
   MCPServer,
   MCPTelemetryConfig,
   MCPToolConfig,
+  MCPWebhookConfig,
   VirtualMCPCompositeToolDefinition,
   VirtualMCPServer,
 } as const;
