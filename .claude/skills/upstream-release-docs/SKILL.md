@@ -28,6 +28,14 @@ Parse the argument to extract:
 - `<OWNER>/<REPO>`: the upstream repository (e.g., `stacklok/toolhive-registry-server`)
 - `<TAG>` (optional): the release tag (e.g., `v0.6.3`). If omitted, fetch the latest release.
 
+## Output conventions
+
+Any output that may be rendered as a GitHub comment, PR body, or Markdown file in the docs-website repo (progress narration, `SUMMARY.md`, `GAPS.md`, commit messages, PR descriptions) **must** fully qualify references to the upstream repo. GitHub auto-links bare `#NNN` relative to the repo the text lives in, so a bare `#777` in a docs-website comment links to docs-website PR #777, not the upstream PR.
+
+- Refer to upstream PRs and issues as `<OWNER>/<REPO>#NNN` (e.g., `stacklok/toolhive#777`), never bare `#NNN`.
+- When the release notes body contains bare `#NNN`, expand them to `<OWNER>/<REPO>#NNN` before echoing them back.
+- Full PR/issue URLs are also fine.
+
 ## Phase 1: Discovery
 
 1. Fetch the release:
@@ -42,7 +50,7 @@ Parse the argument to extract:
    gh release view --repo <OWNER>/<REPO> --json tagName,name,body,publishedAt
    ```
 
-2. Extract PR numbers from the release notes body (look for `#NNN` patterns or full PR URLs).
+2. Extract PR numbers from the release notes body (look for `#NNN` patterns or full PR URLs). When referring to these PRs in any subsequent output, always fully qualify them as `<OWNER>/<REPO>#NNN` (see "Output conventions" above).
 
 3. Categorize changes into:
    - **New features**: entirely new capabilities
