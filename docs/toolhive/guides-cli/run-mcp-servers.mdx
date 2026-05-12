@@ -684,9 +684,21 @@ thv run https://protected-api.com/mcp --name my-server
 ```
 
 If authentication is required, ToolHive will prompt you to complete the OAuth
-flow. When no client credentials are provided, ToolHive automatically registers
-an OAuth client with the authorization server using RFC 7591 dynamic client
-registration, eliminating the need to pre-configure client ID and secret.
+flow. When no client credentials are provided, ToolHive identifies itself to the
+authorization server using one of two mechanisms:
+
+- **Client ID Metadata Document (CIMD).** If the authorization server's
+  discovery document sets `client_id_metadata_document_supported: true`,
+  ToolHive presents
+  [`https://toolhive.dev/oauth/client-metadata.json`](https://toolhive.dev/oauth/client-metadata.json)
+  as its `client_id`. No registration round-trip is needed.
+- **Dynamic Client Registration (DCR, RFC 7591).** When CIMD is unavailable or
+  the authorization server rejects the CIMD `client_id` with
+  `invalid_client`/`unauthorized_client`, ToolHive falls back to registering an
+  OAuth client dynamically.
+
+Either path eliminates the need to pre-configure a client ID and secret for
+authorization servers that support them.
 
 #### OIDC authentication
 
@@ -760,12 +772,9 @@ as defined by [RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707). This
 allows the authorization server to return an access token with a scoped
 audience, which will then be passed to and validated by the remote MCP server.
 
-By default, ToolHive automatically uses the remote server URL as the resource
-indicator when authenticating. The URL is validated, normalized (lowercase
-scheme and host, fragments stripped), and included in the OAuth token request.
-
-To explicitly set a different resource indicator, use the
-`--remote-auth-resource` flag:
+ToolHive does not auto-derive the resource indicator from the server URL by
+default. Set it explicitly with `--remote-auth-resource` when the authorization
+server requires it:
 
 ```bash
 thv run https://api.example.com/mcp \

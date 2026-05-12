@@ -1,16 +1,18 @@
 ---
 title: Redis session storage
 description:
-  Deploy Redis Sentinel for the ToolHive embedded auth server, or a standalone
-  Redis instance for MCPServer and VirtualMCPServer horizontal scaling.
+  Deploy Redis Sentinel, standalone Redis, or Redis Cluster as the session store
+  for the ToolHive embedded auth server and horizontal scaling.
 ---
 
 ToolHive uses Redis for several purposes. This page covers two that require
 different configuration:
 
 - **Embedded authorization server sessions** - stores upstream tokens so users
-  don't need to re-authenticate after pod restarts. Uses Redis Sentinel with
-  ACL-based authentication and a fixed `thv:auth:*` key pattern. See
+  don't need to re-authenticate after pod restarts. Supports Sentinel,
+  standalone, and Redis Cluster connection modes. Uses ACL-based authentication
+  (optional for managed tiers without ACL users) and a fixed `thv:auth:*` key
+  pattern. See
   [Embedded auth server session storage](#embedded-auth-server-session-storage).
 
 - **MCPServer and VirtualMCPServer horizontal scaling** - shares MCP session
@@ -31,12 +33,31 @@ You can reuse the same Redis instance for all three purposes by using different
 
 ## Embedded auth server session storage
 
-Configure Redis Sentinel as the session storage backend for the ToolHive
+Configure Redis as the session storage backend for the ToolHive
 [embedded authorization server](../concepts/embedded-auth-server.mdx). By
 default, sessions are stored in memory, which means upstream tokens are lost
-when pods restart and users must re-authenticate. Redis Sentinel provides
-persistent storage with automatic master discovery, ACL-based access control,
-and optional failover when replicas are configured.
+when pods restart and users must re-authenticate. Redis provides persistent
+storage that survives pod restarts.
+
+The `redis` block on `MCPExternalAuthConfig` supports three connection modes,
+and exactly one must be set:
+
+- **Sentinel** (`sentinelConfig`) - self-managed Redis with Sentinel-based high
+  availability (HA), automatic master discovery, and optional failover when
+  replicas are configured. Covered in the walkthrough below.
+- **Standalone** (`addr` only) - a single endpoint, such as a managed Redis
+  service that handles HA internally (GCP Memorystore Basic/Standard, Azure
+  Cache for Redis, AWS ElastiCache without cluster mode). See
+  [Managed Redis: standalone and cluster modes](#managed-redis-standalone-and-cluster-modes).
+- **Cluster** (`addr` with `clusterMode: true`) - a single discovery endpoint
+  for a Redis Cluster service that auto-discovers the full shard topology (GCP
+  Memorystore Cluster, AWS ElastiCache with cluster mode). See
+  [Managed Redis: standalone and cluster modes](#managed-redis-standalone-and-cluster-modes).
+
+The rest of this section walks through deploying Redis Sentinel and wiring it
+into `MCPExternalAuthConfig`. For managed Redis services, follow the same TLS,
+ACL, and verification steps but use the standalone or Cluster `storage` block
+instead of `sentinelConfig`.
 
 :::info[Prerequisites]
 
@@ -417,6 +438,64 @@ storage:
 
 For the complete list of storage configuration fields, see the
 [Kubernetes CRD reference](../reference/crds/mcpexternalauthconfig.mdx#specembeddedauthserverstorage).
+
+### Managed Redis: standalone and cluster modes
+
+Managed Redis services typically expose a single endpoint and handle HA
+internally, so the Sentinel walkthrough above does not apply to them. Use one of
+the connection modes below instead.
+
+#### Standalone mode
+
+Use `addr` on its own for managed services that present a single, non-clustered
+endpoint, such as GCP Memorystore Basic or Standard HA, Azure Cache for Redis,
+or AWS ElastiCache without cluster mode enabled:
+
+```yaml title="storage block with standalone addr"
+storage:
+  type: redis
+  redis:
+    addr: redis.example.com:6379
+    aclUserConfig:
+      # usernameSecretRef is optional - omit on managed tiers that do not
+      # expose ACL users (GCP Memorystore Basic/Standard HA, Azure Cache
+      # for Redis). Connections fall back to legacy password-only AUTH.
+      passwordSecretRef:
+        name: redis-acl-secret
+        key: password
+```
+
+When `usernameSecretRef` is omitted, ToolHive authenticates with password-only
+`AUTH`, which works against managed tiers that lack Redis ACL support. When the
+managed service supports ACL users (for example, AWS ElastiCache non-cluster
+with Redis 6+ RBAC), set `usernameSecretRef` to use that user.
+
+#### Cluster mode
+
+Set `clusterMode: true` alongside `addr` when the address points at a Redis
+Cluster discovery endpoint, such as GCP Memorystore Cluster or AWS ElastiCache
+with cluster mode enabled. ToolHive auto-discovers the full shard topology from
+the single endpoint:
+
+```yaml title="storage block with Redis Cluster"
+storage:
+  type: redis
+  redis:
+    addr: redis-cluster.example.com:6379
+    clusterMode: true
+    aclUserConfig:
+      passwordSecretRef:
+        name: redis-acl-secret
+        key: password
+```
+
+:::note
+
+`addr` and `sentinelConfig` are mutually exclusive - the CRD admission rules
+reject manifests that set both or neither. `clusterMode: true` requires `addr`
+and cannot be combined with `sentinelConfig`.
+
+:::
 
 ## Enable TLS
 

@@ -648,10 +648,19 @@ For a complete walkthrough, see
 
 By default, the embedded authorization server stores sessions in memory.
 Upstream tokens are lost when pods restart, requiring users to re-authenticate.
-For production deployments, configure Redis Sentinel as the storage backend by
-adding a `storage` block to your `MCPExternalAuthConfig`:
+For production deployments, configure a Redis backend by adding a `storage`
+block to your `MCPExternalAuthConfig`. The `redis` block supports three
+connection modes; you must set exactly one:
 
-```yaml title="storage block for MCPExternalAuthConfig"
+- **Sentinel** (`sentinelConfig`) - self-managed Redis with Sentinel-based high
+  availability (HA)
+- **Standalone** (`addr` only) - managed Redis services that expose a single
+  endpoint, such as GCP Memorystore Basic/Standard or Azure Cache for Redis
+- **Cluster** (`addr` with `clusterMode: true`) - managed Redis Cluster
+  services, such as GCP Memorystore Cluster or AWS ElastiCache with cluster mode
+  enabled
+
+```yaml title="storage block for MCPExternalAuthConfig - Sentinel"
 storage:
   type: redis
   redis:
@@ -669,17 +678,44 @@ storage:
         key: password
 ```
 
-Create the Secret containing your Redis ACL credentials:
+```yaml title="storage block for MCPExternalAuthConfig - Standalone"
+storage:
+  type: redis
+  redis:
+    addr: redis.example.com:6379
+    aclUserConfig:
+      # usernameSecretRef is optional - omit for managed tiers without ACL
+      # users (GCP Memorystore Basic/Standard, Azure Cache for Redis)
+      passwordSecretRef:
+        name: redis-acl-secret
+        key: password
+```
+
+```yaml title="storage block for MCPExternalAuthConfig - Cluster"
+storage:
+  type: redis
+  redis:
+    addr: redis-cluster.example.com:6379
+    clusterMode: true
+    aclUserConfig:
+      passwordSecretRef:
+        name: redis-acl-secret
+        key: password
+```
+
+Create the Secret containing your Redis credentials. The example below includes
+the username for ACL-enabled deployments; omit `--from-literal=username=...`
+when targeting a managed tier that does not support ACL users:
 
 ```bash
 kubectl create secret generic redis-acl-secret \
   --namespace toolhive-system \
   --from-literal=username=toolhive-auth \
-  --from-literal=password="YOUR_REDIS_ACL_PASSWORD"
+  --from-literal=password="YOUR_REDIS_PASSWORD"
 ```
 
 For a complete walkthrough including deploying Redis Sentinel from scratch, see
-[Redis Sentinel session storage](./redis-session-storage.mdx).
+[Redis session storage](./redis-session-storage.mdx).
 
 ### Using an OAuth 2.0 upstream provider
 
