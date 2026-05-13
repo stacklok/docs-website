@@ -11,6 +11,7 @@ at [https://docs.stacklok.com](https://docs.stacklok.com).
 - [Formatting](#formatting)
 - [Building the site](#building-the-site)
 - [Deployment](#deployment)
+- [License](#license)
 - [About](#about)
 
 ## Contributing to docs
@@ -90,6 +91,27 @@ for broken links, so it's recommended to run this before submitting a PR.
 The `docs.stacklok.com` site is published using Vercel. Automatic previews for
 branches and pull requests are enabled. The production site is published from
 the `main` branch.
+
+## License
+
+This repository is dual-licensed:
+
+- **Code** (anything that compiles, runs, or configures the site - including
+  `.ts`, `.tsx`, `.js`, `.mjs`, `.css`, and config files) is licensed under the
+  [Apache License 2.0](./LICENSE).
+- **Documentation content** (Markdown and MDX files under `/docs` and `/blog`,
+  plus accompanying images and diagrams) is licensed under
+  [Creative Commons Attribution 4.0 International (CC BY 4.0)](./LICENSE-docs).
+
+Stacklok trademarks, logos, and brand marks (including the contents of
+`/static/img/logos/` and the Stacklok wordmark and icon used throughout the
+site) are excluded from both licenses and remain the property of Stacklok, Inc.
+
+A small number of source files carry their own upstream license headers (for
+example, components adapted from the Docusaurus community knowledge base under
+CC BY-SA 4.0, theme components ejected from Docusaurus under MIT, and Font
+Awesome assets). In those files the file-level header is authoritative for that
+file.
 
 ## About
 
