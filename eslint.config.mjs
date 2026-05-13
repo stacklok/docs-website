@@ -55,7 +55,7 @@ export default [
 
   // Config for _partials with JSX props
   {
-    files: ['docs/**/_partials/*.mdx'],
+    files: ['docs/**/_partials/*.mdx', 'versioned_docs/**/_partials/*.mdx'],
     rules: {
       'no-unused-expressions': 'off',
       '@typescript-eslint/no-unused-expressions': 'off',

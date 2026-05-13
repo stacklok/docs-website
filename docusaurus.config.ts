@@ -186,6 +186,24 @@ const config: Config = {
               },
             ],
           ],
+          lastVersion: 'current',
+          versions: {
+            current: {
+              label: 'Latest (OSS)',
+            },
+            '1.1': {
+              label: 'Enterprise 1.1',
+              path: 'enterprise/1.1',
+              banner: 'none',
+              noIndex: true,
+            },
+            '1.0': {
+              label: 'Enterprise 1.0',
+              path: 'enterprise/1.0',
+              banner: 'none',
+              noIndex: true,
+            },
+          },
         },
         blog: {
           blogTitle: 'ToolHive Updates and Announcements',
@@ -257,28 +275,34 @@ const config: Config = {
           position: 'left',
           items: [
             {
+              type: 'doc',
+              docId: 'toolhive/index',
               label: 'Home',
-              href: '/toolhive',
             },
             {
+              type: 'doc',
+              docId: 'toolhive/guides-ui/index',
               label: 'ToolHive UI',
-              to: 'toolhive/guides-ui',
             },
             {
+              type: 'doc',
+              docId: 'toolhive/guides-cli/index',
               label: 'ToolHive CLI',
-              to: 'toolhive/guides-cli',
             },
             {
+              type: 'doc',
+              docId: 'toolhive/guides-k8s/index',
               label: 'Kubernetes Operator',
-              to: 'toolhive/guides-k8s',
             },
             {
+              type: 'doc',
+              docId: 'toolhive/guides-vmcp/index',
               label: 'Virtual MCP Server',
-              to: 'toolhive/guides-vmcp',
             },
             {
-              label: 'ToolHive Registry',
-              to: 'toolhive/guides-registry',
+              type: 'doc',
+              docId: 'toolhive/guides-registry/index',
+              label: 'Registry Server',
             },
           ],
         },
@@ -288,28 +312,34 @@ const config: Config = {
           position: 'left',
           items: [
             {
+              type: 'doc',
+              docId: 'toolhive/reference/cli/thv',
               label: 'ToolHive CLI commands',
-              to: 'toolhive/reference/cli/thv',
             },
             {
+              type: 'doc',
+              docId: 'toolhive/reference/api',
               label: 'ToolHive API',
-              to: 'toolhive/reference/api',
             },
             {
+              type: 'doc',
+              docId: 'toolhive/reference/crds/index',
               label: 'ToolHive Operator CRD',
-              to: 'toolhive/reference/crds',
             },
             {
+              type: 'doc',
+              docId: 'toolhive/reference/registry-api',
               label: 'ToolHive Registry Server API',
-              to: 'toolhive/reference/registry-api',
             },
             {
+              type: 'doc',
+              docId: 'toolhive/reference/registry-schema-toolhive',
               label: 'ToolHive registry schema',
-              to: 'toolhive/reference/registry-schema-toolhive',
             },
             {
+              type: 'doc',
+              docId: 'toolhive/reference/registry-schema-upstream',
               label: 'Upstream registry schema',
-              to: 'toolhive/reference/registry-schema-upstream',
             },
           ],
         },
@@ -319,9 +349,16 @@ const config: Config = {
           position: 'left',
         },
         {
-          to: 'toolhive/enterprise',
+          type: 'doc',
+          docId: 'toolhive/enterprise',
           label: 'Enterprise',
           position: 'left',
+          className: 'navbar-doc-link',
+        },
+        {
+          type: 'docsVersionDropdown',
+          position: 'right',
+          className: 'version-dropdown',
         },
         {
           href: 'https://github.com/stacklok',
