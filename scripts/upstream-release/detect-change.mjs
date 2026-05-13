@@ -2,23 +2,25 @@
 // SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Detects which project's version: changed between the PR branch and
-// origin/main in .github/upstream-projects.yaml. Emits GITHUB_OUTPUT:
-//
-//   id=<project-id>
-//   repo=<owner/repo>
-//   prev_tag=<version on main>
-//   new_tag=<version on PR branch>
-//
-// Fails if:
-//   - zero projects changed
-//   - more than one project changed (Renovate is configured not to batch,
-//     but we fail loudly if that ever slips)
-//   - the `repo:` field for the changed project was also modified (a PR
-//     that edits both `repo:` and `version:` could point the workflow at
-//     a hostile clone URL; only Renovate version bumps should reach this)
-//
-// Set BASE_REF to override origin/main for local testing.
+/*
+ * Detects which project's version: changed between the PR branch and
+ * origin/main in .github/upstream-projects.yaml. Emits GITHUB_OUTPUT:
+ *
+ *   id=<project-id>
+ *   repo=<owner/repo>
+ *   prev_tag=<version on main>
+ *   new_tag=<version on PR branch>
+ *
+ * Fails if:
+ *   - zero projects changed
+ *   - more than one project changed (Renovate is configured not to batch,
+ *     but we fail loudly if that ever slips)
+ *   - the `repo:` field for the changed project was also modified (a PR
+ *     that edits both `repo:` and `version:` could point the workflow at
+ *     a hostile clone URL; only Renovate version bumps should reach this)
+ *
+ * Set BASE_REF to override origin/main for local testing.
+ */
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';

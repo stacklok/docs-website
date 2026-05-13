@@ -2,19 +2,21 @@
 // SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Bumps the `version:` field for the given project id in
-// .github/upstream-projects.yaml. Used by the manual-dispatch
-// bootstrap path where a human kicks off the workflow with an
-// explicit project_id + new_tag instead of waiting for Renovate.
-//
-// The auto (Renovate-driven) path does NOT use this script —
-// Renovate already bumps the version itself.
-//
-// Usage:
-//   node bump-yaml.mjs --id <project-id> --tag <new-tag>
-//
-// Fails if the project is not in the YAML or the tag already
-// matches (no-op — caller should not open a PR).
+/*
+ * Bumps the `version:` field for the given project id in
+ * .github/upstream-projects.yaml. Used by the manual-dispatch
+ * bootstrap path where a human kicks off the workflow with an
+ * explicit project_id + new_tag instead of waiting for Renovate.
+ *
+ * The auto (Renovate-driven) path does NOT use this script.
+ * Renovate already bumps the version itself.
+ *
+ * Usage:
+ *   node bump-yaml.mjs --id <project-id> --tag <new-tag>
+ *
+ * Fails if the project is not in the YAML or the tag already
+ * matches (no-op: caller should not open a PR).
+ */
 
 import fs from 'node:fs';
 import yaml from 'yaml';
