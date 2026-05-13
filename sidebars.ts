@@ -258,7 +258,6 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-registry/telemetry-metrics',
         'toolhive/reference/registry-api',
         'toolhive/reference/registry-schema-upstream',
-        'toolhive/reference/registry-schema-toolhive',
       ],
     },
 
