@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 /*
     Extra components to load into the global scope.
     See https://docusaurus.io/docs/markdown-features/react#mdx-component-scope

@@ -1,12 +1,17 @@
-// Remark plugin that expands <CRDReference kind="..." /> MDX elements into
-// an ordered sequence of markdown headings + <CRDFields> calls, one per
-// object scope in the referenced CRD schema. The headings are injected
-// into the AST so Docusaurus's downstream TOC extractor picks them up;
-// this is why we do it as a remark plugin rather than purely at render
-// time in a React component.
-//
-// <CRDFields kind="..." path="..." /> is left alone - it's the per-scope
-// renderer that guides can inline without triggering heading injection.
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/*
+ * Remark plugin that expands <CRDReference kind="..." /> MDX elements into
+ * an ordered sequence of markdown headings + <CRDFields> calls, one per
+ * object scope in the referenced CRD schema. The headings are injected
+ * into the AST so Docusaurus's downstream TOC extractor picks them up;
+ * this is why we do it as a remark plugin rather than purely at render
+ * time in a React component.
+ *
+ * <CRDFields kind="..." path="..." /> is left alone - it's the per-scope
+ * renderer that guides can inline without triggering heading injection.
+ */
 
 import fs from 'node:fs';
 import path from 'node:path';
