@@ -304,7 +304,7 @@ const config: Config = {
               to: 'toolhive/reference/registry-api',
             },
             {
-              label: 'Upstream registry schema',
+              label: 'Registry schema',
               to: 'toolhive/reference/registry-schema-upstream',
             },
           ],
