@@ -94,14 +94,19 @@ the `main` branch.
 
 ## License
 
-This repository is dual-licensed:
+This repository is primarily documentation, so the default license is for
+content. Code is licensed separately:
 
-- **Code** (anything that compiles, runs, or configures the site - including
-  `.ts`, `.tsx`, `.js`, `.mjs`, `.css`, and config files) is licensed under the
-  [Apache License 2.0](./LICENSE).
 - **Documentation content** (Markdown and MDX files under `/docs` and `/blog`,
   plus accompanying images and diagrams) is licensed under
-  [Creative Commons Attribution 4.0 International (CC BY 4.0)](./LICENSE-docs).
+  [Creative Commons Attribution 4.0 International (CC BY 4.0)](./LICENSE).
+- **Code** (anything that compiles, runs, or configures the site - including
+  `.ts`, `.tsx`, `.js`, `.mjs`, `.css`, and config files) is licensed under the
+  [Apache License 2.0](./LICENSE-code). Individual source files carry SPDX
+  headers identifying this.
+
+This split follows the convention used by the
+[Kubernetes website repository](https://github.com/kubernetes/website).
 
 Stacklok trademarks, logos, and brand marks (including the contents of
 `/static/img/logos/` and the Stacklok wordmark and icon used throughout the
