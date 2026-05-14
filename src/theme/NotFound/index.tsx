@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) Facebook, Inc. and its affiliates.
 // SPDX-License-Identifier: MIT
 //
-// Ejected from @docusaurus/theme-classic; unmodified from upstream.
+// Ejected from @docusaurus/theme-classic; code unmodified from upstream.
 
 import React, { type ReactNode } from 'react';
 import { translate } from '@docusaurus/Translate';

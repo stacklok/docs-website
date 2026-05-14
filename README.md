@@ -102,8 +102,9 @@ content. Code is licensed separately:
   [Creative Commons Attribution 4.0 International (CC BY 4.0)](./LICENSE).
 - **Code** (anything that compiles, runs, or configures the site - including
   `.ts`, `.tsx`, `.js`, `.mjs`, `.css`, and config files) is licensed under the
-  [Apache License 2.0](./LICENSE-code). Individual source files carry SPDX
-  headers identifying this.
+  [Apache License 2.0](./LICENSE-code). Most source files carry SPDX headers
+  identifying this; a small number of top-level config files do not, and inherit
+  the code license by virtue of being code.
 
 This split follows the convention used by the
 [Kubernetes website repository](https://github.com/kubernetes/website).
