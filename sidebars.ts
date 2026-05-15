@@ -75,8 +75,8 @@ const sidebars: SidebarsConfig = {
             'toolhive/guides-ui/skills-manage',
           ],
         },
-        'toolhive/guides-ui/cli-access',
         'toolhive/guides-ui/playground',
+        'toolhive/guides-ui/cli-access',
       ],
     },
 
