@@ -567,19 +567,48 @@ groups or roles using the same `principal in THVGroup::"..."` syntax.
 ### How it works
 
 1. The embedded authorization server authenticates the user with your upstream
-   identity provider and issues a ToolHive JWT.
-2. The Cedar authorizer reads claims from the upstream token (not just the
-   ToolHive-issued JWT).
-3. Group claims are extracted and used to build `THVGroup` parent entities for
-   the principal.
+   identity provider, stores the upstream access token, and issues a ToolHive
+   JWT for the client.
+2. The authorizer resolves which token's claims to evaluate:
+   - When `primaryUpstreamProvider` is set, it reads claims from the named
+     upstream's stored access token.
+   - When `primaryUpstreamProvider` is unset and an embedded auth server is
+     configured, it reads claims from the first upstream provider declared on
+     the auth server.
+   - When `primaryUpstreamProvider` is unset and no embedded auth server is
+     configured, it reads claims from the bearer token on the original client
+     request.
+3. Group and role claims are extracted from the resolved claim source and used
+   to build `THVGroup` parent entities for the principal.
 4. Policies using `principal in THVGroup::"<group>"` evaluate correctly.
 
 :::note
 
-If the upstream token is opaque (not a JWT), the authorizer denies the request.
-There is no silent fallback to ToolHive-issued claims only.
+If the resolved upstream token is opaque (not a JWT), the authorizer denies the
+request. There is no silent fallback to the client request's claims.
 
 :::
+
+### How the upstream provider is chosen
+
+In Kubernetes, how you configure `primaryUpstreamProvider` depends on the
+resource type:
+
+- **VirtualMCPServer:** the embedded auth server can declare multiple upstream
+  providers. Set `incomingAuth.authzConfig.inline.primaryUpstreamProvider` on
+  the `VirtualMCPServer` to choose which upstream's access token Cedar
+  evaluates. When the field is empty, the operator defaults to the first entry
+  in `authServerConfig.upstreamProviders` and emits an
+  `AuthzUpstreamSelectionWarning` status condition naming the chosen provider.
+  See
+  [Cedar authorization claim source](../guides-vmcp/authentication.mdx#cedar-authorization-claim-source)
+  in the vMCP authentication guide for the override syntax and validation
+  behavior.
+- **MCPServer and MCPRemoteProxy:** the inline `primaryUpstreamProvider` field
+  is accepted but has no effect on these resources. Setting it surfaces an
+  `AuthzPrimaryUpstreamProviderIgnored` advisory status condition. The embedded
+  auth server for these resources runs through a referenced
+  `MCPExternalAuthConfig` and supports a single upstream provider.
 
 ## Policy evaluation and secure defaults
 

@@ -510,6 +510,66 @@ spec:
     # highlight-end
 ```
 
+### Cedar authorization claim source
+
+When you configure Cedar policies under `incomingAuth.authzConfig.inline`, the
+operator binds Cedar's claim source to one of the providers in
+`authServerConfig.upstreamProviders` so that group and role policies evaluate
+against upstream IDP claims rather than the ToolHive-issued JWT.
+
+By default, the operator selects the first entry in
+`authServerConfig.upstreamProviders`. With two or more upstreams declared the
+choice is ambiguous, so the operator additionally emits an
+`AuthzUpstreamSelectionWarning` status condition naming the chosen provider so
+you can verify the default matches your intent.
+
+To pin Cedar to a specific upstream, set `primaryUpstreamProvider` on the inline
+authz config:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  incomingAuth:
+    type: oidc
+    oidcConfigRef:
+      name: my-oidc-config
+      audience: https://mcp.example.com/mcp
+    authzConfig:
+      type: inline
+      inline:
+        # highlight-next-line
+        primaryUpstreamProvider: github
+        policies:
+          - 'permit(principal in THVGroup::"engineering", action, resource);'
+        entitiesJson: '[]'
+  authServerConfig:
+    issuer: https://auth.example.com
+    upstreamProviders:
+      - name: github
+        type: oauth2
+        oauth2Config: { ... }
+      - name: google
+        type: oidc
+        oidcConfig: { ... }
+```
+
+The value must match an entry in `authServerConfig.upstreamProviders`. Setting
+the field on a single-upstream config is allowed but redundant: the default
+already resolves to that upstream.
+
+Rejection behavior at admission:
+
+- **Name does not match a declared upstream:** the `VirtualMCPServer` is
+  rejected with `AuthServerConfigValidated=False` and `AuthzUpstreamUnknown`.
+  Cedar would otherwise deny every request at runtime, so the operator rejects
+  at admission instead.
+- **Field set without an embedded auth server:** the `VirtualMCPServer` is
+  rejected with `AuthzPrimaryProviderRequiresAuthServer`. Either remove the
+  field or configure `authServerConfig`.
+
+For background on how Cedar resolves claims from the upstream token versus the
+ToolHive-issued JWT, see
+[Upstream identity provider claims](../concepts/cedar-policies.mdx#upstream-identity-provider-claims).
+
 ### Session storage
 
 By default, upstream tokens are stored in memory and lost on pod restart. For
