@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 import React, { type ReactNode } from 'react';
 import DefaultAdmonitionTypes from '@theme-original/Admonition/Types';
 import AdmonitionLayout from '@theme/Admonition/Layout';

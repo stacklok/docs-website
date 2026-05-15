@@ -2,17 +2,19 @@
 // SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Applies pin_files substitutions declared for a project in
-// .github/upstream-projects.yaml. Called by the upstream-release-docs
-// workflow after Renovate has already bumped the `version:` field.
-//
-// Usage:
-//   node apply-pin-files.mjs --id <project-id> --tag <new-tag>
-//
-// pin_files entries supported:
-//   { path: '<file>', replace_latest: true }
-//       Flips `<repo>@latest` (or `<repo>@vX.Y.Z`) to `<repo>@<new-tag>`
-//       so unrelated `@latest` strings elsewhere in the file are safe.
+/*
+ * Applies pin_files substitutions declared for a project in
+ * .github/upstream-projects.yaml. Called by the upstream-release-docs
+ * workflow after Renovate has already bumped the `version:` field.
+ *
+ * Usage:
+ *   node apply-pin-files.mjs --id <project-id> --tag <new-tag>
+ *
+ * pin_files entries supported:
+ *   { path: '<file>', replace_latest: true }
+ *       Flips `<repo>@latest` (or `<repo>@vX.Y.Z`) to `<repo>@<new-tag>`
+ *       so unrelated `@latest` strings elsewhere in the file are safe.
+ */
 
 import fs from 'node:fs';
 import yaml from 'yaml';

@@ -1,3 +1,5 @@
+// Source: https://redocly.com/docs/cli/guides/replace-servers-url
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ReplaceServers = require('./decorators/replace-servers-url');
 const id = 'servers';

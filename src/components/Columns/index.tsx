@@ -1,3 +1,10 @@
+// SPDX-FileCopyrightText: Copyright (c) Juniors017 (Docux)
+// SPDX-License-Identifier: CC-BY-SA-4.0
+//
+// Source: https://docusaurus.community/knowledge/component-library/new/Columns/
+// Original author: https://github.com/Juniors017
+// Licensed under CC BY-SA 4.0: https://creativecommons.org/licenses/by-sa/4.0/
+
 import React, { ReactNode, CSSProperties } from 'react';
 // Import clsx library for conditional classes.
 import clsx from 'clsx';

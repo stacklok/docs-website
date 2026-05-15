@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 import React from 'react';
 import { schemas, type CRDKind } from './schemas';
 import styles from './styles.module.css';

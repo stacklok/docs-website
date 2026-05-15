@@ -1,5 +1,9 @@
+// SPDX-FileCopyrightText: Copyright (c) Facebook, Inc. and its affiliates.
 // SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MIT
+//
+// Ejected from @docusaurus/theme-classic; modified by Stacklok to add Minder
+// and Insight deprecation notices on matching paths.
 
 import React, { type ReactNode } from 'react';
 import clsx from 'clsx';

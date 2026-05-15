@@ -2,28 +2,30 @@
 // SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Copies declared upstream assets into the docs repo for the given
-// project. Assets are declared per-project in
-// .github/upstream-projects.yaml under `assets:`. Three source kinds:
-//
-//   - source: <repo-relative path>            # file in the shallow clone
-//     destination: <repo-relative path>
-//
-//   - release_asset: <asset filename>         # GitHub release asset
-//     destination: <repo-relative path>
-//
-//   - release_asset: <asset filename>
-//     destination: <repo-relative directory>
-//     extract: tar-gz                         # extract tarball into dir
-//
-// Usage:
-//   node sync-assets.mjs --id <project-id> --clone <path> [--repo <owner/repo>]
-//
-// `--clone` is required for `source:` entries (copies from the clone).
-// `--repo` defaults to the project's repo from the YAML and is used
-// for `release_asset:` downloads.
-//
-// No-op if the project declares no assets.
+/*
+ * Copies declared upstream assets into the docs repo for the given
+ * project. Assets are declared per-project in
+ * .github/upstream-projects.yaml under `assets:`. Three source kinds:
+ *
+ *   - source: <repo-relative path>            # file in the shallow clone
+ *     destination: <repo-relative path>
+ *
+ *   - release_asset: <asset filename>         # GitHub release asset
+ *     destination: <repo-relative path>
+ *
+ *   - release_asset: <asset filename>
+ *     destination: <repo-relative directory>
+ *     extract: tar-gz                         # extract tarball into dir
+ *
+ * Usage:
+ *   node sync-assets.mjs --id <project-id> --clone <path> [--repo <owner/repo>]
+ *
+ * `--clone` is required for `source:` entries (copies from the clone).
+ * `--repo` defaults to the project's repo from the YAML and is used
+ * for `release_asset:` downloads.
+ *
+ * No-op if the project declares no assets.
+ */
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';

@@ -1,15 +1,20 @@
 #!/usr/bin/env node
-// Extract each CRD's openAPIV3Schema from the upstream ToolHive CRD YAMLs.
-// For each CRD this writes three files under static/api-specs/crds/:
-//   <plural>.schema.json  - JSON Schema (apiVersion/kind/metadata stripped)
-//   <plural>.example.yaml - Minimal YAML skeleton covering required fields
-// Plus a shared index.json with metadata and a reference graph.
-//
-// Usage:
-//   node scripts/extract-crd-schemas.mjs [--src <dir>]
-//
-// Default src is ../toolhive/deploy/charts/operator-crds/files/crds relative
-// to this repo. Set TOOLHIVE_CRD_DIR to override.
+// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/*
+ * Extract each CRD's openAPIV3Schema from the upstream ToolHive CRD YAMLs.
+ * For each CRD this writes three files under static/api-specs/crds/:
+ *   <plural>.schema.json  - JSON Schema (apiVersion/kind/metadata stripped)
+ *   <plural>.example.yaml - Minimal YAML skeleton covering required fields
+ * Plus a shared index.json with metadata and a reference graph.
+ *
+ * Usage:
+ *   node scripts/extract-crd-schemas.mjs [--src <dir>]
+ *
+ * Default src is ../toolhive/deploy/charts/operator-crds/files/crds relative
+ * to this repo. Set TOOLHIVE_CRD_DIR to override.
+ */
 
 import fs from 'node:fs';
 import path from 'node:path';
