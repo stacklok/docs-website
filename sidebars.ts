@@ -262,6 +262,21 @@ const sidebars: SidebarsConfig = {
     },
 
     {
+      type: 'category',
+      label: 'Cloud UI',
+      description:
+        'How to deploy and use the ToolHive Cloud UI to browse and manage MCP servers',
+      link: {
+        type: 'doc',
+        id: 'toolhive/guides-cloud-ui/index',
+      },
+      items: [
+        'toolhive/guides-cloud-ui/quickstart',
+        'toolhive/guides-cloud-ui/configuration',
+      ],
+    },
+
+    {
       type: 'html',
       value: 'Shared guides',
       className: 'sidebar-title',

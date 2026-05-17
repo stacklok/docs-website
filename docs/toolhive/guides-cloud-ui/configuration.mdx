@@ -1,0 +1,140 @@
+---
+title: Cloud UI configuration
+sidebar_label: Configuration
+description:
+  Configure environment variables, OIDC authentication, and deployment options
+  for the Cloud UI
+---
+
+This guide covers the environment variables and configuration options for
+running the Cloud UI in different environments.
+
+## Environment variables
+
+The Cloud UI is configured entirely through environment variables. The table
+below lists the required and optional variables.
+
+### Required variables
+
+| Variable             | Description                                                                             |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| `OIDC_ISSUER_URL`    | Issuer URL of your OIDC provider (for example, `https://your-org.okta.com`)             |
+| `OIDC_CLIENT_ID`     | OAuth2 client ID registered with your OIDC provider                                     |
+| `OIDC_CLIENT_SECRET` | OAuth2 client secret for the registered client                                          |
+| `BETTER_AUTH_SECRET` | Secret used to encrypt session tokens. Generate one with `openssl rand -base64 32`      |
+| `BETTER_AUTH_URL`    | Base URL where the Cloud UI is accessible (for example, `https://cloud-ui.example.com`) |
+| `API_BASE_URL`       | URL of the Registry Server API (for example, `https://registry.example.com`)            |
+
+### Optional variables
+
+| Variable          | Description                                                                                                      |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`    | PostgreSQL connection string for the auth database. When omitted, the Cloud UI uses an in-memory SQLite database |
+| `TRUSTED_ORIGINS` | Comma-separated list of allowed CORS origins                                                                     |
+
+## Configure OIDC authentication
+
+The Cloud UI delegates authentication to an external OIDC provider using
+[Better Auth](https://www.better-auth.com/). It works with any
+standards-compliant provider, including Okta, Microsoft Entra ID, and Auth0.
+
+To configure your provider:
+
+1. Register a new OAuth2/OIDC application in your identity provider.
+2. Set the redirect URI to `<BETTER_AUTH_URL>/api/auth/callback/oidc` (for
+   example, `https://cloud-ui.example.com/api/auth/callback/oidc`).
+3. Copy the issuer URL, client ID, and client secret into the corresponding
+   environment variables.
+
+:::tip
+
+For local development or testing, use the built-in mock OIDC provider by
+starting the Docker Compose stack with the `mock` profile. See the
+[quickstart](./quickstart.mdx) for details.
+
+:::
+
+## Deployment options
+
+### Docker
+
+Build and run the Cloud UI as a standalone container:
+
+```bash title="Build the image"
+docker build -t toolhive-cloud-ui:latest .
+```
+
+```bash title="Run the container"
+docker run -p 3000:3000 \
+  -e OIDC_ISSUER_URL=https://your-org.okta.com \
+  -e OIDC_CLIENT_ID=your-client-id \
+  -e OIDC_CLIENT_SECRET=your-client-secret \
+  -e BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
+  -e BETTER_AUTH_URL=http://localhost:3000 \
+  -e API_BASE_URL=http://your-registry-server:8080 \
+  toolhive-cloud-ui:latest
+```
+
+The application listens on port 3000.
+
+### Docker Compose
+
+The repository includes a Docker Compose file that starts the full stack (Cloud
+UI, Registry Server, and databases). See the [quickstart](./quickstart.mdx) for
+a walkthrough.
+
+For production use with a real OIDC provider, create a `.env` file with your
+credentials and start without the `mock` profile:
+
+```bash title=".env"
+OIDC_ISSUER_URL=https://your-org.okta.com
+OIDC_CLIENT_ID=your-client-id
+OIDC_CLIENT_SECRET=your-client-secret
+BETTER_AUTH_SECRET=your-generated-secret
+```
+
+```bash
+make compose-up
+```
+
+### Kubernetes (Helm)
+
+The Cloud UI repository includes a Helm chart in the `helm/` directory. To
+deploy on Kubernetes:
+
+```bash
+helm install cloud-ui ./helm \
+  --set env.OIDC_ISSUER_URL=https://your-org.okta.com \
+  --set env.OIDC_CLIENT_ID=your-client-id \
+  --set env.OIDC_CLIENT_SECRET=your-client-secret \
+  --set env.BETTER_AUTH_SECRET=your-generated-secret \
+  --set env.BETTER_AUTH_URL=https://cloud-ui.example.com \
+  --set env.API_BASE_URL=http://registry-server:8080
+```
+
+:::info
+
+For production Kubernetes deployments, store sensitive values like
+`OIDC_CLIENT_SECRET` and `BETTER_AUTH_SECRET` in a Kubernetes Secret rather than
+passing them as Helm values.
+
+:::
+
+The Helm chart supports:
+
+- Replica count and horizontal pod autoscaling (HPA)
+- Resource requests and limits
+- Liveness and readiness probes
+- Ingress configuration
+- Custom service types (ClusterIP, NodePort, LoadBalancer)
+
+Refer to the chart's `values.yaml` for the full set of configurable parameters.
+
+## Next steps
+
+- [Publish servers](../guides-registry/publish-servers.mdx) to populate your
+  catalog with MCP server entries.
+- Set up [Registry Server authentication](../guides-registry/authentication.mdx)
+  to control access to the catalog API.
+- Learn about the [Registry Server architecture](../guides-registry/intro.mdx)
+  to understand how the backend works.
