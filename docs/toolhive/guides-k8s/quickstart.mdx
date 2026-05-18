@@ -101,8 +101,8 @@ from your main system and can be easily deleted when you're done.
 
 ## Step 2: Deploy the ToolHive operator
 
-Now deploy the ToolHive operator to your cluster using Helm. The operator will
-watch for MCP server resources and manage their lifecycle automatically.
+Now deploy the ToolHive operator to your cluster using Helm. The operator
+watches for MCP server resources and manages their lifecycle automatically.
 
 First, install the operator CRDs:
 
@@ -143,12 +143,35 @@ in your cluster.
 ## Step 3: Create your first MCP server
 
 Now for the exciting part - create an MCP server using Kubernetes resources.
-You'll deploy the fetch server, which allows AI agents to retrieve web content.
+You'll deploy the `toolhive-doc-mcp` server, which lets AI agents search the
+ToolHive documentation.
 
-Apply the example `fetch` MCP server from the ToolHive repository:
+Define the `MCPServer` resource:
+
+```yaml title="toolhive-docs.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: toolhive-docs
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/toolhive-doc-mcp
+  transport: streamable-http
+  proxyPort: 8080
+  mcpPort: 8080
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+```
+
+Apply the manifest:
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/stacklok/toolhive/refs/heads/main/examples/operator/mcp-servers/mcpserver_fetch.yaml
+kubectl apply -f toolhive-docs.yaml
 ```
 
 :::info[What's happening?]
@@ -171,8 +194,8 @@ kubectl get mcpservers -n toolhive-system
 You should see:
 
 ```text
-NAME    STATUS   READY   REPLICAS   URL                                                                 AGE
-fetch   Ready    True    1          http://mcp-fetch-proxy.toolhive-system.svc.cluster.local:8080/mcp   30s
+NAME            STATUS   READY   REPLICAS   URL                                                                         AGE
+toolhive-docs   Ready    True    1          http://mcp-toolhive-docs-proxy.toolhive-system.svc.cluster.local:8080/mcp   30s
 ```
 
 If the status is "Pending", wait a few moments and check again. If it remains
@@ -184,13 +207,13 @@ the end of this tutorial.
 Verify that your MCP server is actually working. First, get the service details:
 
 ```bash
-kubectl get service mcp-fetch-proxy -n toolhive-system
+kubectl get service mcp-toolhive-docs-proxy -n toolhive-system
 ```
 
 Port-forward to access the service locally:
 
 ```bash
-kubectl port-forward service/mcp-fetch-proxy -n toolhive-system 8080:8080
+kubectl port-forward service/mcp-toolhive-docs-proxy -n toolhive-system 8080:8080
 ```
 
 In another terminal, test the server:
@@ -220,7 +243,7 @@ Make sure you still have the port-forward running from Step 4. If not, restart
 it in a separate terminal:
 
 ```bash
-kubectl port-forward service/mcp-fetch-proxy -n toolhive-system 8080:8080
+kubectl port-forward service/mcp-toolhive-docs-proxy -n toolhive-system 8080:8080
 ```
 
 Configure Visual Studio Code to connect to your MCP server. Open VS Code and
@@ -245,7 +268,7 @@ access your user settings:
 
 4. Enter the server URL: `http://localhost:8080/mcp` and press Enter
 
-5. Enter a name for the server (e.g., "fetch") and press Enter
+5. Enter a name for the server (e.g., "toolhive-docs") and press Enter
 
 6. Choose "Global" to add the server to your global settings
 
@@ -255,7 +278,7 @@ access your user settings:
    ```json
    {
      "servers": {
-       "fetch": {
+       "toolhive-docs": {
          "url": "http://localhost:8080/mcp",
          "type": "http"
        }
@@ -265,7 +288,7 @@ access your user settings:
    ```
 
 To verify the connection, click **Start**. The indicator should change to
-"Running" and show "1 tools".
+"Running" and show "2 tools".
 
 <ThemedImage
   alt='VS Code MCP settings'
@@ -288,9 +311,9 @@ To verify the connection, click **Start**. The indicator should change to
   className='screenshot'
 />
 
-Now test the connection by asking GitHub Copilot to fetch content from a
-website. Open Copilot Chat in **Agent** mode and ask: "Can you fetch the content
-from https://stacklok.com and summarize it for me?"
+Now test the connection by asking GitHub Copilot a question about ToolHive. Open
+Copilot Chat in **Agent** mode and ask: "What is a Virtual MCP Server and how do
+I use it with ToolHive?"
 
 <ThemedImage
   alt='VS Code Copilot agent mode selection'
@@ -303,8 +326,8 @@ from https://stacklok.com and summarize it for me?"
   className='screenshot'
 />
 
-GitHub Copilot should be able to use your Kubernetes-hosted MCP server to
-retrieve the content and provide a summary.
+GitHub Copilot uses your Kubernetes-hosted MCP server to search the ToolHive
+documentation and compose a grounded answer.
 
 <ThemedImage
   alt='VS Code Copilot tool use confirmation'
@@ -333,7 +356,7 @@ Now that you have a working MCP server, explore some operator features.
 View the detailed status of your MCP server:
 
 ```bash
-kubectl describe mcpserver fetch -n toolhive-system
+kubectl describe mcpserver toolhive-docs -n toolhive-system
 ```
 
 This shows you the current state, any events, and configuration details.
@@ -341,19 +364,19 @@ This shows you the current state, any events, and configuration details.
 Try updating your MCP server's resource limits by editing the resource:
 
 ```bash
-kubectl patch mcpserver fetch -n toolhive-system --type='merge' -p '{"spec":{"resources":{"limits":{"memory":"256Mi"}}}}'
+kubectl patch mcpserver toolhive-docs -n toolhive-system --type='merge' -p '{"spec":{"resources":{"limits":{"memory":"256Mi"}}}}'
 ```
 
 You should see output confirming the patch:
 
 ```text
-mcpserver.toolhive.stacklok.dev/fetch patched
+mcpserver.toolhive.stacklok.dev/toolhive-docs patched
 ```
 
 Check that the pod has been updated with the new resource limits:
 
 ```bash
-kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=fetch -o jsonpath='{.items[0].spec.containers[0].resources.limits.memory}'
+kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=toolhive-docs -o jsonpath='{.items[0].spec.containers[0].resources.limits.memory}'
 ```
 
 You should see output showing the updated memory limit:
@@ -372,7 +395,7 @@ When you're done experimenting, you can clean up your resources.
 Delete the MCP server:
 
 ```bash
-kubectl delete mcpserver fetch -n toolhive-system
+kubectl delete mcpserver toolhive-docs -n toolhive-system
 ```
 
 Verify it's been removed:
@@ -390,7 +413,7 @@ No resources found in toolhive-system namespace.
 Check that the pods are also gone:
 
 ```bash
-kubectl get pods -l app.kubernetes.io/name=fetch -n toolhive-system
+kubectl get pods -l app.kubernetes.io/instance=toolhive-docs -n toolhive-system
 ```
 
 You should see:
@@ -422,7 +445,7 @@ can also run:
 task kind-destroy
 ```
 
-This will fully remove the kind cluster and clean up all associated resources.
+This fully removes the kind cluster and cleans up all associated resources.
 
 :::
 
@@ -438,6 +461,10 @@ Here are some next steps to explore:
 - Learn about
   [advanced MCP server configurations](../guides-k8s/run-mcp-k8s.mdx) for
   production deployments
+- Connect to a hosted MCP server with
+  [MCPRemoteProxy](../guides-k8s/remote-mcp-proxy.mdx). For example, point an
+  `MCPRemoteProxy` at `https://toolhive-doc-mcp.stacklok.com/mcp` to use the
+  hosted docs server instead of running the container in your cluster.
 - Learn more about [Helm deployment options](../guides-k8s/deploy-operator.mdx)
   and configuration
 - Integrate MCP servers with your existing Kubernetes applications
@@ -481,7 +508,7 @@ For a deeper walkthrough, see the
 Describe the MCPServer to see status conditions and recent events:
 
 ```bash
-kubectl describe mcpserver fetch -n toolhive-system
+kubectl describe mcpserver toolhive-docs -n toolhive-system
 ```
 
 If the events don't surface a clear reason, follow the operator logs while you
@@ -499,16 +526,16 @@ kubectl logs -n toolhive-system deployment/toolhive-operator -f
 Verify the Service exists and has endpoints:
 
 ```bash
-kubectl describe svc mcp-fetch-proxy -n toolhive-system
-kubectl get endpoints mcp-fetch-proxy -n toolhive-system
+kubectl describe svc mcp-toolhive-docs-proxy -n toolhive-system
+kubectl get endpoints mcp-toolhive-docs-proxy -n toolhive-system
 ```
 
 If endpoints are empty, either the proxy pod isn't Ready or the Service selector
 doesn't match the proxy pod's labels. Compare them:
 
 ```bash
-kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=fetch --show-labels
-kubectl logs -n toolhive-system -l app.kubernetes.io/instance=fetch
+kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=toolhive-docs --show-labels
+kubectl logs -n toolhive-system -l app.kubernetes.io/instance=toolhive-docs
 ```
 
 </details>
