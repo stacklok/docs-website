@@ -1,14 +1,14 @@
 ---
 title: Rate limiting
 description:
-  Configure per-user and shared rate limits on MCPServer resources to prevent
-  noisy neighbors and protect downstream services.
+  Configure per-user and shared rate limits on MCPServer and VirtualMCPServer
+  resources to prevent noisy neighbors and protect downstream services.
 ---
 
-Configure token bucket rate limits on MCPServer resources to control how many
-tool invocations users can make. Rate limiting prevents individual users from
-monopolizing shared servers and protects downstream services from traffic
-spikes.
+Configure token bucket rate limits on MCPServer and VirtualMCPServer resources
+to control how many tool invocations users can make. Rate limiting prevents
+individual users from monopolizing shared servers and protects downstream
+services from traffic spikes.
 
 ToolHive supports two scopes of rate limiting:
 
@@ -218,6 +218,55 @@ In this example:
 - Each user can make at most 10 `expensive_search` calls per minute (and those
   also count toward the 100 server-level limit).
 - All users combined can make 50 `shared_resource` calls per minute.
+
+## Rate limit a VirtualMCPServer
+
+VirtualMCPServer resources accept the same rate limit shape under
+`spec.config.rateLimiting`. The fields and token bucket semantics match the
+MCPServer examples above, but the prerequisites are stricter:
+
+- `spec.sessionStorage.provider` must be `redis`. The CRD rejects any
+  `rateLimiting` configuration without Redis-backed session storage.
+- `spec.incomingAuth.type` must be `oidc` when you configure any per-user
+  bucket - either at the server level or on a per-tool override.
+
+A request must pass both the server-level vMCP limit and the per-tool limit (if
+defined). Limits apply to the vMCP aggregator and are independent from any
+limits configured on the backend MCPServers it routes to.
+
+```yaml title="vmcp-ratelimit.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: VirtualMCPServer
+metadata:
+  name: shared-toolkit
+  namespace: toolhive-system
+spec:
+  groupRef:
+    name: my-backends
+  incomingAuth:
+    type: oidc
+    oidcConfigRef:
+      name: my-oidc-config
+      audience: shared-toolkit
+  sessionStorage:
+    provider: redis
+    address: <YOUR_REDIS_ADDRESS>
+  config:
+    # highlight-start
+    rateLimiting:
+      shared:
+        maxTokens: 5000
+        refillPeriod: 1m0s
+      perUser:
+        maxTokens: 200
+        refillPeriod: 1m0s
+      tools:
+        - name: expensive_search
+          perUser:
+            maxTokens: 20
+            refillPeriod: 1m0s
+    # highlight-end
+```
 
 ## Next steps
 

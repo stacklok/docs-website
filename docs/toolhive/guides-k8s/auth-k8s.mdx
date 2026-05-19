@@ -779,12 +779,56 @@ from the configured endpoint, and the `fieldMapping` section maps
 provider-specific response fields to standard user identity fields (for example,
 GitHub returns `login` instead of the standard `name` field).
 
-When you omit `userInfo`, the embedded auth server runs in synthesis mode for
-this upstream: it derives a non-personally-identifying subject (with a `tk-`
-prefix) from the access token and leaves `name` and `email` empty. Use this
-configuration for OAuth 2.0 servers that don't expose a userinfo endpoint, such
-as MCP authorization servers that comply with the
+When you omit `userInfo` and `identityFromToken`, the embedded auth server runs
+in synthesis mode for this upstream: it derives a non-personally-identifying
+subject (with a `tk-` prefix) from the access token and leaves `name` and
+`email` empty. Use this configuration for OAuth 2.0 servers that don't expose a
+userinfo endpoint and don't return identity in the token response, such as MCP
+authorization servers that comply with the
 [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
+
+:::
+
+#### Extract identity from the token response
+
+Some providers don't expose a userinfo endpoint but return user identity in the
+OAuth 2.0 token response itself. For example, Slack returns the user ID at
+`authed_user.id`, and Snowflake embeds the username in the access token as a
+JWT. For these providers, set `identityFromToken` on `oauth2Config` instead of
+`userInfo`. The embedded auth server then skips the userinfo HTTP call and
+resolves identity from gjson dot-notation paths into the token response body.
+
+```yaml title="oauth2Config snippet for Slack-style providers"
+oauth2Config:
+  # highlight-start
+  identityFromToken:
+    subjectPath: authed_user.id
+    namePath: authed_user.name
+    emailPath: authed_user.email
+  # highlight-end
+```
+
+For providers like Snowflake that embed identity in a JWT inside the token
+response, use the `@upstreamjwt` modifier to decode the payload:
+
+```yaml title="oauth2Config snippet for JWT-embedded identity"
+oauth2Config:
+  # highlight-start
+  identityFromToken:
+    subjectPath: 'access_token|@upstreamjwt|sub'
+  # highlight-end
+```
+
+`subjectPath` is required; `namePath` and `emailPath` are optional. Each path
+must be 1-256 characters long. `identityFromToken` and `userInfo` can both be
+set, but only one is used at runtime.
+
+:::warning[Trust model]
+
+Claims read from the token response are trusted via TLS only and are not
+cryptographically verified. The `@upstreamjwt` modifier decodes the JWT payload
+without verifying its signature. Prefer OIDC ID tokens when you need
+cryptographically verifiable claims.
 
 :::
 
