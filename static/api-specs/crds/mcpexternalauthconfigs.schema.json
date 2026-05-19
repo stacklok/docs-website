@@ -529,6 +529,33 @@
                           }
                         ]
                       },
+                      "identityFromToken": {
+                        "description": "IdentityFromToken extracts user identity (subject, name, email) directly\nfrom the OAuth2 token-endpoint response body using gjson dot-notation paths.\nWhen set, the embedded auth server skips the userinfo HTTP call entirely\nand resolves identity from the token response. See IdentityFromTokenConfig\nfor trust-model and uniqueness considerations.",
+                        "properties": {
+                          "emailPath": {
+                            "description": "EmailPath is the dot-notation path to the email address field in the token response.\nIf not specified or if the path does not resolve to a string, the email is omitted.\nOmit the field entirely rather than setting it to an empty string.",
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "namePath": {
+                            "description": "NamePath is the dot-notation path to the display name field in the token response.\nIf not specified or if the path does not resolve to a string, the display name is omitted.\nOmit the field entirely rather than setting it to an empty string.",
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "subjectPath": {
+                            "description": "SubjectPath is the dot-notation path to the subject (user ID) field in the token response.\nWarning: claims read from the token response are trusted only via TLS, not\ncryptographically verified; prefer OIDC ID tokens when verifiable claims are required.\nExample: \"authed_user.id\" for Slack (top-level token-response field). For providers\nwhose token response embeds the access token as a JWT (e.g. Snowflake), use the\n\"@upstreamjwt\" modifier to decode the payload, e.g. \"access_token|@upstreamjwt|sub\".\nThe \"@upstreamjwt\" modifier performs no signature verification either.",
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "subjectPath"
+                        ],
+                        "type": "object"
+                      },
                       "redirectUri": {
                         "description": "RedirectURI is the callback URL where the upstream IDP will redirect after authentication.\nWhen not specified, defaults to `{resourceUrl}/oauth/callback` where `resourceUrl` is the\nURL associated with the resource (e.g., MCPServer or vMCP) using this config.",
                         "type": "string"
@@ -547,7 +574,7 @@
                         "type": "string"
                       },
                       "tokenResponseMapping": {
-                        "description": "TokenResponseMapping configures custom field extraction from non-standard token responses.\nSome OAuth providers (e.g., GovSlack) nest token fields under non-standard paths\ninstead of returning them at the top level. When set, ToolHive performs the token\nexchange HTTP call directly and extracts fields using the configured dot-notation paths.\nIf nil, standard OAuth 2.0 token response parsing is used.",
+                        "description": "TokenResponseMapping configures custom field extraction from non-standard token responses.\nSome OAuth providers (e.g., GovSlack) nest token fields under non-standard paths\ninstead of returning them at the top level. When set, ToolHive performs the token\nexchange HTTP call directly and extracts fields using the configured dot-notation paths.\nIf nil, standard OAuth 2.0 token response parsing is used.\nFor extracting user identity from the token response, see IdentityFromToken.",
                         "properties": {
                           "accessTokenPath": {
                             "description": "AccessTokenPath is the dot-notation path to the access token in the response.\nExample: \"authed_user.access_token\"",
@@ -573,7 +600,7 @@
                         "type": "object"
                       },
                       "userInfo": {
-                        "description": "UserInfo contains configuration for fetching user information from the upstream provider.\nWhen omitted, the embedded auth server runs in synthesis mode for this\nupstream: a non-PII subject derived from the access token, no Name/Email.\nUse this shape for upstreams with no userinfo surface (e.g., MCP\nauthorization servers per the MCP spec).",
+                        "description": "UserInfo contains configuration for fetching user information from the upstream provider.\nWhen omitted and IdentityFromToken is also unset, the embedded auth server runs in\nsynthesis mode for this upstream: a non-PII subject derived from the access token, no\nName/Email. Use this shape for upstreams with no userinfo surface and no identity in\nthe token response (e.g., MCP authorization servers per the MCP spec). When\nIdentityFromToken is set instead, identity is resolved from the token response body\n(e.g., Snowflake's \"username\" field, Slack's \"authed_user.id\"); the userinfo HTTP call\nis skipped entirely.",
                         "properties": {
                           "additionalHeaders": {
                             "additionalProperties": {
@@ -1025,6 +1052,11 @@
         "observedGeneration": {
           "description": "ObservedGeneration is the most recent generation observed for this MCPExternalAuthConfig.\nIt corresponds to the MCPExternalAuthConfig's generation, which is updated on mutation by the API Server.",
           "format": "int64",
+          "type": "integer"
+        },
+        "referenceCount": {
+          "description": "ReferenceCount is the number of workloads referencing this config.",
+          "format": "int32",
           "type": "integer"
         },
         "referencingWorkloads": {
