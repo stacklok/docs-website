@@ -205,6 +205,72 @@ See
 [Configure token exchange for backend authentication](../guides-k8s/token-exchange-k8s.mdx)
 for details on using service account token exchange for backend authentication.
 
+### Static header injection
+
+The `headerInjection` outgoing auth strategy injects a fixed HTTP header into
+every request to a backend. Use it when the backend authenticates with a
+pre-issued API key or static bearer token rather than per-user OAuth — for
+example, an MCP server that wraps a SaaS API behind a single shared credential.
+
+Store the header value in a Secret, then create an `MCPExternalAuthConfig` of
+type `headerInjection` that references it:
+
+```yaml title="Secret"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backend-api-key
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  value: <YOUR_API_KEY>
+```
+
+```yaml title="MCPExternalAuthConfig resource"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPExternalAuthConfig
+metadata:
+  name: backend-api-key-header
+  namespace: toolhive-system
+spec:
+  type: headerInjection
+  headerInjection:
+    headerName: X-API-Key
+    valueSecretRef:
+      name: backend-api-key
+      key: value
+```
+
+Reference the config from the VirtualMCPServer's outgoing auth, the same way as
+other strategies:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  outgoingAuth:
+    source: inline
+    backends:
+      backend-private-api:
+        type: externalAuthConfigRef
+        externalAuthConfigRef:
+          name: backend-api-key-header
+```
+
+Alternatively, attach the `MCPExternalAuthConfig` to a backend `MCPServer` via
+its `externalAuthConfigRef` and use `outgoingAuth.source: discovered` to pick it
+up automatically.
+
+For an `Authorization: Bearer <token>` header, set `headerName: Authorization`
+and store the full `Bearer <token>` string (including the `Bearer` prefix) in
+the Secret value.
+
+:::note
+
+The header value must come from a Kubernetes Secret — plaintext inline values
+are not accepted at the CRD layer. Rotating the credential is a matter of
+updating the Secret; restart the affected backend pods to pick up the new value.
+
+:::
+
 ### Upstream token injection
 
 The `upstreamInject` outgoing auth strategy injects a user's upstream access
