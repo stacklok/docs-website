@@ -779,12 +779,78 @@ from the configured endpoint, and the `fieldMapping` section maps
 provider-specific response fields to standard user identity fields (for example,
 GitHub returns `login` instead of the standard `name` field).
 
-When you omit `userInfo`, the embedded auth server runs in synthesis mode for
-this upstream: it derives a non-personally-identifying subject (with a `tk-`
-prefix) from the access token and leaves `name` and `email` empty. Use this
-configuration for OAuth 2.0 servers that don't expose a userinfo endpoint, such
-as MCP authorization servers that comply with the
+When you omit `userInfo` and `identityFromToken`, the embedded auth server runs
+in synthesis mode for this upstream: it derives a non-personally-identifying
+subject (with a `tk-` prefix) from the access token and leaves `name` and
+`email` empty. Use this configuration for OAuth 2.0 servers that don't expose a
+userinfo endpoint and don't return identity in the token response, such as MCP
+authorization servers that comply with the
 [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
+For OAuth 2.0 servers that return identity in the token response itself, see
+[Extract identity from the token response](#extract-identity-from-the-token-response).
+
+:::
+
+### Extract identity from the token response
+
+Some providers don't expose a userinfo endpoint but return user identity in the
+OAuth 2.0 token response itself. For these providers, set `identityFromToken` on
+`oauth2Config` instead of `userInfo`. The embedded auth server then skips the
+userinfo HTTP call and extracts identity from the token response body using
+[gjson dot-notation paths](https://github.com/tidwall/gjson#path-syntax):
+`username` extracts a top-level field, `authed_user.id` extracts a nested field,
+and the pipe operator chains modifiers like `@upstreamjwt`.
+
+For example, Slack's `oauth.v2.access` response includes the authenticated user
+ID at `authed_user.id`:
+
+```yaml title="oauth2Config snippet for Slack"
+oauth2Config:
+  # highlight-start
+  identityFromToken:
+    subjectPath: authed_user.id
+  # highlight-end
+```
+
+Snowflake returns the authenticated login name as a top-level `username` field
+in every authorization-code grant response, and does not expose a userinfo
+endpoint:
+
+```yaml title="oauth2Config snippet for Snowflake"
+oauth2Config:
+  # highlight-start
+  identityFromToken:
+    subjectPath: username
+    namePath: username
+  # highlight-end
+```
+
+For providers whose token response embeds identity inside a JWT-shaped access
+token, the `@upstreamjwt` modifier decodes the JWT payload so subsequent path
+segments can drill into it:
+
+```yaml title="oauth2Config snippet for JWT-embedded identity"
+oauth2Config:
+  # highlight-start
+  identityFromToken:
+    subjectPath: 'access_token|@upstreamjwt|sub'
+  # highlight-end
+```
+
+`subjectPath` is required; `namePath` and `emailPath` are optional. Omit
+`namePath` and `emailPath` rather than setting them to empty strings.
+
+If you set both `identityFromToken` and `userInfo`, `identityFromToken` takes
+precedence and the userinfo HTTP call is skipped. If `identityFromToken` is set
+and extraction fails (path missing or unexpected type), authentication fails for
+that login attempt. There is no fallback to `userInfo`.
+
+:::warning[Trust model]
+
+Claims read from the token response are trusted via TLS only and are not
+cryptographically verified. The `@upstreamjwt` modifier decodes the JWT payload
+without verifying its signature. Prefer OIDC ID tokens when you need
+cryptographically verifiable claims.
 
 :::
 
