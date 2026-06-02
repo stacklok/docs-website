@@ -1,0 +1,208 @@
+---
+title: Enable CIMD on the embedded authorization server
+description:
+  How to configure Client ID Metadata Document (CIMD) support on the ToolHive
+  embedded authorization server so MCP clients such as VS Code can authenticate
+  without prior Dynamic Client Registration.
+---
+
+This guide shows you how to enable Client ID Metadata Document (CIMD) support on
+the ToolHive embedded authorization server. With CIMD enabled, MCP clients that
+host a public metadata document — such as VS Code
+(`https://vscode.dev/oauth/client-metadata.json`) — can authenticate without
+registering through the `/oauth/register` endpoint first.
+
+:::note
+
+CIMD support on the embedded AS requires Kubernetes and the ToolHive Operator.
+It is not available for standalone `thv run` deployments.
+
+For the conceptual background on CIMD, including the two-layer architecture and
+security model, see [Client ID Metadata Documents (CIMD)](../concepts/cimd.mdx).
+
+:::
+
+## Prerequisites
+
+- Kubernetes cluster with the ToolHive Operator installed
+- An existing `MCPExternalAuthConfig` resource with `type: embeddedAuthServer`
+  and at least one upstream provider configured (see
+  [Set up embedded authorization server authentication](./auth-k8s.mdx))
+- `kubectl` access to your cluster
+
+## Enable CIMD
+
+Add a `cimd` block to the `embeddedAuthServer` section of your
+`MCPExternalAuthConfig` resource and set `enabled: true`.
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPExternalAuthConfig
+metadata:
+  name: my-embedded-auth-server
+  namespace: default
+spec:
+  type: embeddedAuthServer
+  embeddedAuthServer:
+    issuer: https://auth.example.com
+    upstreamProviders:
+      - name: github
+        type: oidc
+        oidcConfig:
+          issuerUrl: https://github.com
+          clientId: your-github-client-id
+          clientSecretRef:
+            name: github-client-secret
+            key: client_secret
+    cimd:
+      enabled: true
+```
+
+Apply the updated resource:
+
+```bash
+kubectl apply -f my-embedded-auth-server.yaml
+```
+
+The embedded AS begins advertising `client_id_metadata_document_supported: true`
+in its OAuth discovery documents (`/.well-known/oauth-authorization-server` and
+`/.well-known/openid-configuration`). MCP clients that read discovery metadata
+will use CIMD automatically.
+
+## Configure cache settings
+
+The embedded AS caches fetched CIMD documents to avoid an outbound HTTP request
+on every authorization. Two fields control the cache:
+
+| Field              | Default | Description                                                                                                               |
+| ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `cacheMaxSize`     | `256`   | Maximum number of CIMD documents held in the LRU cache. When the cache is full, the least-recently-used entry is evicted. |
+| `cacheFallbackTtl` | `5m`    | Fixed TTL for each cached document. Cache-Control header parsing is not yet implemented; all entries use this value.      |
+
+Adjust these values based on the number of distinct MCP clients you expect and
+how quickly you need metadata changes to take effect:
+
+```yaml
+cimd:
+  enabled: true
+  cacheMaxSize: 512
+  cacheFallbackTtl: '10m'
+```
+
+:::info
+
+Setting `cacheFallbackTtl` to a shorter value causes more frequent outbound
+fetches to the client's metadata URL. Setting it to a longer value means a
+client's metadata changes (for example, adding a new redirect URI) take longer
+to propagate. Until Cache-Control header parsing is implemented,
+`cacheFallbackTtl` is the only way to control cache lifetime.
+
+:::
+
+## Verify the configuration
+
+Confirm that the embedded AS is advertising CIMD support in its discovery
+document. Port-forward to the service and query the discovery endpoint:
+
+```bash
+kubectl port-forward svc/my-mcp-server 8443:443 &
+curl -s https://localhost:8443/.well-known/oauth-authorization-server | \
+  python3 -m json.tool | grep client_id_metadata_document
+```
+
+You should see:
+
+```json
+"client_id_metadata_document_supported": true
+```
+
+## Complete example
+
+The following example shows a full `MCPExternalAuthConfig` with CIMD enabled,
+custom cache settings, and an OIDC upstream provider:
+
+```yaml
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPExternalAuthConfig
+metadata:
+  name: my-embedded-auth-server
+  namespace: default
+spec:
+  type: embeddedAuthServer
+  embeddedAuthServer:
+    issuer: https://auth.example.com
+    upstreamProviders:
+      - name: default
+        type: oidc
+        oidcConfig:
+          issuerUrl: https://accounts.google.com
+          clientId: your-google-client-id
+          clientSecretRef:
+            name: google-oauth-secret
+            key: client_secret
+    baselineClientScopes:
+      - openid
+      - offline_access
+    cimd:
+      enabled: true
+      cacheMaxSize: 256
+      cacheFallbackTtl: '5m'
+```
+
+:::tip
+
+`baselineClientScopes` and CIMD work independently. Baseline scopes are unioned
+into every client's registered scope set — this applies equally to
+DCR-registered clients and to CIMD-resolved clients. Keep your baseline scopes
+narrow to avoid granting unexpected permissions to dynamically resolved
+third-party clients.
+
+:::
+
+## Troubleshooting
+
+### VS Code is not using CIMD
+
+VS Code reads the OAuth discovery document when it first connects to an MCP
+server. If `client_id_metadata_document_supported` is absent or `false`, VS Code
+falls back to DCR. Check that:
+
+1. `cimd.enabled` is set to `true` in the `MCPExternalAuthConfig`.
+2. The resource has been applied and the operator has reconciled it:
+   ```bash
+   kubectl describe mcpexternalauthconfig my-embedded-auth-server
+   ```
+3. The proxy runner pod has restarted after the configuration change if you
+   updated an existing resource.
+
+### CIMD authentication is failing with `invalid_client`
+
+The embedded AS rejects CIMD documents that fail validation. Common causes:
+
+- The `client_id` field inside the fetched document does not exactly match the
+  URL used to fetch it. The client's metadata document must be self-consistent.
+- The document declares a `token_endpoint_auth_method` that uses a symmetric
+  shared secret (`client_secret_post`, `client_secret_basic`,
+  `client_secret_jwt`). CIMD clients cannot use shared-secret authentication
+  methods.
+- The document declares `grant_types` that do not include `authorization_code`,
+  or declares a `response_type` other than `code`.
+- The `redirect_uris` field is empty or contains a URI that fails strict
+  validation.
+
+### The embedded AS cannot reach the client's metadata URL
+
+The embedded AS makes an outbound HTTPS request to fetch the CIMD document. If
+your cluster has egress restrictions, ensure that the proxy runner pod has
+network access to `https://vscode.dev` (or whichever host the client uses). The
+fetch uses a five-second timeout; if the fetch times out, the authorization
+request fails with an error.
+
+## Related information
+
+- [Client ID Metadata Documents (CIMD)](../concepts/cimd.mdx) — conceptual
+  overview, two-layer architecture, and security model
+- [Embedded authorization server](../concepts/embedded-auth-server.mdx) — full
+  description of the embedded AS, DCR, token forwarding, and session storage
+- [Set up embedded authorization server authentication](./auth-k8s.mdx) —
+  initial embedded AS setup before adding CIMD
