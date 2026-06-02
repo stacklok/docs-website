@@ -1147,6 +1147,22 @@ kubectl logs -n toolhive-system -l app.kubernetes.io/name=weather-server-k8s
 - Check the ConfigMap content:
   `kubectl get configmap authz-config -n toolhive-system -o yaml`
 
+**Authorization ConfigMap not resolved:**
+
+When `spec.authzConfig.type: configMap`, the controller pre-validates the
+referenced ConfigMap and surfaces failures on the `AuthConfigured` condition
+with one of two reasons:
+
+- `AuthzConfigMapNotFound`: the ConfigMap does not exist in the namespace.
+  Create it before reconciling, or correct the `name`/`namespace` reference.
+- `AuthzConfigMapInvalid`: the ConfigMap exists but the payload is missing the
+  configured `key`, is empty, has malformed YAML or JSON, or fails Cedar
+  validation. Inspect the payload and the Cedar configuration shape.
+
+```bash
+kubectl describe mcpserver -n toolhive-system <name>
+```
+
 **OIDC configuration issues:**
 
 - For external IdP: Ensure the issuer URL is accessible from within the cluster
@@ -1181,6 +1197,23 @@ kubectl logs -n toolhive-system -l app.kubernetes.io/name=weather-server-k8s
   `MCPExternalAuthConfig` resource name
 - Verify the upstream provider's client ID and redirect URI are correctly
   configured in the `MCPExternalAuthConfig`
+
+**Consumer reports `ExternalAuthConfigValidated=False`:**
+
+When the referenced `MCPExternalAuthConfig` has its own `Valid` condition set to
+`False`, the consumer resource (`MCPServer`, `MCPRemoteProxy`, or
+`VirtualMCPServer`) mirrors that condition onto its own status with the same
+reason and message. Check both objects:
+
+```bash
+kubectl describe mcpserver -n toolhive-system <name>
+kubectl describe mcpexternalauthconfig -n toolhive-system <authConfigName>
+```
+
+A reason like `EnterpriseRequired` on the consumer indicates the source
+`MCPExternalAuthConfig` is using a type (such as OBO) that requires Stacklok
+Enterprise. Fix the configuration on the `MCPExternalAuthConfig` and the
+consumer's mirrored condition clears on the next reconcile.
 
 **Token validation failures after restart:**
 
