@@ -104,27 +104,6 @@ const config: Config = {
         },
       };
     },
-    function reo() {
-      return {
-        name: 'reo-dev',
-        injectHtmlTags() {
-          if (!isProductionDeploy) return {};
-          return {
-            headTags: [
-              {
-                tagName: 'script',
-                // Reo.dev tracking loader.
-                // Source: Generated from the Reo.dev dashboard for Stacklok.
-                // The snippet is intentionally kept minified and should not be edited manually.
-                // To update, re-generate from the Reo.dev dashboard and replace the string verbatim.
-                innerHTML:
-                  '!function(){var e,t,n;e="3a4f9a7c603cbc3",t=function(){Reo.init({clientID:"3a4f9a7c603cbc3", enableThirdPartyTracking: true})},(n=document.createElement("script")).src="https://static.reo.dev/"+e+"/reo.js",n.defer=!0,n.onload=t,document.head.appendChild(n)}();',
-              },
-            ],
-          };
-        },
-      };
-    },
   ],
 
   // Set the production url of your site here
