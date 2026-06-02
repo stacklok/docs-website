@@ -22,12 +22,21 @@ security model, see [Client ID Metadata Documents (CIMD)](../concepts/cimd.mdx).
 
 :::
 
+:::info[Availability]
+
+The `cimd` field on `MCPExternalAuthConfig` is available from the version of the
+ToolHive Operator that includes this feature. Check the
+[ToolHive release notes](https://github.com/stacklok/toolhive/releases) to
+confirm the minimum required version before applying this configuration.
+
+:::
+
 ## Prerequisites
 
 - Kubernetes cluster with the ToolHive Operator installed
 - An existing `MCPExternalAuthConfig` resource with `type: embeddedAuthServer`
   and at least one upstream provider configured (see
-  [Set up embedded authorization server authentication](./auth-k8s.mdx))
+  [Set up embedded authorization server authentication](./auth-k8s.mdx#set-up-embedded-authorization-server-authentication))
 - `kubectl` access to your cluster
 
 ## Enable CIMD
@@ -40,7 +49,7 @@ apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPExternalAuthConfig
 metadata:
   name: my-embedded-auth-server
-  namespace: default
+  namespace: toolhive-system
 spec:
   type: embeddedAuthServer
   embeddedAuthServer:
@@ -102,11 +111,12 @@ to propagate. Until Cache-Control header parsing is implemented,
 ## Verify the configuration
 
 Confirm that the embedded AS is advertising CIMD support in its discovery
-document. Port-forward to the service and query the discovery endpoint:
+document. Port-forward to the proxy service and query the well-known endpoint:
 
 ```bash
-kubectl port-forward svc/my-mcp-server 8443:443 &
-curl -s https://localhost:8443/.well-known/oauth-authorization-server | \
+# Replace <mcp-server-name> with the name of your MCPServer resource
+kubectl port-forward -n toolhive-system svc/mcp-<mcp-server-name>-proxy 8080:8080 &
+curl -s http://localhost:8080/.well-known/oauth-authorization-server | \
   python3 -m json.tool | grep client_id_metadata_document
 ```
 
@@ -126,7 +136,7 @@ apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPExternalAuthConfig
 metadata:
   name: my-embedded-auth-server
-  namespace: default
+  namespace: toolhive-system
 spec:
   type: embeddedAuthServer
   embeddedAuthServer:
@@ -170,7 +180,7 @@ falls back to DCR. Check that:
 1. `cimd.enabled` is set to `true` in the `MCPExternalAuthConfig`.
 2. The resource has been applied and the operator has reconciled it:
    ```bash
-   kubectl describe mcpexternalauthconfig my-embedded-auth-server
+   kubectl describe mcpexternalauthconfig my-embedded-auth-server -n toolhive-system
    ```
 3. The proxy runner pod has restarted after the configuration change if you
    updated an existing resource.
@@ -204,5 +214,5 @@ request fails with an error.
   overview, two-layer architecture, and security model
 - [Embedded authorization server](../concepts/embedded-auth-server.mdx) — full
   description of the embedded AS, DCR, token forwarding, and session storage
-- [Set up embedded authorization server authentication](./auth-k8s.mdx) —
-  initial embedded AS setup before adding CIMD
+- [Set up embedded authorization server authentication](./auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
+  — initial embedded AS setup before adding CIMD
