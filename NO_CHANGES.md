@@ -1,1 +1,0 @@
-v1.4.6 contains only dependency bumps (CVE fixes), CI/Actions updates, and an internal Postgres connection-package refactor (stacklok/toolhive-registry-server#804) that explicitly preserves the YAML/Helm config schema — no user-facing docs impact.
