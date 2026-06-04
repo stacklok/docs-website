@@ -133,7 +133,7 @@
               "type": "string"
             },
             "baselineClientScopes": {
-              "description": "BaselineClientScopes is a baseline set of OAuth 2.0 scopes guaranteed to be\nincluded in every client registration. The embedded auth server unions these\nscopes into the registered set returned by RFC 7591 Dynamic Client\nRegistration, so a client that narrows the `scope` field at /oauth/register\ncan still request the baseline scopes at /oauth/authorize. All values must\nbe present in the upstream-derived scopesSupported set; the auth server\nfails to start if any value is missing.\n\nSecurity: every client registered via /oauth/register will gain the\nability to request these scopes at /oauth/authorize, regardless of what\nthe client itself requested. Keep the baseline narrow (typically\n\"openid\" and \"offline_access\"). Adding a privileged scope here — e.g.\n\"admin:read\" — would grant it to every DCR-registered client, including\npublic clients like Claude Code, Cursor, and VS Code.",
+              "description": "BaselineClientScopes is a baseline set of OAuth 2.0 scopes guaranteed to be\nincluded in every client registration. The embedded auth server unions these\nscopes into the registered set returned by RFC 7591 Dynamic Client\nRegistration, so a client that narrows the `scope` field at /oauth/register\ncan still request the baseline scopes at /oauth/authorize. All values must\nbe present in the upstream-derived scopesSupported set; the auth server\nfails to start if any value is missing.\n\nSecurity: every client registered via /oauth/register will gain the\nability to request these scopes at /oauth/authorize, regardless of what\nthe client itself requested. Keep the baseline narrow (typically\n\"openid\" and \"offline_access\"). Adding a privileged scope here — e.g.\n\"admin:read\" — would grant it to every DCR-registered client, including\npublic clients like Claude Code, Cursor, and VS Code.\nWhen cimd.enabled is true, every dynamically resolved CIMD client will\nalso gain the ability to request these scopes, including third-party\nclients resolved from arbitrary HTTPS URLs.",
               "items": {
                 "minLength": 1,
                 "pattern": "^[\\x21\\x23-\\x5B\\x5D-\\x7E]+$",
@@ -142,6 +142,30 @@
               "maxItems": 10,
               "type": "array",
               "x-kubernetes-list-type": "atomic"
+            },
+            "cimd": {
+              "description": "CIMD configures Client ID Metadata Document support. When omitted, CIMD is disabled.",
+              "properties": {
+                "cacheFallbackTtl": {
+                  "description": "CacheFallbackTTL is the fixed TTL applied to every cached CIMD document.\nCache-Control header parsing is not yet implemented; all entries use this value.\nFormat: Go duration string (e.g. \"5m\", \"10m\", \"1h\").\nDefaults to 5 minutes when Enabled is true and this field is omitted.",
+                  "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                "cacheMaxSize": {
+                  "description": "CacheMaxSize is the maximum number of CIMD documents held in the LRU cache.\nDefaults to 256 when Enabled is true and this field is omitted.",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "enabled": {
+                  "default": false,
+                  "description": "Enabled activates CIMD client lookup. When false (the default), the AS only\naccepts client_id values that were registered via DCR.",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "enabled"
+              ],
+              "type": "object"
             },
             "hmacSecretRefs": {
               "description": "HMACSecretRefs references Kubernetes Secrets containing symmetric secrets for signing\nauthorization codes and refresh tokens (opaque tokens).\nCurrent secret must be at least 32 bytes and cryptographically random.\nSupports secret rotation via multiple entries (first is current, rest are for verification).\nIf not specified, an ephemeral secret will be auto-generated (development only -\nauth codes and refresh tokens will be invalid after restart).",
@@ -866,6 +890,10 @@
           ],
           "type": "object"
         },
+        "obo": {
+          "description": "OBO configures On-Behalf-Of (OBO) authentication.\nOnly used when Type is \"obo\". The inner schema is intentionally empty in\nthis revision; sub-fields land in a follow-up. Setting this field on an\nupstream-only build will cause the MCPExternalAuthConfig to transition to\nstatus.conditions[Valid] = False with Reason: EnterpriseRequired.",
+          "type": "object"
+        },
         "tokenExchange": {
           "description": "TokenExchange configures RFC-8693 OAuth 2.0 Token Exchange\nOnly used when Type is \"tokenExchange\"",
           "properties": {
@@ -928,7 +956,7 @@
           "type": "object"
         },
         "type": {
-          "description": "Type is the type of external authentication to configure",
+          "description": "Type is the type of external authentication to configure.\nWhen set to \"obo\", the cluster must run a build that has registered an\nOBO handler via controllerutil.RegisterOBOHandler; upstream-only builds\nsurface status.conditions[Valid] = False with Reason: EnterpriseRequired\nfor obo-typed configs.",
           "enum": [
             "tokenExchange",
             "headerInjection",
@@ -936,7 +964,8 @@
             "unauthenticated",
             "embeddedAuthServer",
             "awsSts",
-            "upstreamInject"
+            "upstreamInject",
+            "obo"
           ],
           "type": "string"
         },
@@ -985,8 +1014,12 @@
           "rule": "self.type == 'upstreamInject' ? has(self.upstreamInject) : !has(self.upstreamInject)"
         },
         {
+          "message": "obo configuration must be set if and only if type is 'obo'",
+          "rule": "self.type == 'obo' ? has(self.obo) : !has(self.obo)"
+        },
+        {
           "message": "no configuration must be set when type is 'unauthenticated'",
-          "rule": "self.type == 'unauthenticated' ? (!has(self.tokenExchange) && !has(self.headerInjection) && !has(self.bearerToken) && !has(self.embeddedAuthServer) && !has(self.awsSts) && !has(self.upstreamInject)) : true"
+          "rule": "self.type == 'unauthenticated' ? (!has(self.tokenExchange) && !has(self.headerInjection) && !has(self.bearerToken) && !has(self.embeddedAuthServer) && !has(self.awsSts) && !has(self.upstreamInject) && !has(self.obo)) : true"
         }
       ]
     },
