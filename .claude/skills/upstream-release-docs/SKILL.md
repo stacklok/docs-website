@@ -46,7 +46,7 @@ This skill runs in one of two modes. **The caller signals the mode; absent an ex
 
 ### Unattended decision-point behavior
 
-When a step would normally ask the user (Phase 2 step 4, Phase 2 step 5), instead:
+When Phase 2 step 4 would normally ask the user for a major feature's "why", instead:
 
 1. Fetch the PR body and author with `gh pr view <NUMBER> --repo <OWNER>/<REPO> --json title,body,author`. The PR body usually carries the "why" the author wrote at open time: motivation, intended consumers, design decisions.
 2. If the PR body references linked issues ("Closes #N", "Fixes #N", "Refs #N"), fetch the likely-context-bearing ones with `gh issue view <N> --repo <OWNER>/<REPO>`.
@@ -57,7 +57,7 @@ When a step would normally ask the user (Phase 2 step 4, Phase 2 step 5), instea
 
 These files are read by the automated caller and spliced into the PR body. The filenames and the repo-root location are a contract with the caller; do not rename or relocate them.
 
-**`GAPS.md`** — only if you genuinely need to defer (see above). An empty `GAPS.md` is worse than none; do not create it if every feature's "why" was resolvable from available sources.
+**`GAPS.md`** - only if you genuinely need to defer (see above). An empty `GAPS.md` is worse than none; do not create it if every feature's "why" was resolvable from available sources.
 
 - Include only content gaps a human reviewer must fill. Exclude environment or sandbox limitations (for example, "couldn't run `npm build`"); the PR's CI handles those. Exclude "documented for clarity, not a gap" commentary.
 - Each entry must @-mention the PR author, skipping bot authors (`renovate[bot]`, `github-actions[bot]`, `stacklokbot`).
@@ -77,14 +77,14 @@ These files are read by the automated caller and spliced into the PR body. The f
   > <Self-contained, paste-ready prompt referencing the file(s), PR number, and the narrow piece of info needed.>
   ```
 
-**`NO_CHANGES.md`** — if the Phase 3 impact map is empty (no doc-relevant changes for this release), write this at repo root with a one-line explanation and stop. Do not hand-edit any file.
+**`NO_CHANGES.md`** - if the Phase 3 impact map is empty (no doc-relevant changes for this release), write this at repo root with a one-line explanation and stop. Do not hand-edit any file.
 
-**`SUMMARY.md`** — before the final commit, write a concise list of the hand-written doc changes you made. The caller surfaces it as the PR's "Summary of changes" so reviewers see what shipped without reading the diff. Skip it only when you wrote `NO_CHANGES.md` or made zero hand-edits. Keep it to 3-8 bullets, each formatted as one of:
+**`SUMMARY.md`** - before the final commit, write a concise list of the hand-written doc changes you made. The caller surfaces it as the PR's "Summary of changes" so reviewers see what shipped without reading the diff. Skip it only when you wrote `NO_CHANGES.md` or made zero hand-edits. Keep it to 3-8 bullets, each formatted as one of:
 
-- `Added <what> at <path>` — new pages/sections
-- `Updated <what> in <path>` — meaningful prose edits
-- `Swept <what> across N files in <area>` — repo-wide renames, apiVersion bumps, etc.
-- `Removed <what> from <path>` — deletions
+- `Added <what> at <path>` - new pages/sections
+- `Updated <what> in <path>` - meaningful prose edits
+- `Swept <what> across N files in <area>` - repo-wide renames, apiVersion bumps, etc.
+- `Removed <what> from <path>` - deletions
 
 Describe one logical change as one bullet (don't enumerate each file in a sweep), and exclude auto-generated reference files the caller's refresh step updates: describe only your hand-written edits.
 
@@ -326,13 +326,13 @@ When receiving review comments (from humans or automated reviewers):
 ## Key Principles
 
 - **Triple verification**: verify during deep dive (Phase 2), before finalizing (Phase 5), and when handling reviews (Phase 6)
-- **Document what the release falsifies, not just what it adds**: a new capability that extends or replaces an existing one almost always makes prior "only / default / automatic / planned" statements wrong. Audit the _displaced_ concept's vocabulary (the old mechanism's terms) across the whole docs set, not just the new feature's name. A purely additive (`+N / -0`) edit to a prose page is a smell that a contradiction was left unreconciled. The reviewer cannot catch a sin of omission in a zero-deletion diff; the skill must.
+- **Document what the release falsifies, not just what it adds**: a new capability usually makes prior "only / default / automatic / planned" statements wrong. Audit the _displaced_ concept's vocabulary across the whole docs set, and treat a purely additive (`+N / -0`) prose edit as a smell. The reviewer cannot catch a sin of omission in a zero-deletion diff; the skill must (Phase 3 displacement audit).
 - **Transparency**: log the categorized summary (after Phase 1) and impact map (after Phase 3) for auditability, but do not stop; run all phases to completion
 - **Respect auto-generated content**: don't manually edit auto-generated files, but always create the surrounding conceptual/guide content that auto-generated reference docs don't provide
-- **Separate by Diataxis type, at the right granularity**: keep concept and how-to content distinguishable. For standalone capabilities that means separate pages per type; for features that extend existing docs, a new section of the right type within the existing page is preferable to a new standalone page. Prefer extending an existing page over creating a new one when the feature extends a documented capability, and reserve new pages for genuinely standalone capabilities. This is a default, not a mandate: split a section out to its own page (with a summary and cross-link left behind) when it is a distinct subject, has its own full how-to lifecycle, or would overload an already-long host page. The test is shared subject and a focused page, not extend-versus-new in the abstract.
-- **Verify completeness, not just accuracy**: accuracy checks confirm what you wrote is true; they never catch what you left out. Inventory the release's new public surface (fields, flags, enum values, config keys, routes) in Phase 2 and confirm in Phase 5 that each symbol is documented or consciously deferred. An accurate section that covers only part of a feature's surface is the most common silent failure of this workflow.
+- **Separate by Diataxis type, at the right granularity**: keep concept and how-to content distinguishable, but prefer extending an existing page over a new one when the feature extends a documented capability. Reserve new pages for standalone capabilities, and split a section out only when it would overload its host (Phase 4).
+- **Verify completeness, not just accuracy**: accuracy checks never catch what you left out. Inventory the release's new public surface in Phase 2 and confirm in Phase 5 that each symbol is documented or consciously deferred. An accurate section that covers only part of a feature's surface is this workflow's most common silent failure.
 - **Document the full lifecycle**: if a feature has producer and consumer sides, document both. Always answer "then what?" Readers who follow the docs to completion must not hit a dead end. If consumption tooling isn't built yet, say so explicitly.
-- **Ask for context on major features**: for entirely new capabilities, don't fabricate the "why" from code alone. In interactive mode, ask the user for user stories, PRDs, or RFCs. In unattended mode, derive the "why" from PR bodies and linked issues best-effort and defer to `GAPS.md` only when it is genuinely underivable (see [Execution modes](#execution-modes)). Incremental changes can proceed autonomously in either mode.
+- **Ask for context on major features**: don't fabricate the "why" from code alone. Interactive mode asks the user for user stories, PRDs, or RFCs; unattended mode derives it from PR bodies and linked issues, deferring to `GAPS.md` only when genuinely underivable (see [Execution modes](#execution-modes)). Incremental changes proceed autonomously in either mode.
 - **Lead with scenarios, not abstractions**: open concept pages with concrete "who is this for and why should they care" scenarios, not abstract definitions
 - **Flag gaps honestly**: if consumption tooling, client support, or integration isn't ready yet, say so explicitly rather than omitting the topic
 - **Use realistic examples**: guide pages need end-to-end examples with plausible data, exact commands, and expected output, not placeholder values
