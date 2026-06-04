@@ -514,9 +514,7 @@ jobs:
             --max-turns 1000
             --allowed-tools "Bash(gh:*) Bash(npm run build) Bash(npm run prettier) Bash(npm run prettier:fix) Bash(npm run eslint) Bash(npm run eslint:fix)"
           prompt: |
-            You are running in GitHub Actions with no interactive user. Follow
-            these steps exactly and do NOT ask clarifying questions -- proceed
-            best-effort at every decision point.
+            You are running in GitHub Actions with no interactive user.
 
             PROJECT:    ${{ steps.detect.outputs.id }}
             REPO:       ${{ steps.detect.outputs.repo }}
@@ -525,112 +523,33 @@ jobs:
             CLONE:      ${{ steps.clone.outputs.scratch_dir }}
             DOCS_HINTS: ${{ steps.hints.outputs.docs_paths }}
 
-            Run /upstream-release-docs ${{ steps.detect.outputs.repo }} ${{ steps.detect.outputs.new_tag }}
-            Execute all 6 phases. Prefer reading source code from the
-            local clone at ${{ steps.clone.outputs.scratch_dir }}
-            instead of `gh api contents?ref=<tag>` -- it's already at
-            the tag and doesn't consume API quota.
+            Run /upstream-release-docs ${{ steps.detect.outputs.repo }} ${{ steps.detect.outputs.new_tag }} in unattended mode.
+            Execute all 6 phases. Do NOT ask clarifying questions;
+            proceed best-effort at every decision point. The skill's
+            "Execution modes" section is the single source of truth for
+            unattended behavior and the GAPS.md / SUMMARY.md /
+            NO_CHANGES.md artifact contracts (their format, when to
+            write each, and what to exclude). Follow it; this prompt
+            deliberately no longer duplicates those contracts.
 
-            For Phase 2 step 4 (context on major new features), do the
-            following INSTEAD of the skill's default "ask the user"
-            behavior (there is no interactive user here):
-              1. Use `gh pr view <NUMBER> --repo ${{ steps.detect.outputs.repo }}
-                 --json title,body,author` to fetch the PR description
-                 for each major new feature. The PR body typically
-                 contains the "why" framing the author wrote when
-                 opening the PR -- motivation, intended consumers,
-                 design decisions.
-              2. If the PR body references linked issues (look for
-                 "Closes #N", "Fixes #N", "Refs #N"), fetch those
-                 with `gh issue view <N> --repo ${{ steps.detect.outputs.repo }}`
-                 when they are likely to contain product context.
-              3. Write the "why"/consumer narrative directly in the
-                 relevant docs page using what you learned. This is a
-                 best-effort pass -- reviewers will refine it during
-                 normal review.
-              4. Only defer to GAPS.md when the rationale demonstrably
-                 cannot be derived from available sources. Genuine
-                 examples: the PR body points to an internal design
-                 doc or product spec you cannot access; multiple
-                 plausible consumer narratives exist and picking one
-                 would mislead readers; a release timeline or
-                 commitment needs product-team confirmation.
+            Prefer reading source code from the local clone at
+            ${{ steps.clone.outputs.scratch_dir }} instead of
+            `gh api contents?ref=<tag>` -- it's already at the tag and
+            doesn't consume API quota. Do not hand-edit auto-generated
+            reference under docs/toolhive/reference/cli/,
+            docs/toolhive/reference/crds/, or static/api-specs/ --
+            earlier workflow steps sync those from release assets.
 
-            GAPS.md contract (only if you genuinely need to defer):
-              - ONLY include content gaps a human reviewer must fill
-                in. Do NOT include environment/sandbox limitations
-                (e.g. "couldn't run npm build") -- those are
-                infrastructure concerns; the PR's CI handles them.
-                Do NOT include "not a gap, documented for clarity"
-                commentary.
-              - Each entry MUST include a "Helper prompt for local
-                Claude" block a reviewer can paste verbatim into
-                their local Claude Code to resolve the gap. The
-                prompt must reference the specific file(s) to edit,
-                the PR number that provides context, and the narrow
-                piece of information the human needs to supply or
-                confirm.
-              - Each entry MUST @-mention the PR author (skip this
-                for bot authors: renovate[bot], github-actions[bot],
-                stacklokbot).
-
-            GAPS.md entry format:
-              ```
-              ### <Feature name> (PR #123 by @alice)
-
-              <One paragraph: what's missing, why you couldn't
-              resolve it from available sources.>
-
-              **File(s):** path/to/file.mdx
-
-              **Helper prompt for local Claude:**
-              > <Paste-ready prompt. Self-contained. References the
-              > specific file(s), the PR number, and the narrow
-              > piece of info needed. A human should be able to
-              > paste this into `claude` locally and get a usable
-              > response without additional context.>
-              ```
-
-            Do NOT create GAPS.md if every feature's "why" was
-            resolvable from PR descriptions. An empty GAPS.md is
-            worse than no file.
-
-            Follow the skill's own guidance on auto-generated reference
-            files (Phase 4 step 5, Phase 4 step 6) -- do not hand-edit
-            docs/toolhive/reference/cli/, static/api-specs/, or
-            docs/toolhive/reference/crds/. Those are synced or
-            regenerated from release assets by earlier steps in this
-            workflow; if a release genuinely needs hand-written
-            reference updates, note that in GAPS.md.
-
-            If you conclude there are no doc-relevant changes for this
-            release (Phase 3 impact map is empty), stop and write
-            NO_CHANGES.md at repo root with a one-line explanation.
-            Still do not hand-edit any file.
-
-            BEFORE the final commit in Phase 6, write SUMMARY.md at
-            repo root with a concise bullet list of changes you made
-            on the docs side. This surfaces directly in the PR body
-            as a "Summary of changes" section so reviewers see what
-            actually shipped without clicking the diff.
-
-            Format each bullet as one of:
-              - `Added <what> at <path>` -- new pages/sections
-              - `Updated <what> in <path>` -- meaningful prose edits
-              - `Swept <what> across N files in <area>` -- repo-wide
-                renames, apiVersion bumps, etc.
-              - `Removed <what> from <path>` -- deletions
-
-            Keep the list to 3-8 bullets. Focus on what a reviewer
-            needs to know, not how you did it. If many files are
-            touched as one logical change (e.g. a v1alpha1 ->
-            v1beta1 apiVersion sweep), describe it as one bullet --
-            do not enumerate each file. Do NOT include bullets for
-            auto-generated reference files the refresh step
-            updated; only describe your hand-written edits.
-
-            Skip SUMMARY.md only when you wrote NO_CHANGES.md or
-            made zero hand-edits.
+            Project dependencies are already installed by an earlier
+            workflow step; node_modules is present in the working tree.
+            Run `npm run prettier:fix` and `npm run eslint:fix`
+            directly to format and lint your edits. Do NOT run
+            `npm ci` or `npm install` -- they are unnecessary here and
+            not in the allow-list; if a lint command appears to require
+            a fresh install, it does not. Do not defer formatting to
+            CI: the lint and format CI checks do not run on commits
+            pushed by this bot account. Format your edits in this
+            session.
 
       # Capture skill_gen's execution stats BEFORE skill_review runs
       # and overwrites the shared execution-output JSON at the
@@ -721,6 +640,17 @@ jobs:
             changed (use `git show --name-only HEAD` or `git diff
             --name-only HEAD~1 HEAD` to find them). Apply every
             actionable fix per the skill's standard guidance.
+
+            Project dependencies are already installed by an earlier
+            workflow step; node_modules is present in the working tree.
+            Run `npm run prettier:fix` and `npm run eslint:fix`
+            directly to format and lint your edits. Do NOT run
+            `npm ci` or `npm install` -- they are unnecessary here and
+            not in the allow-list; if a lint command appears to require
+            a fresh install, it does not. Do not defer formatting to
+            CI: the lint and format CI checks do not run on commits
+            pushed by this bot account. Format your edits in this
+            session.
 
             If you spot a factual concern, re-verify against the
             local clone at ${{ steps.clone.outputs.scratch_dir }}
@@ -847,6 +777,10 @@ jobs:
         env:
           BASELINE_SHA: ${{ steps.pre_skill.outputs.sha }}
         run: |
+          # GAPS.md / NO_CHANGES.md / SUMMARY.md filenames and their
+          # repo-root location are a contract with the skill. The skill's
+          # "Execution modes" section owns the format and write conditions;
+          # keep these names in sync with that section if either changes.
           GAPS_BODY=""
           NO_CHANGES_BODY=""
           SUMMARY_BODY=""
