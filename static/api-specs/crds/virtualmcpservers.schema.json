@@ -62,6 +62,13 @@
               "pattern": "^https?://[^\\s?#]+[^/\\s?#]$",
               "type": "string"
             },
+            "primaryUpstreamProvider": {
+              "description": "PrimaryUpstreamProvider names the upstream IDP whose access token Cedar\nshould read claims from when authorising a request. Must match the name\nof one of the entries in UpstreamProviders. When empty, the controller\nauto-selects the first entry of UpstreamProviders.\n\nOnly meaningful on VirtualMCPServer, where multiple upstream providers\ncan be configured and Cedar needs to pick which token's claims to\nevaluate. The VirtualMCPServer controller validates this field against\nUpstreamProviders at admission and rejects unresolvable values.\n\nOn MCPServer and MCPRemoteProxy this field is structurally present (the\nEmbeddedAuthServerConfig struct is shared) but has no runtime effect:\nthose CRDs are restricted to a single upstream so there is no choice to\nmake. Setting it on those CRDs is silently ignored.",
+              "maxLength": 63,
+              "minLength": 1,
+              "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+              "type": "string"
+            },
             "signingKeySecretRefs": {
               "description": "SigningKeySecretRefs references Kubernetes Secrets containing signing keys for JWT operations.\nSupports key rotation by allowing multiple keys (oldest keys are used for verification only).\nIf not specified, an ephemeral signing key will be auto-generated (development only -\nJWTs will be invalid after restart).",
               "items": {
@@ -1207,6 +1214,18 @@
                 "authz": {
                   "description": "Authz contains authorization configuration (optional).",
                   "properties": {
+                    "entitiesJson": {
+                      "description": "EntitiesJSON is a JSON string representing Cedar entities. Required for\nenterprise policies that rely on transitive relationships (e.g.\n`ClaimGroup → PlatformRole`) — without it the Cedar authorizer is\nconstructed with an empty entity store and `in` checks against absent\nentities silently evaluate to false. Defaults to \"[]\" when empty.",
+                      "type": "string"
+                    },
+                    "groupClaimName": {
+                      "description": "GroupClaimName is the JWT claim key that contains group membership for\nthe principal. When set, takes priority over the well-known defaults\n(\"groups\", \"roles\", \"cognito:groups\"). Use this for IDPs that place\ngroups under a URI-style claim (e.g. \"https://example.com/groups\").\nWhen empty, only the well-known claim names are checked.",
+                      "type": "string"
+                    },
+                    "groupEntityType": {
+                      "description": "GroupEntityType is the Cedar entity type name used for principal parent\nUIDs synthesised from JWT group/role claims. Defaults to \"THVGroup\" when\nempty. Must match the entity type used in EntitiesJSON for transitive\n`in` checks to resolve. Namespaced names (`Foo::Bar`) are not yet supported.",
+                      "type": "string"
+                    },
                     "policies": {
                       "description": "Policies contains Cedar policy definitions (when Type = \"cedar\").",
                       "items": {
@@ -1216,6 +1235,10 @@
                     },
                     "primaryUpstreamProvider": {
                       "description": "PrimaryUpstreamProvider names the upstream IDP provider whose access\ntoken should be used as the source of JWT claims for Cedar evaluation.\nWhen empty, claims from the ToolHive-issued token are used.\nMust match an upstream provider name configured in the embedded auth server\n(e.g. \"default\", \"github\"). Only relevant when the embedded auth server is active.",
+                      "type": "string"
+                    },
+                    "roleClaimName": {
+                      "description": "RoleClaimName is the JWT claim key that contains role membership for the\nprincipal. When set, the claim is extracted separately from GroupClaimName\nand both are mapped to the configured group entity type. When empty, no\nrole extraction is performed.",
                       "type": "string"
                     },
                     "type": {
@@ -2072,12 +2095,23 @@
                   ],
                   "type": "object"
                 },
+                "groupClaimName": {
+                  "description": "GroupClaimName is the JWT claim key that contains group membership for the\nprincipal. When set, takes priority over the well-known defaults\n(\"groups\", \"roles\", \"cognito:groups\"). Use this for IDPs that place\ngroups under a URI-style claim (e.g. \"https://example.com/groups\"). When\nType is \"configMap\", a group_claim_name entry in the referenced ConfigMap\nis overridden by this field if both are set.",
+                  "maxLength": 253,
+                  "type": "string"
+                },
+                "groupEntityType": {
+                  "description": "GroupEntityType is the Cedar entity type name used for principal parent\nUIDs synthesised from JWT group/role claims. Defaults to \"THVGroup\" when\nempty. Must match the entity type used in the static entity store for\ntransitive `in` checks (e.g. `ClaimGroup → PlatformRole`) to resolve.\nNamespaced names (`Foo::Bar`) are not yet supported. When Type is\n\"configMap\", a group_entity_type entry in the referenced ConfigMap is\noverridden by this field if both are set.",
+                  "maxLength": 63,
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                  "type": "string"
+                },
                 "inline": {
                   "description": "Inline contains direct authorization configuration\nOnly used when Type is \"inline\"",
                   "properties": {
                     "entitiesJson": {
                       "default": "[]",
-                      "description": "EntitiesJSON is a JSON string representing Cedar entities",
+                      "description": "EntitiesJSON is a JSON string representing Cedar entities. Required when\ntransitive policies (e.g. `ClaimGroup → PlatformRole`) need a static\nentity store; defaults to \"[]\".",
                       "type": "string"
                     },
                     "policies": {
@@ -2090,7 +2124,7 @@
                       "x-kubernetes-list-type": "atomic"
                     },
                     "primaryUpstreamProvider": {
-                      "description": "PrimaryUpstreamProvider names the upstream IDP whose access token's claims\nCedar should evaluate. Currently honored only when the parent\nAuthzConfigRef.Type is \"inline\"; configMap-sourced policies will support\nthis in a future release (see #5208). Only meaningful for VirtualMCPServer\nwith an embedded auth server. When empty and an embedded auth server has\nupstreams configured, the controller defaults to the first upstream\nprovider. The name must match one of the upstreams declared on\nspec.authServerConfig.upstreamProviders; otherwise the VirtualMCPServer is\nrejected with AuthServerConfigValidated=False. MCPServer and MCPRemoteProxy\nhave no embedded auth server; setting this field on those CRs surfaces an\nAuthzPrimaryUpstreamProviderIgnored advisory condition on the resource.",
+                      "description": "PrimaryUpstreamProvider names the upstream IDP whose access token's\nclaims Cedar should evaluate.\n\nDeprecated: on VirtualMCPServer this field has moved to\nspec.authServerConfig.primaryUpstreamProvider. The old location is\nstill read for one release for backward compatibility; the\nVirtualMCPServer controller emits an AuthzPrimaryUpstreamProviderDeprecated\nWarning event whenever it is consumed, and removal is planned for the\nrelease after the deprecation cycle.\n\nOn MCPServer and MCPRemoteProxy this field has always been a structural\nno-op (those CRDs do not run an embedded auth server). Setting it\ncontinues to surface the AuthzPrimaryUpstreamProviderIgnored advisory\ncondition; the deprecation does not change that behaviour.",
                       "maxLength": 63,
                       "minLength": 1,
                       "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
@@ -2101,6 +2135,11 @@
                     "policies"
                   ],
                   "type": "object"
+                },
+                "roleClaimName": {
+                  "description": "RoleClaimName is the JWT claim key that contains role membership for the\nprincipal. When set, the claim is extracted separately from GroupClaimName\nand both are mapped to the configured GroupEntityType. When Type is\n\"configMap\", a role_claim_name entry in the referenced ConfigMap is\noverridden by this field if both are set.",
+                  "maxLength": 253,
+                  "type": "string"
                 },
                 "type": {
                   "default": "configMap",

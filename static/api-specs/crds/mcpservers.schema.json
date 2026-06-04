@@ -78,12 +78,23 @@
               ],
               "type": "object"
             },
+            "groupClaimName": {
+              "description": "GroupClaimName is the JWT claim key that contains group membership for the\nprincipal. When set, takes priority over the well-known defaults\n(\"groups\", \"roles\", \"cognito:groups\"). Use this for IDPs that place\ngroups under a URI-style claim (e.g. \"https://example.com/groups\"). When\nType is \"configMap\", a group_claim_name entry in the referenced ConfigMap\nis overridden by this field if both are set.",
+              "maxLength": 253,
+              "type": "string"
+            },
+            "groupEntityType": {
+              "description": "GroupEntityType is the Cedar entity type name used for principal parent\nUIDs synthesised from JWT group/role claims. Defaults to \"THVGroup\" when\nempty. Must match the entity type used in the static entity store for\ntransitive `in` checks (e.g. `ClaimGroup → PlatformRole`) to resolve.\nNamespaced names (`Foo::Bar`) are not yet supported. When Type is\n\"configMap\", a group_entity_type entry in the referenced ConfigMap is\noverridden by this field if both are set.",
+              "maxLength": 63,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
             "inline": {
               "description": "Inline contains direct authorization configuration\nOnly used when Type is \"inline\"",
               "properties": {
                 "entitiesJson": {
                   "default": "[]",
-                  "description": "EntitiesJSON is a JSON string representing Cedar entities",
+                  "description": "EntitiesJSON is a JSON string representing Cedar entities. Required when\ntransitive policies (e.g. `ClaimGroup → PlatformRole`) need a static\nentity store; defaults to \"[]\".",
                   "type": "string"
                 },
                 "policies": {
@@ -96,7 +107,7 @@
                   "x-kubernetes-list-type": "atomic"
                 },
                 "primaryUpstreamProvider": {
-                  "description": "PrimaryUpstreamProvider names the upstream IDP whose access token's claims\nCedar should evaluate. Currently honored only when the parent\nAuthzConfigRef.Type is \"inline\"; configMap-sourced policies will support\nthis in a future release (see #5208). Only meaningful for VirtualMCPServer\nwith an embedded auth server. When empty and an embedded auth server has\nupstreams configured, the controller defaults to the first upstream\nprovider. The name must match one of the upstreams declared on\nspec.authServerConfig.upstreamProviders; otherwise the VirtualMCPServer is\nrejected with AuthServerConfigValidated=False. MCPServer and MCPRemoteProxy\nhave no embedded auth server; setting this field on those CRs surfaces an\nAuthzPrimaryUpstreamProviderIgnored advisory condition on the resource.",
+                  "description": "PrimaryUpstreamProvider names the upstream IDP whose access token's\nclaims Cedar should evaluate.\n\nDeprecated: on VirtualMCPServer this field has moved to\nspec.authServerConfig.primaryUpstreamProvider. The old location is\nstill read for one release for backward compatibility; the\nVirtualMCPServer controller emits an AuthzPrimaryUpstreamProviderDeprecated\nWarning event whenever it is consumed, and removal is planned for the\nrelease after the deprecation cycle.\n\nOn MCPServer and MCPRemoteProxy this field has always been a structural\nno-op (those CRDs do not run an embedded auth server). Setting it\ncontinues to surface the AuthzPrimaryUpstreamProviderIgnored advisory\ncondition; the deprecation does not change that behaviour.",
                   "maxLength": 63,
                   "minLength": 1,
                   "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
@@ -107,6 +118,11 @@
                 "policies"
               ],
               "type": "object"
+            },
+            "roleClaimName": {
+              "description": "RoleClaimName is the JWT claim key that contains role membership for the\nprincipal. When set, the claim is extracted separately from GroupClaimName\nand both are mapped to the configured GroupEntityType. When Type is\n\"configMap\", a role_claim_name entry in the referenced ConfigMap is\noverridden by this field if both are set.",
+              "maxLength": 253,
+              "type": "string"
             },
             "type": {
               "default": "configMap",
