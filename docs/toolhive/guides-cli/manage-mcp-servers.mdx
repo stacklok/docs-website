@@ -161,6 +161,92 @@ thv start <REMOTE_SERVER_NAME>
 
 This will always prompt for re-authentication, even if valid tokens exist.
 
+## Check for and apply upgrades
+
+For MCP servers you ran from a registry entry (`thv run <SERVER_NAME>`),
+ToolHive can compare each workload's image and configuration against the
+registry's current entry and report when a newer version is available. This only
+works for registry-sourced workloads on the local runtime; remote servers and
+workloads run directly from an image reference report as `not-registry-sourced`.
+
+:::note
+
+Upgrade detection is not yet available for the Kubernetes operator.
+
+:::
+
+### Check for available upgrades
+
+The `thv upgrade check` command is an offline metadata comparison: it inspects
+each workload's image tag and configuration against the registry and never pulls
+images.
+
+To see a summary table for every workload (including stopped ones):
+
+```bash
+thv upgrade check
+```
+
+Each row shows the workload's current image, the candidate image the registry
+reports, the count of new environment variables the candidate declares, and a
+posture marker if the candidate's transport or permission profile differs from
+the workload's current configuration. Possible statuses are `up-to-date`,
+`upgrade-available`, `not-registry-sourced`, `server-not-found`, and `unknown`.
+
+For a detailed report on a single workload, pass its name:
+
+```bash
+thv upgrade check <SERVER_NAME>
+```
+
+The detailed report adds the registry server name, any new environment variables
+(with their descriptions and whether they're required), and the specific
+transport or permission profile changes between the running workload and the
+candidate.
+
+You can also surface an upgrade column alongside `thv list` with an opt-in flag:
+
+```bash
+thv list --check-upgrades
+```
+
+The default `thv list` output is unchanged and performs no registry lookup, so
+it stays offline-friendly.
+
+### Apply an upgrade
+
+To upgrade a workload to the candidate image while preserving its configuration
+(environment variables, secrets, permission profile, transport, volumes,
+middleware), use `thv upgrade apply`:
+
+```bash
+thv upgrade apply <SERVER_NAME>
+```
+
+ToolHive resolves, verifies, and pulls the candidate image **before** touching
+the running workload, then stops the existing workload and starts a new one on
+the candidate image. There is no automatic rollback: if recreation fails after
+the existing workload is stopped, recovery is a forward operation. For an
+interactive session, the command prints what would change and prompts for
+confirmation before applying.
+
+If the candidate declares new environment variables or secrets that the workload
+does not yet supply, pass them with `--env` or `--secret`:
+
+```bash
+thv upgrade apply <SERVER_NAME> --env NEW_FLAG=true --secret api-key,target=API_KEY
+```
+
+To preview the planned changes without applying them:
+
+```bash
+thv upgrade apply <SERVER_NAME> --dry-run
+```
+
+To skip the confirmation prompt (for example, in a script), pass `--yes`. In
+non-interactive shells the command runs non-interactively automatically and
+fails if any required value is missing.
+
 ## Next steps
 
 - [Organize servers into groups](./group-management.mdx) to manage related
@@ -177,3 +263,5 @@ This will always prompt for re-authentication, even if valid tokens exist.
 - [`thv stop` command reference](../reference/cli/thv_stop.md)
 - [`thv start` command reference](../reference/cli/thv_start.md)
 - [`thv rm` command reference](../reference/cli/thv_rm.md)
+- [`thv upgrade check` command reference](../reference/cli/thv_upgrade_check.md)
+- [`thv upgrade apply` command reference](../reference/cli/thv_upgrade_apply.md)
