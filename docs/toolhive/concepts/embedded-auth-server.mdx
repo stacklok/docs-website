@@ -137,13 +137,12 @@ the OAuth flow.
 
 - **In-process execution:** The authorization server runs within the ToolHive
   proxy with no separate infrastructure or sidecar containers.
-- **Dynamic Client Registration (DCR):** Supports OAuth 2.0 DCR (RFC 7591),
-  allowing MCP clients to register automatically. No manual client registration
-  in ToolHive is required.
-- **Client ID Metadata Documents (CIMD):** When enabled, accepts HTTPS URLs as
+- **Client ID Metadata Document (CIMD):** When enabled, accepts HTTPS URLs as
   `client_id` values and resolves client metadata on demand. Clients that
-  support CIMD (such as VS Code) use it automatically; other clients fall back
-  to DCR.
+  support CIMD (such as VS Code) use it automatically.
+- **Dynamic Client Registration (DCR):** Supports OAuth 2.0 DCR (RFC 7591) as a
+  fallback for clients that do not support CIMD. MCP clients register
+  automatically with no manual configuration in ToolHive.
 - **Direct upstream redirect:** Redirects clients directly to the upstream
   provider for authentication (for example, GitHub or Atlassian).
 - **Configurable signing keys:** JWTs are signed with keys you provide,
@@ -217,12 +216,12 @@ sequenceDiagram
     participant EmbeddedAS as Embedded AS
     participant IDP as Upstream IDP
 
-    Note over Client,EmbeddedAS: Leg 1 — CIMD
+    Note over Client,EmbeddedAS: Leg 1: CIMD
     Client->>EmbeddedAS: client_id = https://vscode.dev/oauth/client-metadata.json
     EmbeddedAS->>EmbeddedAS: Fetch and validate CIMD document
     EmbeddedAS-->>Client: Redirect to upstream IDP
 
-    Note over EmbeddedAS,IDP: Leg 2 — AS's own credentials
+    Note over EmbeddedAS,IDP: Leg 2: AS own credentials
     Client->>IDP: Authenticate
     IDP-->>EmbeddedAS: Authorization code
     EmbeddedAS->>IDP: Exchange (AS's own client_id + secret)
@@ -259,12 +258,13 @@ After applying the configuration, confirm that the discovery document advertises
 CIMD support:
 
 ```bash
-kubectl port-forward -n toolhive-system svc/mcp-<server-name>-proxy 8080:8080 &
-curl -s http://localhost:8080/.well-known/oauth-authorization-server | \
+curl -s https://<YOUR_ISSUER_URL>/.well-known/oauth-authorization-server | \
   python3 -m json.tool | grep client_id_metadata_document
 ```
 
-You should see `"client_id_metadata_document_supported": true`.
+Replace `<YOUR_ISSUER_URL>` with the `issuer` value from your
+`MCPExternalAuthConfig`. You should see
+`"client_id_metadata_document_supported": true`.
 
 ## Session storage
 
