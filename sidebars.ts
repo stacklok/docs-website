@@ -271,7 +271,7 @@ const sidebars: SidebarsConfig = {
         id: 'toolhive/guides-cloud-ui/index',
       },
       items: [
-        'toolhive/guides-cloud-ui/quickstart',
+        'toolhive/guides-cloud-ui/deployment',
         'toolhive/guides-cloud-ui/configuration',
       ],
     },
