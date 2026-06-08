@@ -43,9 +43,14 @@ identity provider and those services.
 From the client's perspective, the embedded authorization server provides a
 standard OAuth 2.0 experience:
 
-1. If the client is not yet registered, it registers via Dynamic Client
-   Registration (DCR, RFC 7591), receiving a `client_id` and `client_secret`. No
-   manual client registration in ToolHive is required.
+1. The client identifies itself using one of two mechanisms, with no manual
+   registration in ToolHive required:
+   - **Client ID Metadata Document (CIMD):** If CIMD is enabled on the embedded
+     AS and the client supports it (for example, VS Code), the client presents
+     its public HTTPS metadata URL as its `client_id`. The embedded AS fetches
+     and validates the document.
+   - **Dynamic Client Registration (DCR, RFC 7591):** The client calls
+     `/oauth/register` to receive a `client_id` dynamically.
 2. The client is directed to the ToolHive authorization endpoint.
 3. ToolHive redirects the client to the upstream identity provider for
    authentication (for example, signing in with GitHub or Atlassian).
@@ -132,9 +137,12 @@ the OAuth flow.
 
 - **In-process execution:** The authorization server runs within the ToolHive
   proxy with no separate infrastructure or sidecar containers.
-- **Dynamic Client Registration (DCR):** Supports OAuth 2.0 DCR (RFC 7591),
-  allowing MCP clients to register automatically. No manual client registration
-  in ToolHive is required.
+- **Client ID Metadata Document (CIMD):** When enabled, accepts HTTPS URLs as
+  `client_id` values and resolves client metadata on demand. Clients that
+  support CIMD (such as VS Code) use it automatically.
+- **Dynamic Client Registration (DCR):** Supports OAuth 2.0 DCR (RFC 7591) as a
+  fallback for clients that do not support CIMD. MCP clients register
+  automatically with no manual configuration in ToolHive.
 - **Direct upstream redirect:** Redirects clients directly to the upstream
   provider for authentication (for example, GitHub or Atlassian).
 - **Configurable signing keys:** JWTs are signed with keys you provide,
@@ -195,6 +203,54 @@ headers; every cached document uses the fallback TTL.
 If you also set `baselineClientScopes`, those scopes apply to CIMD-resolved
 clients too. Because CIMD clients can be resolved from arbitrary HTTPS URLs,
 keep the baseline narrow.
+
+### Two-layer architecture
+
+The client's CIMD identity is used only within the embedded AS. The embedded AS
+uses its own pre-configured upstream credentials when redirecting to the
+upstream identity provider.
+
+```mermaid
+sequenceDiagram
+    participant Client as VS Code<br/>(CIMD client_id)
+    participant EmbeddedAS as Embedded AS
+    participant IDP as Upstream IDP
+
+    Note over Client,EmbeddedAS: Leg 1: CIMD
+    Client->>EmbeddedAS: client_id = https://vscode.dev/oauth/client-metadata.json
+    EmbeddedAS->>EmbeddedAS: Fetch and validate CIMD document
+    EmbeddedAS-->>Client: Redirect to upstream IDP
+
+    Note over EmbeddedAS,IDP: Leg 2: AS own credentials
+    Client->>IDP: Authenticate
+    IDP-->>EmbeddedAS: Authorization code
+    EmbeddedAS->>IDP: Exchange (AS's own client_id + secret)
+    EmbeddedAS-->>Client: Issue ToolHive JWT
+```
+
+The upstream IDP never sees the client's CIMD URL. This means you must still
+configure an upstream client ID and secret for the embedded AS regardless of
+whether clients use CIMD or DCR.
+
+### Document validation
+
+The embedded AS enforces the following rules on fetched CIMD documents:
+
+- The URL must use `https` (loopback `http://localhost` is accepted in
+  development environments only).
+- The `client_id` field inside the document must exactly match the URL it was
+  fetched from.
+- `redirect_uris` must be present and pass strict validation.
+- Symmetric shared-secret `token_endpoint_auth_method` values are forbidden.
+- `grant_types` must include `authorization_code` and be a subset of
+  `[authorization_code, refresh_token]`.
+- `response_types` must be a subset of `[code]`.
+- Declared scopes must be a subset of the AS's configured `scopes_supported`
+  list (when set).
+
+The fetcher also applies SSRF protection: DNS resolution runs before dialing,
+private IP ranges are blocked, redirects are not followed, and each fetch is
+subject to a five-second timeout and a 10 KB response cap.
 
 ## Session storage
 

@@ -1185,6 +1185,39 @@ kubectl describe mcpserver -n toolhive-system <name>
   `kubectl logs -n toolhive-system -l app.kubernetes.io/name=toolhive-operator`
 - Verify the operator is running: `kubectl get pods -n toolhive-system`
 
+**CIMD client not using CIMD (falling back to DCR):**
+
+- Verify `cimd.enabled: true` is set in the `MCPExternalAuthConfig` and the
+  operator has reconciled the change:
+  `kubectl describe mcpexternalauthconfig <name> -n toolhive-system`
+- Confirm the discovery document advertises CIMD support:
+  ```bash
+  curl -s https://<YOUR_ISSUER_URL>/.well-known/oauth-authorization-server | \
+    python3 -m json.tool | grep client_id_metadata_document
+  ```
+  Replace `<YOUR_ISSUER_URL>` with the `issuer` value from your
+  `MCPExternalAuthConfig`. You should see
+  `"client_id_metadata_document_supported": true`.
+- Restart the proxy runner pod after updating an existing resource.
+
+**CIMD authentication failing with `invalid_client`:**
+
+- The `client_id` field inside the fetched document must exactly match the URL
+  used to fetch it.
+- Documents must not declare `token_endpoint_auth_method` values that use a
+  symmetric shared secret (`client_secret_post`, `client_secret_basic`,
+  `client_secret_jwt`).
+- `grant_types` must include `authorization_code`. `response_types` must only
+  contain `code`.
+- `redirect_uris` must be present and valid.
+
+**CIMD fetch failing (egress / timeout):**
+
+- The proxy runner pod needs outbound HTTPS access to the client's metadata URL
+  (for example, `https://vscode.dev`). Check cluster egress policies.
+- Fetches time out after five seconds. Ensure the metadata host is reachable
+  from within the cluster.
+
 </details>
 
 <details>
