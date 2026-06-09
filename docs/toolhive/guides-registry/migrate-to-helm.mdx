@@ -1,0 +1,196 @@
+---
+title: Migrate from the operator to Helm
+description:
+  Migrate an operator-managed MCPRegistry deployment to the standalone Registry
+  Server Helm chart
+---
+
+The `MCPRegistry` CRD and the operator-managed deployment method are deprecated
+in favor of the
+[toolhive-registry-server](https://github.com/stacklok/toolhive-registry-server)
+Helm chart, which installs the Registry Server directly. This guide walks you
+through moving an existing operator-managed registry to the Helm chart.
+
+The CRD remains fully functional for now, so you can migrate at your own pace.
+This guide uses a parallel cutover: you deploy the Helm release alongside your
+existing `MCPRegistry`, verify it, repoint clients, and only then remove the
+CRD-managed deployment.
+
+:::info[Why migrate?]
+
+The Helm chart manages the Registry Server like any other Helm release, without
+requiring the ToolHive Operator. The `MCPRegistry` CRD will be removed in a
+future release. Migrating now avoids a forced cutover later.
+
+:::
+
+## Before you begin
+
+- A Kubernetes cluster with an existing operator-managed `MCPRegistry` resource
+- [`kubectl`](https://kubernetes.io/docs/tasks/tools/) configured to communicate
+  with your cluster
+- [Helm](https://helm.sh/docs/intro/install/) v3.10 or later (v3.14+ is
+  recommended)
+- Access to the same PostgreSQL database your `MCPRegistry` currently uses
+
+Both deployment methods read the same
+[Registry Server configuration](./configuration.mdx) and connect to the same
+PostgreSQL schema, so the Helm release can reuse your existing database without
+a data migration.
+
+## How configuration maps
+
+The operator wraps the Registry Server's configuration in the `MCPRegistry`
+spec. The Helm chart exposes the same configuration directly in its values file.
+The table below maps each `MCPRegistry` field to its Helm equivalent.
+
+| `MCPRegistry` spec field          | Helm values field                           |
+| --------------------------------- | ------------------------------------------- |
+| `spec.configYAML`                 | `config` (as structured YAML, not a string) |
+| `spec.pgpassSecretRef`            | pgpass Secret + init container (see below)  |
+| `spec.podTemplateSpec.…resources` | `resources`                                 |
+| `spec.volumes`                    | `extraVolumes`                              |
+| `spec.volumeMounts`               | `extraVolumeMounts`                         |
+| `spec.displayName`                | No equivalent (metadata only; omit)         |
+
+The most important change is `configYAML`: in the CRD it's a YAML string, while
+in the Helm chart the same content goes under `config` as a structured block.
+The schema under both is identical.
+
+## Step 1: Capture your existing configuration
+
+Export your current `MCPRegistry` resource so you can copy its configuration:
+
+```bash
+kubectl -n <NAMESPACE> get mcpregistry <NAME> -o yaml > mcpregistry-backup.yaml
+```
+
+Note the value of `spec.configYAML`. This is the configuration you'll move into
+the Helm values file. Also note the namespace and any database settings so the
+Helm release connects to the same PostgreSQL instance.
+
+## Step 2: Build the Helm values file
+
+Create a `values.yaml` file and copy the contents of `spec.configYAML` under the
+`config` key. For example, an `MCPRegistry` with this spec:
+
+```yaml title="mcpregistry-backup.yaml (excerpt)"
+spec:
+  displayName: My MCP Registry
+  configYAML: |
+    sources:
+      - name: toolhive
+        git:
+          repository: https://github.com/stacklok/toolhive-catalog.git
+          branch: main
+          path: pkg/catalog/toolhive/data/registry-upstream.json
+        syncPolicy:
+          interval: '30m'
+    registries:
+      - name: default
+        sources: ['toolhive']
+    auth:
+      mode: anonymous
+```
+
+becomes this Helm values file:
+
+```yaml title="values.yaml"
+config:
+  sources:
+    - name: toolhive
+      git:
+        repository: https://github.com/stacklok/toolhive-catalog.git
+        branch: main
+        path: pkg/catalog/toolhive/data/registry-upstream.json
+      syncPolicy:
+        interval: '30m'
+  registries:
+    - name: default
+      sources: ['toolhive']
+  auth:
+    mode: anonymous
+```
+
+If your `MCPRegistry` used `pgpassSecretRef` for database credentials, the Helm
+chart provides the same credentials through a pgpass Secret and an init
+container that prepares the file. See
+[Provide database credentials](./deploy-helm.mdx#provide-database-credentials)
+for the complete pattern, then add the `extraEnv`, `extraVolumes`,
+`extraVolumeMounts`, and `initContainers` blocks to your values file.
+
+## Step 3: Deploy the Helm release
+
+Install the chart into the same namespace as your existing registry. Use a
+release name that doesn't collide with the operator-managed resources:
+
+```bash
+helm upgrade --install registry-server \
+  oci://ghcr.io/stacklok/toolhive-registry-server \
+  -n <NAMESPACE> --create-namespace \
+  -f values.yaml
+```
+
+Because both deployments point at the same database, the Helm-managed pod runs
+against your existing data. See [Deploy with Helm](./deploy-helm.mdx) for the
+full set of chart values and their defaults.
+
+## Step 4: Verify the new deployment
+
+Confirm the Helm-managed Registry Server pod is running and healthy:
+
+```bash
+kubectl -n <NAMESPACE> get pods -l app.kubernetes.io/instance=registry-server
+```
+
+Port-forward to the new service and check that it serves registry data:
+
+```bash
+kubectl -n <NAMESPACE> port-forward svc/registry-server 8080:80
+curl http://localhost:8080/v0/servers
+```
+
+The Helm release creates a service named after the release (for example,
+`registry-server`), which differs from the service the operator created for your
+`MCPRegistry`. Note the new service name and endpoint for the next step.
+
+## Step 5: Repoint clients
+
+Update any clients, ingress rules, or `VirtualMCPServer` backends that reference
+the old operator-managed service so they point at the new Helm-managed service
+endpoint. Roll out and verify these changes while the old deployment is still
+running, so you can fall back if needed.
+
+## Step 6: Remove the MCPRegistry resource
+
+Once clients are using the Helm-managed Registry Server and you've confirmed
+it's healthy, delete the `MCPRegistry` resource. The operator removes the
+deployment, service, and RBAC resources it created:
+
+```bash
+kubectl -n <NAMESPACE> delete mcpregistry <NAME>
+```
+
+Deleting the `MCPRegistry` does not affect the database, so your registry data
+remains intact for the Helm-managed server.
+
+If the operator is no longer managing any other resources, you can optionally
+uninstall it. See [Deploy the operator](../guides-k8s/deploy-operator.mdx) for
+details on what the operator manages before removing it.
+
+## Next steps
+
+- [Configure sources and registries](./configuration.mdx) to adjust your data
+  sources and sync policies
+- [Set up authentication](./authentication.mdx) to secure access to your
+  registry
+- [Configure telemetry](./telemetry-metrics.mdx) to monitor your deployment
+
+## Related information
+
+- [Deploy with Helm](./deploy-helm.mdx) - Full reference for the Registry Server
+  Helm chart
+- [Deploy the Registry Server](./deployment.mdx) - Overview of all deployment
+  methods
+- [Database configuration](./database.mdx) - PostgreSQL setup and the pgpass
+  format
