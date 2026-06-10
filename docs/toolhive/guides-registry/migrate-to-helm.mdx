@@ -44,14 +44,14 @@ The operator wraps the Registry Server's configuration in the `MCPRegistry`
 spec. The Helm chart exposes the same configuration directly in its values file.
 The table below maps each `MCPRegistry` field to its Helm equivalent.
 
-| `MCPRegistry` spec field          | Helm values field                           |
-| --------------------------------- | ------------------------------------------- |
-| `spec.configYAML`                 | `config` (as structured YAML, not a string) |
-| `spec.pgpassSecretRef`            | pgpass Secret + init container (see below)  |
-| `spec.podTemplateSpec.…resources` | `resources`                                 |
-| `spec.volumes`                    | `extraVolumes`                              |
-| `spec.volumeMounts`               | `extraVolumeMounts`                         |
-| `spec.displayName`                | No equivalent (metadata only; omit)         |
+| `MCPRegistry` spec field                           | Helm values field                           |
+| -------------------------------------------------- | ------------------------------------------- |
+| `spec.configYAML`                                  | `config` (as structured YAML, not a string) |
+| `spec.pgpassSecretRef`                             | pgpass Secret + init container (see below)  |
+| `spec.podTemplateSpec.spec.containers[].resources` | `resources`                                 |
+| `spec.volumes`                                     | `extraVolumes`                              |
+| `spec.volumeMounts`                                | `extraVolumeMounts`                         |
+| `spec.displayName`                                 | No equivalent (metadata only; omit)         |
 
 The most important change is `configYAML`: in the CRD it's a YAML string, while
 in the Helm chart the same content goes under `config` as a structured block.
@@ -143,16 +143,26 @@ Confirm the Helm-managed Registry Server pod is running and healthy:
 kubectl -n <NAMESPACE> get pods -l app.kubernetes.io/instance=registry-server
 ```
 
-Port-forward to the new service and check that it serves registry data:
+By default, the chart names the service after the release and chart, in the form
+`<RELEASE_NAME>-toolhive-registry-server`. For the `registry-server` release
+used above, that's `registry-server-toolhive-registry-server`. Confirm the exact
+name:
 
 ```bash
-kubectl -n <NAMESPACE> port-forward svc/registry-server 8080:80
-curl http://localhost:8080/v0/servers
+kubectl -n <NAMESPACE> get svc -l app.kubernetes.io/instance=registry-server
 ```
 
-The Helm release creates a service named after the release (for example,
-`registry-server`), which differs from the service the operator created for your
-`MCPRegistry`. Note the new service name and endpoint for the next step.
+Port-forward to the service (its port defaults to `8080`) and check that it
+serves registry data. Replace `default` with one of the registry names from your
+`config`:
+
+```bash
+kubectl -n <NAMESPACE> port-forward svc/registry-server-toolhive-registry-server 8080:8080
+curl -s http://localhost:8080/registry/default/v0.1/servers | jq .
+```
+
+This service name differs from the one the operator created for your
+`MCPRegistry`. Note it for the next step.
 
 ## Step 5: Repoint clients
 
