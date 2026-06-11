@@ -6,11 +6,11 @@ description:
   OIDC authentication.
 ---
 
-This guide deploys the ToolHive Cloud UI on a Kubernetes cluster using the Helm
-chart shipped in the
-[`toolhive-cloud-ui`](https://github.com/stacklok/toolhive-cloud-ui) repository.
-The Cloud UI requires both a running Registry Server and an OIDC identity
-provider, so make sure you have both available before you begin.
+This guide deploys the ToolHive Cloud UI on a Kubernetes cluster using the Cloud
+UI Helm chart, which ToolHive publishes to GitHub Container Registry (GHCR) from
+the [`toolhive-cloud-ui`](https://github.com/stacklok/toolhive-cloud-ui)
+repository. The Cloud UI requires both a running Registry Server and an OIDC
+identity provider, so make sure you have both available before you begin.
 
 ## Prerequisites
 
@@ -28,7 +28,6 @@ Before starting, make sure you have:
   You'll need the issuer URL, client ID, and client secret.
 - [`kubectl`](https://kubernetes.io/docs/tasks/tools/) and
   [Helm](https://helm.sh/docs/intro/install/) v3.10+ installed locally.
-- [Git](https://git-scm.com/downloads) to clone the chart repository.
 
 :::tip[Don't have an OIDC provider yet?]
 
@@ -51,23 +50,13 @@ following settings:
   `<CLOUD_UI_URL>` is the public URL where you plan to expose the Cloud UI (for
   example, `https://cloud-ui.example.com/api/auth/callback/oidc`). You'll set
   this same public URL as `BETTER_AUTH_URL` in
-  [Step 3](#step-3-create-a-namespace-and-oidc-secret).
+  [Step 2](#step-2-create-a-namespace-and-oidc-secret).
 - **Scopes**: `openid`, `profile`, `email`
 
 Copy the **issuer URL**, **client ID**, and **client secret** that your provider
 returns. You'll reference them in the next step.
 
-## Step 2: Clone the chart repository
-
-The Helm chart lives inside the `toolhive-cloud-ui` repository under `helm/`.
-Clone it to your workstation:
-
-```bash
-git clone https://github.com/stacklok/toolhive-cloud-ui.git
-cd toolhive-cloud-ui
-```
-
-## Step 3: Create a namespace and OIDC Secret
+## Step 2: Create a namespace and OIDC Secret
 
 Create a namespace for the Cloud UI and a Kubernetes Secret that holds the
 sensitive configuration. Storing credentials in a Secret keeps them out of your
@@ -100,16 +89,19 @@ Replace the placeholder values:
 See [Configuration](./configuration.mdx) for the full list of supported
 environment variables.
 
-## Step 4: Install the Helm chart
+## Step 3: Install the Helm chart
 
-Install the chart from the cloned repository and reference the Secret you just
-created with `envFrom`:
+Install the chart and reference the Secret you just created with `envFrom`:
 
 ```bash title="Install the Cloud UI"
-helm install cloud-ui ./helm \
+helm install cloud-ui \
+  oci://ghcr.io/stacklok/toolhive-cloud-ui/toolhive-cloud-ui \
   --namespace cloud-ui \
   --set envFrom[0].secretRef.name=cloud-ui-config
 ```
+
+This installs the latest published chart. To pin a specific version, add
+`--version <CHART_VERSION>`.
 
 Wait for the pod to become ready:
 
@@ -127,7 +119,7 @@ configurable parameters (replicas, resources, probes, HPA, security context).
 
 :::
 
-## Step 5: Expose the Cloud UI
+## Step 4: Expose the Cloud UI
 
 The chart creates a ClusterIP Service by default. To make the Cloud UI reachable
 from a browser, choose one of the following options.
@@ -144,12 +136,15 @@ Open `http://localhost:3000` in your browser. For this to work end-to-end, set
 `BETTER_AUTH_URL=http://localhost:3000` and register the matching redirect URI
 (`http://localhost:3000/api/auth/callback/oidc`) in your OIDC application.
 
-### Option B: Ingress (recommended for shared environments)
+### Option B: Ingress or Gateway API (recommended for shared environments)
 
-For shared or production deployments, expose the Cloud UI through an Ingress
-controller. The chart does not ship an Ingress template, so create one yourself.
-The example below assumes you have an Ingress controller (such as NGINX) and a
-TLS certificate already configured:
+The chart creates a standard ClusterIP Service, so you can expose it the same
+way as any other web application: with an Ingress, the Gateway API, or a
+`LoadBalancer` Service. The chart does not ship an Ingress or HTTPRoute
+template, so create the routing resource yourself.
+
+The following Ingress example uses Traefik and assumes you already have an
+Ingress controller and a TLS certificate configured:
 
 ```yaml title="cloud-ui-ingress.yaml"
 apiVersion: networking.k8s.io/v1
@@ -158,7 +153,7 @@ metadata:
   name: cloud-ui
   namespace: cloud-ui
 spec:
-  ingressClassName: nginx
+  ingressClassName: traefik
   tls:
     - hosts:
         - cloud-ui.example.com
@@ -182,14 +177,20 @@ Apply the manifest:
 kubectl apply -f cloud-ui-ingress.yaml
 ```
 
+To expose the Cloud UI through the Gateway API instead, or for help configuring
+TLS certificates, see
+[Connect clients to MCP servers](../guides-k8s/connect-clients.mdx), which
+covers both the Ingress and Gateway API patterns in depth.
+
 Make sure the host matches `BETTER_AUTH_URL` and the registered redirect URI in
 your IdP.
 
-## Step 6: Sign in
+## Step 5: Sign in
 
-Open the Cloud UI in your browser. You should be redirected to your OIDC
-provider's sign-in page. After signing in successfully, your provider redirects
-you back to the Cloud UI's `/catalog` page where you can:
+Open the Cloud UI in your browser. You'll land on a welcome page with a **Sign
+in** button. Select it to go to your OIDC provider's sign-in page. After you
+sign in successfully, the provider redirects you back to the Cloud UI's
+`/catalog` page where you can:
 
 - Browse MCP servers registered in your Registry Server
 - View server details and connection information
@@ -197,7 +198,7 @@ you back to the Cloud UI's `/catalog` page where you can:
 
 If sign-in fails, see the [Troubleshooting](#troubleshooting) section below.
 
-## Clean up
+## Uninstall the Cloud UI
 
 To remove the Cloud UI deployment:
 
@@ -268,7 +269,7 @@ is empty:
 <summary>Pod fails to start with missing environment variable errors</summary>
 
 The Cloud UI requires all six environment variables listed in
-[Step 3](#step-3-create-a-namespace-and-oidc-secret). Confirm the Secret
+[Step 2](#step-2-create-a-namespace-and-oidc-secret). Confirm the Secret
 contains every key:
 
 ```bash

@@ -12,9 +12,10 @@ Cloud UI reads at startup. For end-to-end deployment steps on Kubernetes, see
 
 ## Environment variables
 
-The Cloud UI is configured entirely through environment variables. In a
-Kubernetes deployment, supply them through a Kubernetes Secret referenced from
-`envFrom` (recommended) or through the chart's `env` values.
+The Cloud UI is configured entirely through environment variables. The Helm
+chart does not expose these settings as individual values, so you always pass
+them as container environment variables: reference a Kubernetes Secret from
+`envFrom` (recommended) or list them under the chart's `env` value.
 
 ### Required variables
 
@@ -61,17 +62,33 @@ To configure your provider:
 
 ## Helm chart values
 
-The chart in
-[`toolhive-cloud-ui/helm`](https://github.com/stacklok/toolhive-cloud-ui/tree/main/helm)
-supports the following customizations beyond environment variables:
+The application settings above are not first-class chart values. Pass them as
+container environment variables through `envFrom` (recommended) or `env`, as
+shown in [Deploy the Cloud UI](./deployment.mdx). The chart's remaining values
+configure the Kubernetes Deployment and Service:
 
-- Replica count and horizontal pod autoscaling (HPA)
-- Resource requests and limits
-- Liveness, readiness, and startup probes
-- Pod and container security contexts
-- Image pull secrets for private registries
-- Custom Service types (ClusterIP, NodePort)
-- Additional volumes and volume mounts
+| Value                                             | Default                                        | Description                                               |
+| ------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------- |
+| `replicaCount`                                    | `1`                                            | Number of Cloud UI pods                                   |
+| `image.cloudUiImage`                              | Chart's release image and tag                  | Container image to deploy                                 |
+| `image.pullPolicy`                                | `IfNotPresent`                                 | Image pull policy                                         |
+| `imagePullSecrets`                                | `[]`                                           | Secrets for pulling from a private registry               |
+| `env`                                             | `[]`                                           | Inline environment variables as `name`/`value` pairs      |
+| `envFrom`                                         | `[]`                                           | Environment variables sourced from ConfigMaps or Secrets  |
+| `service.type`                                    | `ClusterIP`                                    | Service type (`ClusterIP`, `NodePort`, or `LoadBalancer`) |
+| `service.port`                                    | `80`                                           | Service port                                              |
+| `service.targetPort`                              | `3000`                                         | Container port the Service targets                        |
+| `service.nodePort`                                | `null`                                         | Node port, used only when `service.type` is `NodePort`    |
+| `resources`                                       | `100m`/`128Mi` requests, `500m`/`512Mi` limits | CPU and memory requests and limits                        |
+| `autoscaling.enabled`                             | `false`                                        | Enable the Horizontal Pod Autoscaler (HPA)                |
+| `autoscaling.minReplicas` / `maxReplicas`         | `1` / `5`                                      | HPA replica bounds                                        |
+| `autoscaling.targetCPUUtilizationPercentage`      | `80`                                           | HPA target CPU utilization                                |
+| `startupProbe`, `livenessProbe`, `readinessProbe` | HTTP `GET /`                                   | Health probe configuration                                |
+| `podSecurityContext` / `securityContext`          | Non-root, UID 1001                             | Pod and container security contexts                       |
+| `serviceAccount.create`                           | `false`                                        | Whether to create a ServiceAccount                        |
+| `podAnnotations` / `podLabels`                    | `{}`                                           | Extra annotations and labels on pods                      |
+| `volumes` / `volumeMounts`                        | `[]`                                           | Additional volumes and volume mounts                      |
+| `nodeSelector` / `tolerations` / `affinity`       | `{}` / `[]` / `{}`                             | Pod scheduling controls                                   |
 
 Refer to the chart's
 [`values.yaml`](https://github.com/stacklok/toolhive-cloud-ui/blob/main/helm/values.yaml)
@@ -79,10 +96,10 @@ for the full set of configurable parameters and their defaults.
 
 :::info
 
-The chart does not ship an Ingress template. To expose the Cloud UI outside the
-cluster, create an Ingress resource separately or use a Service of type
-`NodePort` or `LoadBalancer`. See
-[Step 5 of the deployment guide](./deployment.mdx#step-5-expose-the-cloud-ui)
+The chart does not ship an Ingress or HTTPRoute template. Because it creates a
+standard ClusterIP Service, you can expose the Cloud UI with an Ingress, a
+Gateway API HTTPRoute, or a Service of type `LoadBalancer` or `NodePort`. See
+[Step 4 of the deployment guide](./deployment.mdx#step-4-expose-the-cloud-ui)
 for an Ingress example.
 
 :::
