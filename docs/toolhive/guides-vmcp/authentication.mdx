@@ -68,11 +68,16 @@ spec:
     type: anonymous
 ```
 
-:::warning
+:::warning[Authentication is not enabled by default]
 
-Do not use `anonymous` authentication in production environments. This setting
-disables all access control, allowing anyone to use the vMCP without
-credentials.
+Anonymous authentication disables all access control, allowing anyone who can
+reach the vMCP to use it without credentials. The same applies if you omit
+`incomingAuth` entirely. This is intended for local development or deployments
+already isolated behind a trusted network boundary (such as a NetworkPolicy or
+service mesh); do not use it in production. To enforce client authentication,
+configure an incoming authentication source:
+[OIDC authentication](#oidc-authentication) with an `MCPOIDCConfig`, or the
+[embedded authorization server](#embedded-authorization-server).
 
 :::
 
@@ -205,6 +210,74 @@ See
 [Configure token exchange for backend authentication](../guides-k8s/token-exchange-k8s.mdx)
 for details on using service account token exchange for backend authentication.
 
+### Static header injection
+
+The `headerInjection` outgoing auth strategy injects a fixed HTTP header into
+every request to a backend. Use it when the backend authenticates with a
+pre-issued API key or static bearer token rather than per-user OAuth — for
+example, an MCP server that wraps a SaaS API behind a single shared credential.
+
+Store the header value in a Secret, then create an `MCPExternalAuthConfig` of
+type `headerInjection` that references it:
+
+```yaml title="Secret"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backend-api-key
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  value: <YOUR_API_KEY>
+```
+
+```yaml title="MCPExternalAuthConfig resource"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPExternalAuthConfig
+metadata:
+  name: backend-api-key-header
+  namespace: toolhive-system
+spec:
+  type: headerInjection
+  headerInjection:
+    headerName: X-API-Key
+    valueSecretRef:
+      name: backend-api-key
+      key: value
+```
+
+Reference the config from the VirtualMCPServer's outgoing auth, the same way as
+other strategies:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  outgoingAuth:
+    source: inline
+    backends:
+      backend-private-api:
+        type: externalAuthConfigRef
+        externalAuthConfigRef:
+          name: backend-api-key-header
+```
+
+Alternatively, attach the `MCPExternalAuthConfig` to a backend `MCPServer` via
+its `externalAuthConfigRef` and use `outgoingAuth.source: discovered` to pick it
+up automatically.
+
+For an `Authorization: Bearer <token>` header, set `headerName: Authorization`
+and store the full `Bearer <token>` string (including the `Bearer` prefix) in
+the Secret value.
+
+:::note
+
+The header value must come from a Kubernetes Secret — plaintext inline values
+are not accepted at the CRD layer. Rotating the credential is a matter of
+updating the Secret; restart the vMCP deployment/pods, or whichever ToolHive
+workload is making the outbound requests using this `MCPExternalAuthConfig`, to
+pick up the new value.
+
+:::
+
 ### Upstream token injection
 
 The `upstreamInject` outgoing auth strategy injects a user's upstream access
@@ -329,10 +402,11 @@ stored upstream tokens for backends.
 
 Use the embedded authorization server when your backend MCP servers call
 external APIs on behalf of individual users and no federation relationship
-exists between your identity provider and those services. It also provides OAuth
-2.0 Dynamic Client Registration
+exists between your identity provider and those services. It also supports OAuth
+2.0 Client ID Metadata Documents (CIMD) and Dynamic Client Registration
 ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)), so MCP clients can
-register automatically without manual client configuration in ToolHive.
+identify themselves or register automatically without manual client
+configuration in ToolHive.
 
 :::info
 
@@ -480,6 +554,38 @@ providers, see
 The [complete example](#complete-example) below shows full provider
 configurations.
 
+When multiple upstream providers are configured, Cedar reads JWT claims from the
+first upstream's access token by default. Pin a specific provider with
+`spec.authServerConfig.primaryUpstreamProvider`. The value must match one of the
+names in `upstreamProviders`; unresolvable values are rejected at admission with
+`AuthServerConfigValidated=False`:
+
+```yaml
+spec:
+  authServerConfig:
+    issuer: https://auth.example.com
+    primaryUpstreamProvider: okta
+    upstreamProviders:
+      - name: okta
+        type: oidc
+        # ...
+      - name: github
+        type: oauth2
+        # ...
+```
+
+:::note[Deprecated location]
+
+`primaryUpstreamProvider` previously lived under
+`spec.incomingAuth.authzConfig.inline.primaryUpstreamProvider`. The old location
+is still read for backward compatibility, but the VirtualMCPServer controller
+emits a Warning event with reason `AuthzPrimaryUpstreamProviderDeprecated`
+whenever it reads the value. Move the field to
+`spec.authServerConfig.primaryUpstreamProvider` to clear the warning. Removal of
+the deprecated location is planned for the release after the deprecation cycle.
+
+:::
+
 :::tip[Non-standard token responses]
 
 Some OAuth 2.0 providers nest tokens under non-standard paths instead of
@@ -488,6 +594,17 @@ at `authed_user.access_token`). Add a `tokenResponseMapping` block to the
 `oauth2Config` with dot-notation paths for `accessTokenPath`, `scopePath`,
 `refreshTokenPath`, and `expiresInPath`. See the
 [CRD reference](../reference/crds/index.mdx) for field details.
+
+:::
+
+:::tip[Identity in the token response]
+
+When an upstream returns user identity in the token response itself (Slack
+returns it at `authed_user.id`; Snowflake embeds it in the access-token JWT),
+set `identityFromToken` on the `oauth2Config` with gjson dot-notation paths for
+`subjectPath` (required), `namePath`, and `emailPath`. See
+[Extract identity from the token response](../guides-k8s/auth-k8s.mdx#extract-identity-from-the-token-response)
+for the full pattern and trust-model caveats.
 
 :::
 

@@ -82,11 +82,11 @@ export const intros = {
   MCPRegistry: {
     slug: 'mcpregistry',
     group: 'core',
-    summary: 'Deploy a ToolHive Registry Server.',
+    summary: 'Deploy a ToolHive Registry Server (deprecated).',
     description:
       'Schema reference for MCPRegistry, which declares a ToolHive Registry Server deployment managed by the operator.',
     intro:
-      '`MCPRegistry` deploys a [ToolHive Registry Server](../../guides-registry/intro.mdx) in the cluster. The operator watches `MCPRegistry` resources and provisions the Registry Server, its PostgreSQL backing, and the configured sources (Git, ConfigMap, URL, or Kubernetes discovery) that populate its catalog of MCP server definitions.',
+      '`MCPRegistry` deploys a [ToolHive Registry Server](../../guides-registry/intro.mdx) in the cluster. The operator watches `MCPRegistry` resources and provisions the Registry Server, its PostgreSQL backing, and the configured sources (Git, ConfigMap, URL, or Kubernetes discovery) that populate its catalog of MCP server definitions.\n\n:::warning[Deprecated]\n\nThe `MCPRegistry` CRD is deprecated and will be removed in a future release. The CRD remains fully functional, but `kubectl` now prints a deprecation warning on apply or get and the operator emits a `Warning` event recommending the [`toolhive-registry-server` Helm chart](https://github.com/stacklok/toolhive-registry-server). For new deployments, see [Deploy with Helm](../../guides-registry/deploy-helm.mdx).\n\n:::',
   },
 
   // Shared configuration - grouping, then auth, then observability/behavior,

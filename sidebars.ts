@@ -244,9 +244,10 @@ const sidebars: SidebarsConfig = {
           },
           collapsible: false,
           items: [
-            'toolhive/guides-registry/deploy-operator',
             'toolhive/guides-registry/deploy-helm',
             'toolhive/guides-registry/deploy-manual',
+            'toolhive/guides-registry/deploy-operator',
+            'toolhive/guides-registry/migrate-to-helm',
           ],
         },
         'toolhive/guides-registry/configuration',
