@@ -11,13 +11,18 @@ with other applications or automating tasks.
 
 :::note
 
-The API server isn't intended for production use. It's designed for local
-automation and UI development, and doesn't implement any authentication or
-authorization mechanisms.
+The API server is designed for local automation and UI development. By default,
+it binds to `localhost` (127.0.0.1) and starts without authentication, so any
+process on the same machine can call it.
 
-For production use cases, consider using the ToolHive Kubernetes Operator, which
-provides a more robust and secure way to manage ToolHive instances in a
-multi-user environment.
+If you expose the API server beyond `localhost`, enable OIDC authentication so
+that ToolHive requires a valid token on every request. See
+[Authenticate API requests with OIDC](#authenticate-api-requests-with-oidc)
+below.
+
+For multi-user, production environments, consider the ToolHive Kubernetes
+Operator, which provides a more robust and secure way to manage ToolHive
+instances.
 
 :::
 
@@ -80,6 +85,64 @@ socket. Named-pipe addresses are rejected on non-Windows platforms.
 
 When using `--socket`, the argument overrides the host:port address
 configuration.
+
+## Authenticate API requests with OIDC
+
+By default, the API server accepts requests without authentication. This is fine
+when it's bound to `localhost`, but if you bind it to a routable address with
+`--host`, anyone who can reach that address can manage your MCP servers. To
+protect the API server, enable OpenID Connect (OIDC) authentication so that
+ToolHive validates a bearer token on every request.
+
+ToolHive connects to your existing identity provider (such as Google, Okta,
+Microsoft Entra ID, Auth0, or Kubernetes) and verifies that incoming tokens were
+issued by that provider. ToolHive never sees your password, only the tokens your
+identity provider issues.
+
+To enable OIDC validation, provide at least one of `--oidc-issuer`,
+`--oidc-jwks-url`, or `--oidc-introspection-url`. If none of these are set, the
+API server starts unauthenticated.
+
+The following options configure OIDC validation:
+
+| Option                     | Description                                                                                                 |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `--oidc-issuer`            | OIDC issuer URL, for example `https://accounts.google.com`. ToolHive discovers the JWKS URL from it.        |
+| `--oidc-audience`          | Expected audience (`aud` claim) for the token. Tokens issued for a different audience are rejected.         |
+| `--oidc-jwks-url`          | URL to fetch the JSON Web Key Set (JWKS) from. Optional when `--oidc-issuer` is set and supports discovery. |
+| `--oidc-introspection-url` | Token introspection endpoint (RFC 7662) for validating opaque tokens.                                       |
+| `--oidc-client-id`         | OIDC client ID.                                                                                             |
+| `--oidc-client-secret`     | OIDC client secret. Optional, used for token introspection.                                                 |
+| `--oidc-scopes`            | OAuth scopes to advertise in the protected resource metadata endpoint (RFC 9728). Defaults to `openid`.     |
+
+When you set `--oidc-issuer` without `--oidc-jwks-url`, ToolHive discovers the
+JWKS URL from the issuer's OIDC discovery document on the first request, so the
+server can start before your identity provider is reachable.
+
+The following example starts the API server bound to a routable address and
+validates signed JWT tokens against an issuer:
+
+```bash
+thv serve \
+  --host 0.0.0.0 \
+  --port 8080 \
+  --oidc-issuer https://your-oidc-issuer.com \
+  --oidc-audience toolhive-api
+```
+
+You only need `--oidc-client-id` and `--oidc-client-secret` when validating
+opaque tokens through an introspection endpoint.
+
+Clients must then send a valid token in the `Authorization` header:
+
+```bash
+curl -H "Authorization: Bearer <TOKEN>" \
+  http://your-host:8080/api/v1beta/version
+```
+
+For background on how ToolHive uses OIDC, JWT validation, and authorization
+policies, see the
+[authentication and authorization framework](../concepts/auth-framework.mdx).
 
 ## API documentation
 
