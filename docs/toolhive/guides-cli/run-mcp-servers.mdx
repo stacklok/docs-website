@@ -271,28 +271,31 @@ flag instead:
 thv run --audit-config ./audit.json <SERVER>
 ```
 
-A configuration file lets you choose which event types to record, whether to
-include request or response data, and where to send the audit log. For example:
+A configuration file lets you select which event types to record with
+`eventTypes` (or exclude specific types with `excludeEventTypes`), choose
+whether to include request or response data, and set where to send the audit
+log. For example:
 
 ```json title="audit.json"
 {
   "component": "fetch-server",
+  "eventTypes": ["mcp_tool_call", "mcp_resource_read"],
   "includeRequestData": true,
   "includeResponseData": false,
   "maxDataSize": 2048,
-  "logFile": "/var/log/toolhive/fetch-audit.log"
+  "logFile": "./fetch-audit.log"
 }
 ```
 
 When you set `logFile`, ToolHive appends audit events to that file instead of
-the server's standard logs. Leave it unset to keep events in the logs viewed by
-`thv logs`.
+the server's standard logs. Use a path that the user running `thv` can write to.
+Leave it unset to keep events in the logs viewed by `thv logs`.
 
 :::note
 
-The `--enable-audit` and `--audit-config` flags are independent. Use
-`--enable-audit` for the built-in defaults, or `--audit-config` to load your own
-settings. When you pass `--audit-config`, you don't also need `--enable-audit`.
+Use either flag to turn on audit logging: `--enable-audit` for the built-in
+defaults, or `--audit-config` to load your own settings. `--audit-config`
+enables auditing on its own, so you don't need to pass `--enable-audit` as well.
 
 :::
 
@@ -329,10 +332,10 @@ thv run --image-verification enabled fetch
 
 :::note
 
-Image verification applies only to servers that have provenance information,
-which currently means servers from the ToolHive registry. For a custom image
-without provenance data, `warn` and `enabled` behave differently: `warn` runs
-the server with a warning, while `enabled` refuses to run it.
+Successful verification requires provenance information, which currently means
+servers from the ToolHive registry. A custom image without provenance data is
+treated as a verification failure, so the modes diverge: `warn` runs the server
+with a warning, while `enabled` refuses to run it.
 
 :::
 
@@ -987,10 +990,11 @@ previously exported configurations. This is useful for:
 
 ### Export a server configuration
 
-To export a server's configuration to a file, use the
-[`thv export`](../reference/cli/thv_export.md) command. The `--format` flag
-controls the output format and accepts two values: `json` (the default) and
-`k8s`.
+To export the saved run configuration of a server you've already created, use
+the [`thv export`](../reference/cli/thv_export.md) command. ToolHive exports the
+stored configuration of an existing workload, so the server must have been run
+or created first. The `--format` flag controls the output format and accepts two
+values: `json` (the default) and `k8s`.
 
 ```bash
 thv export <server-name> <output-file> [--format json|k8s]
@@ -1038,12 +1042,14 @@ spec:
   proxyMode: streamable-http
 ```
 
-Some settings can't be represented inline in the `MCPServer` resource and aren't
-included in the exported manifest. If the server uses any of the following,
-`thv export` prints a warning and you must configure these separately before
-applying the manifest:
+Some settings aren't included in the exported manifest, because their values
+live outside the run configuration or require a separate resource. If the server
+uses any of the following, `thv export` prints a warning and you must configure
+these separately before applying the manifest:
 
-- **Secrets**: create the corresponding Kubernetes secrets in your cluster.
+- **Secrets**: create the corresponding Kubernetes Secret objects in your
+  cluster, then reference them from the `MCPServer` under `spec.secrets` (each
+  entry takes a secret `name`, a `key`, and an optional `targetEnvName`).
 - **OIDC authentication**: create an `MCPOIDCConfig` resource and add an
   `oidcConfigRef` to the `MCPServer`.
 - **Telemetry**: create an `MCPTelemetryConfig` resource and add a
