@@ -238,6 +238,109 @@ to ensure the server functions correctly.
 
 :::
 
+### Enable audit logging
+
+ToolHive can record an audit trail of the MCP activity that flows through a
+server's proxy. Audit events capture interactions such as client initialization,
+`tools/list` and `tools/call` requests, resource reads, prompt requests, and
+notifications, along with metadata like the timestamp, component name, and
+outcome.
+
+To turn on audit logging with ToolHive's built-in defaults, use the
+`--enable-audit` flag:
+
+```bash
+thv run --enable-audit <SERVER>
+```
+
+The default configuration records each event type but omits the request and
+response payloads to protect potentially sensitive data. Audit events are
+written to the server's logs, so you can view them with `thv logs`:
+
+```bash
+thv logs <SERVER_NAME>
+```
+
+Each event is emitted as a JSON object on its own line, which makes the output
+easy to filter or forward to a log aggregator.
+
+For finer control, supply your own configuration file with the `--audit-config`
+flag instead:
+
+```bash
+thv run --audit-config ./audit.json <SERVER>
+```
+
+A configuration file lets you select which event types to record with
+`eventTypes` (or exclude specific types with `excludeEventTypes`), choose
+whether to include request or response data, and set where to send the audit
+log. For example:
+
+```json title="audit.json"
+{
+  "component": "fetch-server",
+  "eventTypes": ["mcp_tool_call", "mcp_resource_read"],
+  "includeRequestData": true,
+  "includeResponseData": false,
+  "maxDataSize": 2048,
+  "logFile": "./fetch-audit.log"
+}
+```
+
+When you set `logFile`, ToolHive appends audit events to that file instead of
+the server's standard logs. Use a path that the user running `thv` can write to.
+Leave it unset to keep events in the logs viewed by `thv logs`.
+
+:::note
+
+Use either flag to turn on audit logging: `--enable-audit` for the built-in
+defaults, or `--audit-config` to load your own settings. `--audit-config`
+enables auditing on its own, so you don't need to pass `--enable-audit` as well.
+
+:::
+
+Setting `includeRequestData` or `includeResponseData` to `true` can capture
+sensitive arguments or results in the audit log. Enable these options only when
+you understand the privacy implications, and adjust `maxDataSize` to limit how
+much of each payload is recorded.
+
+### Verify container image signatures
+
+For MCP servers that run from a container image, ToolHive can check the image's
+signature and provenance before launching it. Some registry servers publish
+provenance information that ToolHive uses to confirm the image was built and
+signed as expected. To see whether a given server has it, check the
+`Has Provenance` field in the output of `thv registry info <SERVER_NAME>`.
+
+Use the `--image-verification` flag to control this behavior. It accepts three
+values:
+
+- `warn` (default): verify the image and log a warning if verification fails or
+  the server has no provenance information, but run the server anyway.
+- `enabled`: verify the image and refuse to run the server if verification fails
+  or no provenance information is available.
+- `disabled`: skip image verification entirely.
+
+```bash
+thv run --image-verification enabled <SERVER>
+```
+
+For example, to enforce verification when running the `fetch` server:
+
+```bash
+thv run --image-verification enabled fetch
+```
+
+:::note
+
+Verification succeeds only for servers that include provenance information, and
+not every server does. When a server has no provenance data, `warn` runs it with
+a warning while `enabled` declines to run it. If you set `enabled`, keep in mind
+that it stops servers without provenance, not only servers that fail
+verification.
+
+:::
+
 ### Run a server on a specific port
 
 ToolHive creates a reverse proxy on a random port that forwards requests to the
@@ -889,14 +992,22 @@ previously exported configurations. This is useful for:
 
 ### Export a server configuration
 
-To export a running server's configuration to a file, use the
-[`thv export`](../reference/cli/thv_export.md) command:
+To export the saved run configuration of a server you've already created, use
+the [`thv export`](../reference/cli/thv_export.md) command. ToolHive exports the
+stored configuration of an existing workload, so the server must have been run
+or created first. The `--format` flag controls the output format and accepts two
+values: `json` (the default) and `k8s`.
 
 ```bash
-thv export <server-name> <output-file>
+thv export <server-name> <output-file> [--format json|k8s]
 ```
 
-For example, to export the configuration of a running server named "fetch":
+#### Export as ToolHive configuration (JSON)
+
+By default, `thv export` writes a ToolHive run configuration as JSON. This is
+the format you use with `thv run --from-config` to recreate the same server.
+
+For example, to export the configuration of a server named "fetch":
 
 ```bash
 thv export fetch ./fetch-config.json
@@ -909,6 +1020,50 @@ This creates a JSON file containing all the server's configuration, including:
 - Volume mounts and permissions
 - Network settings
 - Transport configuration
+
+#### Export as a Kubernetes resource
+
+To deploy the same server with the ToolHive Kubernetes operator, export it as an
+`MCPServer` custom resource by setting `--format k8s`:
+
+```bash
+thv export fetch ./fetch.yaml --format k8s
+```
+
+This generates a YAML manifest that you can apply to a cluster running the
+operator:
+
+```yaml title="fetch.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: fetch
+spec:
+  image: ghcr.io/stackloklabs/gofetch/server:latest
+  transport: stdio
+  proxyMode: streamable-http
+```
+
+Some settings aren't included in the exported manifest, because their values
+live outside the run configuration or require a separate resource. If the server
+uses any of the following, `thv export` prints a warning and you must configure
+these separately before applying the manifest:
+
+- **Secrets**: create the corresponding Kubernetes Secret objects in your
+  cluster, then reference them from the `MCPServer` under `spec.secrets` (each
+  entry takes a secret `name`, a `key`, and an optional `targetEnvName`).
+- **OIDC authentication**: create an `MCPOIDCConfig` resource and add an
+  `oidcConfigRef` to the `MCPServer`.
+- **Telemetry**: create an `MCPTelemetryConfig` resource and add a
+  `telemetryConfigRef` to the `MCPServer`.
+
+`thv export` doesn't support exporting remote MCP servers to Kubernetes. To run
+a remote server with the operator, configure an
+[`MCPRemoteProxy`](../guides-k8s/remote-mcp-proxy.mdx) resource directly.
+
+See [Run MCP servers in Kubernetes](../guides-k8s/run-mcp-k8s.mdx) and the
+[`MCPServer` CRD reference](../reference/crds/mcpserver.mdx) for details on
+deploying and configuring servers with the operator.
 
 ### Run a server from an exported configuration
 
