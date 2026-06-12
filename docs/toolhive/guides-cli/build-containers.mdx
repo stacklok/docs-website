@@ -371,6 +371,79 @@ thv config set-build-env GOPRIVATE "github.com/mycompany/*"
 thv config set-build-env PIP_INDEX_URL https://pypi.corp.example.com/simple
 ```
 
+#### Authenticate to private registries
+
+Private registries usually require credentials such as an authentication token
+or API key. Don't pass these as literal values, because literal values are
+stored in plaintext in ToolHive's configuration file. Instead, supply the
+credential from a [ToolHive secret](./secrets-management.mdx) or from the shell
+environment so that only a reference is stored. ToolHive resolves the value at
+build time and injects it into the builder stage of the multi-stage Docker
+build, so the credential never appears in the final image.
+
+To reference a stored secret, use the `--from-secret` flag. Pass two positional
+arguments: the environment variable name the package manager expects, followed
+by the name of the secret. The `--from-secret` flag tells ToolHive to treat the
+second argument as a secret reference rather than a literal value. The secret
+must already exist; ToolHive validates it when you run the command:
+
+```bash
+# Store the credential as a ToolHive secret (enter the value when prompted)
+thv secret set artifactory-token
+
+# Reference it by name when setting the build environment variable
+thv config set-build-env ARTIFACTORY_API_KEY --from-secret artifactory-token
+```
+
+To read the credential from the shell at build time, use the `--from-env` flag
+with no value. ToolHive reads the variable of the same name from your
+environment when you run `thv build`. This is useful in CI/CD pipelines that
+inject credentials as environment variables:
+
+```bash
+thv config set-build-env GITHUB_TOKEN --from-env
+```
+
+:::tip
+
+Use `thv config get-build-env` to review your configured build environment
+variables. Secret-backed and shell-backed values are shown as references
+(`<from-secret:NAME>` or `<from-env>`), never as resolved values.
+
+:::
+
+#### Authenticate with a credential file
+
+Some package managers read credentials from a configuration file instead of an
+environment variable, such as `.npmrc` for npm or `.netrc` for pip and Go. Use
+`thv config set-build-auth-file` to store one of these files and have ToolHive
+inject it into the build. The supported file types are `npmrc`, `netrc`, and
+`yarnrc`.
+
+Pass the file content as the second argument:
+
+```bash
+thv config set-build-auth-file npmrc '//npm.corp.example.com/:_authToken=<TOKEN>'
+```
+
+To avoid recording the credential in your shell history, read the content from
+standard input with the `--stdin` flag instead:
+
+```bash
+thv config set-build-auth-file npmrc --stdin < ~/.npmrc
+```
+
+ToolHive stores the file content in its secrets manager and keeps only a
+reference in your configuration, so the credentials never appear in plaintext.
+At build time, ToolHive resolves the file and injects it into the builder stage
+of the multi-stage Docker build, not the final image. This requires a configured
+secrets provider; see [Secrets management](./secrets-management.mdx) to set one
+up.
+
+Review or remove configured files with `thv config get-build-auth-file` (which
+hides content by default unless you pass `--show-content`) and
+`thv config unset-build-auth-file`.
+
 ### Build local Go projects
 
 Build MCP servers from local Go projects:
