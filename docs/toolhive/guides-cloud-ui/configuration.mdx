@@ -1,0 +1,114 @@
+---
+title: Cloud UI configuration
+sidebar_label: Configuration
+description:
+  Configure environment variables and OIDC authentication for the ToolHive Cloud
+  UI.
+---
+
+This guide covers the environment variables and OIDC settings that the ToolHive
+Cloud UI reads at startup. For end-to-end deployment steps on Kubernetes, see
+[Deploy the Cloud UI](./deployment.mdx).
+
+## Environment variables
+
+The Cloud UI is configured entirely through environment variables. The Helm
+chart does not expose these settings as individual values, so you always pass
+them as container environment variables: reference a Kubernetes Secret from
+`envFrom` (recommended) or list them under the chart's `env` value.
+
+### Required variables
+
+| Variable             | Description                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `OIDC_ISSUER_URL`    | Issuer URL of your OIDC provider (for example, `https://your-org.okta.com`)                                   |
+| `OIDC_CLIENT_ID`     | OAuth2 client ID registered with your OIDC provider                                                           |
+| `OIDC_CLIENT_SECRET` | OAuth2 client secret for the registered client                                                                |
+| `BETTER_AUTH_SECRET` | Secret used to encrypt session tokens. Generate one with `openssl rand -base64 32`                            |
+| `BETTER_AUTH_URL`    | Public URL where the Cloud UI is reachable (for example, `https://cloud-ui.example.com`)                      |
+| `API_BASE_URL`       | URL of the Registry Server API (for example, `http://my-registry-api.toolhive-system.svc.cluster.local:8080`) |
+
+### Optional variables
+
+| Variable          | Description                                                                                                      |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`    | PostgreSQL connection string for the auth database. When omitted, the Cloud UI uses an in-memory SQLite database |
+| `TRUSTED_ORIGINS` | Comma-separated list of allowed CORS origins                                                                     |
+
+:::warning
+
+The default in-memory SQLite database is not suitable for production. Sessions
+are lost on pod restart and can't be shared across replicas. For multi-replica
+deployments or any non-evaluation environment, set `DATABASE_URL` to point at a
+managed PostgreSQL instance.
+
+:::
+
+## Configure OIDC authentication
+
+The Cloud UI delegates authentication to an external OIDC provider using
+[Better Auth](https://www.better-auth.com/). It works with any
+standards-compliant provider, including Okta, Microsoft Entra ID, Auth0, and
+Keycloak.
+
+To configure your provider:
+
+1. Register a new OAuth2 / OIDC application in your identity provider.
+2. Set the redirect URI to `<BETTER_AUTH_URL>/api/auth/callback/oidc` (for
+   example, `https://cloud-ui.example.com/api/auth/callback/oidc`).
+3. Request the `openid`, `profile`, and `email` scopes.
+4. Copy the issuer URL, client ID, and client secret into a Kubernetes Secret as
+   described in [Deploy the Cloud UI](./deployment.mdx).
+
+## Helm chart values
+
+The application settings above are not first-class chart values. Pass them as
+container environment variables through `envFrom` (recommended) or `env`, as
+shown in [Deploy the Cloud UI](./deployment.mdx). The chart's remaining values
+configure the Kubernetes Deployment and Service:
+
+| Value                                             | Default                                        | Description                                               |
+| ------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------- |
+| `replicaCount`                                    | `1`                                            | Number of Cloud UI pods                                   |
+| `image.cloudUiImage`                              | Chart's release image and tag                  | Container image to deploy                                 |
+| `image.pullPolicy`                                | `IfNotPresent`                                 | Image pull policy                                         |
+| `imagePullSecrets`                                | `[]`                                           | Secrets for pulling from a private registry               |
+| `env`                                             | `[]`                                           | Inline environment variables as `name`/`value` pairs      |
+| `envFrom`                                         | `[]`                                           | Environment variables sourced from ConfigMaps or Secrets  |
+| `service.type`                                    | `ClusterIP`                                    | Service type (`ClusterIP`, `NodePort`, or `LoadBalancer`) |
+| `service.port`                                    | `80`                                           | Service port                                              |
+| `service.targetPort`                              | `3000`                                         | Container port the Service targets                        |
+| `service.nodePort`                                | `null`                                         | Node port, used only when `service.type` is `NodePort`    |
+| `resources`                                       | `100m`/`128Mi` requests, `500m`/`512Mi` limits | CPU and memory requests and limits                        |
+| `autoscaling.enabled`                             | `false`                                        | Enable the Horizontal Pod Autoscaler (HPA)                |
+| `autoscaling.minReplicas` / `maxReplicas`         | `1` / `5`                                      | HPA replica bounds                                        |
+| `autoscaling.targetCPUUtilizationPercentage`      | `80`                                           | HPA target CPU utilization                                |
+| `startupProbe`, `livenessProbe`, `readinessProbe` | HTTP `GET /`                                   | Health probe configuration                                |
+| `podSecurityContext` / `securityContext`          | Non-root, UID 1001                             | Pod and container security contexts                       |
+| `serviceAccount.create`                           | `false`                                        | Whether to create a ServiceAccount                        |
+| `podAnnotations` / `podLabels`                    | `{}`                                           | Extra annotations and labels on pods                      |
+| `volumes` / `volumeMounts`                        | `[]`                                           | Additional volumes and volume mounts                      |
+| `nodeSelector` / `tolerations` / `affinity`       | `{}` / `[]` / `{}`                             | Pod scheduling controls                                   |
+
+Refer to the chart's
+[`values.yaml`](https://github.com/stacklok/toolhive-cloud-ui/blob/main/helm/values.yaml)
+for the full set of configurable parameters and their defaults.
+
+:::info
+
+The chart does not ship an Ingress or HTTPRoute template. Because it creates a
+standard ClusterIP Service, you can expose the Cloud UI with an Ingress, a
+Gateway API HTTPRoute, or a Service of type `LoadBalancer` or `NodePort`. See
+[Step 4 of the deployment guide](./deployment.mdx#step-4-expose-the-cloud-ui)
+for an Ingress example.
+
+:::
+
+## Next steps
+
+- [Deploy the Cloud UI](./deployment.mdx) end-to-end on Kubernetes if you
+  haven't already.
+- [Publish servers](../guides-registry/publish-servers.mdx) to populate your
+  catalog with MCP server entries.
+- Set up [Registry Server authentication](../guides-registry/authentication.mdx)
+  to control access to the catalog API the Cloud UI reads from.

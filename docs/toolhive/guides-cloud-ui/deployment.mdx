@@ -1,0 +1,287 @@
+---
+title: Deploy the Cloud UI
+sidebar_label: Deploy on Kubernetes
+description:
+  Deploy the ToolHive Cloud UI on Kubernetes alongside a Registry Server, with
+  OIDC authentication.
+---
+
+This guide deploys the ToolHive Cloud UI on a Kubernetes cluster using the Cloud
+UI Helm chart, which ToolHive publishes to GitHub Container Registry (GHCR) from
+the [`toolhive-cloud-ui`](https://github.com/stacklok/toolhive-cloud-ui)
+repository. The Cloud UI requires both a running Registry Server and an OIDC
+identity provider, so make sure you have both available before you begin.
+
+## Prerequisites
+
+Before starting, make sure you have:
+
+- A running Kubernetes cluster (v1.24+). The
+  [Registry Server quickstart](../guides-registry/quickstart.mdx) walks through
+  a local kind cluster you can reuse.
+- A **Registry Server** reachable from the cluster. If you don't have one yet,
+  complete the [Registry Server quickstart](../guides-registry/quickstart.mdx)
+  first. Take note of the in-cluster Service name and port (the quickstart
+  exposes `my-registry-api:8080` in the `toolhive-system` namespace).
+- An **OIDC application** registered with your identity provider (Okta,
+  Microsoft Entra ID, Auth0, Keycloak, or any standards-compliant provider).
+  You'll need the issuer URL, client ID, and client secret.
+- [`kubectl`](https://kubernetes.io/docs/tasks/tools/) and
+  [Helm](https://helm.sh/docs/intro/install/) v3.10+ installed locally.
+
+:::tip[Don't have an OIDC provider yet?]
+
+If you want to evaluate the Cloud UI without setting up a real identity provider
+(IdP), the `toolhive-cloud-ui` repository includes a mock OIDC provider for
+local development. See the
+[repository README](https://github.com/stacklok/toolhive-cloud-ui#development-modes)
+for details. Use the Kubernetes path below for any environment beyond local
+evaluation.
+
+:::
+
+## Step 1: Register the OIDC application
+
+In your identity provider, create a new OAuth2 / OIDC application with the
+following settings:
+
+- **Application type**: Web application
+- **Redirect URI**: `<CLOUD_UI_URL>/api/auth/callback/oidc`, where
+  `<CLOUD_UI_URL>` is the public URL where you plan to expose the Cloud UI (for
+  example, `https://cloud-ui.example.com/api/auth/callback/oidc`). You'll set
+  this same public URL as `BETTER_AUTH_URL` in
+  [Step 2](#step-2-create-a-namespace-and-oidc-secret).
+- **Scopes**: `openid`, `profile`, `email`
+
+Copy the **issuer URL**, **client ID**, and **client secret** that your provider
+returns. You'll reference them in the next step.
+
+## Step 2: Create a namespace and OIDC Secret
+
+Create a namespace for the Cloud UI and a Kubernetes Secret that holds the
+sensitive configuration. Storing credentials in a Secret keeps them out of your
+Helm values file and chart history.
+
+```bash
+kubectl create namespace cloud-ui
+```
+
+```bash
+kubectl create secret generic cloud-ui-config \
+  -n cloud-ui \
+  --from-literal=OIDC_ISSUER_URL=https://your-org.okta.com \
+  --from-literal=OIDC_CLIENT_ID=<CLIENT_ID> \
+  --from-literal=OIDC_CLIENT_SECRET=<CLIENT_SECRET> \
+  --from-literal=BETTER_AUTH_SECRET=$(openssl rand -base64 32) \
+  --from-literal=BETTER_AUTH_URL=https://cloud-ui.example.com \
+  --from-literal=API_BASE_URL=http://my-registry-api.toolhive-system.svc.cluster.local:8080
+```
+
+Replace the placeholder values:
+
+- `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`: values from
+  [Step 1](#step-1-register-the-oidc-application).
+- `BETTER_AUTH_URL`: the public URL where users will reach the Cloud UI.
+- `API_BASE_URL`: the in-cluster URL of the Registry Server Service. If you
+  followed the [Registry Server quickstart](../guides-registry/quickstart.mdx),
+  it's `http://my-registry-api.toolhive-system.svc.cluster.local:8080`.
+
+See [Configuration](./configuration.mdx) for the full list of supported
+environment variables.
+
+## Step 3: Install the Helm chart
+
+Install the chart and reference the Secret you just created with `envFrom`:
+
+```bash title="Install the Cloud UI"
+helm install cloud-ui \
+  oci://ghcr.io/stacklok/toolhive-cloud-ui/toolhive-cloud-ui \
+  --namespace cloud-ui \
+  --set fullnameOverride=cloud-ui \
+  --set envFrom[0].secretRef.name=cloud-ui-config
+```
+
+The `fullnameOverride=cloud-ui` flag names the Deployment and Service `cloud-ui`
+so they match the commands in the rest of this guide. Without it, the chart
+prefixes resources with the release name (for example,
+`cloud-ui-toolhive-cloud-ui`).
+
+This installs the latest published chart. To pin a specific version, add
+`--version <CHART_VERSION>`.
+
+Wait for the pod to become ready:
+
+```bash
+kubectl rollout status deployment/cloud-ui -n cloud-ui --timeout=120s
+```
+
+:::info[What the chart deploys]
+
+The chart deploys the Cloud UI as a single-replica Deployment with a ClusterIP
+Service on port 80 that targets the container on port 3000. The container reads
+all OIDC and Registry Server settings from the Secret you mounted with
+`envFrom`. Check `helm/values.yaml` in the repository for the full set of
+configurable parameters (replicas, resources, probes, HPA, security context).
+
+:::
+
+## Step 4: Expose the Cloud UI
+
+The chart creates a ClusterIP Service by default. To make the Cloud UI reachable
+from a browser, choose one of the following options.
+
+### Option A: Port-forward (testing only)
+
+For testing, forward the Service port to your local machine:
+
+```bash
+kubectl port-forward svc/cloud-ui 3000:80 -n cloud-ui
+```
+
+Open `http://localhost:3000` in your browser. For this to work end-to-end, set
+`BETTER_AUTH_URL=http://localhost:3000` and register the matching redirect URI
+(`http://localhost:3000/api/auth/callback/oidc`) in your OIDC application.
+
+### Option B: Ingress or Gateway API (recommended for shared environments)
+
+The chart creates a standard ClusterIP Service, so you can expose it the same
+way as any other web application: with an Ingress, the Gateway API, or a
+`LoadBalancer` Service. The chart does not ship an Ingress or HTTPRoute
+template, so create the routing resource yourself.
+
+The following Ingress example uses Traefik and assumes you already have an
+Ingress controller and a TLS certificate configured:
+
+```yaml title="cloud-ui-ingress.yaml"
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cloud-ui
+  namespace: cloud-ui
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - cloud-ui.example.com
+      secretName: cloud-ui-tls
+  rules:
+    - host: cloud-ui.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-ui
+                port:
+                  number: 80
+```
+
+Apply the manifest:
+
+```bash
+kubectl apply -f cloud-ui-ingress.yaml
+```
+
+To expose the Cloud UI through the Gateway API instead, or for help configuring
+TLS certificates, see
+[Connect clients to MCP servers](../guides-k8s/connect-clients.mdx), which
+covers both the Ingress and Gateway API patterns in depth.
+
+Make sure the host matches `BETTER_AUTH_URL` and the registered redirect URI in
+your IdP.
+
+## Step 5: Sign in
+
+Open the Cloud UI in your browser. You'll land on a welcome page with a **Sign
+in** button. Select it to go to your OIDC provider's sign-in page. After you
+sign in successfully, the provider redirects you back to the Cloud UI's
+`/catalog` page where you can:
+
+- Browse MCP servers registered in your Registry Server
+- View server details and connection information
+- Copy server URLs into your AI agents or MCP clients
+
+If sign-in fails, see the [Troubleshooting](#troubleshooting) section below.
+
+## Uninstall the Cloud UI
+
+To remove the Cloud UI deployment:
+
+```bash
+helm uninstall cloud-ui -n cloud-ui
+kubectl delete namespace cloud-ui
+```
+
+This leaves the Registry Server and your IdP application untouched.
+
+## Next steps
+
+- [Cloud UI configuration](./configuration.mdx) covers every supported
+  environment variable, including optional persistence with PostgreSQL and CORS
+  origins.
+- [Publish servers](../guides-registry/publish-servers.mdx) to populate the
+  catalog that the Cloud UI displays.
+- [Set up Registry Server authentication](../guides-registry/authentication.mdx)
+  to protect the catalog API the Cloud UI reads from.
+
+## Related information
+
+- [Registry Server quickstart](../guides-registry/quickstart.mdx) - deploy the
+  backend the Cloud UI depends on
+- [Deploy the Registry Server](../guides-registry/deployment.mdx) - production
+  deployment patterns for the Registry Server
+
+## Troubleshooting
+
+<details>
+<summary>Sign-in redirects to the IdP but never returns to the Cloud UI</summary>
+
+The most common cause is a mismatch between the redirect URI registered in your
+IdP and the value the Cloud UI sends. Confirm that:
+
+- `BETTER_AUTH_URL` in the Secret matches the public URL the browser uses to
+  reach the Cloud UI (scheme, host, and port).
+- The redirect URI registered in your IdP is exactly
+  `<BETTER_AUTH_URL>/api/auth/callback/oidc`.
+
+Restart the pod after changing the Secret so the new values take effect:
+
+```bash
+kubectl rollout restart deployment/cloud-ui -n cloud-ui
+```
+
+</details>
+
+<details>
+<summary>Catalog page shows no MCP servers</summary>
+
+The Cloud UI talks to the Registry Server through `API_BASE_URL`. If the catalog
+is empty:
+
+1. Confirm the Registry Server is reachable from inside the cluster:
+
+   ```bash
+   kubectl run curl --rm -it --image=curlimages/curl --restart=Never -- \
+     curl -s http://my-registry-api.toolhive-system.svc.cluster.local:8080/registry/default/v0.1/servers
+   ```
+
+2. Confirm the registry has at least one server published. See
+   [Publish servers](../guides-registry/publish-servers.mdx).
+
+</details>
+
+<details>
+<summary>Pod fails to start with missing environment variable errors</summary>
+
+The Cloud UI requires all six environment variables listed in
+[Step 2](#step-2-create-a-namespace-and-oidc-secret). Confirm the Secret
+contains every key:
+
+```bash
+kubectl describe secret cloud-ui-config -n cloud-ui
+```
+
+Recreate the Secret with the missing keys, then restart the deployment.
+
+</details>
