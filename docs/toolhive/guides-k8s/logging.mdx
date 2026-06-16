@@ -7,8 +7,10 @@ description:
 
 ToolHive provides structured JSON logging for MCP servers in Kubernetes, giving
 you detailed operational insights and compliance audit trails. You can configure
-log levels, enable audit logging for tracking MCP operations, and integrate with
-common log collection systems like Fluentd, Filebeat, and Splunk.
+log levels, enable audit logging for tracking MCP operations, and ship the logs
+with collectors like Fluent Bit, Grafana Alloy, or the OpenTelemetry Collector
+to the analysis system you already use, such as the Elastic Stack (ELK), Splunk,
+or Datadog.
 
 ## Overview
 
@@ -36,7 +38,7 @@ flowchart TB
     ELK["ELK stack"]
     Splunk["Splunk"]
     Datadog["Datadog"]
-    Etc["...other collectors"]
+    Etc["...other systems"]
   end
 
   Op --> Stdout
@@ -154,7 +156,7 @@ request from an MCPServer resource:
 ```json
 {
   "time": "2024-01-01T12:00:00.123456789Z",
-  "level": "INFO+2",
+  "level": "AUDIT",
   "msg": "audit_event",
   "audit_id": "550e8400-e29b-41d4-a716-446655440000",
   "type": "mcp_tool_call",
@@ -226,7 +228,7 @@ configured, the `user_id` field is set to `local`.
 | Field                        | Type   | Description                                                             |
 | ---------------------------- | ------ | ----------------------------------------------------------------------- |
 | `time`                       | string | Timestamp when the log was generated                                    |
-| `level`                      | string | Log level (INFO+2 for audit events)                                     |
+| `level`                      | string | Log level (`AUDIT` for audit events)                                    |
 | `msg`                        | string | Always "audit_event" for audit logs                                     |
 | `audit_id`                   | string | Unique identifier for the audit event                                   |
 | `type`                       | string | Type of MCP operation (see event types below)                           |
@@ -271,111 +273,245 @@ configured, the `user_id` field is set to `local`.
 ## Set up log collection
 
 ToolHive outputs structured JSON logs that work with your existing log
-collection infrastructure. The examples below show basic host-based
-configurations for common log collectors. Adapt these patterns to match your
-organization's logging setup.
+collection infrastructure. Before configuring a collector, identify which pods
+and containers to target, then route their logs to your observability backend.
 
-:::note[Prerequisites]
+### Identify the namespace and containers
 
-These examples assume:
+By default, the operator and its workloads run in the `toolhive-system`
+namespace, but this varies by installation. Confirm the namespace and list the
+pods running in it:
 
-- Container logs are available at `/var/log/pods/`
-- You have a standard Kubernetes logging setup
-- Deployment manifests are handled separately
-- You're using host-based log collection
+```bash
+kubectl get pods -n toolhive-system
+```
+
+ToolHive pods use different container names depending on the component, and not
+every container emits JSON:
+
+| Component                                        | Container  | Output                                   |
+| ------------------------------------------------ | ---------- | ---------------------------------------- |
+| MCP server proxy (`MCPServer`, `MCPRemoteProxy`) | `toolhive` | Structured JSON, including audit events  |
+| Virtual MCP server (`VirtualMCPServer`)          | `vmcp`     | Structured JSON, including audit events  |
+| MCP server process                               | `mcp`      | Raw MCP server stdout (often plain text) |
+
+Target the `toolhive` and `vmcp` containers for JSON log collection. The `mcp`
+container passes through whatever the MCP server writes to stdout, so pointing a
+JSON parser at it produces parse failures whenever that output is plain text.
+
+On a standard Kubernetes node, container logs are symlinked under
+`/var/log/containers/` using the pattern
+`<POD>_<NAMESPACE>_<CONTAINER>-<ID>.log`. To match only the JSON-emitting
+containers in the `toolhive-system` namespace, target:
+
+```text
+/var/log/containers/*_toolhive-system_toolhive-*.log
+/var/log/containers/*_toolhive-system_vmcp-*.log
+```
+
+:::note[Audit events use a custom log level]
+
+Audit events are logged at a custom `AUDIT` level (`"level": "AUDIT"` in the
+JSON output), which sits between `INFO` and `WARN` so audit events stay distinct
+from regular application logs.
+
+Because `AUDIT` is not one of the standard level names that log aggregators
+detect automatically (`debug`, `info`, `warn`, `error`, and so on), audit events
+appear with an undetected or `unknown` level in views like Grafana's Explore
+Logs. Filter on an explicit `level = "AUDIT"` label or on the
+`msg = "audit_event"` field rather than relying on automatic level detection.
 
 :::
 
 :::tip[Use your existing collection methods]
 
-If your organization uses sidecar-based or operator-based log collection (such
-as Fluent Bit sidecars or the Fluentd Operator), adapt these configuration
-patterns to work with your existing infrastructure.
+The examples below run each collector as a `DaemonSet` that tails container logs
+from each node. If your organization uses sidecar-based or operator-based log
+collection, adapt these patterns to match your existing infrastructure.
 
 :::
 
-### Configure Fluentd
+### Fluent Bit
 
-```text
-# fluentd.conf
-<source>
-  @type tail
-  path /var/log/pods/*toolhive*.log
-  tag toolhive
-  read_from_head true
-  <parse>
-    @type json
-    time_key time
-    time_format %Y-%m-%dT%H:%M:%S.%NZ
-  </parse>
-</source>
+[Fluent Bit](https://fluentbit.io/) is a lightweight, widely deployed log
+processor with first-class support for the container (CRI) log format and JSON
+parsing. The following [Helm chart](https://github.com/fluent/helm-charts)
+values define a complete pipeline that tails the ToolHive containers, enriches
+records with Kubernetes metadata, promotes the JSON log fields to the top level,
+and ships everything to Grafana Loki:
 
-# Route standard logs
-<match toolhive>
-  @type elasticsearch
-  host elasticsearch.logging.svc.cluster.local
-  port 9200
-  index_name toolhive
-</match>
+```yaml title="fluent-bit-values.yaml"
+luaScripts:
+  add_service.lua: |
+    function add_service(tag, timestamp, record)
+      if record["kubernetes"] ~= nil then
+        record["service"] = record["kubernetes"]["container_name"]
+      end
+      return 1, timestamp, record
+    end
 
-# Route audit logs (entries that contain audit_id) to a separate index
-<filter toolhive>
-  @type grep
-  <regexp>
-    key audit_id
-    pattern .+
-  </regexp>
-  @label @AUDIT
-</filter>
+config:
+  inputs: |
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        # Target the toolhive (MCP proxy) and vmcp (Virtual MCP) containers.
+        # Both emit structured JSON covering audit and application logs.
+        Path              /var/log/containers/*_toolhive-system_toolhive-*.log,/var/log/containers/*_toolhive-system_vmcp-*.log
+        Parser            cri
+        DB                /var/log/flb-toolhive.db
+        Mem_Buf_Limit     5MB
+        Skip_Long_Lines   On
 
-<label @AUDIT>
-  <match **>
-    @type elasticsearch
-    host elasticsearch.logging.svc.cluster.local
-    port 9200
-    index_name toolhive-audit
-  </match>
-</label>
+  filters: |
+    [FILTER]
+        Name              kubernetes
+        Match             kube.*
+        Kube_Tag_Prefix   kube.var.log.containers.
+        Labels            Off
+        Annotations       Off
+
+    [FILTER]
+        # Add a `service` label (= container name) for Grafana drilldown grouping
+        Name    lua
+        Match   kube.*
+        script  /fluent-bit/scripts/add_service.lua
+        call    add_service
+
+    [FILTER]
+        # Parse the JSON content from the `message` field set by the CRI parser
+        # and promote its fields (level, msg, audit_id, ...) to the top level.
+        # Reserve_Data keeps non-JSON lines (such as plain-text output) intact.
+        Name              parser
+        Match             kube.*
+        Key_Name          message
+        Parser            toolhive_json
+        Reserve_Data      True
+        Preserve_Key      False
+
+  customParsers: |
+    [PARSER]
+        # No Time_Key: the CRI parser already set the timestamp from the log prefix.
+        Name        toolhive_json
+        Format      json
+
+  outputs: |
+    [OUTPUT]
+        Name              loki
+        Match             kube.*
+        Host              loki.observability.svc
+        Port              3100
+        Labels            job=toolhive
+        Label_Keys        $kubernetes['namespace_name'],$kubernetes['pod_name'],$kubernetes['container_name'],$service
+        Auto_Kubernetes_Labels Off
+        # Drop internal CRI and Fluent Bit fields that add noise to the log body
+        Remove_Keys       logtag,stream,kubernetes
 ```
 
-### Configure Filebeat
+The second JSON `parser` filter is the critical stage. Without it, the
+structured fields (including `level`) stay nested inside the raw log string and
+aren't available as top-level fields for filtering in Loki.
 
-```yaml
-filebeat.inputs:
-  - type: container
-    paths:
-      - /var/log/pods/*toolhive*.log
-    json.keys_under_root: true
-    json.add_error_key: true
+### Grafana Alloy
 
-output.elasticsearch:
-  hosts: ['${ELASTICSEARCH_HOST:elasticsearch}:${ELASTICSEARCH_PORT:9200}']
-  indices:
-    - index: 'toolhive-audit-%{+yyyy.MM.dd}'
-      when.has_fields: ['audit_id']
-    - index: 'toolhive-%{+yyyy.MM.dd}'
+[Grafana Alloy](https://grafana.com/docs/alloy/latest/) is Grafana's current
+recommended collector (it supersedes Promtail) and a natural companion to Loki.
+This configuration discovers the ToolHive containers, parses their JSON, and
+promotes `level` to a label:
+
+```alloy title="config.alloy"
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+// Keep only the JSON-emitting toolhive and vmcp containers
+discovery.relabel "toolhive" {
+  targets = discovery.kubernetes.pods.targets
+
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    regex         = "toolhive-system"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    regex         = "toolhive|vmcp"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label  = "service"
+  }
+}
+
+loki.source.kubernetes "toolhive" {
+  targets    = discovery.relabel.toolhive.output
+  forward_to = [loki.process.toolhive.receiver]
+}
+
+loki.process "toolhive" {
+  forward_to = [loki.write.default.receiver]
+
+  // Promote the JSON `level` field to a label
+  stage.json {
+    expressions = { level = "level" }
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki.observability.svc:3100/loki/api/v1/push"
+  }
+}
 ```
 
-### Configure Splunk
+### OpenTelemetry Collector
 
-```ini
-# inputs.conf
-[monitor:///var/log/pods/*toolhive*]
-sourcetype = _json
-index = toolhive
+If you already run the
+[OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) as an
+observability hub, its `filelog` receiver can scrape the ToolHive container
+logs. This receiver is also the basis for the
+[Splunk Distribution of the OpenTelemetry Collector](https://help.splunk.com/en/splunk-observability-cloud/manage-data/splunk-distribution-of-the-opentelemetry-collector/get-started-with-the-splunk-distribution-of-the-opentelemetry-collector),
+Splunk's current recommended approach for Kubernetes log collection:
 
-# props.conf
-[_json]
-KV_MODE = json
-SHOULD_LINEMERGE = false
-TRANSFORMS-route_audit = route_audit
+```yaml title="otel-collector-config.yaml"
+receivers:
+  filelog:
+    include:
+      - /var/log/pods/toolhive-system_toolhive-*/toolhive/*.log
+      - /var/log/pods/toolhive-system_vmcp-*/vmcp/*.log
+    include_file_path: true
+    operators:
+      # Parse the container (CRI/containerd) log envelope
+      - type: container
+      # Promote the structured JSON fields (level, msg, audit_id, ...) to attributes
+      - type: json_parser
+        if: 'body matches "^{"'
 
-# transforms.conf
-[route_audit]
-REGEX = "audit_id":\s*".+"
-DEST_KEY = _MetaData:Index
-FORMAT = toolhive_audit
+service:
+  pipelines:
+    logs:
+      receivers: [filelog]
+      processors: [batch]
+      exporters: [otlp]
 ```
+
+Unlike the `/var/log/containers/` symlinks used in the examples above, the
+`filelog` receiver reads the `/var/log/pods/` directory layout directly. The
+receiver fits best when the Collector is already part of your stack; teams that
+need a dedicated, high-throughput log scraper often pair it with Fluent Bit or
+Grafana Alloy.
 
 ## Security considerations
 
