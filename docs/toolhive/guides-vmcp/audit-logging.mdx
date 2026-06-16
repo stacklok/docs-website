@@ -173,7 +173,7 @@ Each audit event is a structured JSON object with these fields:
 ```json
 {
   "time": "2025-02-02T15:45:30.123456789Z",
-  "level": "INFO+2",
+  "level": "AUDIT",
   "msg": "audit_event",
   "audit_id": "a3f2b8d1-4c5e-6789-abcd-ef0123456789",
   "type": "mcp_tool_call",
@@ -220,7 +220,7 @@ Each audit event is a structured JSON object with these fields:
 | Field       | Description                                               |
 | ----------- | --------------------------------------------------------- |
 | `time`      | Timestamp when the log was generated                      |
-| `level`     | Log level (INFO+2 for audit events)                       |
+| `level`     | Log level (`AUDIT` for audit events)                      |
 | `msg`       | Always "audit_event" for audit logs                       |
 | `audit_id`  | Unique identifier for this audit event                    |
 | `type`      | Event classification (what happened)                      |
@@ -232,6 +232,21 @@ Each audit event is a structured JSON object with these fields:
 | `target`    | Resource or operation targeted                            |
 | `metadata`  | Additional context (duration_ms, transport, backend_name) |
 | `data`      | Optional request and response payloads                    |
+
+:::note[Audit events use a custom log level]
+
+Audit events are logged at a custom `AUDIT` level (`"level": "AUDIT"` in the
+JSON output), which sits between `INFO` and `WARN` so audit events stay distinct
+from regular application logs.
+
+Because `AUDIT` is not one of the standard level names that log aggregators
+detect automatically (`debug`, `info`, `warn`, `error`, and so on), audit events
+appear with an undetected or `unknown` level in views like Grafana's Explore
+Logs. To filter for them, match the `level` field value `AUDIT` or the `msg`
+value `audit_event` directly. Matching `level` as a label or indexed field works
+only if your collector promotes that field from the JSON log line first.
+
+:::
 
 ## User identity in audit logs
 
@@ -270,8 +285,8 @@ spec:
       # logFile not specified = stdout
 ```
 
-This approach works well with log aggregation systems like Fluentd, Fluent Bit,
-or cloud provider log collectors (CloudWatch, Google Cloud Logging, Azure
+This approach works well with log aggregation systems like Fluent Bit, Grafana
+Alloy, or cloud provider log collectors (CloudWatch, Google Cloud Logging, Azure
 Monitor).
 
 ### Log to a file
@@ -392,11 +407,17 @@ kubectl logs -n toolhive-system -l app.kubernetes.io/instance=my-vmcp \
 
 When audit logs are written to stdout (the default), they integrate with
 standard Kubernetes log collection infrastructure. Your existing log collectors
-(Fluentd, Fluent Bit, Filebeat, Splunk forwarders) can parse the JSON audit
-events and route them to your observability backend.
+(Fluent Bit, Grafana Alloy, the OpenTelemetry Collector, and others) can parse
+the JSON audit events and route them to your observability backend.
 
-For detailed configuration examples and best practices for setting up log
-collection with Fluentd, Filebeat, Splunk, and other systems, see the
+vMCP pods run a single container named `vmcp`, which emits the structured JSON
+application and audit logs. Target this container in your collector
+configuration, for example with a log path glob like
+`/var/log/containers/*_<NAMESPACE>_vmcp-*.log`.
+
+For complete, working configuration examples for Fluent Bit, Grafana Alloy, and
+the OpenTelemetry Collector, including how to identify the right namespace and
+containers, see the
 [Kubernetes logging guide](../guides-k8s/logging.mdx#set-up-log-collection).
 
 ## Next steps
