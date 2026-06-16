@@ -138,6 +138,12 @@ a dedicated vMCP instance per team instead.
 
 :::
 
+Session affinity is also a performance optimization, not only a correctness
+mechanism. When a request lands on a pod that does not have the session cached,
+the session manager rebuilds it by reconnecting to all backends, which adds
+latency to that request (see [Per-pod session cache](#per-pod-session-cache)).
+Keeping a client routed to the same pod avoids repeated rebuilds.
+
 ## Capacity limits
 
 Review these limits before planning capacity for a vMCP deployment.
@@ -151,8 +157,16 @@ fails, and the next request for that session ID triggers a cache miss.
 
 When Redis session storage is configured, the session manager transparently
 rebuilds the session from stored metadata and reconnects to backends, so clients
-do not need to reinitialize. Without Redis, an evicted session is lost and the
-client must reinitialize.
+do not need to reinitialize. This rebuild is not free: reconnecting to every
+backend and reconstructing the routing table adds noticeable latency (typically
+a few hundred milliseconds) to the first request that lands on a pod without the
+session cached. Without Redis, an evicted session is lost and the client must
+reinitialize.
+
+The same rebuild cost applies on any cache miss, including when a request is
+routed to a pod that never held the session. This is the latency tradeoff of not
+using session affinity: see
+[When horizontal scaling is challenging](#when-horizontal-scaling-is-challenging).
 
 To serve more than 1,000 concurrent sessions per replica, add vMCP replicas and
 configure Redis session storage. Total capacity scales as `replicas × 1,000`.
