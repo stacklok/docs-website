@@ -591,6 +591,54 @@ Verify the route is configured:
 kubectl get httproute -n toolhive-system
 ```
 
+### MCPServer fields for ingress routing
+
+Three fields on the MCPServer spec control how the proxy presents its endpoint
+when it runs behind an ingress or load balancer. Set them so that the URLs the
+proxy generates match what external clients use.
+
+| Field                                                                   | What it does                                                                                                            | When to set it                                                                             |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `proxyMode`<br/>(`sse` \| `streamable-http`, default `streamable-http`) | Endpoint style for stdio servers: `/mcp` vs `/sse`                                                                      | Only when `transport` is `stdio`, to match your ingress paths and client transport setting |
+| `endpointPrefix`<br/>(string, no default)                               | Prepends a path prefix to the proxy's advertised endpoint URLs                                                          | When the ingress forwards a prefix without stripping it (for example, `/fetch/mcp`)        |
+| `trustProxyHeaders`<br/>(boolean, default `false`)                      | Builds endpoint URLs from `X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-Port`, and `X-Forwarded-Prefix` headers | When an ingress or load balancer terminates TLS or rewrites the host                       |
+
+These fields matter most for OAuth discovery and any flow where the proxy
+returns a URL to the client. If clients receive `http://` links or internal
+hostnames, `trustProxyHeaders` is usually the fix. If a stripped or added path
+prefix breaks discovery, reconcile `endpointPrefix` with your ingress rewrite
+behavior.
+
+This example uses a stdio-transport server behind path-based routing where the
+ingress preserves the `/fetch` prefix:
+
+```yaml title="fetch-server-ingress.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: fetch
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/gofetch/server:latest
+  transport: stdio
+  proxyMode: streamable-http
+  endpointPrefix: /fetch
+  trustProxyHeaders: true
+  proxyPort: 8080
+```
+
+With this configuration, the proxy advertises its endpoint as
+`https://mcp.example.com/fetch/mcp`, matching the external URL clients connect
+to.
+
+:::note
+
+If your ingress strips the path prefix before forwarding to the backend (the
+approach used in the path-based routing examples above), omit `endpointPrefix`.
+Setting it in that case would double the prefix in generated URLs.
+
+:::
+
 ### TLS certificates
 
 For production deployments, use valid TLS certificates from a trusted
