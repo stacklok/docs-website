@@ -58,7 +58,7 @@
           "type": "object"
         },
         "authzConfig": {
-          "description": "AuthzConfig defines authorization policy configuration for the MCP server",
+          "description": "AuthzConfig defines authorization policy configuration for the MCP server.\nAuthzConfig and AuthzConfigRef are mutually exclusive.",
           "properties": {
             "configMap": {
               "description": "ConfigMap references a ConfigMap containing authorization configuration\nOnly used when Type is \"configMap\"",
@@ -148,6 +148,20 @@
               "rule": "self.type == 'inline' ? has(self.inline) : !has(self.inline)"
             }
           ]
+        },
+        "authzConfigRef": {
+          "description": "AuthzConfigRef references a shared MCPAuthzConfig resource for authorization.\nThe referenced MCPAuthzConfig must exist in the same namespace as this MCPServer.\nMutually exclusive with authzConfig.\n\nresolve AuthzConfigRef into a runtime authz config.\n\nNOTE: this field is consumed by workload controllers in a follow-up PR.\nUntil that lands, AuthzConfigRef is reference-tracked by the\nMCPAuthzConfig controller (deletion protection, status.referenceCount)\nbut does NOT apply authorization to this MCPServer. Use the inline\nAuthzConfig field in the meantime.",
+          "properties": {
+            "name": {
+              "description": "Name is the name of the MCPAuthzConfig resource in the same namespace.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
         },
         "backendReplicas": {
           "description": "BackendReplicas is the desired number of MCP server backend pod replicas.\nThis controls the backend Deployment (the MCP server container itself),\nindependent of the proxy runner controlled by Replicas.\nWhen nil, the operator does not set Deployment.Spec.Replicas, leaving replica\nmanagement to an HPA or other external controller.",
@@ -774,6 +788,10 @@
       ],
       "type": "object",
       "x-kubernetes-validations": [
+        {
+          "message": "authzConfig and authzConfigRef are mutually exclusive; use authzConfigRef to reference a shared MCPAuthzConfig",
+          "rule": "!(has(self.authzConfig) && has(self.authzConfigRef))"
+        },
         {
           "message": "rateLimiting requires sessionStorage with provider 'redis'",
           "rule": "!has(self.rateLimiting) || (has(self.sessionStorage) && self.sessionStorage.provider == 'redis')"

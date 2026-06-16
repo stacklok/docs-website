@@ -167,6 +167,11 @@
               ],
               "type": "object"
             },
+            "disableUpstreamTokenInjection": {
+              "default": false,
+              "description": "DisableUpstreamTokenInjection prevents the embedded auth server from injecting\nupstream IdP tokens into requests forwarded to the backend MCP server.\nWhen true, the embedded auth server still handles OAuth flows for clients,\nbut instead of swapping ToolHive JWTs for upstream tokens the proxy STRIPS\nthe client's credential headers (Authorization, Cookie, Proxy-Authorization)\nafter validating the JWT — the backend receives an unauthenticated request.\nUse headerForward to attach static credentials (e.g. an API key) if the\nbackend needs them. Cannot be combined with token exchange or AWS STS,\nwhich would re-add credentials after the strip.\nThis is useful when the backend MCP server does not require authentication\n(e.g., public documentation servers) but you still want client authentication.",
+              "type": "boolean"
+            },
             "hmacSecretRefs": {
               "description": "HMACSecretRefs references Kubernetes Secrets containing symmetric secrets for signing\nauthorization codes and refresh tokens (opaque tokens).\nCurrent secret must be at least 32 bytes and cryptographically random.\nSupports secret rotation via multiple entries (first is current, rest are for verification).\nIf not specified, an ephemeral secret will be auto-generated (development only -\nauth codes and refresh tokens will be invalid after restart).",
               "items": {
@@ -891,7 +896,68 @@
           "type": "object"
         },
         "obo": {
-          "description": "OBO configures On-Behalf-Of (OBO) authentication.\nOnly used when Type is \"obo\". The inner schema is intentionally empty in\nthis revision; sub-fields land in a follow-up. Setting this field on an\nupstream-only build will cause the MCPExternalAuthConfig to transition to\nstatus.conditions[Valid] = False with Reason: EnterpriseRequired.",
+          "description": "OBO configures On-Behalf-Of (OBO) authentication.\nOnly used when Type is \"obo\". Setting this field on an upstream-only build\ncauses the MCPExternalAuthConfig to transition to\nstatus.conditions[Valid] = False with Reason: EnterpriseRequired, because\nno OBO handler is registered. See OBOConfig for the field-to-runtime\ncontract mapping.",
+          "properties": {
+            "audience": {
+              "description": "Audience is the backend target identifier requested in the exchanged\ntoken. Used as the exchange target when Scopes is empty. At least one of\naudience or scopes must be set; the operator enforces that at reconcile\n(it is not an admission-time rule — see the type doc).",
+              "type": "string"
+            },
+            "authority": {
+              "description": "Authority overrides the default Entra login host\n(https://login.microsoftonline.com) for sovereign or national clouds, e.g.\nhttps://login.microsoftonline.us (US Gov) or\nhttps://login.partner.microsoftonline.cn (China). When set, the operator\nbuilds the token endpoint by joining <authority>, <tenantId>, and the\nv2.0 token path. Must be an HTTPS URL with no userinfo, query, fragment,\nor trailing slash; a path IS permitted and is prefixed before the tenant\nsegment, as some sovereign / B2C / CIAM endpoints require. The OBO exchange\nPOSTs the client secret and the end-user assertion to this host, so it is a\ncredential trust boundary: HTTPS is required and userinfo (user@host) is\nrejected to prevent host confusion (per RFC 3986 the real host follows the\n\"@\", so https://login.microsoftonline.com@attacker.example targets\nattacker.example). This is intentionally stricter than the downstream\nexchanger's validateHTTPSURL, which also accepts http for loopback hosts\nand tolerates a trailing slash — rejecting those at admission is the safe\ndirection.",
+              "pattern": "^https://[^\\s?#@]+[^/\\s?#@]$",
+              "type": "string"
+            },
+            "cacheSkew": {
+              "description": "CacheSkew overrides the OBO token cache's default expiry skew (the margin\nby which a cached token is treated as expired before its real expiry),\ne.g. \"30s\". The operator converts it to the runtime contract's\ninteger-seconds cacheSkewSeconds. Should not be negative, but the schema\ndoes not enforce that — metav1.Duration carries no numeric minimum — and\nupstream builds do not reject it. A negative value is rejected only by an\nenterprise build's OBO handler once that handler validates the converted\nparameters; it is not enforced at admission or in upstream-only builds.\nWhen omitted, the cache default applies.",
+              "type": "string"
+            },
+            "clientId": {
+              "description": "ClientID is the confidential client's application (client) ID registered\nin Entra. Emitted verbatim as the runtime contract's clientId.\nOptional at the CRD level so future client-authentication methods (e.g.\ncertificate or workload-identity credentials, planned fast-follows) can be\nadded without a breaking schema change. The operator enforces that clientId\nand clientSecretRef are both present for the v1 shared-secret flow.",
+              "type": "string"
+            },
+            "clientSecretRef": {
+              "description": "ClientSecretRef references a Kubernetes Secret containing the confidential\nclient's secret. v1 supports a shared client secret only. The operator\ninjects the resolved value into the proxyrunner pod as an environment\nvariable and emits only that variable's name in the runtime contract, as\nclientSecretEnvVar — the secret value never travels in the contract.\nOptional at the CRD level for the same forward-compatibility reason as\nclientId (a certificate/workload-identity flow needs no client secret);\nthe operator enforces presence for the v1 shared-secret flow.",
+              "properties": {
+                "key": {
+                  "description": "Key is the key within the secret",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "Name is the name of the secret",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "name"
+              ],
+              "type": "object"
+            },
+            "scopes": {
+              "description": "Scopes are the delegated scopes to request for the exchanged token, e.g.\n[\"api://<backend>/.default\"]. When non-empty they take precedence over\nAudience. At least one of audience or scopes must be set; the operator\nenforces that at reconcile. The MaxItems and per-item length caps are\ndefensive bounds on an otherwise unbounded list.",
+              "items": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 20,
+              "type": "array",
+              "x-kubernetes-list-type": "atomic"
+            },
+            "subjectTokenProviderName": {
+              "description": "SubjectTokenProviderName selects the source of the OBO subject (assertion)\ntoken from the request's authenticated Identity:\n  - Omitted: use the inbound end-user token the client presented\n    (Identity.Token) — the deployment with no embedded auth server, where\n    the client holds an Entra token directly.\n  - Set: use the named upstream provider's token\n    (Identity.UpstreamTokens[<name>]) — the embedded-auth-server\n    deployment, where the inbound token is the proxy's own session token.\n    The value must match a configured upstream provider name.\nThe subject is always sourced from the authenticated Identity, never from\nan inbound request header, so the upstream auth middleware must run first.",
+              "maxLength": 63,
+              "minLength": 1,
+              "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+              "type": "string"
+            },
+            "tenantId": {
+              "description": "TenantID is the Microsoft Entra (Azure AD) directory (tenant) identifier.\nOptional at the CRD level (see the type doc); the operator enforces its\npresence, since an OBO confidential-client exchange must target a specific\ntenant. When set, it must be one of the two forms the Entra v2.0 token\nendpoint addresses: a directory GUID, or a verified domain name (e.g.\ncontoso.onmicrosoft.com). Well-known aliases such as \"common\",\n\"organizations\", and \"consumers\" are NOT accepted. The operator\ninterpolates it into the token endpoint\n(<authority>/<tenantId>/oauth2/v2.0/token), so the value is constrained to\nthe GUID/domain shape (no path metacharacters); the pattern and 253-char\ncap mirror the enterprise exchanger's validateTenant, so any tenantId\nadmitted here is one the runtime can consume.",
+              "maxLength": 253,
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,})$",
+              "type": "string"
+            }
+          },
           "type": "object"
         },
         "tokenExchange": {
@@ -1100,7 +1166,7 @@
           "type": "integer"
         },
         "referencingWorkloads": {
-          "description": "ReferencingWorkloads is a list of workload resources that reference this MCPExternalAuthConfig.\nEach entry identifies the workload by kind and name.",
+          "description": "ReferencingWorkloads is a list of workload resources that reference this MCPExternalAuthConfig.\nEach entry identifies the workload by kind and name. The map key is the\n(kind, name) pair so two workloads of different kinds that share a name\n(e.g., an MCPServer \"foo\" and a VirtualMCPServer \"foo\") are distinct\nentries rather than colliding under merge-patch semantics.",
           "items": {
             "description": "WorkloadReference identifies a workload that references a shared configuration resource.\nNamespace is implicit — cross-namespace references are not supported.",
             "properties": {
@@ -1127,6 +1193,7 @@
           },
           "type": "array",
           "x-kubernetes-list-map-keys": [
+            "kind",
             "name"
           ],
           "x-kubernetes-list-type": "map"

@@ -6,6 +6,7 @@
 // <CRDReference> remark plugin can resolve schemas by Kind name.
 
 import EmbeddingServer from '@site/static/api-specs/crds/embeddingservers.schema.json';
+import MCPAuthzConfig from '@site/static/api-specs/crds/mcpauthzconfigs.schema.json';
 import MCPExternalAuthConfig from '@site/static/api-specs/crds/mcpexternalauthconfigs.schema.json';
 import MCPGroup from '@site/static/api-specs/crds/mcpgroups.schema.json';
 import MCPOIDCConfig from '@site/static/api-specs/crds/mcpoidcconfigs.schema.json';
@@ -21,6 +22,7 @@ import VirtualMCPServer from '@site/static/api-specs/crds/virtualmcpservers.sche
 
 export const schemas = {
   EmbeddingServer,
+  MCPAuthzConfig,
   MCPExternalAuthConfig,
   MCPGroup,
   MCPOIDCConfig,
