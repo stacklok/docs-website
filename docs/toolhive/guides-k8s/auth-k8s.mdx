@@ -190,6 +190,60 @@ kubectl get mcpoidc -n toolhive-system
 The `REFERENCES` column shows which workloads use this config. The `VALID`
 column confirms validation passed.
 
+### Use a custom CA certificate for the OIDC issuer
+
+If your OIDC provider presents a certificate signed by a non-public CA, such as
+a corporate Keycloak instance with a self-signed certificate, ToolHive can't
+validate tokens until it trusts that CA. Use `caBundleRef` to point the
+`MCPOIDCConfig` at a ConfigMap containing the CA bundle. ToolHive auto-mounts
+the ConfigMap and configures token validation to trust the custom CA.
+
+First, create a ConfigMap with the CA certificate. The ConfigMap must live in
+the same namespace as the MCPServer that references the config:
+
+```bash
+kubectl create configmap corporate-ca-bundle \
+  --from-file=ca.crt=/path/to/corporate-ca.crt \
+  -n toolhive-system
+```
+
+Then reference it from the `MCPOIDCConfig` with `caBundleRef`:
+
+```yaml title="corporate-oidc-config.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: corporate-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: 'https://keycloak.corp.example.com/realms/myrealm'
+    clientId: 'your-client-id'
+    clientSecretRef:
+      name: oidc-secret
+      key: client-secret
+    # highlight-start
+    caBundleRef:
+      configMapRef:
+        name: corporate-ca-bundle
+        key: ca.crt
+    # highlight-end
+```
+
+Set `key` to the ConfigMap key that holds the bundle, commonly `ca.crt`. Once
+you apply the config and a referencing MCPServer, check the
+`CABundleRefValidated` condition on that MCPServer to confirm the CA bundle
+resolved:
+
+```bash
+kubectl get mcpserver <YOUR_SERVER_NAME> -n toolhive-system \
+  -o jsonpath='{.status.conditions[?(@.type=="CABundleRefValidated")]}'
+```
+
+If the ConfigMap is missing or the key isn't found, the condition reports a
+`False` status with a reason of `CABundleRefNotFound` or `CABundleRefInvalid`.
+
 ### Benefits of MCPOIDCConfig
 
 - **Centralized management**: update provider settings in one place for all
