@@ -220,6 +220,48 @@ This approach provides:
 - Better security isolation between different MCPServer instances
 - Support for multi-tenant deployments across different namespaces
 
+### Use an existing ServiceAccount
+
+You may not want the operator to create RBAC resources, or you may need the
+proxy runner pods to use a ServiceAccount that already carries specific
+bindings. Set `spec.serviceAccount` to the name of an existing ServiceAccount in
+the same namespace, and the operator uses it instead of creating one
+automatically.
+
+```yaml {7} title="my-mcpserver-custom-sa.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: osv
+  namespace: my-namespace
+spec:
+  image: ghcr.io/stackloklabs/osv-mcp/server
+  serviceAccount: my-existing-sa
+  transport: streamable-http
+  mcpPort: 8080
+  proxyPort: 8080
+```
+
+This is useful when:
+
+- **Locked-down clusters** prohibit operators from creating RBAC, so a platform
+  team provisions the ServiceAccount, Role, and RoleBinding ahead of time.
+- **Cloud IAM** is mapped to Kubernetes identity, such as
+  [IAM roles for service accounts (IRSA)](https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html)
+  on Amazon EKS or
+  [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
+  on Google Kubernetes Engine (GKE). The MCP server then inherits cloud
+  permissions through the annotated ServiceAccount.
+
+:::note
+
+When you supply an existing ServiceAccount, you are responsible for granting it
+the permissions the proxy runner needs (StatefulSets, Services, Pods, and Pod
+logs and attach operations in the namespace). The operator no longer manages
+those bindings for you.
+
+:::
+
 ## Customize server settings
 
 You can customize the MCP server by adding additional fields to the `MCPServer`
@@ -433,6 +475,68 @@ spec:
               readOnly: true
 ```
 
+### Override proxy Deployment and Service settings
+
+The `podTemplateSpec` field customizes the MCP server backend pod. To customize
+the proxy runner resources that the operator creates, use
+`spec.resourceOverrides`. This lets you add labels and annotations to the proxy
+Deployment and Service, set environment variables on the proxy container, and
+attach image pull secrets for private registries.
+
+The field has two sub-objects:
+
+- `proxyDeployment` - overrides for the proxy Deployment. Supports `labels` and
+  `annotations` on the Deployment itself, `podTemplateMetadataOverrides`
+  (`labels` and `annotations` applied to the proxy pod template), `env`
+  (environment variables for the proxy container), and `imagePullSecrets`.
+- `proxyService` - `labels` and `annotations` for the proxy Service.
+
+```yaml title="my-mcpserver-resource-overrides.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: osv
+  namespace: my-namespace
+spec:
+  image: ghcr.io/stackloklabs/osv-mcp/server
+  transport: streamable-http
+  mcpPort: 8080
+  proxyPort: 8080
+  resourceOverrides:
+    proxyDeployment:
+      labels:
+        team: platform
+      annotations:
+        company.com/owner: platform-team
+      podTemplateMetadataOverrides:
+        labels:
+          team: platform
+        annotations:
+          prometheus.io/scrape: 'true'
+      env:
+        - name: TOOLHIVE_DEBUG
+          value: 'true'
+      imagePullSecrets:
+        - name: my-registry-credentials
+    proxyService:
+      annotations:
+        company.com/owner: platform-team
+```
+
+Common uses:
+
+- **Custom labels and annotations** integrate the proxy resources with cluster
+  tooling such as cost allocation, ownership tracking, or metrics scraping. The
+  [HashiCorp Vault integration](../integrations/vault.mdx) relies on
+  `proxyDeployment.podTemplateMetadataOverrides.annotations` to add the Vault
+  Agent injection annotations to the proxy runner pods.
+- **Proxy environment variables** tune the proxy runner itself. For example, set
+  `TOOLHIVE_DEBUG=true` to enable debug logging in the proxy container (this
+  affects the proxy, not the MCP server it manages).
+- **Image pull secrets** let the proxy runner pull from a private registry. The
+  secrets in `proxyDeployment.imagePullSecrets` are applied to both the proxy
+  Deployment and its ServiceAccount.
+
 ## Check MCP server status
 
 To check the status of your MCP servers in a specific namespace:
@@ -454,6 +558,65 @@ For more details about a specific MCP server:
 ```bash
 kubectl -n <NAMESPACE> describe mcpserver <NAME>
 ```
+
+## Restart an MCP server
+
+You can restart an MCP server without changing its spec by setting the
+`mcpserver.toolhive.stacklok.dev/restarted-at` annotation to a new
+[RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) timestamp. The operator
+restarts the server whenever this timestamp changes, which keeps operational
+restarts separate from configuration changes.
+
+Two restart strategies are available through the optional
+`mcpserver.toolhive.stacklok.dev/restart-strategy` annotation:
+
+- `rolling` (default) - updates the Deployment pod template so Kubernetes
+  performs a rolling update with zero downtime. Use this in production.
+- `immediate` - deletes the MCP server pods directly so they are recreated right
+  away. This causes brief downtime and is best for development.
+
+Trigger a rolling restart with `kubectl annotate`:
+
+```bash
+kubectl -n <NAMESPACE> annotate mcpserver <NAME> \
+  mcpserver.toolhive.stacklok.dev/restarted-at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --overwrite
+```
+
+For an immediate restart, also set the strategy annotation:
+
+```bash
+kubectl -n <NAMESPACE> annotate mcpserver <NAME> \
+  mcpserver.toolhive.stacklok.dev/restarted-at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  mcpserver.toolhive.stacklok.dev/restart-strategy="immediate" \
+  --overwrite
+```
+
+The annotation value must be a valid RFC 3339 timestamp, and it must be newer
+than the previous value for the operator to act on it.
+
+## Join a group for aggregation
+
+An MCPServer can join an [MCPGroup](../reference/crds/mcpgroup.mdx) so a
+[Virtual MCP Server (vMCP)](../guides-vmcp/index.mdx) can aggregate it together
+with other servers behind a single endpoint. Set `spec.groupRef.name` to the
+name of an MCPGroup in the same namespace:
+
+```yaml {8-9} title="MCPServer resource"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: osv
+  namespace: my-namespace
+spec:
+  image: ghcr.io/stackloklabs/osv-mcp/server
+  groupRef:
+    name: my-group
+```
+
+The referenced MCPGroup must already exist in the same namespace. For the steps
+to create an MCPGroup, see
+[Declare remote MCP server entries](./mcp-server-entry.mdx).
 
 ## Horizontal scaling
 
@@ -587,6 +750,33 @@ depending on how far the resource has progressed: the operator never picks it
 up, the operator accepts it but pods fail, or pods run but clients can't reach
 the server. Start with `kubectl describe mcpserver <NAME>` to see which stage
 your server is stuck at, then jump to the matching section below.
+
+### Status conditions reference
+
+`kubectl describe mcpserver <NAME>` (or `kubectl get mcpserver <NAME> -o yaml`)
+shows the status conditions the operator sets during reconciliation. Start with
+`Ready`; a configuration condition with `status: "False"` usually points
+directly at the problem. The table below lists the conditions the operator can
+report and what to check when one is failing.
+
+| Condition                     | What it means                                                                          | What to check                                                                                                          |
+| ----------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `Ready`                       | Overall readiness of the MCPServer. Aggregates the checks below and Deployment health. | If `False`, look at the more specific conditions and the proxy and backend pod status to find the underlying cause.    |
+| `GroupRefValidated`           | The referenced MCPGroup in `spec.groupRef` exists and is ready.                        | Confirm the MCPGroup exists in the same namespace and is itself ready.                                                 |
+| `PodTemplateValid`            | The `spec.podTemplateSpec` is structurally valid.                                      | Check that your `podTemplateSpec` is valid and that the main container is named `mcp`.                                 |
+| `CABundleRefValidated`        | The CA bundle ConfigMap referenced for a custom OIDC CA exists and is valid.           | Confirm the referenced ConfigMap exists in the same namespace and contains the expected key (defaults to `ca.crt`).    |
+| `OIDCConfigRefValidated`      | The referenced `spec.oidcConfigRef` (MCPOIDCConfig) exists and is valid.               | Confirm the MCPOIDCConfig exists in the same namespace and is valid.                                                   |
+| `ExternalAuthConfigValidated` | The referenced `spec.externalAuthConfigRef` is valid for an MCPServer.                 | Confirm the MCPExternalAuthConfig exists and has a single upstream. Multiple upstreams are not supported on MCPServer. |
+| `AuthServerRefValidated`      | The referenced `spec.authServerRef` resolves to a valid embedded auth server config.   | Confirm the referenced resource exists, has a supported kind, and is of type `embeddedAuthServer`.                     |
+| `WebhookConfigValidated`      | The referenced `spec.webhookConfigRef` (MCPWebhookConfig) exists and is valid.         | Confirm the MCPWebhookConfig exists in the same namespace and is valid.                                                |
+| `TelemetryConfigRefValidated` | The referenced `spec.telemetryConfigRef` (MCPTelemetryConfig) exists and is valid.     | Confirm the MCPTelemetryConfig exists in the same namespace and is valid.                                              |
+| `RateLimitConfigValid`        | The `spec.rateLimiting` configuration is valid.                                        | Per-user rate limiting requires authentication (`oidcConfigRef` or `externalAuthConfigRef`) and Redis session storage. |
+| `StdioReplicaCapped`          | An advisory that `spec.replicas` was capped at 1 because the transport is `stdio`.     | Expected for stdio servers. To run multiple proxy replicas, use `streamable-http` or `sse` transport.                  |
+| `SessionStorageWarning`       | `spec.replicas > 1` but no Redis session storage is configured.                        | Configure [Redis session storage](./redis-session-storage.mdx) so sessions are shared across proxy runner pods.        |
+
+The operator may also set deprecated or advisory conditions (for example, when a
+field has no effect on MCPServer). These are informational and don't block
+readiness.
 
 ### MCPServer not picked up by the operator
 
