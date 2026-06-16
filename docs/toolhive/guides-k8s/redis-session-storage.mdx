@@ -839,6 +839,59 @@ spec:
   # highlight-end
 ```
 
+### Session affinity and shared session storage
+
+Session affinity and Redis session storage solve related but distinct problems
+for a scaled `MCPServer`, and they work best together.
+
+The `MCPServer` spec exposes a `sessionAffinity` field that controls how
+Kubernetes routes repeated client connections to the proxy `Service`:
+
+```yaml title="mcp-server-with-affinity.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: my-server
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/example/my-mcp-server:latest
+  replicas: 2
+  # highlight-next-line
+  sessionAffinity: ClientIP # default; set to None for free load balancing
+```
+
+The field accepts two values:
+
+- **`ClientIP`** (default) - routes connections from the same client IP to the
+  same pod. Because MCP transports (SSE and streamable HTTP) are stateful, this
+  keeps a client pinned to the replica that holds its in-memory session.
+- **`None`** - lets the `Service` load-balance each connection freely across
+  replicas.
+
+Affinity only influences routing. It does not move session state between pods.
+Redis-backed shared session storage solves that: when a client lands on a
+different replica, whether because of `sessionAffinity: None`, a pod restart, or
+pod replacement, the new pod rebuilds the session from Redis instead of failing.
+Use the two together for resilient scaling - `ClientIP` reduces cross-pod hops
+during normal operation, while Redis lets sessions survive when a hop or restart
+happens anyway.
+
+:::warning[ClientIP affinity is unreliable behind NAT or shared egress IPs]
+
+`ClientIP` affinity relies on the client source IP reaching kube-proxy. When
+clients sit behind a NAT gateway, corporate proxy, or cloud load balancer
+(common in EKS, GKE, and AKS), all traffic appears to originate from the same
+IP, routing every client to one pod and negating the benefit of multiple
+replicas. Configure Redis session storage so any pod can serve any client, and
+consider `sessionAffinity: None` so the `Service` load-balances evenly.
+
+:::
+
+This is the `MCPServer` equivalent of the affinity behavior documented for vMCP.
+For the same field on `VirtualMCPServer`, including guidance on stateful
+backends, see
+[When horizontal scaling is challenging](../guides-vmcp/scaling-and-performance.mdx#when-horizontal-scaling-is-challenging).
+
 ### Configure VirtualMCPServer session storage
 
 The `sessionStorage` field is identical for `VirtualMCPServer`:
