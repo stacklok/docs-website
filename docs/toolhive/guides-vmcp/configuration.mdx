@@ -306,6 +306,54 @@ For detailed backend health monitoring, see
 [Verify backend status](./backend-discovery.mdx#verify-backend-status) in the
 Backend discovery guide.
 
+## Forward client headers to backends
+
+By default, vMCP opens a fresh request to each backend and sends only its own
+headers - the client's request headers do not reach the backend. If a backend
+authenticates per-user from a custom header (for example, an `x-api-key` it
+resolves to a specific user), that header is silently dropped today.
+
+Use `spec.passthroughHeaders` to allowlist headers that vMCP should forward
+verbatim from the client request to every backend it calls:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  groupRef:
+    name: my-backends
+  incomingAuth:
+    type: oidc
+    oidcConfigRef:
+      name: my-oidc-config
+      audience: my-vmcp
+  # highlight-start
+  passthroughHeaders:
+    - x-mcp-api-key
+  # highlight-end
+```
+
+Each listed header is captured from the client request at the incoming-auth
+boundary and attached to that session's backend requests. Headers that are not
+listed are ignored.
+
+A few names are reserved and rejected at admission time, because letting them
+pass through would let a client overwrite vMCP's own routing or identity
+signals:
+
+- `Host`
+- Hop-by-hop headers (such as `Connection`, `Keep-Alive`, `Transfer-Encoding`)
+- `X-Forwarded-*` headers
+- `Authorization`, `Cookie`, and `Proxy-Authorization`
+
+:::warning[Forwarded headers are attacker-influenceable]
+
+Anything you list in `passthroughHeaders` flows through from the client
+verbatim. A backend that grants authority based on the value (for example, a
+shared API key that maps to a user) trusts the client to send the right value.
+Use this only when a trusted upstream sets the header on behalf of the client,
+or when the backend independently revalidates it.
+
+:::
+
 ## Next steps
 
 - [Configure backend discovery](./backend-discovery.mdx) to control how vMCP

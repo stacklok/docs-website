@@ -1,0 +1,6 @@
+- Added "Run multiple replicas for high availability" section to `docs/toolhive/guides-k8s/remote-mcp-proxy.mdx` covering the new `spec.replicas`, `spec.sessionStorage`, and `sessionAffinity` interaction on `MCPRemoteProxy`
+- Added "Forward client headers to backends" section to `docs/toolhive/guides-vmcp/configuration.mdx` covering the new `spec.passthroughHeaders` field, the restricted-header list, and the trust caveat
+- Added "Skip upstream token injection for public backends" section to `docs/toolhive/guides-vmcp/authentication.mdx` covering the new `authServerConfig.disableUpstreamTokenInjection` flag and its incompatibility with `tokenExchange` / `awsSts`
+- Updated the embedded auth server configuration reference table in `docs/toolhive/guides-k8s/auth-k8s.mdx` to document `disableUpstreamTokenInjection`, and softened the "always swaps the token" prose in `docs/toolhive/concepts/embedded-auth-server.mdx` to reflect the new option
+- Added an intro override for `MCPAuthzConfig` in `scripts/lib/crd-intros.mjs` (with a deferred-runtime warning) and regenerated `docs/toolhive/reference/crds/mcpauthzconfig.mdx` and `docs/toolhive/reference/crds/index.mdx`
+- Mentioned `MCPRemoteProxy` alongside `MCPServer` and `VirtualMCPServer` in `docs/toolhive/guides-k8s/redis-session-storage.mdx` so the horizontal-scaling Redis guidance covers all three workloads
