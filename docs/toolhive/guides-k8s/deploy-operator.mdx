@@ -205,6 +205,96 @@ The chart also exposes `operator.imagePullSecrets`, which controls only the
 operator's own pod. Use it when the operator image itself is in a private
 registry; use `defaultImagePullSecrets` for the workloads the operator manages.
 
+### Scale the operator with autoscaling
+
+The operator runs a single replica by default. For high availability, run more
+than one replica: set a fixed count with `operator.replicaCount`, or enable a
+HorizontalPodAutoscaler (HPA) to adjust the count automatically based on
+resource utilization.
+
+Autoscaling is disabled by default. To enable it, configure the
+`operator.autoscaling` values:
+
+```yaml title="values.yaml"
+operator:
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 100
+    targetCPUUtilizationPercentage: 80
+    # targetMemoryUtilizationPercentage: 80
+```
+
+When `autoscaling.enabled` is `true`, the chart creates a
+HorizontalPodAutoscaler and stops setting a static replica count, so the HPA
+takes full control of the replica range. Memory-based scaling is off unless you
+set `targetMemoryUtilizationPercentage`.
+
+:::note
+
+The operator uses leader election, so only one replica is active at a time; the
+others run as warm standbys that take over if the leader fails. Extra replicas
+improve failover, not reconciliation throughput. For high availability, keep
+`minReplicas` (or `operator.replicaCount`) at 2 or more so a standby is always
+ready.
+
+:::
+
+:::note
+
+The HPA requires the Kubernetes
+[metrics server](https://github.com/kubernetes-sigs/metrics-server) to be
+installed in your cluster so it can read CPU and memory usage. Many managed
+Kubernetes distributions include it by default.
+
+:::
+
+### Tune operator resources
+
+The operator ships with conservative resource requests and limits suitable for
+most clusters. The defaults are:
+
+```yaml title="values.yaml"
+operator:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+```
+
+If the operator manages a large number of resources, you can raise these values.
+The chart also exposes Go runtime tuning through the `operator.gc` values, which
+set the `GOMEMLIMIT` and `GOGC` environment variables on the operator container:
+
+```yaml title="values.yaml"
+operator:
+  gc:
+    gomemlimit: 110MiB
+    gogc: 75
+```
+
+`gomemlimit` is a soft memory ceiling that helps the Go runtime avoid hitting
+the container memory limit, and `gogc` controls how aggressively garbage
+collection runs (a lower value collects more often and uses less memory). Keep
+`gomemlimit` below the container `memory` limit, and raise it if you raise the
+memory limit. The defaults work well for most deployments.
+
+## Run on OpenShift
+
+The operator runs on OpenShift with no special configuration. At startup, it
+detects whether it's running on OpenShift (by looking for the
+`route.openshift.io` API), and the workloads it creates use security contexts
+that satisfy the default restricted Security Context Constraints (SCCs).
+
+On OpenShift, the operator omits hardcoded user and group IDs from the workloads
+it creates so the platform can assign them dynamically from the namespace's
+allowed range, and it applies the required seccomp profile and drops all Linux
+capabilities. Install the operator using the standard commands above; no
+OpenShift-specific values are required.
+
 ## Operator deployment modes
 
 The ToolHive operator supports two distinct deployment modes to accommodate
