@@ -996,9 +996,24 @@ membership. See
 [Upstream identity provider claims](../concepts/cedar-policies.mdx#upstream-identity-provider-claims)
 for details.
 
+You can provide Cedar policies to an `MCPServer` in two ways:
+
+- **ConfigMap** (`authzConfig.type: configMap`): store policies in a separate
+  ConfigMap and reference it from the MCPServer. This keeps policies decoupled
+  from the server spec and lets you share one policy set across multiple
+  servers. Prefer this for larger or shared policy sets.
+- **Inline** (`authzConfig.type: inline`): define policies directly in the
+  MCPServer spec. This is the simplest option for small, server-specific policy
+  sets, with no separate resource to manage.
+
+Both approaches use the same Cedar policy language.
+
 **Step 1: Create authorization configuration**
 
 <BasicCedarConfig />
+
+<Tabs groupId="authz-source">
+<TabItem value="configmap" label="ConfigMap" default>
 
 **Step 2: Create a ConfigMap with policies**
 
@@ -1032,7 +1047,7 @@ kubectl apply -f authz-configmap.yaml
 
 **Step 3: Update MCPServer to use authorization**
 
-Add the authorization configuration to your `MCPServer` resources:
+Reference the ConfigMap from your `MCPServer` resource:
 
 ```yaml title="mcp-server-with-authz.yaml"
 apiVersion: toolhive.stacklok.dev/v1beta1
@@ -1059,12 +1074,14 @@ spec:
   oidcConfigRef:
     name: k8s-sa-authz-oidc
     audience: 'toolhive'
+  # highlight-start
   # Authorization configuration
   authzConfig:
     type: configMap
     configMap:
       name: authz-config
       key: authz-config.json
+  # highlight-end
   resources:
     limits:
       cpu: '100m'
@@ -1077,6 +1094,91 @@ spec:
 ```bash
 kubectl apply -f mcp-server-with-authz.yaml
 ```
+
+</TabItem>
+<TabItem value="inline" label="Inline">
+
+**Step 2: Define policies inline on the MCPServer**
+
+Set `authzConfig.type` to `inline` and list your Cedar policies directly under
+`authzConfig.inline.policies`. There's no separate ConfigMap to create:
+
+```yaml title="mcp-server-inline-authz.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: k8s-sa-authz-oidc
+  namespace: toolhive-system
+spec:
+  type: kubernetesServiceAccount
+  kubernetesServiceAccount:
+    serviceAccount: 'mcp-client'
+    namespace: 'client-apps'
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: weather-server-inline-authz
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: sse
+  proxyPort: 8080
+  # Authentication configuration
+  oidcConfigRef:
+    name: k8s-sa-authz-oidc
+    audience: 'toolhive'
+  # highlight-start
+  # Authorization configuration (policies defined inline)
+  authzConfig:
+    type: inline
+    inline:
+      policies:
+        # Allow any authenticated client to call the weather tool
+        - |
+          permit(
+            principal,
+            action == Action::"call_tool",
+            resource == Tool::"weather"
+          );
+        # Allow a specific client to call the admin tool
+        - |
+          permit(
+            principal == Client::"alice123",
+            action == Action::"call_tool",
+            resource == Tool::"admin_tool"
+          );
+        # Allow clients with the premium role to call any tool
+        - |
+          permit(
+            principal,
+            action == Action::"call_tool",
+            resource
+          )
+          when {
+            principal.claim_roles.contains("premium")
+          };
+  # highlight-end
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+```
+
+```bash
+kubectl apply -f mcp-server-inline-authz.yaml
+```
+
+The `policies` list requires at least one entry. To use transitive policies that
+rely on a static entity store (for example, mapping a group claim to a platform
+role), add an `authzConfig.inline.entitiesJson` string alongside `policies`; it
+defaults to `"[]"`.
+
+</TabItem>
+</Tabs>
 
 ## Test your setup
 
