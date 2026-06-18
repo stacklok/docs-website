@@ -639,6 +639,34 @@ backends.
 
 :::
 
+### Session affinity for proxy replicas
+
+Clients connect to the proxy runner through its Service. When you run more than
+one proxy replica (`spec.replicas > 1`), the `spec.sessionAffinity` field
+controls how that Service routes repeated connections from the same client:
+
+- `ClientIP` (default) - pins a client to the same proxy pod. Because MCP
+  transports (SSE and streamable HTTP) are stateful, this keeps a client on the
+  replica that holds its in-memory session.
+- `None` - load-balances each connection freely across proxy pods.
+
+```yaml title="MCPServer resource"
+spec:
+  replicas: 2
+  # highlight-next-line
+  sessionAffinity: None # default is ClientIP
+```
+
+Affinity only influences routing; it does not move session state between pods.
+`ClientIP` is also unreliable behind NAT or shared egress IPs, where many
+clients share a source address. For reliable scaling, configure
+[Redis session storage](./redis-session-storage.mdx#horizontal-scaling-session-storage)
+so any proxy pod can serve any client rather than depending on affinity alone.
+
+This client-facing affinity is separate from the backend session routing
+described next, which controls how the proxy reaches backend pods when
+`spec.backendReplicas > 1`.
+
 ### Session routing for backend replicas
 
 MCP connections are stateful: once a client establishes a session with a
