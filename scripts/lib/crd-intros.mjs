@@ -165,4 +165,13 @@ export const intros = {
     intro:
       '`MCPWebhookConfig` defines validating and mutating webhook middleware that intercepts MCP tool calls. [MCPServer](./mcpserver.mdx) references an `MCPWebhookConfig` via `spec.webhookConfigRef` to delegate tool-call authorization or request transformation to an external HTTPS service. This is the Kubernetes equivalent of the CLI [`--webhook-config`](../../guides-cli/webhooks.mdx) flag, configured declaratively as a custom resource.',
   },
+  MCPAuthzConfig: {
+    slug: 'mcpauthzconfig',
+    group: 'shared',
+    summary: 'Shared authorization policy decoupled from a specific backend.',
+    description:
+      'Schema reference for MCPAuthzConfig, which configures backend-agnostic authorization policy for MCP servers and proxies.',
+    intro:
+      '`MCPAuthzConfig` defines a reusable authorization policy that is decoupled from a particular authorizer backend. [MCPServer](./mcpserver.mdx), [MCPRemoteProxy](./mcpremoteproxy.mdx), and [VirtualMCPServer](./virtualmcpserver.mdx) reference an `MCPAuthzConfig` via `spec.authzConfigRef` (or `spec.incomingAuth.authzConfigRef` on `VirtualMCPServer`), mutually exclusive with the inline `authzConfig` field.\n\n:::note[Runtime wiring is deferred]\n\nIn v0.30.0 the schema, validation, and reference tracking ship together, but workload controllers do not yet resolve `authzConfigRef` into a runtime authz config. Until a follow-up release wires that path, the field is reference-tracked (deletion protection and `status.referenceCount` work) but does **not** apply authorization. Use the inline `spec.authzConfig` field for enforcement in the meantime.\n\n:::',
+  },
 };

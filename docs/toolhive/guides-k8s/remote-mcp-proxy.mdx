@@ -626,6 +626,68 @@ curl -X POST http://localhost:8080/mcp \
   -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
 ```
 
+## Run multiple replicas for high availability
+
+By default, an `MCPRemoteProxy` runs as a single proxy pod. To survive pod
+restarts and absorb higher request volumes, set `spec.replicas` and configure
+shared session storage so MCP sessions resolve across replicas.
+
+```yaml title="analytics-proxy-ha.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPRemoteProxy
+metadata:
+  name: analytics-proxy
+  namespace: toolhive-system
+spec:
+  remoteUrl: https://mcp.analytics.example.com
+  transport: streamable-http
+  # ... other config ...
+
+  # highlight-start
+  replicas: 3
+  sessionStorage:
+    provider: redis
+    address: redis.toolhive-system.svc.cluster.local:6379
+    db: 0
+    keyPrefix: analytics-proxy-sessions
+    passwordRef:
+      name: redis-password
+      key: password
+  sessionAffinity: None
+  # highlight-end
+```
+
+When `spec.replicas` is omitted, the operator does not write `replicas` on the
+Deployment, so an HPA or other external controller can own scaling without the
+operator overwriting the live count. Set `spec.replicas` to make the operator
+authoritative.
+
+`sessionStorage` configures a shared store for the proxy's session state.
+Without it, each pod keeps sessions in memory only, so a request routed to a
+different replica than the one that established the session fails with
+`Session not found`. The store must be `redis` for multi-replica deployments;
+the `memory` provider stays pod-local.
+
+`sessionAffinity` controls how the Service routes connections. The default
+`ClientIP` value pins each client to a single pod, which is correct when you
+have no Redis-backed session storage but defeats the load-balancing benefit of
+multiple replicas. With Redis-backed `sessionStorage`, set
+`sessionAffinity: None` so requests distribute across pods and sessions resolve
+through the shared store.
+
+For end-to-end Redis deployment steps and Sentinel configuration, see
+[Redis Sentinel session storage](./redis-session-storage.mdx).
+
+:::warning
+
+If `spec.replicas` is greater than 1 without Redis-backed `sessionStorage`, the
+operator sets a `SessionStorageWarning` condition on the resource but still
+applies the replica count. Pods start, but any request routed to a replica that
+did not establish the session fails. Configure Redis before scaling past a
+single replica.
+
+:::
+
 ## Expose the proxy externally
 
 To make the proxy accessible from outside the cluster, create an Ingress

@@ -636,6 +636,47 @@ auth server. See
 [Redis Sentinel session storage](../guides-k8s/redis-session-storage.mdx) for a
 complete walkthrough.
 
+### Skip upstream token injection for public backends
+
+By default, the embedded auth server swaps the client's ToolHive JWT for the
+matching upstream token before forwarding the request to a backend, using
+[upstream token injection](#upstream-token-injection) or
+[token exchange with upstream tokens](#token-exchange-with-upstream-tokens).
+That assumes the backend itself requires authentication.
+
+If the backend MCP server is public (for example, a documentation server with no
+auth of its own) but you still want clients to authenticate to vMCP, set
+`disableUpstreamTokenInjection: true` on `authServerConfig`. The embedded auth
+server still runs the OAuth flow for clients, but the proxy then **strips** the
+client's credential headers (`Authorization`, `Cookie`, and
+`Proxy-Authorization`) after the JWT is validated, so the backend receives an
+unauthenticated request.
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  authServerConfig:
+    issuer: https://auth.example.com
+    # highlight-next-line
+    disableUpstreamTokenInjection: true
+    upstreamProviders:
+      - name: github
+        # ...
+```
+
+Use `outgoingAuth` with `headerInjection` (see
+[Static header injection](#static-header-injection)) if the backend still needs
+a static credential such as an API key.
+
+:::warning[Incompatible with token exchange and AWS STS]
+
+The strip happens after JWT validation but before token-exchange and AWS STS
+middlewares would normally attach a new credential. Combining
+`disableUpstreamTokenInjection: true` with `tokenExchange` or `awsSts` on the
+same vMCP causes the embedded auth server to fail validation at startup. Use
+this flag only when the backend should remain unauthenticated.
+
+:::
+
 ### Complete example
 
 This example deploys a vMCP with an embedded auth server that authenticates

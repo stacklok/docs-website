@@ -50,7 +50,7 @@
           "type": "object"
         },
         "authzConfig": {
-          "description": "AuthzConfig defines authorization policy configuration for the proxy",
+          "description": "AuthzConfig defines authorization policy configuration for the proxy.\nAuthzConfig and AuthzConfigRef are mutually exclusive.",
           "properties": {
             "configMap": {
               "description": "ConfigMap references a ConfigMap containing authorization configuration\nOnly used when Type is \"configMap\"",
@@ -140,6 +140,20 @@
               "rule": "self.type == 'inline' ? has(self.inline) : !has(self.inline)"
             }
           ]
+        },
+        "authzConfigRef": {
+          "description": "AuthzConfigRef references a shared MCPAuthzConfig resource for authorization.\nThe referenced MCPAuthzConfig must exist in the same namespace as this MCPRemoteProxy.\nMutually exclusive with authzConfig.\n\nresolve AuthzConfigRef into a runtime authz config.\n\nNOTE: this field is consumed by workload controllers in a follow-up PR.\nUntil that lands, AuthzConfigRef is reference-tracked by the\nMCPAuthzConfig controller (deletion protection, status.referenceCount)\nbut does NOT apply authorization to this MCPRemoteProxy. Use the\ninline AuthzConfig field in the meantime.",
+          "properties": {
+            "name": {
+              "description": "Name is the name of the MCPAuthzConfig resource in the same namespace.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
         },
         "endpointPrefix": {
           "description": "EndpointPrefix is the path prefix to prepend to SSE endpoint URLs.\nThis is used to handle path-based ingress routing scenarios where the ingress\nstrips a path prefix before forwarding to the backend.",
@@ -271,6 +285,12 @@
           "description": "RemoteURL is the URL of the remote MCP server to proxy",
           "pattern": "^https?://",
           "type": "string"
+        },
+        "replicas": {
+          "description": "Replicas is the desired number of proxy pod replicas.\nMCPRemoteProxy creates a single Deployment for the proxy process, so there\nis only one replicas field (mirrors VirtualMCPServer.spec.replicas).\nWhen nil, the operator does not set Deployment.Spec.Replicas, leaving replica\nmanagement to an HPA or other external controller.\nWhen set above 1, also configure sessionStorage with the redis provider and\nsessionAffinity: \"None\" so sessions resolve across replicas; otherwise a\nSessionStorageWarning condition is surfaced on the resource status.",
+          "format": "int32",
+          "minimum": 0,
+          "type": "integer"
         },
         "resourceOverrides": {
           "description": "ResourceOverrides allows overriding annotations and labels for resources created by the operator",
@@ -421,12 +441,69 @@
         },
         "sessionAffinity": {
           "default": "ClientIP",
-          "description": "SessionAffinity controls whether the Service routes repeated client connections to the same pod.\nMCP protocols (SSE, streamable-http) are stateful, so ClientIP is the default.\nSet to \"None\" for stateless servers or when using an external load balancer with its own affinity.",
+          "description": "SessionAffinity controls whether the Service routes repeated client connections to the same pod.\nMCP protocols (SSE, streamable-http) are stateful, so ClientIP is the default.\nSet to \"None\" for stateless servers or when using an external load balancer with its own affinity.\n\nInteraction with sessionStorage: when running multiple replicas with\nsessionStorage.provider \"redis\", set this to \"None\" so requests are\ndistributed across replicas and sessions resolve via the shared store.\nConversely, \"None\" without Redis-backed sessionStorage breaks session\ncontinuity — any request landing on a different pod fails with\n\"Session not found\".",
           "enum": [
             "ClientIP",
             "None"
           ],
           "type": "string"
+        },
+        "sessionStorage": {
+          "description": "SessionStorage configures session storage for stateful horizontal scaling.\nWhen nil, no session storage is configured and the proxy falls back to\npod-local in-memory session state — incompatible with multi-replica\ndeployments behind load balancers that don't preserve client-IP affinity\n(e.g. AWS ALB across multiple AZs).\n\nThe transparent proxy validates `Mcp-Session-Id` against this store on\nevery non-initialize request (see pkg/transport/proxy/transparent/\ntransparent_proxy.go) and rewrites client-facing session IDs to backend\nsession IDs using session metadata. Both lookups require shared state\nacross replicas.\n\nWhen using the Redis provider, also set sessionAffinity to \"None\" so the\nService routes requests round-robin and all replicas rely on the shared\nsession store rather than pod-local state.\n\nMirrors MCPServer.spec.sessionStorage and VirtualMCPServer.spec.sessionStorage.",
+          "properties": {
+            "address": {
+              "description": "Address is the Redis server address (required when provider is redis)",
+              "minLength": 1,
+              "type": "string"
+            },
+            "db": {
+              "default": 0,
+              "description": "DB is the Redis database number",
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "keyPrefix": {
+              "description": "KeyPrefix is an optional prefix for all Redis keys used by ToolHive",
+              "type": "string"
+            },
+            "passwordRef": {
+              "description": "PasswordRef is a reference to a Secret key containing the Redis password",
+              "properties": {
+                "key": {
+                  "description": "Key is the key within the secret",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "Name is the name of the secret",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "name"
+              ],
+              "type": "object"
+            },
+            "provider": {
+              "description": "Provider is the session storage backend type",
+              "enum": [
+                "memory",
+                "redis"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider"
+          ],
+          "type": "object",
+          "x-kubernetes-validations": [
+            {
+              "message": "address is required",
+              "rule": "self.provider == 'redis' ? has(self.address) : true"
+            }
+          ]
         },
         "telemetryConfigRef": {
           "description": "TelemetryConfigRef references an MCPTelemetryConfig resource for shared telemetry configuration.\nThe referenced MCPTelemetryConfig must exist in the same namespace as this MCPRemoteProxy.\nCross-namespace references are not supported for security and isolation reasons.",
@@ -477,7 +554,13 @@
       "required": [
         "remoteUrl"
       ],
-      "type": "object"
+      "type": "object",
+      "x-kubernetes-validations": [
+        {
+          "message": "authzConfig and authzConfigRef are mutually exclusive; use authzConfigRef to reference a shared MCPAuthzConfig",
+          "rule": "!(has(self.authzConfig) && has(self.authzConfigRef))"
+        }
+      ]
     },
     "status": {
       "description": "MCPRemoteProxyStatus defines the observed state of MCPRemoteProxy",
