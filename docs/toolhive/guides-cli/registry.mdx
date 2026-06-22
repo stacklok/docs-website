@@ -197,6 +197,88 @@ endpoint.
 
 :::
 
+If your Registry Server requires authentication, you can configure the OIDC
+settings at the same time by adding the `--issuer` and `--client-id` flags (with
+optional `--audience` and `--scopes`). ToolHive saves these settings so you can
+complete the login with
+[`thv registry login`](#authenticate-to-a-protected-registry):
+
+```bash
+thv config set-registry https://registry.example.com/api \
+  --issuer https://auth.example.com \
+  --client-id <CLIENT_ID>
+```
+
+To point at a Registry Server on a private IP address, such as a local
+deployment during development, add the `-p, --allow-private-ip` flag.
+
+:::note
+
+Running `thv config set-registry` clears any previously configured registry
+authentication, so reconfigure auth after changing the registry.
+
+:::
+
+### Authenticate to a protected registry
+
+Some remote registries require authentication before you can list, inspect, or
+run their servers. ToolHive authenticates to these registries using an
+interactive OAuth login backed by an OpenID Connect (OIDC) identity provider. If
+your registry is open to anonymous access, you don't need to log in.
+
+Logging in needs three values: the registry URL, the OIDC issuer URL, and an
+OAuth client ID. Supply them as flags the first time you authenticate. ToolHive
+validates and saves them, then opens your browser to complete the OAuth flow:
+
+```bash
+thv registry login \
+  --registry https://registry.example.com/api \
+  --issuer https://auth.example.com \
+  --client-id <CLIENT_ID>
+```
+
+ToolHive caches the resulting tokens and reuses the saved settings, so later
+logins (after you log out or your tokens expire) need no flags:
+
+```bash
+thv registry login
+```
+
+Pass both `--issuer` and `--client-id` again to override the saved values.
+
+The login command accepts the following flags:
+
+| Flag                     | Description                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------- |
+| `--registry`             | Registry URL. Always saved to your configuration, and clears saved credentials. |
+| `--issuer`               | OIDC issuer URL for the identity provider. ToolHive validates it via discovery. |
+| `--client-id`            | OAuth client ID registered with the identity provider.                          |
+| `--audience`             | OAuth audience parameter (optional).                                            |
+| `--scopes`               | Comma-separated OAuth scopes to request. Defaults to `openid,offline_access`.   |
+| `-p, --allow-private-ip` | Allow `--registry` to reference a private IP address. Defaults to `false`.      |
+
+:::note
+
+OAuth login applies only to remote registries (a URL or API endpoint). It isn't
+supported for [local registry files](#set-a-local-registry-file). Supplying a
+new `--registry` URL clears any previously saved credentials so that tokens are
+never sent to the wrong server.
+
+:::
+
+When you're done, clear the cached credentials with:
+
+```bash
+thv registry logout
+```
+
+This removes the cached OAuth tokens for the configured registry. The next
+registry command that requires authentication prompts you to log in again.
+
+For details on configuring authentication on the server side, see
+[Authentication configuration](../guides-registry/authentication.mdx) in the
+Registry Server documentation.
+
 ### Set a local registry file
 
 To configure ToolHive to use a local registry file, set the file path:
