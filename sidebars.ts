@@ -257,6 +257,7 @@ const sidebars: SidebarsConfig = {
         'toolhive/guides-registry/database',
         'toolhive/guides-registry/skills',
         'toolhive/guides-registry/telemetry-metrics',
+        'toolhive/guides-registry/audit-logging',
         'toolhive/reference/registry-api',
         'toolhive/reference/registry-schema-upstream',
       ],
