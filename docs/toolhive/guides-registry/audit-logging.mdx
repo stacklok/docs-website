@@ -1,0 +1,340 @@
+---
+title: Audit logging
+description:
+  Configure audit logging for the ToolHive Registry Server to track API
+  operations and meet security compliance requirements.
+---
+
+The ToolHive Registry Server provides structured audit logging for all admin and
+consumer API operations. Audit logs give security teams the visibility they need
+to investigate incidents, satisfy compliance requirements, and track who did
+what in the registry.
+
+## Enable audit logging
+
+Audit logging is disabled by default. Add an `audit` section to your
+configuration file to enable it:
+
+```yaml title="config.yaml"
+audit:
+  enabled: true
+```
+
+With no other options set, audit events are written to stdout alongside
+application logs, in JSON format.
+
+### Helm
+
+In a Helm deployment, set the same values under `config.audit` in your
+`values.yaml`:
+
+```yaml title="values.yaml"
+config:
+  audit:
+    enabled: true
+```
+
+## Configuration options
+
+| Option               | Type     | Default | Description                                                               |
+| -------------------- | -------- | ------- | ------------------------------------------------------------------------- |
+| `enabled`            | bool     | `false` | Enable audit logging                                                      |
+| `logFile`            | string   | `""`    | File path for audit logs. Empty means stdout.                             |
+| `eventTypes`         | []string | `[]`    | Allowlist of event types to log. Empty means all events.                  |
+| `excludeEventTypes`  | []string | `[]`    | Blocklist of event types to suppress. Takes precedence over `eventTypes`. |
+| `includeRequestData` | bool     | `false` | Capture request bodies in audit events (mutating requests only).          |
+| `maxDataSize`        | int      | `1024`  | Maximum request body size in bytes. Hard limit: 1 MB.                     |
+
+## Audit event types
+
+The registry server emits events across three API surfaces.
+
+### Admin API (`/v1/`)
+
+Resource lifecycle events:
+
+| Event type              | Trigger                                   |
+| ----------------------- | ----------------------------------------- |
+| `source.create`         | Source created (PUT, HTTP 201)            |
+| `source.update`         | Source updated (PUT, HTTP 200)            |
+| `source.delete`         | Source deleted                            |
+| `source.list`           | Sources listed                            |
+| `source.read`           | Source retrieved                          |
+| `source.entries.list`   | Entries listed for a source               |
+| `registry.create`       | Registry created (PUT, HTTP 201)          |
+| `registry.update`       | Registry updated (PUT, HTTP 200)          |
+| `registry.delete`       | Registry deleted                          |
+| `registry.list`         | Registries listed                         |
+| `registry.read`         | Registry retrieved                        |
+| `registry.entries.list` | Entries listed for a registry             |
+| `entry.publish`         | Entry published to a managed source       |
+| `entry.delete`          | Entry deleted                             |
+| `entry.claims.update`   | Entry claims updated                      |
+| `user.info`             | Caller identity info retrieved (`/v1/me`) |
+
+Security events:
+
+| Event type             | Trigger                        |
+| ---------------------- | ------------------------------ |
+| `auth.unauthenticated` | Request rejected with HTTP 401 |
+
+### MCP Registry discovery API (`/registry/{name}/v0.1/`)
+
+| Event type             | Trigger                           |
+| ---------------------- | --------------------------------- |
+| `server.list`          | Server list requested             |
+| `server.versions.list` | Server version list requested     |
+| `server.version.read`  | Specific server version retrieved |
+
+### Skills extension API (`/x/dev.toolhive/skills`)
+
+| Event type            | Trigger                          |
+| --------------------- | -------------------------------- |
+| `skill.list`          | Skill list requested             |
+| `skill.read`          | Skill retrieved                  |
+| `skill.versions.list` | Skill version list requested     |
+| `skill.version.read`  | Specific skill version retrieved |
+
+## Filter events
+
+By default, every event type is logged. Use `eventTypes` and `excludeEventTypes`
+to control what gets captured.
+
+**Log only write operations and auth failures:**
+
+```yaml
+audit:
+  enabled: true
+  eventTypes:
+    - source.create
+    - source.update
+    - source.delete
+    - registry.create
+    - registry.update
+    - registry.delete
+    - entry.publish
+    - entry.delete
+    - entry.claims.update
+    - auth.unauthenticated
+```
+
+**Log everything except high-frequency read events:**
+
+```yaml
+audit:
+  enabled: true
+  excludeEventTypes:
+    - source.list
+    - registry.list
+    - server.list
+    - skill.list
+    - user.info
+```
+
+:::info
+
+When both `eventTypes` and `excludeEventTypes` are set, `excludeEventTypes`
+takes precedence. Events in the exclusion list are never logged, even if they
+appear in `eventTypes`.
+
+:::
+
+## Request body capture
+
+By default, audit events record metadata about API operations but not the
+request payload. To capture request bodies for forensic analysis:
+
+```yaml
+audit:
+  enabled: true
+  includeRequestData: true
+  maxDataSize: 4096 # bytes; default 1024, hard limit 1 MB
+```
+
+Request body capture applies only to mutating operations (POST, PUT, DELETE).
+Bodies larger than `maxDataSize` are truncated before logging.
+
+:::warning
+
+Request bodies may contain sensitive data. Review your organization's data
+handling policies before enabling request body capture in production.
+
+:::
+
+## Audit log format
+
+Each audit event is a single-line JSON object:
+
+```json
+{
+  "time": "2025-06-23T10:15:30.123456789Z",
+  "level": "AUDIT",
+  "msg": "audit_event",
+  "audit_id": "a3f2b8d1-4c5e-6789-abcd-ef0123456789",
+  "type": "source.delete",
+  "logged_at": "2025-06-23T10:15:30.123456Z",
+  "outcome": "success",
+  "component": "toolhive-registry-api",
+  "source": {
+    "type": "network",
+    "value": "10.0.1.50:54321",
+    "extra": {
+      "user_agent": "kubectl/1.30",
+      "x_forwarded_for": "203.0.113.42"
+    }
+  },
+  "subjects": {
+    "sub": "alice|12345",
+    "user": "alice@example.com",
+    "role": "super_admin"
+  },
+  "target": {
+    "method": "DELETE",
+    "path": "/v1/sources/my-source",
+    "resource_type": "source",
+    "resource_name": "my-source"
+  },
+  "metadata": {
+    "extra": {
+      "request_id": "req-abc-123",
+      "duration_ms": 12,
+      "response_bytes": 0
+    }
+  }
+}
+```
+
+### Field descriptions
+
+| Field            | Description                                                                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `time`           | Timestamp when the log line was written                                                                                                                       |
+| `level`          | Log level (`AUDIT` for audit events)                                                                                                                          |
+| `msg`            | Always `audit_event` for audit log entries                                                                                                                    |
+| `audit_id`       | Unique identifier for this event                                                                                                                              |
+| `type`           | Event type (see [Audit event types](#audit-event-types))                                                                                                      |
+| `logged_at`      | UTC timestamp when the event was recorded                                                                                                                     |
+| `outcome`        | `success`, `failure`, `denied`, or `error`                                                                                                                    |
+| `component`      | Always `toolhive-registry-api`                                                                                                                                |
+| `source.value`   | Direct peer address (the connecting IP, not the `X-Forwarded-For` header value)                                                                               |
+| `source.extra`   | `user_agent` and `x_forwarded_for` when present                                                                                                               |
+| `subjects`       | Caller identity from the JWT (`sub`, `user`, optionally `role`)                                                                                               |
+| `target`         | Always includes `method` and `path`; `resource_type`, `resource_name`, `registry_name`, `entry_type`, `version`, and `namespace` are present when applicable. |
+| `metadata.extra` | `request_id`, `duration_ms`, `response_bytes`                                                                                                                 |
+| `data`           | Request body, present only when `includeRequestData: true`                                                                                                    |
+
+`resource_name` values are percent-encoded when the name contains slashes (for
+example, `"com.example%2Fmy-server"`).
+
+#### Unauthenticated requests
+
+When a request fails authentication, `subjects` contains
+`{"identity": "unknown"}` and `target` contains only the HTTP method and path.
+The `metadata.extra` block contains only `request_id` — `duration_ms` and
+`response_bytes` are absent because the event fires before the response is
+written:
+
+```json
+{
+  "subjects": { "identity": "unknown" },
+  "target": { "method": "GET", "path": "/registry/default/v0.1/servers" },
+  "metadata": { "extra": { "request_id": "pod-name/abc-000001" } }
+}
+```
+
+:::note[Audit log level]
+
+Audit events use a custom `AUDIT` log level that sits between `INFO` and `WARN`.
+Because `AUDIT` is not a standard level name, some log aggregators may display
+it as `unknown`. To filter for audit events, match on `level = "AUDIT"` or
+`msg = "audit_event"` directly rather than relying on level detection.
+
+:::
+
+:::note[Known issue: `level` field may show as `INFO+2`]
+
+In some versions of the Registry Server, the `level` field is serialized as
+`"INFO+2"` rather than `"AUDIT"` (tracked in
+[#826](https://github.com/stacklok/toolhive-registry-server/issues/826)). If
+your logs show `"INFO+2"`, filter on `"INFO+2"` or `"audit_event"` instead.
+
+:::
+
+## Configure output destination
+
+### Stdout (default)
+
+Without `logFile` set, audit events go to stdout alongside application logs. Use
+the `level` and `msg` fields to distinguish them from regular application logs.
+This works well with any Kubernetes log collection stack (Fluent Bit, Grafana
+Alloy, the OTel Collector):
+
+```yaml
+audit:
+  enabled: true
+  # logFile not set = stdout
+```
+
+### Log to a file
+
+To write audit logs to a dedicated file, set `logFile` and ensure the parent
+directory exists and is writable. In Kubernetes, mount a persistent volume for
+the target path:
+
+```yaml title="values.yaml"
+config:
+  audit:
+    enabled: true
+    logFile: /var/log/toolhive/audit.log
+
+extraVolumes:
+  - name: audit-logs
+    persistentVolumeClaim:
+      claimName: registry-audit-pvc
+
+extraVolumeMounts:
+  - name: audit-logs
+    mountPath: /var/log/toolhive
+```
+
+Audit log files are created with mode `0600`.
+
+:::info
+
+For most deployments, stdout is simpler and integrates better with Kubernetes
+log collection. Use file-based logging only if your compliance requirements
+mandate a separate audit trail or your log collector cannot distinguish audit
+from application traffic at the log-level field.
+
+:::
+
+## Querying audit logs
+
+With stdout logging, filter audit events from application logs using `jq`:
+
+```bash
+# All audit events
+kubectl logs -n <NAMESPACE> deployment/toolhive-registry-api \
+  | jq 'select(.msg == "audit_event")'
+
+# Write operations only
+kubectl logs -n <NAMESPACE> deployment/toolhive-registry-api \
+  | jq 'select(.msg == "audit_event" and (.type | test("create|update|delete|publish")))'
+
+# Auth failures
+kubectl logs -n <NAMESPACE> deployment/toolhive-registry-api \
+  | jq 'select(.type == "auth.unauthenticated")'
+
+# Activity from a specific user
+kubectl logs -n <NAMESPACE> deployment/toolhive-registry-api \
+  | jq 'select(.msg == "audit_event" and .subjects.user == "alice@example.com")'
+```
+
+## Next steps
+
+- [Configure authentication](./authentication.mdx) to ensure caller identity
+  appears in `subjects`
+- [Configure authorization](./authorization.mdx) to control which roles can
+  perform which operations
+- [Configure telemetry](./telemetry-metrics.mdx) for distributed tracing and
+  metrics alongside audit logs
