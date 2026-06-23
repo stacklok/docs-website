@@ -1,0 +1,437 @@
+---
+title: Configure MCP servers
+description:
+  Customize MCP server behavior with the ToolHive CLI - names, secrets, ports,
+  tool filtering, audit logging, volumes, and network isolation.
+---
+
+You might need to customize the behavior of an MCP server, such as changing the
+port, mounting a local directory, or passing secrets. ToolHive provides several
+options to customize a server's configuration when you run it.
+
+These options apply whether you run a server from the
+[registry](./run-mcp-servers.mdx#run-a-server-from-the-registry), from a
+[custom image or protocol scheme](./run-mcp-servers.mdx#run-a-custom-mcp-server),
+or as a [remote server](./run-remote-mcp-servers.mdx) - but not all options
+apply to every mode. They fall into two groups:
+
+- [**Options for all servers**](#options-for-all-servers) operate at the proxy
+  or workload level, so they work for registry, custom, and remote servers.
+- [**Options for container-based servers**](#options-for-container-based-servers)
+  configure the container that ToolHive launches. They have no effect on remote
+  servers, which proxy to a URL instead of running a local container.
+
+For a complete list of options, run
+[`thv run --help`](../reference/cli/thv_run.md) or see the
+[`thv run` command reference](../reference/cli/thv_run.md).
+
+## Options for all servers
+
+These options apply to every run mode, including remote servers.
+
+### Run a server with a custom name
+
+By default, the container name matches the MCP server's name in the registry or
+is automatically generated from the image name when you run a custom server. To
+give your server instance a custom name, use the `--name` option:
+
+```bash
+thv run --name <FRIENDLY_NAME> <SERVER>
+```
+
+For example:
+
+```bash
+thv run --name my-fetch fetch
+```
+
+### Run a server with secrets
+
+Many MCP servers require secrets or other configuration variables to function
+correctly. ToolHive lets you pass these secrets as environment variables when
+starting the server.
+
+To pass a secret to an MCP server, use the `--secret` option:
+
+```bash
+thv run --secret <SECRET_NAME>,target=<ENV_VAR_NAME> <SERVER>
+```
+
+The `target` parameter specifies the name of the environment variable in the MCP
+server's container. This is useful for passing secrets like API tokens or other
+sensitive information.
+
+For example:
+
+```bash
+thv run --secret github,target=GITHUB_PERSONAL_ACCESS_TOKEN github
+```
+
+See [Secrets management](./secrets-management.mdx) to learn how to manage
+secrets in ToolHive.
+
+:::note[Remote servers]
+
+The `--secret` flag injects values into a container's environment, so it has no
+effect on remote servers. Remote servers authenticate with bearer tokens or
+forwarded headers instead. See
+[Run remote MCP servers](./run-remote-mcp-servers.mdx#authentication-setup) for
+the equivalent options.
+
+:::
+
+### Run a server within a group
+
+To run an MCP server within a specific group, use the `--group` option. This
+allows you to organize your servers and manage them collectively.
+
+```bash
+thv run --group <GROUP_NAME> <SERVER>
+```
+
+:::note
+
+The group must exist before you can run a server in it.
+
+:::
+
+See [Organize servers into groups](./group-management.mdx) to learn more about
+organizing servers and configuring client access.
+
+### Run a server on a specific port
+
+ToolHive creates a reverse proxy on a random port that forwards requests to the
+container. This is the port that client applications connect to. To set a
+specific proxy port instead, use the `--proxy-port` flag:
+
+```bash
+thv run --proxy-port <PORT_NUMBER> <SERVER>
+```
+
+To publish a container's own port directly to the host (separate from the proxy
+port), use `--publish` (`-p`) with `hostPort:containerPort`. Repeat the flag for
+multiple ports:
+
+```bash
+thv run --publish 8090:8080 <SERVER>
+```
+
+Most servers only need the proxy port; use `--publish` when a server exposes an
+additional port you need to reach directly.
+
+### Override the session timeout
+
+ToolHive's proxy evicts idle MCP sessions after 2 hours by default. To raise or
+lower this inactivity timeout for a workload, pass `--session-ttl` with a Go
+duration string:
+
+```bash
+thv run --session-ttl 4h <SERVER>
+```
+
+Set a longer value when clients hold sessions open for long-running operations,
+or a shorter value to free resources faster.
+
+### Run a server in the foreground
+
+By default, ToolHive runs the server in the background and returns control to
+your shell. To keep the process attached to your terminal until the container
+exits, use the `--foreground` (`-f`) flag:
+
+```bash
+thv run --foreground <SERVER>
+```
+
+This is useful for debugging or when you want the server's lifecycle tied to the
+current shell session.
+
+### Run a server exposing only selected tools
+
+ToolHive can filter the tools returned to the client as result of a `tools/list`
+command as well as block calls to tools that you don't want to expose.
+
+This can help reduce the amount of tools sent to the LLM while still using the
+same MCP server, but it is not meant as a security feature.
+
+To filter the list of tools, use the `--tools` flag either once
+
+```bash
+thv run --tools <TOOL_1> <SERVER>
+```
+
+Or multiple times
+
+```bash
+thv run --tools <TOOL_1> --tools <TOOL_2> <SERVER>
+```
+
+For example:
+
+```bash
+thv run --tools list_issues --tools get_issue github
+```
+
+If the server comes from the registry, ToolHive can validate the tool names
+against the list advertised in the image reference. An error is returned in case
+ToolHive cannot find one of the specified tools.
+
+### Override tool names and descriptions
+
+With ToolHive you can modify how tools exposed by an MCP server are exposed to
+clients. In particular, tool names and descriptions can be changed.
+
+This is useful when you want to guide an agent toward calling a specific tool
+for particular questions.
+
+One common use case is running multiple copies of the same MCP server with
+different [network access levels](./network-isolation.mdx), one for internal
+resources and another for public internet access. By overriding the tool names
+and descriptions, you can help your agent choose the right server for each task.
+
+For example, the `fetch` MCP server exposes a single `fetch` tool with a
+description like:
+
+```
+"Fetches a URL from the internet and optionally extracts its contents as markdown."
+```
+
+To override this, create a configuration file with one entry under
+`toolsOverride` for each tool you want to modify:
+
+```json
+{
+  "toolsOverride": {
+    "fetch": {
+      "name": "toolhive-docs-fetch",
+      "description": "Fetches a URL from https://docs.stacklok.com/toolhive website."
+    }
+  }
+}
+```
+
+Then pass this file to [`thv run`](../reference/cli/thv_run.md):
+
+```sh
+thv run --tools-override override.json fetch
+```
+
+The key in the override object is the _original tool name_, while the `name`
+field contains the _new name_ that clients will see.
+
+:::info
+
+Take care when using `--tools` and `--tools-override` together in the same
+command.
+
+Tool filtering and tool overrides work independently: filtering limits access to
+a subset of tools, while overrides change how those tools appear to clients.
+
+When using both options, `--tools` must reference the _overridden names_ (the
+new names you define) since those are what clients will see.
+
+:::
+
+### Enable audit logging
+
+ToolHive can record an audit trail of the MCP activity that flows through a
+server's proxy. Audit events capture interactions such as client initialization,
+`tools/list` and `tools/call` requests, resource reads, prompt requests, and
+notifications, along with metadata like the timestamp, component name, and
+outcome.
+
+To turn on audit logging with ToolHive's built-in defaults, use the
+`--enable-audit` flag:
+
+```bash
+thv run --enable-audit <SERVER>
+```
+
+The default configuration records each event type but omits the request and
+response payloads to protect potentially sensitive data. Audit events are
+written to the server's logs, so you can view them with `thv logs`:
+
+```bash
+thv logs <SERVER_NAME>
+```
+
+Each event is emitted as a JSON object on its own line, which makes the output
+easy to filter or forward to a log aggregator.
+
+For finer control, supply your own configuration file with the `--audit-config`
+flag instead:
+
+```bash
+thv run --audit-config ./audit.json <SERVER>
+```
+
+A configuration file lets you select which event types to record with
+`eventTypes` (or exclude specific types with `excludeEventTypes`), choose
+whether to include request or response data, and set where to send the audit
+log. For example:
+
+```json title="audit.json"
+{
+  "component": "fetch-server",
+  "eventTypes": ["mcp_tool_call", "mcp_resource_read"],
+  "includeRequestData": true,
+  "includeResponseData": false,
+  "maxDataSize": 2048,
+  "logFile": "./fetch-audit.log"
+}
+```
+
+When you set `logFile`, ToolHive appends audit events to that file instead of
+the server's standard logs. Use a path that the user running `thv` can write to.
+Leave it unset to keep events in the logs viewed by `thv logs`.
+
+:::note
+
+Use either flag to turn on audit logging: `--enable-audit` for the built-in
+defaults, or `--audit-config` to load your own settings. `--audit-config`
+enables auditing on its own, so you don't need to pass `--enable-audit` as well.
+
+:::
+
+Setting `includeRequestData` or `includeResponseData` to `true` can capture
+sensitive arguments or results in the audit log. Enable these options only when
+you understand the privacy implications, and adjust `maxDataSize` to limit how
+much of each payload is recorded.
+
+## Options for container-based servers
+
+These options configure the container that ToolHive launches for registry and
+custom servers. They have no effect on remote servers, which proxy to a URL
+instead of running a local container.
+
+### Pass environment variables
+
+Many MCP servers read non-sensitive configuration from environment variables.
+Pass them individually with `-e` / `--env`:
+
+```bash
+thv run -e <KEY>=<VALUE> -e <KEY2>=<VALUE2> <SERVER>
+```
+
+To load variables from a file instead, use `--env-file`. To load every file in a
+directory, use `--env-file-dir`:
+
+```bash
+thv run --env-file ./server.env <SERVER>
+thv run --env-file-dir ./env.d <SERVER>
+```
+
+For sensitive values such as API tokens, use `--secret` instead, so the value is
+resolved from your secrets provider rather than passed in plaintext.
+
+### Mount a local file or directory
+
+To enable file system access for an MCP server, you can either use the
+`--volume` flag to mount specific paths or create a custom permission profile
+that defines read and write permissions.
+
+See [File system access](./filesystem-access.mdx) for detailed examples. To
+prevent sensitive files from being exposed when mounting a project, use
+[.thvignore](./thvignore.mdx).
+
+### Restrict network access
+
+ToolHive enables _network isolation_ by default, restricting an MCP server's
+outbound traffic to the hosts and ports declared in its permission profile.
+Override the default profile with `--permission-profile`, or opt out entirely
+with `--isolate-network=false`.
+
+See [Network isolation](./network-isolation.mdx) for network architecture
+details and examples.
+
+### Add command-line arguments
+
+Some MCP servers require additional arguments to run correctly. You can pass
+these arguments after the server name in the
+[`thv run`](../reference/cli/thv_run.md) command:
+
+```bash
+thv run <SERVER> -- <ARGS>
+```
+
+For example:
+
+```bash
+thv run my-mcp-server:latest -- --arg1 value1 --arg2 value2
+```
+
+Check the MCP server's documentation for the required arguments.
+
+:::warning
+
+Some MCP servers in the ToolHive registry include default arguments that are
+essential for proper operation. When you provide custom arguments using
+`-- <ARGS>`, these replace the registry defaults entirely rather than adding to
+them.
+
+Before adding custom arguments, check the server's registry entry:
+
+```bash
+thv registry info <SERVER> --format json | jq '.args'
+```
+
+If default arguments are listed, include them along with your custom arguments
+to ensure the server functions correctly.
+
+:::
+
+### Verify container image signatures
+
+For MCP servers that run from a container image, ToolHive can check the image's
+signature and provenance before launching it. Some registry servers publish
+provenance information that ToolHive uses to confirm the image was built and
+signed as expected. To see whether a given server has it, check the
+`Has Provenance` field in the output of `thv registry info <SERVER_NAME>`.
+
+Use the `--image-verification` flag to control this behavior. It accepts three
+values:
+
+- `warn` (default): verify the image and log a warning if verification fails or
+  the server has no provenance information, but run the server anyway.
+- `enabled`: verify the image and refuse to run the server if verification fails
+  or no provenance information is available.
+- `disabled`: skip image verification entirely.
+
+```bash
+thv run --image-verification enabled <SERVER>
+```
+
+For example, to enforce verification when running the `fetch` server:
+
+```bash
+thv run --image-verification enabled fetch
+```
+
+:::note
+
+Verification succeeds only for servers that include provenance information, and
+not every server does. When a server has no provenance data, `warn` runs it with
+a warning while `enabled` declines to run it. If you set `enabled`, keep in mind
+that it stops servers without provenance, not only servers that fail
+verification.
+
+:::
+
+## Next steps
+
+- [Monitor and manage MCP servers](./manage-mcp-servers.mdx) to control your
+  running servers
+- [Test your MCP servers](./test-mcp-servers.mdx) using the MCP Inspector or
+  `thv mcp` commands
+- [Secure your servers](./auth.mdx) with OIDC authentication and Cedar policies
+- [Enable telemetry and metrics](./telemetry-and-metrics.mdx) to gain
+  observability into MCP server interactions
+
+## Related information
+
+- [`thv run` command reference](../reference/cli/thv_run.md)
+- [Run MCP servers](./run-mcp-servers.mdx)
+- [Run remote MCP servers](./run-remote-mcp-servers.mdx)
+- [Secrets management](./secrets-management.mdx)
+- [Custom permissions](./custom-permissions.mdx)
+  - [File system access](./filesystem-access.mdx)
+  - [Network isolation](./network-isolation.mdx)
