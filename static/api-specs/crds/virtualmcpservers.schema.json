@@ -652,6 +652,12 @@
                         "type": "array",
                         "x-kubernetes-list-type": "atomic"
                       },
+                      "subjectClaim": {
+                        "description": "SubjectClaim names the validated ID-token claim to use as the upstream\nsubject. Defaults to \"sub\" when empty. Set it for IdPs where \"sub\" isn't\nstable per user — e.g. Entra/Azure AD, whose \"sub\" rotates per application\nand whose stable identifier is \"oid\".\n\nThe value is looked up verbatim as a top-level claim name, so it is\nconstrained to a claim-name shape: it must start with a letter or\nunderscore and contain only letters, digits, and underscores. This rejects\ndotted, colon-namespaced, or whitespace-containing values at admission\nrather than letting a typo silently miss the claim at login, and keeps the\nfield aligned with the directory service's per-issuer bindingClaim.\n\nChanging this on a live deployment re-keys existing users (the value\nresolves to the internal user ID), so treat it as immutable once users\nexist.\n\nPer-IdP notes:\n  - Entra/Azure AD: use \"oid\"; it is only emitted when the upstream scopes\n    include \"profile\". \"oid\" is unique within a single tenant — multi-tenant\n    apps need oid+tid, which this single-claim field cannot express.\n  - Okta: the org auth server already puts the stable id in \"sub\" (default\n    works). A custom auth server's \"sub\" is the mutable login/email and the\n    stable \"uid\" lives only in the access token, not the ID token — map a\n    custom ID-token claim and point subjectClaim at it.\nThe pattern matches the claim-name shape and allows empty (defaults to\n\"sub\"). Using Pattern rather than a CEL XValidation rule keeps this off the\nCRD's CEL cost budget — a single-field format check via CEL is rejected by\nthe apiserver as too expensive once multiplied across the upstreams list.",
+                        "maxLength": 128,
+                        "pattern": "^([a-zA-Z_][a-zA-Z0-9_]*)?$",
+                        "type": "string"
+                      },
                       "userInfoOverride": {
                         "description": "UserInfoOverride allows customizing UserInfo fetching behavior for OIDC providers.\nBy default, the UserInfo endpoint is discovered automatically via OIDC discovery.\nUse this to override the endpoint URL, HTTP method, or field mappings for providers\nthat return non-standard claim names in their UserInfo response.",
                         "properties": {
@@ -2204,7 +2210,7 @@
               ]
             },
             "authzConfigRef": {
-              "description": "AuthzConfigRef references a shared MCPAuthzConfig resource for authorization.\nThe referenced MCPAuthzConfig must exist in the same namespace as this VirtualMCPServer.\nMutually exclusive with authzConfig.\n\nresolve AuthzConfigRef into a runtime authz config.\n\nNOTE: this field is consumed by workload controllers in a follow-up PR.\nUntil that lands, AuthzConfigRef is reference-tracked by the\nMCPAuthzConfig controller (deletion protection, status.referenceCount)\nbut does NOT apply authorization to this VirtualMCPServer. Use the\ninline AuthzConfig field in the meantime.",
+              "description": "AuthzConfigRef references a shared MCPAuthzConfig resource for authorization.\nThe referenced MCPAuthzConfig must exist in the same namespace as this VirtualMCPServer.\nMutually exclusive with authzConfig.\n\nOnly cedarv1 MCPAuthzConfig resources are supported for VirtualMCPServer\ntoday; referencing a non-Cedar config fails reconciliation with a clear\nerror because the vMCP runtime authz middleware is Cedar-only.",
               "properties": {
                 "name": {
                   "description": "Name is the name of the MCPAuthzConfig resource in the same namespace.",
@@ -2493,6 +2499,10 @@
     "status": {
       "description": "VirtualMCPServerStatus defines the observed state of VirtualMCPServer",
       "properties": {
+        "authzConfigHash": {
+          "description": "AuthzConfigHash is the hash of the referenced MCPAuthzConfig spec for change detection.\nOnly populated when IncomingAuth.AuthzConfigRef is set.",
+          "type": "string"
+        },
         "backendCount": {
           "description": "BackendCount is the number of routable backends (ready + unauthenticated).\nExcludes unavailable, degraded, and unknown backends.",
           "format": "int32",
