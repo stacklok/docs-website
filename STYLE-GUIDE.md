@@ -323,7 +323,7 @@ Specific guidelines for Docusaurus:
 
 These are the projects we work on, and a short description of each one.
 
-**Stacklok Enterprise**: Stacklok’s commercial offering for enterprises: the
+**Stacklok Enterprise**: Stacklok's commercial offering for enterprises: the
 enterprise-licensed distribution of ToolHive. It adds turnkey identity provider
 integration, centralized policy enforcement, hardened and signed releases, and
 SLA-backed support, plus commercial support terms, services hours from the
@@ -332,7 +332,7 @@ server images.
 
 **ToolHive**: A collection of open source projects that form the foundation of
 Stacklok Enterprise. ToolHive includes everything you need to use MCP servers in
-production. It’s made up of four key components: the Runtime, Registry Server,
+production. It's made up of four key components: the Runtime, Registry Server,
 Gateway, and Portal. It's written bi-capitalized as one word (not "Toolhive" or
 "Tool Hive").
 

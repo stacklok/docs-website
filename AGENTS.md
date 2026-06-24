@@ -304,7 +304,7 @@ Stacklok Enterprise includes turnkey integrations for common identity providers.
 ```ts title="sidebars.ts"
 {
   type: 'doc',
-  id: 'toolhive/enterprise-manager/config-server',
+  id: 'platform/enterprise-manager/index',
   className: 'enterprise-only',
 }
 ```
