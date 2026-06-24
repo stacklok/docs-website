@@ -4,11 +4,40 @@
 
 /*
  * Generate MDX pages for each CRD plus the CRD reference landing page and a
- * sidebar.json consumed by sidebars.ts. Every CRD present in
- * static/api-specs/crds/index.json (produced by extract-crd-schemas.mjs) is
- * published. Hand-written overrides in scripts/lib/crd-intros.mjs are merged
- * over schema-derived defaults, so a new upstream CRD ships a usable page
+ * sidebar.json consumed by sidebars.ts. Every CRD present in the data
+ * directory's index.json (produced by extract-crd-schemas.mjs) is published.
+ * Hand-written overrides in scripts/lib/crd-intros.mjs are merged over
+ * schema-derived defaults, so a new upstream CRD ships a usable page
  * automatically; overrides are improvements, not prerequisites.
+ *
+ * Usage:
+ *   node scripts/generate-crd-pages.mjs [--data <dir>] [--pages <dir>]
+ *
+ * --data              Directory produced by extract-crd-schemas.mjs (contains
+ *                     index.json and per-CRD schema/example files).
+ *                     Default: static/api-specs/toolhive-crds
+ * --pages             Directory to write MDX pages into.
+ *                     Default: docs/toolhive/reference/crds
+ * --landing-title     Title for the CRD reference landing page and sidebar
+ *                     category label.
+ *                     Default: "Kubernetes CRD reference"
+ * --landing-description  Front-matter description for the landing page (used
+ *                     for DocCard previews and SEO meta).
+ *                     Default: "Reference for all ToolHive Kubernetes Operator
+ *                     custom resource definitions."
+ * --landing-intro     Intro paragraph text rendered below the landing page
+ *                     title, above the DocCard grid.
+ *                     Default: ToolHive-specific copy.
+ *
+ * The Docusaurus doc-ID prefix (used in sidebar items and landing-page hrefs)
+ * is derived automatically from --pages by stripping the leading docs/ path.
+ * Run the script twice with different flags to publish OSS and enterprise CRDs
+ * to separate sections without the indexes clobbering each other.
+ *
+ * This script writes per-set output only (MDX pages, sidebar fragment, and
+ * the enriched index.json). The consolidated Kind -> schema barrel consumed
+ * by <CRDFields> spans all sets and is generated separately by
+ * scripts/generate-crd-barrel.mjs.
  */
 
 import fs from 'node:fs';
@@ -23,8 +52,49 @@ import { intros, groupLabels, groupOrder } from './lib/crd-intros.mjs';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
-const crdsDataDir = path.join(repoRoot, 'static', 'api-specs', 'crds');
-const pagesDir = path.join(repoRoot, 'docs', 'toolhive', 'reference', 'crds');
+
+const defaultDataDir = path.join(
+  repoRoot,
+  'static',
+  'api-specs',
+  'toolhive-crds'
+);
+const defaultPagesDir = path.join(
+  repoRoot,
+  'docs',
+  'toolhive',
+  'reference',
+  'crds'
+);
+
+const args = process.argv.slice(2);
+
+const dataArgIdx = args.indexOf('--data');
+const crdsDataDir =
+  dataArgIdx >= 0 ? path.resolve(args[dataArgIdx + 1]) : defaultDataDir;
+
+const pagesArgIdx = args.indexOf('--pages');
+const pagesDir =
+  pagesArgIdx >= 0 ? path.resolve(args[pagesArgIdx + 1]) : defaultPagesDir;
+
+function argValue(flag, fallback) {
+  const idx = args.indexOf(flag);
+  return idx >= 0 ? args[idx + 1] : fallback;
+}
+
+const landingTitle = argValue('--landing-title', 'Kubernetes CRD reference');
+const landingDescription = argValue(
+  '--landing-description',
+  'Reference for all ToolHive Kubernetes Operator custom resource definitions.'
+);
+const landingIntro = argValue(
+  '--landing-intro',
+  'The ToolHive operator manages MCP workloads using Kubernetes custom resources.\nEach page below documents one resource - its fields, defaults, validation\nrules, and a minimal example manifest - and links to the other resources it\nreferences.'
+);
+
+// Derive the Docusaurus doc-ID prefix from pagesDir (strip the leading docs/).
+const docsRoot = path.join(repoRoot, 'docs');
+const docIdPrefix = path.relative(docsRoot, pagesDir); // e.g. "toolhive/reference/crds"
 
 fs.mkdirSync(pagesDir, { recursive: true });
 
@@ -147,7 +217,6 @@ function renderPage(entry) {
 title: ${entry.kind}
 description: >-
   ${meta.description}
-displayed_sidebar: toolhiveSidebar
 toc_max_heading_level: 4
 ---
 
@@ -199,42 +268,40 @@ function kindsByGroup() {
 
 function renderLandingPage() {
   const grouped = kindsByGroup();
-  const sections = groupOrder.map((group) => {
-    const label = groupLabels[group];
-    const cards = grouped[group]
-      .map(
-        (item) => `<DocCard
+  const sections = groupOrder
+    .filter((group) => grouped[group].length > 0)
+    .map((group) => {
+      const label = groupLabels[group];
+      const cards = grouped[group]
+        .map(
+          (item) => `<DocCard
   item={{
     type: 'link',
-    href: '/toolhive/reference/crds/${item.slug}',
+    href: '/${docIdPrefix}/${item.slug}',
     label: '${item.kind}',
     description: '${item.summary.replace(/'/g, "\\'")}',
   }}
 />`
-      )
-      .join('\n\n');
-    return `## ${label}
+        )
+        .join('\n\n');
+      return `## ${label}
 
 <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem', margin: '1rem 0'}}>
 
 ${cards}
 
 </div>`;
-  });
+    });
 
   return `---
-title: Kubernetes CRD reference
+title: ${landingTitle}
 description:
-  Reference for all ToolHive Kubernetes Operator custom resource definitions.
-displayed_sidebar: toolhiveSidebar
+  ${landingDescription}
 ---
 
 import DocCard from '@theme/DocCard';
 
-The ToolHive operator manages MCP workloads using Kubernetes custom resources.
-Each page below documents one resource - its fields, defaults, validation
-rules, and a minimal example manifest - and links to the other resources it
-references.
+${landingIntro}
 
 ${sections.join('\n\n')}
 `;
@@ -244,19 +311,18 @@ function renderSidebarFragment() {
   const grouped = kindsByGroup();
   return {
     type: 'category',
-    label: 'CRD reference',
-    description:
-      'Reference for the Kubernetes custom resources managed by the ToolHive operator',
-    link: { type: 'doc', id: 'toolhive/reference/crds/index' },
-    items: groupOrder.map((group) => ({
-      type: 'category',
-      label: groupLabels[group],
-      collapsed: false,
-      collapsible: false,
-      items: grouped[group].map(
-        (item) => `toolhive/reference/crds/${item.slug}`
-      ),
-    })),
+    label: landingTitle,
+    description: landingDescription,
+    link: { type: 'doc', id: `${docIdPrefix}/index` },
+    items: groupOrder
+      .filter((group) => grouped[group].length > 0)
+      .map((group) => ({
+        type: 'category',
+        label: groupLabels[group],
+        collapsed: false,
+        collapsible: false,
+        items: grouped[group].map((item) => `${docIdPrefix}/${item.slug}`),
+      })),
   };
 }
 
@@ -292,39 +358,6 @@ fs.writeFileSync(
   JSON.stringify(renderSidebarFragment(), null, 2) + '\n'
 );
 console.log(`Wrote ${path.relative(repoRoot, sidebarPath)}`);
-
-// Emit the schemas index consumed by <CRDFields>. This lets MDX authors
-// reference a CRD by its Kind name without knowing the plural form or
-// importing the JSON themselves.
-const schemasPath = path.resolve(
-  repoRoot,
-  'src',
-  'components',
-  'CRDReference',
-  'schemas.ts'
-);
-const schemasContent = `// SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
-// SPDX-License-Identifier: Apache-2.0
-
-// AUTO-GENERATED by scripts/generate-crd-pages.mjs. Do not edit.
-// Maps each CRD Kind to its extracted JSON Schema so <CRDFields> and the
-// <CRDReference> remark plugin can resolve schemas by Kind name.
-
-${index
-  .map(
-    (entry) =>
-      `import ${entry.kind} from '@site/static/api-specs/crds/${entry.plural}.schema.json';`
-  )
-  .join('\n')}
-
-export const schemas = {
-${index.map((entry) => `  ${entry.kind},`).join('\n')}
-} as const;
-
-export type CRDKind = keyof typeof schemas;
-`;
-fs.writeFileSync(schemasPath, schemasContent);
-console.log(`Wrote ${path.relative(repoRoot, schemasPath)}`);
 
 const withoutOverride = index.filter(
   (entry) => !metaByKind.get(entry.kind).hasOverride

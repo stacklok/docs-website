@@ -10,7 +10,6 @@ import Head from '@docusaurus/Head';
 import ProductGrid from '@site/src/components/ProductGrid';
 import ProductCard from '@site/src/components/ProductCard';
 import Heading from '@theme/Heading';
-
 import styles from './index.module.css';
 
 function HomepageHeader() {
@@ -97,7 +96,30 @@ export default function Home(): ReactNode {
       </Head>
       <HomepageHeader />
       <main className='container'>
-        <ProductGrid>
+        <ProductGrid layout='fixed-1'>
+          <ProductCard
+            contentType='logo'
+            href='/platform'
+            logo='/img/logos/stacklok-default-black.svg'
+            logoDark='/img/logos/stacklok-default-white.svg'
+            logoAlt='Stacklok logo'
+            logoTitle='Stacklok Enterprise'
+            linkText='Explore the platform'
+            icon={{
+              src: '/img/logos/stacklok-symbol-dark-green.svg',
+              srcDark: '/img/logos/stacklok-symbol-light-green.svg',
+              alt: 'Stacklok symbol',
+              width: '90px',
+              style: { marginLeft: '1.5rem' },
+            }}
+          >
+            Stacklok Enterprise is one platform to run, govern, and secure the
+            AI your teams depend on, from the MCP servers and skills your agents
+            call to the models behind them.
+          </ProductCard>
+        </ProductGrid>
+
+        <ProductGrid layout='fixed-2'>
           <ProductCard
             contentType='logo'
             href='/toolhive'
@@ -105,40 +127,70 @@ export default function Home(): ReactNode {
             logoDark='/img/logos/toolhive-default-white.svg'
             logoAlt='ToolHive logo'
             logoTitle='ToolHive logo'
-            linkText='Read documentation'
+            linkText='Manage MCP & skills'
             icon={{
               src: '/img/logos/toolhive-symbol-black.svg',
               srcDark: '/img/logos/toolhive-symbol-white.svg',
               alt: 'ToolHive symbol',
-              width: '120px',
+              width: '90px',
               style: { marginLeft: '1.5rem' },
             }}
           >
-            ToolHive simplifies the deployment and management of Model Context
-            Protocol (MCP) servers, ensuring ease of use, consistency, and
-            security. It&apos;s available as a standalone tool or as a
-            Kubernetes operator, making it versatile for various environments.
+            Run, secure, and govern Model Context Protocol (MCP) servers and
+            agent skills across the desktop app, CLI, and Kubernetes. ToolHive
+            is the open source core.
           </ProductCard>
           <ProductCard
-            contentType='logo'
-            href='/toolhive/enterprise'
-            logo='/img/logos/stacklok-default-black.svg'
-            logoDark='/img/logos/stacklok-default-white.svg'
-            logoAlt='Stacklok logo'
-            logoTitle='Stacklok logo'
-            linkText='Learn more'
+            contentType='text'
+            href='/ai-gateway'
+            title='AI Gateway'
+            linkText='Control LLM access'
             icon={{
               src: '/img/logos/stacklok-symbol-black.svg',
               srcDark: '/img/logos/stacklok-symbol-white.svg',
               alt: 'Stacklok symbol',
-              width: '120px',
-              style: { marginLeft: '1.5rem' },
+              width: '90px',
+              style: { marginLeft: '1.5rem', marginBottom: '0.5rem' },
             }}
           >
-            Stacklok Enterprise provides a fully managed, enterprise-grade
-            platform built on ToolHive, with advanced security, compliance, and
-            governance features for organizations deploying MCP servers at
-            scale.
+            Govern access, cost, and compliance for the large language model
+            providers your teams use, with identity-bound budgets, data
+            guardrails, and a full audit trail. Self-hosted in your environment.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='/platform/enterprise-platform'
+            title='Deploy & operate'
+            linkText='Set up the platform'
+            icon={{
+              src: '/img/icons/stacklok-website-icons-circuit-dark-green.svg',
+              srcDark:
+                '/img/icons/stacklok-website-icons-circuit-light-green.svg',
+              alt: 'Stacklok symbol',
+              width: '100px',
+              style: { marginLeft: '1.5rem', marginBottom: '0.5rem' },
+            }}
+          >
+            Stand up Stacklok Enterprise on Kubernetes and run its platform
+            services, the Enterprise Manager, Cloud UI, and managed clients, in
+            production.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
+            href='/platform/enterprise-authz'
+            title='Govern & secure'
+            linkText='Set policy'
+            icon={{
+              src: '/img/icons/stacklok-website-icons-security-dark-green.svg',
+              srcDark:
+                '/img/icons/stacklok-website-icons-security-light-green.svg',
+              alt: 'Stacklok symbol',
+              width: '100px',
+              style: { marginLeft: '1.5rem', marginBottom: '0.5rem' },
+            }}
+          >
+            Centralize identity, authorization, and policy across the platform
+            with enterprise authorization and the Enterprise Manager.
           </ProductCard>
         </ProductGrid>
 
@@ -274,9 +326,9 @@ export default function Home(): ReactNode {
             title='MCP Optimizer'
             linkText='Read the docs'
             icon={{
-              src: '/img/mcp-servers/stacklok-website-icons-efficiency-dark-green.svg',
+              src: '/img/icons/stacklok-website-icons-efficiency-dark-green.svg',
               srcDark:
-                '/img/mcp-servers/stacklok-website-icons-efficiency-light-green.svg',
+                '/img/icons/stacklok-website-icons-efficiency-light-green.svg',
               alt: 'Stacklok efficiency icon',
               width: '80px',
               style: { marginLeft: '1.5rem', marginBottom: '0.5rem' },

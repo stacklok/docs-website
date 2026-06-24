@@ -1,0 +1,350 @@
+---
+title: Roll out Stacklok Desktop
+description:
+  Distribute Stacklok Desktop to user devices via MDM, with the platform URL
+  pre-configured so users sign in without typing it.
+---
+
+This page covers a silent, fleet-wide rollout of Stacklok Desktop to user
+devices via your mobile device management (MDM) platform. The goal is that a
+user opens the app for the first time and lands directly on the single sign-on
+(SSO) screen, with no prompt to enter a platform URL and no elevated privileges
+required.
+
+The Stacklok CLI reads the same managed preference when it's installed alongside
+the desktop app. See [Stacklok CLI](../enterprise-cli/index.mdx) for
+CLI-specific rollout notes.
+
+## How the platform URL bootstrap works
+
+On first launch, Stacklok Desktop needs to know which
+[Enterprise Manager](../enterprise-manager/index.mdx) to talk to. It learns the
+URL from one of two sources, checked in this order:
+
+1. The MDM-managed preference (see the per-OS paths below). This is the
+   recommended path for fleet rollouts.
+2. The `STACKLOK_PLATFORM_URL` environment variable. Useful for local
+   development or single-user installs; not appropriate for fleet rollout.
+
+If neither is set, the app prompts for the URL at first launch. The goal of the
+rollout is to never reach that prompt.
+
+The key name and per-OS managed-preference location are:
+
+| OS      | Path                                                       | Key                   |
+| ------- | ---------------------------------------------------------- | --------------------- |
+| macOS   | `/Library/Managed Preferences/com.stacklok.toolhive.plist` | `StacklokPlatformUrl` |
+| Windows | `HKLM\SOFTWARE\Policies\Stacklok\ToolHive`                 | `StacklokPlatformUrl` |
+
+The macOS path is the standard Apple managed-preferences location delivered by a
+Configuration Profile. The Windows path follows the conventional
+`HKLM\SOFTWARE\Policies\<Vendor>\<Product>` layout used by Microsoft Edge,
+Google Chrome, Mozilla Firefox, and Docker Desktop, delivered as a registry
+policy by your MDM.
+
+## Prerequisites
+
+Before you start, ensure you have:
+
+- An active Stacklok Enterprise license and access to the Stacklok-provided
+  distribution channel for the desktop installer. Both are issued during
+  onboarding.
+- The browser-reachable Cloud UI URL of your Stacklok Enterprise deployment (the
+  same value you set as `betterAuth.url` when deploying the
+  [Enterprise Cloud UI](../enterprise-cloud-ui/configure.mdx)). This is the
+  value of `<PLATFORM_URL>` throughout this page.
+- Administrative access to your MDM with permission to upload apps and
+  managed-configuration policies.
+- A target device group scoped to the users who should receive the app. Do not
+  deploy to all devices.
+
+## Obtain the installer
+
+Stacklok provides the signed desktop installer through your enterprise
+distribution channel. Contact your Stacklok representative if you do not have
+access yet.
+
+You receive a per-architecture artifact:
+
+| OS      | Artifact                                            |
+| ------- | --------------------------------------------------- |
+| macOS   | `StacklokDesktop-<X.Y.Z>-arm64.dmg` (Apple Silicon) |
+| macOS   | `StacklokDesktop-<X.Y.Z>-x64.dmg` (Intel)           |
+| Windows | `StacklokDesktop.Setup.exe`                         |
+
+The macOS `.dmg` is signed with Stacklok's Developer ID Application certificate,
+notarized by Apple, and stapled. The Windows `.exe` is signed via Azure Trusted
+Signing. Neither requires a Gatekeeper or SmartScreen bypass on managed devices.
+
+:::warning[Per-user install on Windows]
+
+The Windows installer is a Squirrel installer that lays the app down under
+`%LOCALAPPDATA%\Programs\StacklokDesktop\`, not `C:\Program Files\`. Your MDM
+detection rules **must** target the per-user path. Rules that look for an
+executable under `%ProgramFiles%\...` incorrectly report the install as failed.
+
+:::
+
+## Push the platform URL on macOS
+
+Stacklok Desktop reads `StacklokPlatformUrl` from the managed-preferences domain
+`com.stacklok.toolhive` at first launch. You deliver the value by uploading a
+Configuration Profile to your MDM.
+
+### Configuration Profile template
+
+Save the following as `com.stacklok.toolhive.mobileconfig` on your admin
+workstation, replacing `<PLATFORM_URL>` with your deployment URL and
+`<ORGANIZATION>` with your organization name. Do not include a trailing slash on
+the URL.
+
+```xml title="com.stacklok.toolhive.mobileconfig"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadIdentifier</key>
+    <string>com.stacklok.toolhive.managed-settings</string>
+    <key>PayloadUUID</key>
+    <string>1864D77D-1931-474A-B099-2970676AA3FF</string>
+    <key>PayloadDisplayName</key>
+    <string>Stacklok Desktop - Managed Settings</string>
+    <key>PayloadOrganization</key>
+    <string><ORGANIZATION></string>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadType</key>
+            <string>com.stacklok.toolhive</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>PayloadIdentifier</key>
+            <string>com.stacklok.toolhive.managed-settings.payload</string>
+            <key>PayloadUUID</key>
+            <string>C248058F-2905-46E8-9AB7-9F0807BD1166</string>
+            <key>PayloadDisplayName</key>
+            <string>Stacklok Desktop managed preferences</string>
+            <key>StacklokPlatformUrl</key>
+            <string><PLATFORM_URL></string>
+        </dict>
+    </array>
+</dict>
+</plist>
+```
+
+Despite the `.mobileconfig` extension, this is the universal Apple Configuration
+Profile format and applies to macOS. Validate the file with
+`plutil -lint com.stacklok.toolhive.mobileconfig` before uploading.
+
+### Upload to your MDM (macOS)
+
+Upload the Configuration Profile alongside the signed `.dmg`, and scope both to
+the device group that should receive the app. The exact menu paths differ per
+MDM; consult your vendor's documentation for screenshots and edge cases. Worked
+examples for two commonly used MDMs:
+
+**Jamf Pro**
+
+1. Upload the `.dmg` under **Computers** > **Management Settings** > **Computer
+   Management** > **Packages** > **New**.
+2. Create the deployment policy under **Computers** > **Policies** > **New**,
+   add the package, and scope to the target smart group.
+3. Upload the Configuration Profile under **Computers** > **Configuration
+   Profiles** > **Upload Profile**, and scope to the same smart group.
+
+Vendor docs: [Jamf Pro documentation](https://learn.jamf.com/).
+
+**Microsoft Intune**
+
+1. Upload the `.dmg` under **Apps** > **macOS** > **Add** > **macOS app (DMG)**,
+   fill in the app info (publisher `Stacklok`, minimum OS `11.0`), and assign to
+   the target Entra ID group.
+2. Upload the Configuration Profile under **Devices** > **Configuration** >
+   **Create profile**, choose platform **macOS** and profile type
+   **Templates** > **Custom**, upload the `.mobileconfig`, and assign to the
+   same group.
+
+Intune's macOS DMG path requires the Intune management agent installed on each
+device with Full Disk Access granted on macOS 13+ (System Settings > Privacy &
+Security > Full Disk Access).
+
+Vendor docs:
+[Add an unmanaged macOS DMG app to Microsoft Intune](https://learn.microsoft.com/intune/).
+
+## Push the platform URL on Windows
+
+On Windows the equivalent of macOS managed preferences is the registry. The
+desktop app reads `StacklokPlatformUrl` from
+`HKLM\SOFTWARE\Policies\Stacklok\ToolHive` at runtime. The hive is `HKLM`
+(machine-scoped); do not put the value under `HKCU`.
+
+The recommended delivery artifact is a `.reg` file. An ADMX/ADML policy template
+pair is also available from Stacklok during onboarding for MDMs that render form
+UI from ingested ADMX (Microsoft Intune via Import ADMX, Workspace ONE via the
+ADMX Profile payload). Both artifacts write the same key and value, so a mixed
+fleet can use whichever artifact suits each MDM; the result on each device is
+identical.
+
+### Registry template
+
+Save the following as `ToolHive.reg` on your admin workstation, replacing
+`<PLATFORM_URL>` with your deployment URL:
+
+```text title="ToolHive.reg"
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Stacklok\ToolHive]
+"StacklokPlatformUrl"="<PLATFORM_URL>"
+```
+
+### Upload to your MDM (Windows)
+
+Upload the signed `.exe` alongside the registry policy, and scope both to the
+device group that should receive the app. Worked examples for two commonly used
+MDMs:
+
+**Microsoft Intune**
+
+1. Wrap the installer. Intune's Win32 app type requires `.exe` installers to be
+   wrapped into `.intunewin` packages with the
+   [Microsoft Win32 Content Prep Tool](https://github.com/microsoft/Microsoft-Win32-Content-Prep-Tool).
+
+   ```cmd
+   IntuneWinAppUtil.exe -c .\source -s StacklokDesktop.Setup.exe -o .\output
+   ```
+
+2. Upload the wrapped app under **Apps** > **Windows** > **Add** > **Windows app
+   (Win32)**. Set the install command to `StacklokDesktop.Setup.exe --silent`.
+   Set the detection rule to look for
+   `%LOCALAPPDATA%\Programs\StacklokDesktop\StacklokDesktop.exe` (the per-user
+   path, not `Program Files`).
+3. Push the registry value. Either import the ADMX/ADML pair under **Devices** >
+   **Configuration** > **Import ADMX**, then create a Settings Catalog profile
+   that sets **Stacklok platform URL** to `<PLATFORM_URL>`; or push the `.reg`
+   values via a remediation script that runs `reg import` against a pre-staged
+   copy of `ToolHive.reg`.
+4. Assign both to the target Entra ID group.
+
+Vendor docs:
+[Win32 app management in Microsoft Intune](https://learn.microsoft.com/intune/).
+
+**Workspace ONE / Omnissa**
+
+1. Upload the installer under **Resources** > **Apps** > **Native** > **Add
+   Application** > **Windows** > **Internal**, upload
+   `StacklokDesktop.Setup.exe`. Set the install command to
+   `StacklokDesktop.Setup.exe --silent`, the uninstall command to
+   `Update.exe --uninstall -s`, and the detection rule to file path
+   `%LOCALAPPDATA%\Programs\StacklokDesktop\StacklokDesktop.exe`.
+2. Push the registry value. Either upload the ADMX/ADML pair under
+   **Resources** > **Profiles** > **Add Profile** > **Windows Desktop** >
+   **Administrative Templates** and enter `<PLATFORM_URL>` in the form field, or
+   use Registry Automation to import the `.reg` file directly.
+3. Assign both to the target smart group.
+
+Vendor docs: [Workspace ONE UEM documentation](https://docs.omnissa.com/).
+
+## Verify the rollout
+
+On a test device in the scoped group, after the MDM push completes:
+
+**macOS**
+
+```bash
+# App installed
+ls /Applications/StacklokDesktop.app
+
+# Configuration Profile applied
+profiles list | grep -i toolhive
+
+# Managed preference landed
+defaults read "/Library/Managed Preferences/com.stacklok.toolhive.plist" \
+  StacklokPlatformUrl
+```
+
+The last command should print your `<PLATFORM_URL>`. Open the app from
+`/Applications`; it should land directly on the SSO sign-in screen with no
+platform-URL prompt.
+
+**Windows**
+
+```cmd
+:: App installed (per-user path)
+dir "%LOCALAPPDATA%\Programs\StacklokDesktop\StacklokDesktop.exe"
+
+:: Registry policy applied
+reg query "HKLM\SOFTWARE\Policies\Stacklok\ToolHive" /v StacklokPlatformUrl
+```
+
+The `reg query` output should show your `<PLATFORM_URL>`. Open Stacklok Desktop
+from the Start menu; it should land directly on the SSO sign-in screen with no
+platform-URL prompt.
+
+## Managed updates
+
+Auto-update is disabled in Stacklok Desktop. New versions reach user devices
+through your organization's release cycle, not through the app's built-in update
+mechanism. This gives your platform team control over which version is deployed
+across the organization.
+
+When Stacklok publishes a new release, repeat the
+[Obtain the installer](#obtain-the-installer) step for the new version and
+update the deployment policy in your MDM to point at the new artifact. The
+managed-preference Configuration Profile and registry policy do not need to
+change between releases unless your platform URL changes.
+
+## Next steps
+
+- [Policy enforcement](./policy-enforcement.mdx) to understand which features
+  the Enterprise Manager controls once the app is running.
+- [Deep links](./deep-links.mdx) for Enterprise Cloud UI integration.
+- [Configure identity](../enterprise-platform/configure-identity.mdx) if you
+  have not already set up OIDC for your deployment.
+
+## Troubleshooting
+
+<details>
+<summary>User is prompted for the platform URL at first launch</summary>
+
+The managed preference did not land. On macOS, run
+`profiles show -identifier com.stacklok.toolhive.managed-settings` on the user's
+device. On Windows, run
+`reg query "HKLM\SOFTWARE\Policies\Stacklok\ToolHive" /v StacklokPlatformUrl`.
+If either returns nothing, re-check the MDM scope and the device's check-in
+status.
+
+</details>
+
+<details>
+<summary>MDM reports install success on Windows but the app does not appear</summary>
+
+The detection rule is targeting `Program Files` instead of the per-user path.
+Repoint the rule at
+`%LOCALAPPDATA%\Programs\StacklokDesktop\StacklokDesktop.exe`.
+
+</details>
+
+<details>
+<summary>MDM reports install success on macOS but the app does not launch</summary>
+
+The notarization staple was stripped by an MDM repackaging step. Confirm with
+`xcrun stapler validate "/Applications/StacklokDesktop.app"` on the user's
+device. If validation fails, redeploy the original `.dmg` without repackaging.
+
+</details>
+
+<details>
+<summary>Logs to collect when escalating to Stacklok support</summary>
+
+- macOS: `~/Library/Logs/Stacklok Desktop/main.log` plus the output of
+  `profiles list` and the `defaults read` command above.
+- Windows: `%APPDATA%\Stacklok Desktop\logs\main.log` plus the output of the
+  `reg query` command above.
+
+</details>

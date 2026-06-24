@@ -7,11 +7,20 @@
 # reacts to those PRs, shallow-clones the upstream, and adds
 # source-verified content edits via the upstream-release-docs skill.
 #
-# For `stacklok/toolhive` specifically, most reference artifacts are
-# declared as `assets:` below (synced by sync-assets.mjs) — plus one
-# workflow-step in upstream-release-docs.yml that downloads the CRD
-# manifests tarball and runs extract-crd-schemas.mjs + generate-crd-
-# pages.mjs to produce our opinionated per-CRD MDX pages.
+# For projects that ship Kubernetes CRDs, declare a `crds:` array
+# alongside `assets:`. Each entry drives one run of extract-crd-schemas.mjs
+# + generate-crd-pages.mjs via scripts/upstream-release/extract-crds.mjs.
+# Source kinds: `release_asset:` (from the GitHub release tarball) or
+# `source:` (directory inside the upstream clone). Required per-entry
+# fields: `out` (static/ output dir), `pages` (docs/ MDX output dir).
+# Optional: `landing_title`, `landing_description`, `landing_intro` to
+# customize the generated landing page.
+# This array is the single source of truth for the CRD sets: the remark
+# plugin (docusaurus.config.ts), the sidebar fragments (sidebars.ts), and
+# the consolidated <CRDFields> schema barrel are all derived from it via
+# scripts/lib/crd-sets.mjs, so adding a set is a YAML edit plus a regen.
+# Multiple entries per project are supported for suites that ship more
+# than one CRD set (e.g. enterprise platform + AI gateway).
 #
 # You can also edit `version:` by hand (to backfill or reset) and
 # dispatch the upstream-release-docs workflow manually in bootstrap
@@ -20,7 +29,7 @@
 projects:
   - id: toolhive-registry-server
     repo: stacklok/toolhive-registry-server
-    version: v1.4.6
+    version: v1.4.10
     docs_paths:
       - docs/toolhive/guides-registry
       - docs/toolhive/concepts/registry-criteria.mdx
@@ -35,7 +44,7 @@ projects:
 
   - id: toolhive
     repo: stacklok/toolhive
-    version: v0.30.0
+    version: v0.30.1
     # toolhive is a monorepo covering the CLI, the Kubernetes
     # operator, and the vMCP gateway. It also introduces cross-
     # cutting features that land in concepts/, integrations/,
@@ -66,6 +75,41 @@ projects:
         destination: static/api-specs/publisher-provided.schema.json
       - release_asset: skill.schema.json
         destination: static/api-specs/skill.schema.json
+    crds:
+      - release_asset: thv-crds.tar.gz
+        out: static/api-specs/toolhive-crds
+        pages: docs/toolhive/reference/crds
+        landing_title: Kubernetes CRD reference
+        landing_description: >-
+          Reference for all ToolHive Kubernetes Operator custom resource
+          definitions.
+        landing_intro: >-
+          The ToolHive operator manages MCP workloads using Kubernetes custom
+          resources. Each page below documents one resource - its fields,
+          defaults, validation rules, and a minimal example manifest - and
+          links to the other resources it references.
+
+  - id: stacklok-enterprise-platform
+    repo: stacklok/stacklok-enterprise-platform
+    # version: intentionally omitted - no public release cadence yet.
+    # CRDs are sourced from the local clone via --clone in development
+    # and will use release_asset: once the platform ships releases.
+    docs_paths:
+      - docs/platform
+    crds:
+      - source: enterprise/toolhive-enterprise/helm/files/crds
+        out: static/api-specs/enterprise-crds
+        pages: docs/platform/reference/crds
+        landing_title: Platform CRD reference
+        landing_description: >-
+          Reference for Stacklok Enterprise authorization custom resource
+          definitions.
+        landing_intro: >-
+          The Stacklok Enterprise platform extends the Kubernetes API with
+          custom resources for role-based access control and authorization
+          policy enforcement. Each page below documents one resource - its
+          fields, defaults, validation rules, and a minimal example manifest
+          - and links to the other resources it references.
 
   - id: toolhive-studio
     repo: stacklok/toolhive-studio

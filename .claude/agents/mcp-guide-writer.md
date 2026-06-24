@@ -28,7 +28,7 @@ Your primary responsibilities:
 
 3. **Ensure Technical Accuracy**: All configuration examples must be valid and tested. Reference the existing ToolHive documentation in the `docs/toolhive/` directory as the source of truth for:
    - Available `thv` CLI commands and their syntax (reference: `docs/toolhive/reference/cli/*.md` or run `thv --help`)
-   - Kubernetes CRD specifications and fields (reference: `static/api-specs/toolhive-crd-api.md`)
+   - Kubernetes CRD specifications and fields (reference: `static/api-specs/toolhive-crds/*.schema.json`)
    - UI configuration options and workflows (reference: `docs/toolhive/guides-ui/*`)
 
 4. **Follow Documentation Standards**: Adhere to the project's writing style guide (`STYLE_GUIDE.md`) including:

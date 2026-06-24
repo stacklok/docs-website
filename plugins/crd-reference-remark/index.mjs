@@ -196,15 +196,32 @@ function buildRelatedBlocks(entry, registry) {
 }
 
 export default function crdReferenceRemark(options = {}) {
-  const schemaDir =
-    options.schemaDir ??
-    path.resolve(process.cwd(), 'static', 'api-specs', 'crds');
+  // Accept either a single schemaDir (legacy) or a list of schemaDirs. The
+  // registries are merged into one Kind -> entry map. CRD Kinds must be
+  // globally unique across dirs because we resolve schemas by Kind name;
+  // throw on a collision rather than letting one set silently shadow another.
+  const dirs =
+    options.schemaDirs ??
+    (options.schemaDir
+      ? [options.schemaDir]
+      : [path.resolve(process.cwd(), 'static', 'api-specs', 'toolhive-crds')]);
 
-  const indexPath = path.join(schemaDir, 'index.json');
   const registry = new Map();
-  if (fs.existsSync(indexPath)) {
+  for (const schemaDir of dirs) {
+    const indexPath = path.join(schemaDir, 'index.json');
+    if (!fs.existsSync(indexPath)) continue;
     const entries = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
-    for (const entry of entries) registry.set(entry.kind, entry);
+    for (const entry of entries) {
+      const existing = registry.get(entry.kind);
+      if (existing) {
+        throw new Error(
+          `crd-reference-remark: duplicate CRD Kind "${entry.kind}" in ` +
+            `${existing.schemaDir} and ${schemaDir}. CRD Kinds must be unique ` +
+            `across schema dirs because <CRDReference> resolves by Kind name.`
+        );
+      }
+      registry.set(entry.kind, { ...entry, schemaDir });
+    }
   }
 
   return function transformer(tree, file) {
@@ -230,13 +247,16 @@ export default function crdReferenceRemark(options = {}) {
       const entry = registry.get(kind);
       if (!entry) {
         file.message(
-          `<CRDReference kind="${kind}"> has no matching CRD in ${path.relative(process.cwd(), indexPath)}; skipping.`,
+          `<CRDReference kind="${kind}"> has no matching CRD in any registered schema dir (${dirs.map((d) => path.relative(process.cwd(), d)).join(', ')}); skipping.`,
           node
         );
         return;
       }
 
-      const schemaPath = path.join(schemaDir, `${entry.plural}.schema.json`);
+      const schemaPath = path.join(
+        entry.schemaDir,
+        `${entry.plural}.schema.json`
+      );
       let schema;
       try {
         schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
