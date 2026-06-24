@@ -208,6 +208,7 @@ const mcpSidebar: SidebarsConfig[string] = [
       'toolhive/guides-vmcp/tool-aggregation',
       'toolhive/guides-vmcp/composite-tools',
       'toolhive/guides-vmcp/optimizer',
+      'toolhive/guides-vmcp/code-mode',
       'toolhive/guides-vmcp/failure-handling',
       'toolhive/guides-vmcp/telemetry-and-metrics',
       'toolhive/guides-vmcp/audit-logging',
