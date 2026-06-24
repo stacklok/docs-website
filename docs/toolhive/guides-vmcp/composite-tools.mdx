@@ -588,6 +588,238 @@ step 'conditional_step' can be skipped but is referenced by downstream steps
 without defaultResults defined
 ```
 
+### Structured output
+
+By default, a composite tool returns the raw output of its last step. Add an
+`output` block to define a structured, typed response instead. This is useful
+when you want to aggregate data from multiple steps, enforce types, or give
+models a consistent response shape.
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  config:
+    compositeTools:
+      - name: create_github_issue
+        description: Create an issue and return structured result
+        parameters:
+          type: object
+          properties:
+            title:
+              type: string
+            body:
+              type: string
+          required: [title, body]
+        steps:
+          - id: create
+            tool: github_create_issue
+            arguments:
+              title: '{{.params.title}}'
+              body: '{{.params.body}}'
+        # highlight-start
+        output:
+          properties:
+            issue_number:
+              type: integer
+              description: Number of the created issue
+              value: '{{.steps.create.output.number}}'
+            issue_url:
+              type: string
+              description: URL of the created issue
+              value: '{{.steps.create.output.url}}'
+          required: [issue_number, issue_url]
+        # highlight-end
+```
+
+#### Property fields
+
+Each entry in `output.properties` requires `type` and either `value` or
+`properties`:
+
+| Field         | Required    | Description                                                                   |
+| ------------- | ----------- | ----------------------------------------------------------------------------- |
+| `type`        | Yes         | JSON Schema type: `string`, `integer`, `number`, `boolean`, `object`, `array` |
+| `description` | Recommended | Human-readable description exposed to clients and models                      |
+| `value`       | Yes\*       | Template string that resolves to the property value                           |
+| `properties`  | Yes\*       | Nested property definitions (object type only)                                |
+| `default`     | No          | Fallback value when template expansion returns no value or coercion fails     |
+
+\* `value` and `properties` are mutually exclusive. Non-object types must use
+`value`. Object types may use either.
+
+:::note
+
+`description` is optional in the CRD schema but is required by the vMCP runtime
+validator. Omitting it causes the composite tool to fail at load time.
+
+:::
+
+The top-level `required` list names properties that must be present and non-null
+at runtime. If a required property is missing or null, the workflow fails.
+
+#### Type coercion
+
+Template expansion always produces a string. The runtime converts that string to
+the declared type:
+
+| Type      | Coercion                                                |
+| --------- | ------------------------------------------------------- |
+| `string`  | Used as-is                                              |
+| `integer` | Parsed as a base-10 integer; fails if not parseable     |
+| `number`  | Parsed as a float; fails if not parseable               |
+| `boolean` | Accepts `true`/`false`, `1`/`0`; fails otherwise        |
+| `object`  | Parsed as a JSON object string; fails if not valid JSON |
+| `array`   | Parsed as a JSON array string; fails if not valid JSON  |
+
+When coercion fails and no `default` is defined, the workflow fails. When
+`default` is defined, it is used as the fallback and a warning is logged.
+
+For `object` and `array` types, the `value` must expand to a JSON string. If a
+step's structured output already contains a map or slice (not a JSON string),
+use the `json` template function to serialize it first:
+
+```yaml
+# Step returns a structured list; serialize to JSON for the output block
+referrers:
+  type: array
+  description: Attestation referrers attached to this image
+  value: '{{json .steps.list_referrers.output.referrers}}'
+```
+
+#### The `default` field
+
+Use `default` to provide a fallback for properties that may not resolve. For
+example, when referencing output from a conditionally skipped step:
+
+```yaml
+output:
+  properties:
+    processed_count:
+      type: integer
+      description: Number of items processed
+      value: '{{.steps.optional_step.output.count}}'
+      default: 0
+    status:
+      type: string
+      description: Processing status
+      value: '{{.steps.optional_step.output.status}}'
+      default: not_run
+```
+
+:::note
+
+When a step is conditionally skipped, its output fields expand to `<no value>`
+in templates. Without a `default`, the workflow fails. `defaultResults` on the
+step itself serves a different purpose: it provides fallback values for
+downstream **steps** that reference the skipped step's output in their
+`arguments`. See [Default step outputs](#default-step-outputs).
+
+:::
+
+#### Nested objects
+
+For object properties, use `value` when the step returns data to deserialize, or
+`properties` to template each field individually:
+
+```yaml
+output:
+  properties:
+    # Option 1a: step returns a JSON string already — reference it directly
+    metadata:
+      type: object
+      description: Metadata returned by the backend as a JSON string
+      value: '{{.steps.fetch.output.metadata_json}}'
+
+    # Option 1b: step returns structured data — use json to serialize it first
+    referrers:
+      type: array
+      description: OCI referrers attached to this image
+      value: '{{json .steps.list_referrers.output.referrers}}'
+
+    # Option 2: nested properties, each individually templated
+    summary:
+      type: object
+      description: Aggregated scan summary
+      properties:
+        issue_count:
+          type: integer
+          description: Total issues found
+          value: '{{.steps.scan.output.count}}'
+        severity:
+          type: string
+          description: Highest severity level
+          value: '{{.steps.scan.output.max_severity}}'
+```
+
+#### Aggregating from multiple steps
+
+The `output` block is the natural place to collect results from parallel or
+sequential steps into a single response. This example fans out three lookups in
+parallel, then aggregates them into one structured result:
+
+```yaml title="VirtualMCPCompositeToolDefinition resource"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: VirtualMCPCompositeToolDefinition
+metadata:
+  name: image-supply-chain-audit
+spec:
+  name: audit_image_supply_chain
+  description: Audit an OCI image (info, referrers, and recent tags in parallel)
+  parameters:
+    type: object
+    properties:
+      image_ref:
+        type: string
+        description: Full image reference including tag
+      repository:
+        type: string
+        description: Repository path without tag, for listing tags
+    required: [image_ref, repository]
+  steps:
+    # All three steps run in parallel — no dependsOn between them
+    - id: image_info
+      tool: oci-registry_get_image_info
+      arguments:
+        image_ref: '{{.params.image_ref}}'
+    - id: referrers
+      tool: oci-registry_list_referrers
+      arguments:
+        image_ref: '{{.params.image_ref}}'
+    - id: tags
+      tool: oci-registry_list_tags
+      arguments:
+        repository: '{{.params.repository}}'
+        limit: 10
+  output:
+    properties:
+      image_ref:
+        type: string
+        description: The image reference that was audited
+        value: '{{.params.image_ref}}'
+      digest:
+        type: string
+        description: Content-addressable digest of the image
+        value: '{{.steps.image_info.output.digest}}'
+      architecture:
+        type: string
+        description: CPU architecture of the image
+        value: '{{.steps.image_info.output.architecture}}'
+      layers:
+        type: integer
+        description: Number of image layers
+        value: '{{.steps.image_info.output.layers}}'
+      # referrers is a structured list — use json to serialize before output parses it
+      referrers:
+        type: array
+        description:
+          Attestation referrers attached to this image (SBOMs, signatures)
+        value: '{{json .steps.referrers.output.referrers}}'
+      recent_tags:
+        type: array
+        description: Most recent tags in the repository
+        value: '{{json .steps.tags.output.tags}}'
+    required: [digest]
+```
+
 ## Template syntax
 
 Access workflow context in arguments:
