@@ -1,0 +1,168 @@
+---
+title: Namespace self-service authorization
+description:
+  Hand authorization authoring to the team that owns the MCPServer, using
+  PlatformRoleBinding inside their own namespace.
+---
+
+This guide is for a team that owns an MCPServer in its own namespace and wants
+to author authorization grants without involving the cluster admin. The cluster
+admin still owns the role catalog; the team owns the bindings inside its
+namespace.
+
+## When to use it
+
+Use namespace self-service when the team owns the workload, has an IdP group of
+its own, and wants access changes to land in the same manifests as the MCPServer
+itself. The cluster admin maintains a `ClusterPlatformRole` catalog; teams pick
+from it rather than minting new verb sets.
+
+## How the trust model works
+
+The effective principal set on a `ToolhiveAuthorizationPolicy` is the union of:
+
+- every matching `ClusterPlatformRoleBinding` at the cluster scope, and
+- every matching `PlatformRoleBinding` in the policy's own namespace.
+
+Namespace bindings can only add principals to that union. They cannot remove a
+grant that a `ClusterPlatformRoleBinding` made cluster-wide. To deny an access
+path for a specific MCP target, use the policy's `deny[]` list, which compiles
+to a Cedar `forbid` rule and overrides every grant. The escalation direction is
+intentional: the cluster admin retains a clean override path through
+`ClusterPlatformRoleBinding`, and the team gets fast iteration on additive
+grants.
+
+| Source                        | Scope          | Who authors     |
+| ----------------------------- | -------------- | --------------- |
+| `ClusterPlatformRoleBinding`  | Cluster-wide   | Cluster admin   |
+| `PlatformRoleBinding`         | One namespace  | Namespace owner |
+| `ToolhiveAuthorizationPolicy` | One MCP target | Namespace owner |
+
+For full field details on each resource, see the
+[ClusterPlatformRoleBinding](../reference/crds/clusterplatformrolebinding.mdx),
+[PlatformRoleBinding](../reference/crds/platformrolebinding.mdx), and
+[ToolhiveAuthorizationPolicy](../reference/crds/toolhiveauthorizationpolicy.mdx)
+CRD references.
+
+## Walkthrough
+
+This walkthrough builds on the
+[Quickstart: GitHub MCP with Entra ID](./quickstart-entra.mdx). The difference
+is the namespace: the team owns `team-alpha` and has deployed an MCPServer named
+`alpha-tools-mcp` there. The cluster admin has previously authored a `read-only`
+`ClusterPlatformRole` and granted the team's namespace RBAC to manage
+`platformrolebindings` and `toolhiveauthorizationpolicies` in `team-alpha`.
+
+### 1. Bind the IdP role to the catalog role
+
+Create a `PlatformRoleBinding` in `team-alpha` that maps the Entra app role
+`mcp-team-alpha-engineers` to the cluster-published `read-only`
+`ClusterPlatformRole`:
+
+```yaml title="alpha-engineers-readonly.yaml"
+apiVersion: platform.enterprise.stacklok.com/v1alpha1
+kind: PlatformRoleBinding
+metadata:
+  name: alpha-engineers-readonly
+  namespace: team-alpha
+spec:
+  bindings:
+    - roleRef:
+        kind: ClusterPlatformRole
+        name: read-only
+      from:
+        - roles:
+            - mcp-team-alpha-engineers
+```
+
+```bash
+kubectl apply -f alpha-engineers-readonly.yaml
+```
+
+This binding only contributes principals to authorization policies in
+`team-alpha`. The `roleRef` points at a cluster-scoped role, so the team
+consumes the catalog without authoring verbs.
+
+### 2. Attach the role to the MCP target
+
+Create a `ToolhiveAuthorizationPolicy` in `team-alpha` that binds the
+`read-only` role to `alpha-tools-mcp`:
+
+```yaml title="alpha-tools-readonly.yaml"
+apiVersion: toolhive.enterprise.stacklok.com/v1alpha1
+kind: ToolhiveAuthorizationPolicy
+metadata:
+  name: alpha-tools-readonly
+  namespace: team-alpha
+spec:
+  targetRef:
+    name: alpha-tools-mcp
+  bindings:
+    - roleRef:
+        kind: ClusterPlatformRole
+        name: read-only
+```
+
+```bash
+kubectl apply -f alpha-tools-readonly.yaml
+```
+
+`targetRef.kind` defaults to `MCPServer`, so it's omitted. The policy's
+namespace and the MCPServer's namespace must match.
+
+### 3. Wait for the policy to compile
+
+```bash
+kubectl wait --for=condition=Compiled \
+  tap/alpha-tools-readonly -n team-alpha --timeout=60s
+```
+
+When the `Compiled` condition flips to `True`, the operator has turned the
+policy plus the matching `PlatformRoleBinding` into the Cedar policy bundle the
+proxy will enforce.
+
+### 4. Verify with a token from the team's IdP group
+
+Obtain a token for a user assigned to `mcp-team-alpha-engineers` and call a tool
+through the proxy at `alpha-tools-mcp`, following the pattern in
+[step 6 of the Entra quickstart](./quickstart-entra.mdx#step-6-verify-the-policy-is-enforced).
+
+Expected outcome: tool calls that carry the `readOnlyHint` annotation return
+`200`, and tool calls that don't carry it return `403`. The read-only role's
+principal set was contributed entirely by the team's `PlatformRoleBinding`; no
+cluster-wide binding had to change.
+
+## What namespace owners cannot do
+
+Self-service is bounded. A namespace owner cannot:
+
+- **Subtract a cluster-wide grant.** If a `ClusterPlatformRoleBinding` grants a
+  role to a principal that also matches a `ToolhiveAuthorizationPolicy` in the
+  team's namespace, the team cannot drop that principal locally. The options are
+  a `deny[]` entry on the authorization policy to override grants for one
+  specific MCP target, or a request to the cluster admin to change the
+  `ClusterPlatformRoleBinding`.
+- **Author or edit a `ClusterPlatformRole`.** Roles live in the
+  cluster-admin-owned catalog. The team consumes them by `roleRef`.
+- **Bind across namespaces.** A `PlatformRoleBinding` in `team-alpha` only
+  contributes principals to authorization policies whose namespace is
+  `team-alpha`. Cross-namespace effects require a `ClusterPlatformRoleBinding`,
+  which only the cluster admin can author.
+
+## Guard rails the cluster admin can enable
+
+The access gate on namespace self-service is namespace-level Kubernetes RBAC on
+`platformrolebindings` and `toolhiveauthorizationpolicies`. A team that holds
+those verbs can reference any `ClusterPlatformRole` in the cluster, including
+high-power roles published for other teams. Treat the `ClusterPlatformRole`
+catalog as a curated allow-list, and publish fewer, narrower roles when in
+doubt.
+
+## Next steps
+
+- See every field on the namespace binding in the
+  [PlatformRoleBinding CRD reference](../reference/crds/platformrolebinding.mdx).
+- See the cluster-scoped counterpart in the
+  [ClusterPlatformRoleBinding CRD reference](../reference/crds/clusterplatformrolebinding.mdx).
+- Read how identity, roles, and bindings fit together in the
+  [Authentication and authorization framework](../../toolhive/concepts/auth-framework.mdx).

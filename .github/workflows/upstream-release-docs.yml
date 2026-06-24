@@ -11,11 +11,12 @@ name: Upstream Release Docs
 #   3. Syncs declared upstream assets into static/ via sync-assets.mjs
 #      (release-asset downloads, tarball extractions, file-from-clone
 #      copies — see `assets:` in upstream-projects.yaml)
-#   4. For toolhive specifically, downloads the CRD manifests tarball
-#      and runs extract-crd-schemas.mjs + generate-crd-pages.mjs +
-#      bundle-upstream-schema.mjs to produce our opinionated reference
-#      MDX (the CRD tarball and toolhive-core schemas are shipped as
-#      release assets by stacklok/toolhive#4982)
+#   4. For any project that declares a `crds:` key in upstream-projects.yaml,
+#      runs extract-crds.mjs to drive extract-crd-schemas.mjs +
+#      generate-crd-pages.mjs for each declared CRD set. Each set writes
+#      to its own out/pages dirs so multiple CRD sources (OSS operator,
+#      enterprise platform, AI gateway, etc.) never clobber each other.
+#      bundle-upstream-schema.mjs also runs here for toolhive specifically.
 #   5. Runs two Claude Opus sessions: a generation pass running the
 #      upstream-release-docs skill, then a fresh-context editorial
 #      pass running docs-review over the changed files. Both have
@@ -361,27 +362,28 @@ jobs:
             --repo "$REPO" \
             --tag "$NEW_TAG"
 
-      # toolhive ships CRD manifests as a release asset tarball (see
-      # stacklok/toolhive#4982). We extract it to a temp dir and run our
-      # opinionated transforms: extract per-CRD JSON schemas + examples,
-      # generate MDX reference pages. Bundling the upstream-registry
-      # schema (resolves the remote MCP-server $refs for our JSON-Schema
-      # viewer) also runs here.
-      - name: Extract CRDs + generate reference MDX (toolhive)
-        if: steps.detect.outputs.id == 'toolhive'
+      # For any project with a `crds:` key in upstream-projects.yaml, run
+      # extract-crds.mjs to drive extract-crd-schemas.mjs +
+      # generate-crd-pages.mjs for each declared CRD set. The script is a
+      # no-op for projects with no crds: entries, so no `if:` guard is needed.
+      - name: Extract CRDs + generate reference MDX
         env:
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          CLONE_DIR: ${{ steps.clone.outputs.scratch_dir }}
           REPO: ${{ steps.detect.outputs.repo }}
           NEW_TAG: ${{ steps.detect.outputs.new_tag }}
         run: |
-          TMP=$(mktemp -d)
-          gh release download "$NEW_TAG" --repo "$REPO" \
-            --pattern "thv-crds.tar.gz" --dir "$TMP"
-          mkdir -p "$TMP/crds"
-          tar -xzf "$TMP/thv-crds.tar.gz" -C "$TMP/crds"
-          TOOLHIVE_CRD_DIR="$TMP/crds" node scripts/extract-crd-schemas.mjs
-          node scripts/generate-crd-pages.mjs
-          node scripts/bundle-upstream-schema.mjs
-          rm -rf "$TMP"
+          node scripts/upstream-release/extract-crds.mjs \
+            --id "$PROJECT_ID" \
+            --clone "$CLONE_DIR" \
+            --repo "$REPO" \
+            --tag "$NEW_TAG"
+
+      # toolhive-specific: bundle the upstream-registry schema to resolve
+      # remote MCP-server $refs for the JSON-Schema viewer.
+      - name: Bundle upstream schema (toolhive)
+        if: steps.detect.outputs.id == 'toolhive'
+        run: node scripts/bundle-upstream-schema.mjs
 
       # Commit AND PUSH the refreshed reference assets (synced release-
       # asset files + regenerated toolhive CRD MDX if applicable) before
@@ -437,6 +439,22 @@ jobs:
             console.log(JSON.stringify(p?.docs_paths ?? []));
           ")
           echo "docs_paths=$HINTS" >> "$GITHUB_OUTPUT"
+
+      # Resolve the CRD pages dirs for this project so the autogen-detect
+      # step and skill prompts can reference them without hardcoding paths.
+      # Space-separated; empty string when the project declares no crds:.
+      - name: Resolve CRD pages dirs
+        id: crd_pages
+        env:
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+        run: |
+          DIRS=$(node -e "
+            const yaml = require('yaml');
+            const fs = require('fs');
+            const p = yaml.parse(fs.readFileSync('.github/upstream-projects.yaml','utf8')).projects.find(x=>x.id===process.env.PROJECT_ID);
+            console.log((p?.crds ?? []).map(c => c.pages).filter(Boolean).join(' '));
+          " 2>/dev/null || true)
+          echo "dirs=$DIRS" >> "$GITHUB_OUTPUT"
 
       # claude-code-action@v1 rejects track_progress: true on
       # workflow_dispatch events with "track_progress is only
@@ -536,8 +554,8 @@ jobs:
             ${{ steps.clone.outputs.scratch_dir }} instead of
             `gh api contents?ref=<tag>` -- it's already at the tag and
             doesn't consume API quota. Do not hand-edit auto-generated
-            reference under docs/toolhive/reference/cli/,
-            docs/toolhive/reference/crds/, or static/api-specs/ --
+            reference under static/api-specs/, docs/toolhive/reference/cli/,
+            or any CRD pages dirs (${{ steps.crd_pages.outputs.dirs }}) --
             earlier workflow steps sync those from release assets.
 
             Project dependencies are already installed by an earlier
@@ -660,9 +678,9 @@ jobs:
             new claims; only refine what's already there.
 
             Do NOT re-run /upstream-release-docs. Do NOT touch files
-            under docs/toolhive/reference/cli/, static/api-specs/,
-            or docs/toolhive/reference/crds/ — those are
-            regenerated from release assets and aren't yours to edit.
+            under static/api-specs/, docs/toolhive/reference/cli/,
+            or any CRD pages dirs (${{ steps.crd_pages.outputs.dirs }}) --
+            those are regenerated from release assets and aren't yours to edit.
 
             Do NOT touch GAPS.md, NO_CHANGES.md, or SUMMARY.md at
             the repo root if they exist -- they're signal files
@@ -866,12 +884,20 @@ jobs:
         # the staged diff represents skill-introduced changes only.
         # The Augment step consumes `touched` directly and composes
         # the CAUTION alert itself -- no note block assembled here.
+        env:
+          PROJECT_ID: ${{ steps.detect.outputs.id }}
+          CRD_PAGES_DIRS: ${{ steps.crd_pages.outputs.dirs }}
         run: |
           git add -A
-          TOUCHED=$(git diff --cached --name-only -- \
-            'docs/toolhive/reference/cli/' \
-            'static/api-specs/' \
-            'docs/toolhive/reference/crds/' | paste -sd, - || true)
+          # Always watch: CLI reference (toolhive only) and all static/api-specs/.
+          # Plus any CRD pages dirs declared in the project's crds: config.
+          DIFF_ARGS=()
+          [ "$PROJECT_ID" = "toolhive" ] && DIFF_ARGS+=('docs/toolhive/reference/cli/')
+          DIFF_ARGS+=('static/api-specs/')
+          for dir in $CRD_PAGES_DIRS; do
+            DIFF_ARGS+=("${dir}/")
+          done
+          TOUCHED=$(git diff --cached --name-only -- "${DIFF_ARGS[@]}" | paste -sd, - || true)
           echo "touched=$TOUCHED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push
@@ -997,6 +1023,7 @@ jobs:
           GAPS_BLOCK: ${{ steps.signals.outputs.gaps_block }}
           SUMMARY_BLOCK: ${{ steps.signals.outputs.summary_block }}
           AUTOGEN_TOUCHED: ${{ steps.autogen.outputs.touched }}
+          CRD_PAGES_DIRS: ${{ steps.crd_pages.outputs.dirs }}
           COMPARE_OK: ${{ steps.reviewers.outputs.compare_ok }}
           MENTION_BLOCK: ${{ steps.reviewers.outputs.mention_block }}
           ASSIGN_LIST: ${{ steps.reviewers.outputs.list }}
@@ -1235,9 +1262,12 @@ jobs:
             echo "auto-fixes are applied after."
             echo ""
             echo "Auto-synced paths — do not hand-edit these in review:"
-            echo "- \`docs/toolhive/reference/cli/\`"
-            echo "- \`docs/toolhive/reference/crds/\`"
             echo "- \`static/api-specs/\`"
+            echo "- \`docs/toolhive/reference/cli/\` (toolhive only)"
+            # Emit one bullet per CRD pages dir declared in the project config.
+            for dir in $CRD_PAGES_DIRS; do
+              echo "- \`${dir}/\`"
+            done
             echo ""
             echo "If a \"Gaps needing human context\" section is present above,"
             echo "each entry includes a paste-ready **Helper prompt for local"

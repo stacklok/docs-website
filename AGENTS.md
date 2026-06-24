@@ -231,6 +231,11 @@ ALWAYS use these exact terms and capitalizations. When editing documentation, re
 - large language model (LLM)
 - Visual Studio Code ("VS Code" after first use)
 - Virtual MCP Server (vMCP) - a feature of ToolHive that aggregates multiple MCP servers into a single endpoint; use "Virtual MCP Server (vMCP)" on first use, "vMCP" thereafter
+- Stacklok Enterprise - the commercial, enterprise-licensed distribution of ToolHive, adding turnkey IdP integration, centralized policy enforcement, hardened and signed releases, and SLA-backed support
+- Stacklok Desktop - the enterprise edition of the ToolHive desktop app, with enterprise lockdown policies controlled by the Enterprise Manager (not "Enterprise UI", "Enterprise Studio", or "Stacklok UI")
+- Enterprise Manager - the Stacklok Enterprise component that pushes policy configuration to Stacklok Desktop and the Stacklok CLI
+- Enterprise Cloud UI - the Stacklok Enterprise web console for browsing and managing the MCP server catalog
+- enterprise authorization - the Stacklok Enterprise capability that compiles RBAC-style custom resources (roles, bindings, and per-server attachment policies) into the Cedar policies ToolHive enforces. It is a feature, not a named component: write it lowercase, capitalizing only at the start of a sentence, heading, or title. Don't treat it as a proper noun like the Enterprise Manager.
 
 If you encounter a term not listed here that appears frequently in the documentation, consider adding it to this list for consistency.
 
@@ -299,7 +304,7 @@ Stacklok Enterprise includes turnkey integrations for common identity providers.
 ```ts title="sidebars.ts"
 {
   type: 'doc',
-  id: 'toolhive/guides-enterprise/config-server',
+  id: 'platform/enterprise-manager/index',
   className: 'enterprise-only',
 }
 ```

@@ -4,16 +4,19 @@
 
 /*
  * Extract each CRD's openAPIV3Schema from the upstream ToolHive CRD YAMLs.
- * For each CRD this writes three files under static/api-specs/crds/:
+ * For each CRD this writes three files under static/api-specs/toolhive-crds/:
  *   <plural>.schema.json  - JSON Schema (apiVersion/kind/metadata stripped)
  *   <plural>.example.yaml - Minimal YAML skeleton covering required fields
  * Plus a shared index.json with metadata and a reference graph.
  *
  * Usage:
- *   node scripts/extract-crd-schemas.mjs [--src <dir>]
+ *   node scripts/extract-crd-schemas.mjs [--src <dir>] [--out <dir>]
  *
  * Default src is ../toolhive/deploy/charts/operator-crds/files/crds relative
  * to this repo. Set TOOLHIVE_CRD_DIR to override.
+ * Default out is static/api-specs/toolhive-crds. Set TOOLHIVE_CRD_OUT to override.
+ * Each src/out pair is independent; run the script twice for OSS and
+ * enterprise CRDs to keep their indexes separate.
  */
 
 import fs from 'node:fs';
@@ -24,7 +27,6 @@ import { intros } from './lib/crd-intros.mjs';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
-const outDir = path.join(repoRoot, 'static', 'api-specs', 'crds');
 
 const defaultSrc = path.resolve(
   repoRoot,
@@ -36,6 +38,7 @@ const defaultSrc = path.resolve(
   'files',
   'crds'
 );
+const defaultOut = path.join(repoRoot, 'static', 'api-specs', 'toolhive-crds');
 
 const args = process.argv.slice(2);
 const srcArgIdx = args.indexOf('--src');
@@ -43,6 +46,12 @@ const srcDir =
   srcArgIdx >= 0
     ? args[srcArgIdx + 1]
     : process.env.TOOLHIVE_CRD_DIR || defaultSrc;
+
+const outArgIdx = args.indexOf('--out');
+const outDir =
+  outArgIdx >= 0
+    ? path.resolve(args[outArgIdx + 1])
+    : process.env.TOOLHIVE_CRD_OUT || defaultOut;
 
 if (!fs.existsSync(srcDir)) {
   console.error(`CRD source directory not found: ${srcDir}`);

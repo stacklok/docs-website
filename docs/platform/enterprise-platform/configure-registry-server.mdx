@@ -1,0 +1,145 @@
+---
+title: Configure the Registry Server
+description:
+  Configuration reference for the Registry Server component in the Stacklok
+  Enterprise platform chart.
+---
+
+The Registry Server serves the approved MCP server and skills catalog that the
+Enterprise Cloud UI and Stacklok Desktop clients consume. It ships as a
+hardened, license-gated build in the Stacklok Enterprise platform chart.
+
+:::tip[Deploy the platform first]
+
+Install the Registry Server with the [platform chart](./deployment.mdx), which
+deploys it alongside the other components. To run it in its own cluster, or to
+maintain a separate registry per environment, enable only this component as
+described in [Distributed deployments](./distributed-deployments.mdx).
+
+:::
+
+The enterprise Registry Server uses the same configuration schema as the open
+source [Registry Server guides](../../toolhive/guides-registry/index.mdx). Every
+configuration concern (sources, registries, sync policies, database,
+authentication, and authorization) is identical, so this page covers enabling
+the component and points to the open source reference for the field-level
+detail.
+
+## Prerequisites
+
+Before deploying, ensure you have:
+
+- A Kubernetes cluster (1.28 or later)
+- An external PostgreSQL database (14 or later) that you provide, with an
+  application user, and optionally a separate migration user with
+  schema-modification privileges; the Registry Server stores its catalog there
+- Stacklok Enterprise distribution access, which includes the Helm chart and
+  container image registry credentials, provided by Stacklok during onboarding
+
+## Configure values
+
+Enable the Registry Server with its `registryServer.enabled` flag, then set its
+configuration under the `toolhive-registry-server` key. The chart wraps the open
+source Registry Server chart under an `upstream` alias, so those values sit
+under `toolhive-registry-server.upstream`.
+
+The `upstream.config` block is the open source Registry Server configuration
+schema, rendered verbatim into a ConfigMap. A functioning server needs at least
+one `sources` entry and one `registries` entry in addition to the `database`
+connection. The skeleton below shows only the database wiring; see the
+[open source reference](#configuration-reference) for the rest.
+
+### Create the database credential Secrets
+
+Supply database passwords from Secrets, never inline in the `config` block.
+Create a Secret for the application user's password. The Registry Server runs
+schema migrations on startup; if you use a separate, more-privileged migration
+user, create a second Secret for it. Otherwise the server reuses the application
+password for migrations and you can skip it.
+
+```bash
+kubectl create secret generic registry-db-credentials \
+  --from-literal=password='<APP_DB_PASSWORD>' \
+  -n stacklok-system
+
+# Only if you use a separate migration user
+kubectl create secret generic registry-db-migrator-credentials \
+  --from-literal=password='<MIGRATION_DB_PASSWORD>' \
+  -n stacklok-system
+```
+
+### Set the values file
+
+Enable the component, point it at your database, and reference the Secrets you
+just created:
+
+```yaml title="values.yaml"
+# Enable only the Registry Server.
+registryServer:
+  enabled: true
+
+# Registry Server configuration.
+toolhive-registry-server:
+  upstream:
+    config:
+      # sources and registries are required for a working server. See the
+      # configuration reference below.
+      database:
+        host: 'postgres.example.com'
+        port: 5432
+        user: 'registry' # application user
+        migrationUser: 'registry_migrator' # elevated user for migrations
+        database: 'registry'
+        sslMode: 'require'
+    # Passwords from Secrets, keyed by the env vars the server reads.
+    extraEnv:
+      - name: THV_REGISTRY_DATABASE_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: registry-db-credentials
+            key: password
+      # Only if you use a separate migration user
+      - name: THV_REGISTRY_DATABASE_MIGRATIONPASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: registry-db-migrator-credentials
+            key: password
+```
+
+### Configuration reference
+
+The `upstream.config` block accepts every field the open source Registry Server
+supports. See the open source reference for the detail:
+
+- [Configuration](../../toolhive/guides-registry/configuration.mdx) for sources,
+  registries, and sync policies
+- [Database](../../toolhive/guides-registry/database.mdx) for connection
+  details, the migration user, and credential mechanisms
+- [Authentication](../../toolhive/guides-registry/authentication.mdx) and
+  [Authorization](../../toolhive/guides-registry/authorization.mdx) for securing
+  the API
+- [Telemetry and metrics](../../toolhive/guides-registry/telemetry-metrics.mdx)
+  for observability
+
+## Connect the Cloud UI
+
+Install the platform chart with these values as described in
+[Deploy the platform](./deployment.mdx). Once running, verify the pod:
+
+```bash
+kubectl get pods -n stacklok-system -l app.kubernetes.io/component=registry-api
+```
+
+The chart exposes the Registry Server through an in-cluster Service named
+`registry-api` on port 8080. Point the Cloud UI at it with
+`toolhive-cloud-ui.apiBaseUrl`, for example
+`http://registry-api.stacklok-system.svc.cluster.local:8080`.
+
+## Next steps
+
+- [Deploy the platform](./deployment.mdx) to install the Registry Server
+  alongside the rest of the platform
+- [Publish servers](../../toolhive/guides-registry/publish-servers.mdx) to
+  populate the catalog
+- [Browse the catalog](../enterprise-cloud-ui/browse-catalog.mdx) in the Cloud
+  UI once the Registry Server is running
