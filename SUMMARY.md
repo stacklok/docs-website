@@ -1,1 +1,0 @@
-- Updated audit log level note in `docs/toolhive/guides-registry/audit-logging.mdx`: removed the standalone `INFO+2` known-issue admonition (fixed by `stacklok/toolhive-registry-server#828`) and folded a brief mention of the older v1.4.9-and-earlier behavior into the existing audit-level note for readers on older versions.
