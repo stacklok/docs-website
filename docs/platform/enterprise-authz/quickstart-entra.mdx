@@ -1,0 +1,541 @@
+---
+title: Quickstart - GitHub MCP with Entra ID
+description:
+  Pair Microsoft Entra ID with the GitHub MCP server and enforce role-based
+  authorization with a compiled ToolhiveAuthorizationPolicy.
+---
+
+By the end of this walkthrough, you'll stand up an Entra ID-authenticated GitHub
+MCP server, attach a policy that gives one user full write access and another
+user read-only access, and verify the split with live tool calls. The reader is
+restricted by a tool annotation filter so the same `reader`
+`ClusterPlatformRole` can be reused elsewhere with different scoping. An
+optional final step demonstrates a second pattern: narrowing a broad role to a
+named allow-list of tools at bind time.
+
+## What you'll learn
+
+- How to register an app and define app roles in Microsoft Entra ID
+- How to deploy an Entra ID-authenticated GitHub MCP server with per-server OIDC
+- How to map Entra app roles to built-in ToolHive platform roles
+- How to attach a per-server policy that gives one user write access and another
+  read-only access
+- How to verify the access split with live MCP tool calls
+- How to narrow a role to a named allow-list of tools at bind time (optional)
+
+## Prerequisites
+
+Before starting, make sure you have:
+
+- A Kubernetes cluster running the Stacklok Enterprise distribution. See the
+  [Kubernetes quickstart](../../toolhive/guides-k8s/quickstart.mdx) for cluster
+  setup, then follow the enterprise installer instructions.
+- `kubectl` configured against that cluster.
+- A Microsoft Entra ID tenant where you have permission to create an app
+  registration, define app roles, and assign users.
+- A
+  [GitHub personal access token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+  (PAT) with `repo` scope. The policy gates what each user can do, so the PAT is
+  intentionally privileged.
+- An MCP client that can send a bearer token. This guide uses the
+  [MCP Inspector](https://github.com/modelcontextprotocol/inspector) CLI, which
+  needs Node.js.
+
+## Step 1: Set up the Entra app registration
+
+In the Entra ID portal, create an app registration and configure it as follows:
+
+1. **App registrations** > **New registration**. Name it `toolhive-authz-demo`
+   with single-tenant account type.
+2. **Authentication**. Configure the platform and flow you'll use to obtain user
+   access tokens in step 6. The setup is environment-specific: for a
+   public-client flow, for example, add **Mobile and desktop applications**, set
+   a redirect URI, and set **Allow public client flows** to **Yes**.
+3. **Expose an API**. Accept the default Application ID URI of
+   `api://<CLIENT-ID>` and add a scope named `access_as_user`.
+4. **App roles**. Create three roles with member type **Users/Groups**. Use
+   these exact **Value** strings - later manifests refer to them:
+
+   | Display name      | Value          |
+   | ----------------- | -------------- |
+   | MCP admin         | `mcp-admin`    |
+   | MCP viewer        | `mcp-viewer`   |
+   | MCP code reviewer | `mcp-reviewer` |
+
+5. Open the matching **Enterprise application** > **Properties** and set
+   **Assignment required** to **Yes**, so unassigned users don't get tokens with
+   empty `roles` claims.
+6. **Enterprise application** > **Users and groups** > **Add user/group**.
+   Assign one test user per role so each user receives exactly one of
+   `mcp-admin`, `mcp-viewer`, or `mcp-reviewer`.
+7. Note the tenant ID and application (client) ID from the app's **Overview**
+   page for step 3.
+
+## Step 2: Create the namespace and GitHub PAT secret
+
+Create a namespace to hold the demo resources and a `Secret` that the MCP server
+will mount as the GitHub PAT.
+
+```yaml title="00-namespace.yaml"
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: authz-demo
+```
+
+```yaml title="00-secret-github-pat.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-pat
+  namespace: authz-demo
+type: Opaque
+stringData:
+  token: '<YOUR-GITHUB-PAT>'
+```
+
+Replace `<YOUR-GITHUB-PAT>` with your classic PAT, then apply both files:
+
+```bash
+kubectl apply -f 00-namespace.yaml -f 00-secret-github-pat.yaml
+```
+
+The MCPServer in the next step references this `Secret` by name through its
+`secrets[]` field. For the other ways ToolHive can source secrets in Kubernetes,
+see
+[Run a server with secrets](../../toolhive/guides-k8s/run-mcp-k8s.mdx#run-a-server-with-secrets).
+
+## Step 3: Configure OIDC and deploy the GitHub MCP server
+
+Define an `MCPOIDCConfig` that points at your Entra tenant, then deploy the
+GitHub MCP server with a reference to that config. This `MCPOIDCConfig` is
+per-server: it tells the proxy in front of this MCP server how to validate
+incoming tokens. It is independent of the
+[platform-component identity](../enterprise-platform/configure-identity.mdx)
+that the enterprise installer configures for the manager, UI, and Registry
+Server, so you don't need that setup in place to follow this quickstart. Both
+draw their group and role claims from the same identity provider.
+
+```yaml title="01-oidc-config.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: demo-entra-oidc
+  namespace: authz-demo
+spec:
+  type: inline
+  inline:
+    issuer: 'https://login.microsoftonline.com/<TENANT-ID>/v2.0'
+```
+
+```yaml title="02-mcpserver-github.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: github-demo
+  namespace: authz-demo
+spec:
+  image: ghcr.io/github/github-mcp-server:v1.0.3
+  transport: stdio
+  proxyPort: 8080
+  oidcConfigRef:
+    name: demo-entra-oidc
+    audience: '<CLIENT-ID>'
+  secrets:
+    - name: github-pat
+      key: token
+      targetEnvName: GITHUB_PERSONAL_ACCESS_TOKEN
+  env:
+    - name: GITHUB_API_URL
+      value: https://api.github.com
+  resources:
+    limits:
+      cpu: '200m'
+      memory: '256Mi'
+    requests:
+      cpu: '100m'
+      memory: '128Mi'
+```
+
+Replace `<TENANT-ID>` with your directory (tenant) ID and `<CLIENT-ID>` with the
+application (client) ID from step 1, then apply both manifests and wait for the
+server to come up:
+
+```bash
+kubectl apply -f 01-oidc-config.yaml -f 02-mcpserver-github.yaml
+kubectl -n authz-demo wait --for=condition=Ready \
+  mcpserver/github-demo --timeout=2m
+```
+
+:::warning[Match the audience to what Entra actually emits]
+
+`oidcConfigRef.audience` must match the `aud` claim Entra puts in your access
+tokens. The manifest above uses the client GUID, which is the v2 default. If
+your tenant is configured to emit the Application ID URI (`api://<CLIENT-ID>`)
+instead, set `audience` to that string. If you hit `401` errors later, step 9
+covers how to inspect a token and fix the mismatch.
+
+:::
+
+:::note[Production considerations]
+
+This quickstart trades production hardening for a short setup path. Two choices
+are worth revisiting before you run this pattern in production:
+
+- **The shared PAT hides the calling user from the backend.** ToolHive
+  authenticates and authorizes each user, but every GitHub API call still
+  reaches GitHub as the single bot identity behind the PAT. If you need GitHub
+  to see who made each call (for its own audit log or fine-grained access), use
+  a per-user OAuth flow to the backend instead of a shared token. See
+  [token exchange](../../toolhive/guides-k8s/token-exchange-k8s.mdx) for
+  propagating user identity to upstream services.
+- **`transport: stdio` runs one process per session.** It keeps the manifest
+  simple but doesn't scale to a fleet. The GitHub MCP server also offers a
+  `streamable-http` mode, which serves many sessions from one deployment and
+  uses OAuth rather than a PAT. See the
+  [github-mcp-server streamable-http docs](https://github.com/github/github-mcp-server/blob/main/docs/streamable-http.md).
+
+:::
+
+## Step 4: Apply the role bindings (admin and viewer)
+
+Map the two Entra app roles to the built-in `writer` and `reader`
+`ClusterPlatformRole` objects. This is the only place IdP role names appear in
+the manifests, every later step refers to the platform roles by name.
+
+```yaml title="10-trb-admin-viewer.yaml"
+apiVersion: platform.enterprise.stacklok.com/v1alpha1
+kind: ClusterPlatformRoleBinding
+metadata:
+  name: demo-admin-viewer-binding
+spec:
+  bindings:
+    - roleRef:
+        kind: ClusterPlatformRole
+        name: writer
+      from:
+        - roles: ['mcp-admin']
+    - roleRef:
+        kind: ClusterPlatformRole
+        name: reader
+      from:
+        - roles: ['mcp-viewer']
+```
+
+```bash
+kubectl apply -f 10-trb-admin-viewer.yaml
+```
+
+This `ClusterPlatformRoleBinding` says: any caller whose JWT carries
+`roles: ["mcp-admin"]` gets the `writer` role, and any caller with
+`roles: ["mcp-viewer"]` gets the `reader` role. The binding is cluster-scoped
+and doesn't yet apply to any server; that's the job of the next step.
+
+## Step 5: Apply the per-server policy with reader and writer
+
+The `ToolhiveAuthorizationPolicy` attaches roles to a specific MCP server. This
+policy binds the `writer` role unrestricted, and binds the `reader` role with a
+`toolHintFilter` that limits the binding to tools that declare the MCP
+`readOnlyHint` annotation.
+
+```yaml title="11-tap-reader-writer.yaml"
+apiVersion: toolhive.enterprise.stacklok.com/v1alpha1
+kind: ToolhiveAuthorizationPolicy
+metadata:
+  name: github-demo-rw-policy
+  namespace: authz-demo
+spec:
+  targetRef:
+    name: github-demo
+  bindings:
+    - roleRef:
+        kind: ClusterPlatformRole
+        name: writer
+    - roleRef:
+        kind: ClusterPlatformRole
+        name: reader
+      toolHintFilter:
+        readOnlyHint: true
+```
+
+`targetRef.kind` defaults to `MCPServer`, so it's omitted. `toolHintFilter`
+lives on the binding rather than on the role itself: the same `reader` role can
+be reused in a different policy without a filter, or with a different filter
+like `destructiveHint: false`. The role describes the verbs; the binding decides
+which tools at the target satisfy those verbs.
+
+Apply the policy and wait for the operator to compile it:
+
+```bash
+kubectl apply -f 11-tap-reader-writer.yaml
+kubectl wait --for=condition=Compiled tap/github-demo-rw-policy \
+  -n authz-demo --timeout=60s
+```
+
+The `Compiled` condition flips to `True` once the operator has turned the policy
+into the Cedar policy bundle the proxy will enforce. If it doesn't compile, see
+[step 9](#step-9-troubleshooting).
+
+## Step 6: Verify the policy is enforced
+
+Point an MCP client at the server using each user's token, and call a read tool
+(`list_issues`) and a write tool (`issue_write`) to see the policy in action.
+
+In a real deployment, clients reach the MCP server through the ingress or
+gateway your platform exposes, and you point the client at that URL. For a quick
+local check against this quickstart, forward the proxy Service to your machine.
+This is a validation convenience, not a production access path:
+
+```bash
+kubectl -n authz-demo port-forward svc/mcp-github-demo-proxy 18080:8080
+```
+
+The server is then reachable at `http://localhost:18080/mcp`, which the commands
+below use.
+
+### Get a token for each test user
+
+Obtain an access token for each test user from your identity provider: the user
+assigned `mcp-admin` and the user assigned `mcp-viewer` (plus `mcp-reviewer` for
+step 7). Use whichever OAuth 2.0 flow your environment supports - authorization
+code with PKCE, device code, or a client your platform already uses. The policy
+evaluates the token's contents, not how you acquired it, so each token must:
+
+- be an access token for this app, with an audience matching
+  `spec.oidcConfigRef.audience` on the MCPServer (the
+  `api://<CLIENT-ID>/access_as_user` scope produces it), and
+- carry the user's app role in the `roles` claim, which requires the user to be
+  assigned to that role on the enterprise application (step 1).
+
+Decode a token with `jwt decode "$TOKEN"` to confirm its `aud` and `roles`
+before continuing. Put each user's token in a shell variable - `TOKEN_ADMIN`,
+`TOKEN_VIEWER`, and `TOKEN_REVIEWER` - for the calls below.
+
+### Verify with an MCP client
+
+Use any MCP client that can send a bearer token. This guide uses the
+[MCP Inspector](https://github.com/modelcontextprotocol/inspector) in CLI mode,
+which runs the MCP handshake (`initialize`, `notifications/initialized`,
+`tools/list`) before your call. That handshake matters here: the proxy only
+learns a tool's `readOnlyHint` annotation once `tools/list` has run on the
+session, and the reader binding's `toolHintFilter` consults it. A standard
+client does this for you.
+
+Call a read tool (`list_issues`) and a write tool (`issue_write`) with each
+user's token, substituting your repository for `<OWNER>/<REPO>`. As the admin,
+both succeed:
+
+```bash
+npx @modelcontextprotocol/inspector --cli http://localhost:18080/mcp \
+  --transport http --header "Authorization: Bearer $TOKEN_ADMIN" \
+  --method tools/call --tool-name list_issues \
+  --tool-arg owner=<OWNER> --tool-arg repo=<REPO>
+
+npx @modelcontextprotocol/inspector --cli http://localhost:18080/mcp \
+  --transport http --header "Authorization: Bearer $TOKEN_ADMIN" \
+  --method tools/call --tool-name issue_write \
+  --tool-arg method=create --tool-arg owner=<OWNER> --tool-arg repo=<REPO> \
+  --tool-arg title="authz smoke test"
+```
+
+As the viewer, the read succeeds but the write is denied (same two commands with
+`$TOKEN_VIEWER`):
+
+```bash
+npx @modelcontextprotocol/inspector --cli http://localhost:18080/mcp \
+  --transport http --header "Authorization: Bearer $TOKEN_VIEWER" \
+  --method tools/call --tool-name list_issues \
+  --tool-arg owner=<OWNER> --tool-arg repo=<REPO>
+
+npx @modelcontextprotocol/inspector --cli http://localhost:18080/mcp \
+  --transport http --header "Authorization: Bearer $TOKEN_VIEWER" \
+  --method tools/call --tool-name issue_write \
+  --tool-arg method=create --tool-arg owner=<OWNER> --tool-arg repo=<REPO> \
+  --tool-arg title="should be denied"
+```
+
+Both users can read. The admin's `issue_write` creates the issue and returns its
+URL. The viewer's `issue_write` is rejected by the proxy before it reaches the
+server:
+
+| User         | `list_issues` | `issue_write` (create)   |
+| ------------ | ------------- | ------------------------ |
+| `mcp-admin`  | succeeds      | succeeds (issue created) |
+| `mcp-viewer` | succeeds      | denied                   |
+
+The viewer's denial surfaces as a transport error carrying the proxy's `403`:
+
+```text
+Failed to call tool issue_write: Streamable HTTP error: Error POSTing to
+endpoint: {"Result":null,"Error":{"code":403,"message":"Unauthorized"},"ID":{}}
+```
+
+That 403 is the policy doing its job: `issue_write` does not carry the
+`readOnlyHint` annotation, so the reader binding's `toolHintFilter` excludes it,
+while the read-only `list_issues` is allowed.
+
+:::note[Tool names track the server version]
+
+This guide targets `github-mcp-server:v1.0.3`, where issue writes go through the
+`issue_write` tool. Other versions may name tools differently. Run the client's
+`tools/list` method to see what your server exposes.
+
+:::
+
+## Step 7: (Optional) Give a reviewer access to only the tools they need
+
+A code reviewer doesn't need every tool the GitHub MCP server exposes, just the
+ones for reading pull requests, searching code, and listing issues. Grant them
+exactly that set by listing tool names in `ruleRestrictions.tools` on the
+binding. The underlying `code-reviewer` role can still be reused elsewhere with
+a different tool list; the per-target policy decides the narrowing.
+
+```yaml title="20-platformrole-code-reviewer.yaml"
+apiVersion: platform.enterprise.stacklok.com/v1alpha1
+kind: ClusterPlatformRole
+metadata:
+  name: code-reviewer
+spec:
+  description: 'Code-reviewer baseline. Scoped at binding time.'
+  productActions:
+    - apiGroup: toolhive.enterprise.stacklok.com
+      actions:
+        - list_tools
+        - call_tool
+        - list_prompts
+        - get_prompt
+        - list_resources
+        - read_resource
+```
+
+```yaml title="21-trb-reviewer.yaml"
+apiVersion: platform.enterprise.stacklok.com/v1alpha1
+kind: ClusterPlatformRoleBinding
+metadata:
+  name: demo-reviewer-binding
+spec:
+  bindings:
+    - roleRef:
+        kind: ClusterPlatformRole
+        name: code-reviewer
+      from:
+        - roles: ['mcp-reviewer']
+```
+
+```yaml title="22-tap-code-reviewer.yaml"
+apiVersion: toolhive.enterprise.stacklok.com/v1alpha1
+kind: ToolhiveAuthorizationPolicy
+metadata:
+  name: github-reviewer-policy
+  namespace: authz-demo
+spec:
+  targetRef:
+    name: github-demo
+  bindings:
+    - roleRef:
+        kind: ClusterPlatformRole
+        name: code-reviewer
+      ruleRestrictions:
+        - tools:
+            - list_issues
+            - pull_request_read
+            - search_code
+```
+
+Apply the three files and wait for compilation:
+
+```bash
+kubectl apply \
+  -f 20-platformrole-code-reviewer.yaml \
+  -f 21-trb-reviewer.yaml \
+  -f 22-tap-code-reviewer.yaml
+kubectl wait --for=condition=Compiled tap/github-reviewer-policy \
+  -n authz-demo --timeout=60s
+```
+
+Fetch a token for the `mcp-reviewer` user and rerun the verification commands
+from step 6 with `$TOKEN_REVIEWER`. Every tool below is read-only, so the
+difference is the binding's `ruleRestrictions` allow-list, not the
+`readOnlyHint`:
+
+| Tool                | Result  |
+| ------------------- | ------- |
+| `list_issues`       | allowed |
+| `pull_request_read` | allowed |
+| `search_code`       | allowed |
+| `get_file_contents` | denied  |
+
+The reviewer is granted broad MCP verbs by the role, but the per-server binding
+narrows the tool list to exactly the three names in `ruleRestrictions.tools`.
+
+## Step 8: Clean up
+
+Deleting the namespace removes the MCPServer, OIDC config, secret, and
+namespaced `ToolhiveAuthorizationPolicy` in one shot. The two cluster-scoped
+role bindings (and the custom `code-reviewer` role from the optional step) live
+outside the namespace, so delete them explicitly:
+
+```bash
+kubectl delete clusterplatformrolebinding \
+  demo-admin-viewer-binding demo-reviewer-binding --ignore-not-found
+kubectl delete clusterplatformrole code-reviewer --ignore-not-found
+kubectl delete namespace authz-demo
+```
+
+## Next steps
+
+- Hand a namespace and a scoped policy surface to an application team with
+  [Namespace self-service](./namespace-self-service.mdx).
+- See every field on the policy resource in the
+  [ToolhiveAuthorizationPolicy CRD reference](../reference/crds/toolhiveauthorizationpolicy.mdx).
+- Understand what the operator compiles your `ToolhiveAuthorizationPolicy` into
+  with [Cedar policies](../../toolhive/concepts/cedar-policies.mdx).
+
+## Troubleshooting
+
+<details>
+<summary>Tokens have the wrong `aud` claim</summary>
+
+Decode a fresh token with `jwt decode "$TOKEN" | jq .aud`. The value must match
+`spec.oidcConfigRef.audience` on the MCPServer exactly. Entra emits the client
+GUID by default; some tenants are configured to emit `api://<CLIENT-ID>`
+instead. Update `audience` in `02-mcpserver-github.yaml` to whatever the JWT
+actually contains, then re-apply.
+
+</details>
+
+<details>
+<summary>Tokens are missing the `roles` claim</summary>
+
+If `jwt decode` shows `.payload.roles` empty, the user isn't assigned to any app
+role on the enterprise application. Open the enterprise app's **Users and
+groups** page and add an assignment for the user. You can verify with
+`az rest --method GET --uri "https://graph.microsoft.com/v1.0/users/<UPN>/appRoleAssignments"`.
+
+</details>
+
+<details>
+<summary>A `ToolhiveAuthorizationPolicy` doesn't reach the `Compiled` condition</summary>
+
+Inspect the resource for the failing condition and look at the operator events:
+
+```bash
+kubectl -n authz-demo describe tap github-demo-rw-policy
+```
+
+The most common cause is a `roleRef` that names a `ClusterPlatformRole` that
+doesn't exist (a typo, or the optional step's role wasn't applied yet).
+
+</details>
+
+<details>
+<summary>The viewer succeeds on a write tool</summary>
+
+The reader binding's `toolHintFilter` reads each tool's `readOnlyHint`
+annotation, which the proxy only caches after `tools/list` has run on the
+session. A standard MCP client (like the Inspector) runs `tools/list` during the
+handshake, so the filter is always in effect. If you instead script raw JSON-RPC
+calls, call `initialize`, `notifications/initialized`, and `tools/list` before
+`tools/call`, or the filter sees an empty cache and the write slips through.
+
+</details>

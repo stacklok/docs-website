@@ -1,0 +1,116 @@
+---
+title: Stacklok CLI
+description:
+  Enterprise edition of the ToolHive CLI with OIDC sign-in and centralized
+  policy enforcement from the Enterprise Manager.
+---
+
+:::enterprise
+
+The Stacklok CLI is a component of Stacklok Enterprise. For a full comparison of
+ToolHive Community and Stacklok Enterprise capabilities, see
+[Stacklok Enterprise](../index.mdx).
+
+:::
+
+The Stacklok CLI is the enterprise edition of the
+[ToolHive CLI](../../toolhive/guides-cli/index.mdx) (`thv`). Everything in the
+open source `thv` works the same way. The Stacklok CLI adds OIDC authentication
+to your Stacklok Enterprise platform and enforces the policies your
+administrators define in the
+[Enterprise Manager](../enterprise-manager/index.mdx).
+
+This page covers what the enterprise edition adds. For the base CLI workflows,
+see the [ToolHive CLI](../../toolhive/guides-cli/index.mdx) guides.
+
+## How you get it
+
+Stacklok provides the CLI as part of your Enterprise subscription in two forms:
+
+- **Bundled with [Stacklok Desktop](../enterprise-desktop/index.mdx).**
+  Installing the desktop app installs and manages the CLI for you: it puts `thv`
+  on your `PATH` and keeps the CLI version matched to the app, the same way the
+  open source app does. See
+  [Access the CLI from the desktop app](../../toolhive/guides-ui/cli-access.mdx)
+  for how that works. Because the desktop app and the CLI share a session,
+  signing in to Stacklok Desktop also signs in the CLI, so this is the simplest
+  option.
+- **Standalone `thv-enterprise` binary.** Install this yourself when you want
+  the CLI without the desktop app, such as on a server or in CI, and
+  authenticate it with `thv login`.
+
+Both are the enterprise build of `thv`. Command examples on this page use `thv`.
+
+## How it connects to the platform
+
+The CLI needs your platform URL before it can authenticate. It reads
+`StacklokPlatformUrl` from managed preferences first (the macOS managed
+preferences plist or the Windows registry), then falls back to the
+`STACKLOK_PLATFORM_URL` environment variable. This is the same bootstrap
+mechanism [Stacklok Desktop](../enterprise-desktop/index.mdx) uses, so a
+fleet-wide managed preference configures both clients at once.
+
+From that URL, the CLI discovers the OIDC issuer, client ID, and scopes from the
+platform's well-known configuration endpoint. You do not configure those by
+hand.
+
+## Authentication
+
+The Stacklok CLI adds two commands for managing your platform session:
+
+- **`thv login`** opens a browser to complete the OAuth flow against your
+  platform. On success, the session is stored in your secrets store and shared
+  with Stacklok Desktop, so signing in from one signs in both. Login also
+  configures registry access, so later `thv registry` commands reuse the session
+  instead of opening a second browser flow. Re-run `thv login` at any time to
+  refresh the session and pick up administrator-side configuration changes.
+- **`thv logout`** clears the cached session token and OAuth configuration.
+
+`thv login` discovers its settings from the platform, so you normally run it
+with no flags. To override the discovered values, use `--client-id`, `--scopes`,
+or `--callback-port`.
+
+If you installed the CLI through Stacklok Desktop and have already signed in
+there, the CLI shares that session, so you can skip `thv login`. Run it when you
+use the standalone binary, or to sign in from the terminal without opening the
+desktop app.
+
+## Policy enforcement
+
+After you sign in, the CLI fetches signed configuration from the Enterprise
+Manager and enforces the directives that apply to clients. Each directive
+carries an `enforcement` level: `enforced` directives are mandatory, while
+`default` directives set a value you can still override locally. This is the
+same model [Stacklok Desktop](../enterprise-desktop/policy-enforcement.mdx)
+applies.
+
+Two directives shape what the CLI can do:
+
+- **[Registry](../enterprise-manager/policies/registry.mdx).** When the registry
+  directive is enforced, the configured registry URL is locked. Attempts to
+  change it with `thv config set-registry` or `thv config unset-registry` are
+  blocked.
+- **[Non-registry servers](../enterprise-manager/policies/non-registry-servers.mdx).**
+  When this directive is enforced to disallow them, the CLI blocks running MCP
+  servers that are not in your organization's approved registry. Use
+  `thv search` to find approved servers instead.
+
+For the full set of directives an administrator can configure, see
+[Enterprise Manager policies](../enterprise-manager/policies/).
+
+## Degraded mode
+
+When the CLI cannot reach the Enterprise Manager, it keeps working from its
+cached configuration and prints a `[ToolHive Policy Warning]` to standard error
+so you know policy may be stale. If your administrator sets the
+[degraded mode policy](../enterprise-manager/degraded-mode.mdx) to block new
+installations, the CLI blocks creating new MCP servers until it reconnects.
+
+## Next steps
+
+- [ToolHive CLI guides](../../toolhive/guides-cli/index.mdx) for the base CLI
+  features
+- [Enterprise Manager policies](../enterprise-manager/policies/) to see the
+  directives that govern the CLI
+- [Configure platform identity](../enterprise-platform/configure-identity.mdx)
+  for the identity provider setup behind `thv login`

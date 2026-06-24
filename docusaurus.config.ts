@@ -6,6 +6,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 import PrismLight from './src/utils/prismLight';
 import PrismDark from './src/utils/prismDark';
 import crdReferenceRemark from './plugins/crd-reference-remark/index.mjs';
+import { getCrdSets } from './scripts/lib/crd-sets.mjs';
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
@@ -17,7 +18,7 @@ const isProductionDeploy = process.env.VERCEL_ENV === 'production';
 
 const config: Config = {
   title: 'Stacklok Docs',
-  tagline: 'Put MCP into production',
+  tagline: 'Run, govern, and secure your AI agents, tools, and models',
   favicon: 'img/stacklok-favicon.svg',
   plugins: [
     [
@@ -182,7 +183,12 @@ const config: Config = {
             [
               crdReferenceRemark,
               {
-                schemaDir: path.join(__dirname, 'static', 'api-specs', 'crds'),
+                // Derived from the CRD sets declared in
+                // .github/upstream-projects.yaml - no hardcoded list to keep
+                // in sync when a set is added.
+                schemaDirs: getCrdSets().map((s) =>
+                  path.resolve(__dirname, s.out)
+                ),
               },
             ],
           ],
@@ -252,71 +258,32 @@ const config: Config = {
       },
       items: [
         {
-          type: 'dropdown',
-          label: 'Docs',
+          type: 'docSidebar',
+          sidebarId: 'platformSidebar',
+          label: 'Stacklok Platform',
           position: 'left',
-          items: [
-            {
-              label: 'Home',
-              href: '/toolhive',
-            },
-            {
-              label: 'ToolHive UI',
-              to: 'toolhive/guides-ui',
-            },
-            {
-              label: 'ToolHive CLI',
-              to: 'toolhive/guides-cli',
-            },
-            {
-              label: 'Kubernetes Operator',
-              to: 'toolhive/guides-k8s',
-            },
-            {
-              label: 'Virtual MCP Server',
-              to: 'toolhive/guides-vmcp',
-            },
-            {
-              label: 'ToolHive Registry',
-              to: 'toolhive/guides-registry',
-            },
-          ],
         },
         {
-          type: 'dropdown',
-          label: 'References',
+          type: 'docSidebar',
+          sidebarId: 'mcpSidebar',
+          label: 'ToolHive MCP & skills',
           position: 'left',
-          items: [
-            {
-              label: 'ToolHive CLI commands',
-              to: 'toolhive/reference/cli/thv',
-            },
-            {
-              label: 'ToolHive API',
-              to: 'toolhive/reference/api',
-            },
-            {
-              label: 'ToolHive Operator CRD',
-              to: 'toolhive/reference/crds',
-            },
-            {
-              label: 'ToolHive Registry Server API',
-              to: 'toolhive/reference/registry-api',
-            },
-            {
-              label: 'Registry schema',
-              to: 'toolhive/reference/registry-schema-upstream',
-            },
-          ],
+        },
+        {
+          type: 'docSidebar',
+          sidebarId: 'aiGatewaySidebar',
+          label: 'AI Gateway',
+          position: 'left',
+        },
+        {
+          type: 'docSidebar',
+          sidebarId: 'resourcesSidebar',
+          label: 'Resources',
+          position: 'left',
         },
         {
           to: '/toolhive/updates',
           label: 'Updates',
-          position: 'left',
-        },
-        {
-          to: 'toolhive/enterprise',
-          label: 'Enterprise',
           position: 'left',
         },
         {

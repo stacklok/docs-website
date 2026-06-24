@@ -12,7 +12,7 @@ import styles from './styles.module.css';
 /**
  * ProductGrid layout variants
  */
-type GridLayout = 'auto' | 'fixed-2' | 'fixed-3' | 'fixed-4';
+type GridLayout = 'auto' | 'fixed-1' | 'fixed-2' | 'fixed-3' | 'fixed-4';
 
 /**
  * ProductGrid spacing variants
@@ -46,6 +46,7 @@ interface ProductGridProps {
  */
 const gridLayouts = {
   auto: 'repeat(auto-fit, minmax(var(--grid-min-width, 350px), 1fr))',
+  'fixed-1': 'repeat(1, 1fr)',
   'fixed-2': 'repeat(2, 1fr)',
   'fixed-3': 'repeat(3, 1fr)',
   'fixed-4': 'repeat(4, 1fr)',

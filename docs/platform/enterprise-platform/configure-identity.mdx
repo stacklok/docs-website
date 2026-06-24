@@ -1,0 +1,255 @@
+---
+title: Configure platform identity
+description:
+  Configure your identity provider so the Stacklok Enterprise platform
+  components can authenticate users and validate their requests.
+---
+
+Stacklok Enterprise authenticates every request through your identity provider.
+When a developer signs in to the Stacklok CLI, Stacklok Desktop, or Enterprise
+Cloud UI, the identity provider issues an access token that the platform
+components validate before serving any data. This page walks through the values
+each component expects from your identity provider and shows two supported ways
+to model them, so that each component accepts the tokens your provider issues.
+
+This page covers the shared platform components: the Enterprise Manager,
+Enterprise Cloud UI, and Registry Server. Individual MCP servers validate tokens
+through their own per-server OIDC configuration, which you set up alongside each
+server's policy in [enterprise authorization](../enterprise-authz/index.mdx).
+The same identity provider issues both, so the claims you configure here also
+feed the role bindings on your MCP servers.
+
+You should already have an OIDC-compatible identity provider (Okta, Entra ID, or
+a generic OIDC provider) where you can create authorization servers, OAuth
+client applications, custom scopes, and custom claims. Stacklok Enterprise does
+not ship its own identity provider.
+
+## What each component expects
+
+Each component validates a different slice of the access token. They share two
+requirements: the token is a signed JSON Web Token (JWT) so they can verify it
+locally against the identity provider's published key set, and the issuer
+matches the URL configured on the component. Beyond that, each component looks
+at a different combination of audience, scope, and claims.
+
+| Component                                                   | What the component verifies                                                                                                                                                           |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Enterprise Manager](../enterprise-manager/configure.mdx)   | Issuer, an audience that matches the configured value, and the configured scope is present                                                                                            |
+| [Enterprise Cloud UI](../enterprise-cloud-ui/configure.mdx) | Issuer and an audience that matches the Cloud UI's OAuth client application                                                                                                           |
+| [Registry Server](../../toolhive/guides-registry/index.mdx) | Issuer, the role claim that maps the user to a platform role, and the group claim used for bindings                                                                                   |
+| [MCP servers](../enterprise-authz/quickstart-entra.mdx)     | Issuer and an audience that matches the server's `MCPOIDCConfig`, plus the role and group claims that [enterprise authorization](../enterprise-authz/index.mdx) policies bind against |
+
+The Stacklok CLI and Stacklok Desktop obtain tokens from the identity provider
+using the Proof Key for Code Exchange (PKCE) flow and present them to each
+component. The Enterprise Cloud UI authenticates browser users through the
+authorization code flow on its server side. The components do not call the
+identity provider's introspection endpoint, so the authorization server you
+choose must issue signed JWTs rather than opaque tokens.
+
+## Pick a setup
+
+The components do not care whether their tokens come from the same authorization
+server or from different ones. They care that the audience on the token matches
+the audience configured on the component. Two setups satisfy that requirement.
+
+**One authorization server per component.** Recommended where your identity
+provider supports it. Create one custom authorization server per platform
+component, give each its own audience, and point each component at its own
+issuer URL. Tokens issued for one component cannot be replayed against another,
+because their issuer values differ.
+
+**One authorization server with multiple audiences.** Use this when your
+identity provider plan caps you at a single custom authorization server. For
+example, an Okta tenant on the free tier ships with one pre-provisioned
+authorization server named `default` and does not let you create more. List
+every component's audience on that one server. Each token still carries exactly
+one audience, so a token minted for the Enterprise Manager is still rejected by
+the Cloud UI and vice versa.
+
+Either setup produces JWTs the components accept. Pick based on what your
+identity provider plan supports, and use the worked example below as a template
+for either path.
+
+## Set up your identity provider (Okta example)
+
+This walkthrough uses Okta with the second setup: a single authorization server
+(`default`) carrying every component's audience. To use the first setup instead,
+repeat steps 1 through 4 once per custom authorization server you create, and
+point each component at the matching issuer URL in step 6.
+
+### Step 1: Add audiences to the authorization server
+
+The Enterprise Manager and Cloud UI both reject tokens whose `aud` claim does
+not match the value configured on the chart. Each component needs its audience
+listed on the authorization server that issues its tokens.
+
+In the Okta admin console, go to **Security** > **API** > **Authorization
+Servers** and open the `default` server. On the **Settings** tab, add the
+audiences your deployment uses:
+
+```text title="Audiences"
+enterprise-manager
+cloud-ui
+```
+
+The exact strings here must match the `audience` value you set on each component
+when you deploy it. Step 6 shows where that mapping goes in each component's
+`values.yaml`.
+
+### Step 2: Add the scope the Enterprise Manager requires
+
+The Enterprise Manager checks the access token for a scope before it returns
+configuration to the client. Without a matching scope on the token, every config
+request returns `401 Unauthorized`. The Cloud UI and Registry Server do not
+require this scope.
+
+On the **Scopes** tab, add a custom scope:
+
+| Field         | Value                       |
+| ------------- | --------------------------- |
+| Name          | `toolhive:config:read`      |
+| Description   | Read Stacklok configuration |
+| Default scope | No                          |
+
+### Step 3: Add the claims your components map to platform roles
+
+The Registry Server and the per-server MCP authorization policies both read
+group and role claims from the token to map each user to a platform role. The
+platform matches against the claim names, so those matter, but the values flow
+through from your identity provider's user profile. Adjust the value expressions
+to match how your Okta tenant carries group membership and role assignment.
+
+On the **Claims** tab, add the claims each component reads:
+
+| Name     | Include in token type | Value         | Value type | Include in |
+| -------- | --------------------- | ------------- | ---------- | ---------- |
+| `groups` | Access Token          | `user.groups` | Expression | Any scope  |
+| `roles`  | Access Token          | `user.roles`  | Expression | Any scope  |
+| `email`  | Access Token          | `user.email`  | Expression | Any scope  |
+
+These are the IdP side of the claim setup. For how the platform maps these claim
+names to platform roles, and the ConfigMap that overrides them, see
+[claim mapping in enterprise authorization](../enterprise-authz/intro.mdx#claim-mapping).
+
+### Step 4: Add a default access policy
+
+The Okta free tier ships the `default` authorization server without an access
+policy, so client applications cannot request scopes against it until you add
+one. Paid tiers usually have a permissive default policy already in place, so
+this step is a no-op for them.
+
+On the **Access Policies** tab, add a default policy with one rule that permits
+your OAuth clients to request the audiences and scope from steps 1 and 2.
+
+### Step 5: Create OAuth client applications
+
+Each Stacklok Enterprise component authenticates against a different OAuth
+client. The Stacklok CLI and Stacklok Desktop share a single native (PKCE)
+application that requests tokens for the Enterprise Manager audience. The Cloud
+UI uses its own confidential (web) application because it runs an authorization
+code flow on its server.
+
+| Application                       | Type                       | Audience requested   |
+| --------------------------------- | -------------------------- | -------------------- |
+| Stacklok CLI and Stacklok Desktop | Native (PKCE, no secret)   | `enterprise-manager` |
+| Enterprise Cloud UI               | Web (confidential, secret) | `cloud-ui`           |
+
+Note the client IDs and (for the Cloud UI) the client secret for the next step.
+
+### Step 6: Wire the values into the component charts
+
+Each component reads its issuer and audience from its chart's `values.yaml`. The
+values you wire in here must match the audiences and scope you configured in
+steps 1 through 5, or the component will reject the tokens at runtime.
+
+For the [Enterprise Manager](../enterprise-manager/configure.mdx):
+
+```yaml title="enterprise-manager values.yaml"
+idpConfig:
+  issuer: 'https://<TENANT>.okta.com/oauth2/default'
+  audience: 'enterprise-manager'
+  requiredScope: 'toolhive:config:read'
+  idpType: 'okta'
+clientID: '<STACKLOK_CLI_CLIENT_ID>'
+```
+
+For the [Enterprise Cloud UI](../enterprise-cloud-ui/configure.mdx):
+
+```yaml title="cloud-ui values.yaml"
+oidc:
+  issuerUrl: 'https://<TENANT>.okta.com/oauth2/default'
+  clientId: '<CLOUD_UI_CLIENT_ID>'
+  clientSecret: '<CLOUD_UI_CLIENT_SECRET>'
+```
+
+Replace `<TENANT>` with your Okta subdomain and the `<*_CLIENT_ID>` placeholders
+with the client IDs from step 5.
+
+When deploying with the umbrella chart, nest these values under the component's
+top-level key (`enterprise-manager:` and `toolhive-cloud-ui:` respectively). See
+[Deploy the platform](./deployment.mdx#3-configure-values) for the full nested
+structure.
+
+## Verify a token
+
+Once a Stacklok client can sign in, you can confirm the tokens it receives carry
+the right values before wiring them into a component. Decode the access token
+and check the issuer, audience, and scope:
+
+```bash
+echo "<ACCESS_TOKEN>" | cut -d. -f2 | base64 -d 2>/dev/null | jq '.iss, .aud, .scp'
+```
+
+For a token that the Enterprise Manager would accept, you should see:
+
+```text
+"https://<TENANT>.okta.com/oauth2/default"
+"enterprise-manager"
+["toolhive:config:read"]
+```
+
+If `aud` does not match the value you configured on the component, or `scp` does
+not include `toolhive:config:read` for an Enterprise Manager request, the
+component returns `401 Unauthorized`.
+
+## Next steps
+
+- [Configure the Enterprise Manager](../enterprise-manager/configure.mdx) with
+  the issuer, audience, and scope from this page wired into its chart
+- [Configure the Enterprise Cloud UI](../enterprise-cloud-ui/configure.mdx) with
+  the matching OIDC values
+
+## Troubleshooting
+
+<details>
+<summary>Tokens are opaque, not JWTs</summary>
+
+Okta's org authorization server (the one without `/oauth2/<server-name>` in the
+issuer URL) issues opaque tokens that require server-side introspection.
+Stacklok Enterprise validates JWTs locally against the authorization server's
+key set and does not call the introspection endpoint, so opaque tokens are not
+usable. Use a custom authorization server (`/oauth2/default` or one you create)
+so that access tokens are issued as JWTs.
+
+</details>
+
+<details>
+<summary>`aud` is an array, not a string</summary>
+
+Some identity providers put a single audience into an array
+(`"aud": ["enterprise-manager"]`). The components accept both shapes. If
+validation still fails, confirm the string inside the array matches the
+configured audience exactly, including any prefix like `api://`.
+
+</details>
+
+<details>
+<summary>`scp` is missing</summary>
+
+Okta only includes the scope claim on access tokens when the OAuth client
+requested it. Confirm the client's authorize request includes
+`scope=openid+toolhive:config:read` (or the equivalent for your client library)
+and that the access policy on the authorization server permits the scope for
+that client.
+
+</details>

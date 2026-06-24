@@ -3,7 +3,7 @@
 
 /*
  * Hand-written overrides for per-CRD metadata. Every CRD in
- * static/api-specs/crds/index.json is published automatically; entries here
+ * static/api-specs/toolhive-crds/index.json is published automatically; entries here
  * are improvements over schema-derived defaults, not prerequisites.
  *
  * To improve a CRD's page (or intentionally position a new one on the
@@ -36,10 +36,11 @@
 
 export const groupLabels = {
   core: 'Core workloads',
+  enterpriseAuthz: 'Enterprise authorization',
   shared: 'Shared configuration',
 };
 
-export const groupOrder = ['core', 'shared'];
+export const groupOrder = ['core', 'enterpriseAuthz', 'shared'];
 
 export const intros = {
   // Core workloads - ordered from primary resource outward.
@@ -87,6 +88,45 @@ export const intros = {
       'Schema reference for MCPRegistry, which declares a ToolHive Registry Server deployment managed by the operator.',
     intro:
       '`MCPRegistry` deploys a [ToolHive Registry Server](../../guides-registry/intro.mdx) in the cluster. The operator watches `MCPRegistry` resources and provisions the Registry Server, its PostgreSQL backing, and the configured sources (Git, ConfigMap, URL, or Kubernetes discovery) that populate its catalog of MCP server definitions.\n\n:::warning[Deprecated]\n\nThe `MCPRegistry` CRD is deprecated and will be removed in a future release. The CRD remains fully functional, but `kubectl` now prints a deprecation warning on apply or get and the operator emits a `Warning` event recommending the [`toolhive-registry-server` Helm chart](https://github.com/stacklok/toolhive-registry-server). For new deployments, see [Deploy with Helm](../../guides-registry/deploy-helm.mdx).\n\n:::',
+  },
+
+  // Enterprise authorization - role definition, cluster and namespaced
+  // bindings, then per-target policy.
+  ClusterPlatformRole: {
+    slug: 'clusterplatformrole',
+    group: 'enterpriseAuthz',
+    summary: 'Cluster-wide role definition for MCP authorization.',
+    description:
+      'Schema reference for ClusterPlatformRole, which defines what a role can do across MCP products in Stacklok Enterprise.',
+    intro:
+      '`ClusterPlatformRole` defines what a role can do across the registered platform products. The role is product-agnostic; per-product action vocabularies live under `spec.productActions[]`, keyed by API group. Bind a role to principals with [ClusterPlatformRoleBinding](./clusterplatformrolebinding.mdx) or [PlatformRoleBinding](./platformrolebinding.mdx), and attach it to an MCP target with [ToolhiveAuthorizationPolicy](./toolhiveauthorizationpolicy.mdx).',
+  },
+  ClusterPlatformRoleBinding: {
+    slug: 'clusterplatformrolebinding',
+    group: 'enterpriseAuthz',
+    summary: 'Cluster-wide binding of a role to IdP principals.',
+    description:
+      'Schema reference for ClusterPlatformRoleBinding, which maps IdP groups and roles to a ClusterPlatformRole cluster-wide.',
+    intro:
+      '`ClusterPlatformRoleBinding` maps IdP groups and roles (read from the configured `groups_claim` and `roles_claim` on the incoming JWT) to a [ClusterPlatformRole](./clusterplatformrole.mdx), effective across every namespace. Use [PlatformRoleBinding](./platformrolebinding.mdx) when you want a namespace-scoped grant instead.',
+  },
+  PlatformRoleBinding: {
+    slug: 'platformrolebinding',
+    group: 'enterpriseAuthz',
+    summary: 'Namespace-scoped binding of a role to IdP principals.',
+    description:
+      'Schema reference for PlatformRoleBinding, which maps IdP groups and roles to a ClusterPlatformRole within a single namespace.',
+    intro:
+      '`PlatformRoleBinding` is the namespace-scoped sibling of [ClusterPlatformRoleBinding](./clusterplatformrolebinding.mdx). Namespace owners use it to grant a [ClusterPlatformRole](./clusterplatformrole.mdx) to IdP principals for the [ToolhiveAuthorizationPolicy](./toolhiveauthorizationpolicy.mdx) resources in the same namespace, without involving the cluster admin.',
+  },
+  ToolhiveAuthorizationPolicy: {
+    slug: 'toolhiveauthorizationpolicy',
+    group: 'enterpriseAuthz',
+    summary: 'Attach roles and deny rules to a specific MCP target.',
+    description:
+      'Schema reference for ToolhiveAuthorizationPolicy, which attaches roles and deny rules to a specific MCP target.',
+    intro:
+      '`ToolhiveAuthorizationPolicy` attaches one or more [ClusterPlatformRole](./clusterplatformrole.mdx) bindings to a specific MCP target: an `MCPServer` or `MCPRemoteProxy`. Bindings can be narrowed by rule restrictions or tool-hint filters, and hard `deny` rules compile to Cedar `forbid` and override every grant.',
   },
 
   // Shared configuration - grouping, then auth, then observability/behavior,
@@ -172,6 +212,6 @@ export const intros = {
     description:
       'Schema reference for MCPAuthzConfig, which configures backend-agnostic authorization policy for MCP servers and proxies.',
     intro:
-      '`MCPAuthzConfig` defines a reusable authorization policy that is decoupled from a particular authorizer backend. [MCPServer](./mcpserver.mdx), [MCPRemoteProxy](./mcpremoteproxy.mdx), and [VirtualMCPServer](./virtualmcpserver.mdx) reference an `MCPAuthzConfig` via `spec.authzConfigRef` (or `spec.incomingAuth.authzConfigRef` on `VirtualMCPServer`), mutually exclusive with the inline `authzConfig` field.\n\n:::note[Runtime wiring is deferred]\n\nIn v0.30.0 the schema, validation, and reference tracking ship together, but workload controllers do not yet resolve `authzConfigRef` into a runtime authz config. Until a follow-up release wires that path, the field is reference-tracked (deletion protection and `status.referenceCount` work) but does **not** apply authorization. Use the inline `spec.authzConfig` field for enforcement in the meantime.\n\n:::',
+      '`MCPAuthzConfig` defines a reusable authorization policy that is decoupled from a particular authorizer backend. [MCPServer](./mcpserver.mdx), [MCPRemoteProxy](./mcpremoteproxy.mdx), and [VirtualMCPServer](./virtualmcpserver.mdx) reference an `MCPAuthzConfig` via `spec.authzConfigRef` (or `spec.incomingAuth.authzConfigRef` on `VirtualMCPServer`), mutually exclusive with the inline `authzConfig` field.\n\nFrom v0.30.1, workload controllers resolve `authzConfigRef` into a runtime authorization config and apply it to the proxy alongside the existing reference-tracking (deletion protection and `status.referencingWorkloads`). For walkthroughs, see [Share policies across resources with MCPAuthzConfig](../../guides-k8s/auth-k8s.mdx#share-policies-across-resources-with-mcpauthzconfig).\n\n:::note[VirtualMCPServer is Cedar-only]\n\n`VirtualMCPServer.spec.incomingAuth.authzConfigRef` only supports MCPAuthzConfig resources with `spec.type: cedarv1`. Referencing a non-Cedar config (for example, `httpv1`) fails reconciliation with a clear condition message because the vMCP runtime authorization middleware is Cedar-only.\n\n:::',
   },
 };

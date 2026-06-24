@@ -323,16 +323,18 @@ Specific guidelines for Docusaurus:
 
 These are the projects we work on, and a short description of each one.
 
-**Stacklok MCP Platform**: Stacklok’s commercial offering for enterprises. It
-consists of the ToolHive platform, commercial support terms, services hours from
-the Stacklok Applied AI engineering team, and access to a collection of hardened
-MCP server images.
+**Stacklok Enterprise**: Stacklok’s commercial offering for enterprises: the
+enterprise-licensed distribution of ToolHive. It adds turnkey identity provider
+integration, centralized policy enforcement, hardened and signed releases, and
+SLA-backed support, plus commercial support terms, services hours from the
+Stacklok Applied AI engineering team, and access to a collection of hardened MCP
+server images.
 
 **ToolHive**: A collection of open source projects that form the foundation of
-the Stacklok MCP Platform. ToolHive includes everything you need to use MCP
-servers in production. It’s made up of four key components: the Runtime,
-Registry Server, Gateway, and Portal. It's written bi-capitalized as one word
-(not "Toolhive" or "Tool Hive").
+Stacklok Enterprise. ToolHive includes everything you need to use MCP servers in
+production. It’s made up of four key components: the Runtime, Registry Server,
+Gateway, and Portal. It's written bi-capitalized as one word (not "Toolhive" or
+"Tool Hive").
 
 **ToolHive Runtime**: The core ToolHive CLI, desktop UI app, and Kubernetes
 Operator. ToolHive manages containerized MCP servers on your local machine, in
@@ -354,6 +356,18 @@ thereafter.
 
 **ToolHive Portal**: A web-based frontend to the ToolHive Registry Server.
 
+**Stacklok Desktop**: The enterprise edition of the ToolHive desktop app
+(ToolHive UI). It adds OIDC sign-in and enterprise lockdown policies controlled
+by the Enterprise Manager. Not "Enterprise UI", "Enterprise Studio", or
+"Stacklok UI".
+
+**Enterprise Manager**: The Stacklok Enterprise component that pushes policy
+configuration to Stacklok Desktop and the Stacklok CLI, controlling client
+behavior across the organization.
+
+**Enterprise Cloud UI**: The Stacklok Enterprise web console for browsing and
+managing the MCP server catalog.
+
 ## Word list & glossary
 
 Common terms used in Stacklok content:
@@ -364,9 +378,8 @@ sentence.
 
 **OSS**: Abbreviation for "open source software".
 
-**Stacklok**: The company behind ToolHive and the Stacklok Enterprise MCP
-Platform. It's written as one word with a single capital (not "StackLok" or
-"Stacklock").
+**Stacklok**: The company behind ToolHive and Stacklok Enterprise. It's written
+as one word with a single capital (not "StackLok" or "Stacklock").
 
 ### Products/brands
 

@@ -1,0 +1,115 @@
+---
+title: Configure the Enterprise Manager
+description:
+  Configuration reference for the Enterprise Manager component in the Stacklok
+  Enterprise platform chart.
+---
+
+The Enterprise Manager runs as a Kubernetes service. It ships in the Stacklok
+Enterprise platform chart, the umbrella chart that installs the platform.
+
+:::tip[Deploy the platform first]
+
+Install the Enterprise Manager with the
+[platform chart](../enterprise-platform/deployment.mdx), which deploys it
+alongside the other components. To run it in its own cluster, enable only this
+component as described in
+[Distributed deployments](../enterprise-platform/distributed-deployments.mdx).
+
+:::
+
+You enable the component with its `enterpriseManager.enabled` flag and set its
+configuration under the `enterprise-manager` key in your platform `values.yaml`.
+
+## Prerequisites
+
+Before configuring, ensure you have:
+
+- An OIDC-compatible identity provider (Okta, Entra ID, or generic OIDC)
+  configured with a client application for Stacklok clients to use
+- Enterprise Manager distribution access, which includes the container image and
+  Helm chart (provided by Stacklok during onboarding)
+
+## Generate a signing key
+
+The Enterprise Manager signs every policy envelope with an EC P-256 key. Clients
+verify the signature against the public key the Enterprise Manager advertises at
+its discovery endpoint, so a cached envelope can be trusted as genuine and
+untampered even when the server is temporarily unreachable. Generate one if you
+don't already have it:
+
+```bash
+openssl ecparam -name prime256v1 -genkey -noout -out signing.pem
+```
+
+Store it as a Kubernetes Secret in the `stacklok-system` namespace:
+
+```bash
+kubectl create secret generic enterprise-manager-signing-key \
+  --from-file=signing.pem=./signing.pem \
+  -n stacklok-system
+```
+
+## Configuration values
+
+Enable the Enterprise Manager and set its configuration:
+
+```yaml title="values.yaml"
+# Enable the Enterprise Manager.
+enterpriseManager:
+  enabled: true
+
+# Enterprise Manager configuration.
+enterprise-manager:
+  # IdP / OIDC configuration
+  idpConfig:
+    # OIDC issuer URI, the base URL of your identity provider
+    issuer: 'https://idp.example.com'
+    # Expected JWT audience claim
+    audience: 'enterprise-manager'
+    # OAuth2 scope required to call the config endpoint
+    requiredScope: 'toolhive:config:read'
+    # IdP type: "entra", "okta", or "generic"
+    idpType: 'generic'
+
+  # Signing configuration
+  signingConfig:
+    # Name of the Secret created in the prerequisites step
+    existingSecret: 'enterprise-manager-signing-key'
+    # How long a signed envelope is valid for
+    envelopeTTL: '24h'
+    # How often clients should poll for a new envelope
+    refreshInterval: '5m'
+
+  # Public URL where clients reach the Enterprise Manager.
+  # Clients use this to discover the authorization server (RFC 9728).
+  resourceURL: 'https://config.example.com'
+
+  # OIDC client ID for the Stacklok CLI and Stacklok Desktop.
+  # Configure a public (PKCE, no client secret) application in your IdP.
+  clientID: '<CLIENT_ID>'
+
+  # Enterprise policy configuration
+  enterpriseConfig:
+    # Enforce a specific MCP registry URL
+    registry:
+      value:
+        api_url: 'https://registry.example.com'
+      enforcement: 'enforced'
+    # Block MCP servers not listed in the registry
+    non_registry_servers:
+      value: false
+      enforcement: 'enforced'
+    # Client behavior when the Enterprise Manager is unreachable
+    degraded_mode:
+      policy: 'block_new'
+      grace_period: '24h'
+      message: 'Enterprise Manager unreachable. Contact your administrator.'
+```
+
+## Next steps
+
+- [Configure policies](./policies/) to control client behavior across your
+  organization
+- [Configure degraded mode](./degraded-mode.mdx) to define how clients behave
+  when the Enterprise Manager is unreachable

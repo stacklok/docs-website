@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React from 'react';
-import { schemas, type CRDKind } from './schemas';
+import {
+  allSchemas as schemas,
+  type AnyCRDKind as CRDKind,
+} from './all-schemas';
 import styles from './styles.module.css';
 
 // Minimal subset of JSON Schema we care about for CRD rendering.

@@ -1,0 +1,335 @@
+---
+title: Deploy the platform
+description:
+  Install the Stacklok Enterprise platform in your Kubernetes cluster as a
+  single Helm release.
+---
+
+The Stacklok Enterprise platform runs in your Kubernetes cluster. You install it
+as a single umbrella Helm chart that deploys the ToolHive Operator, the
+Enterprise Manager, the Enterprise Cloud UI, and the Registry Server in one
+release, along with the custom resource definitions (CRDs) the operator needs.
+
+:::tip[Distributed and multi-cluster deployments]
+
+The umbrella chart can also run a subset of components, so you can spread the
+platform across clusters or maintain separate registries per environment. See
+[Distributed deployments](./distributed-deployments.mdx).
+
+:::
+
+:::tip[Air-gapped or strict-egress clusters]
+
+This page installs the chart directly from Replicated, which requires outbound
+access at install time. If your cluster can't reach Replicated, or your security
+posture requires every artifact to come from an internal registry, see
+[Install from a private registry (air-gapped)](./airgap-install.mdx) instead.
+
+:::
+
+## Prerequisites
+
+Before deploying, ensure you have:
+
+- A Kubernetes cluster (1.28 or later)
+- An ingress or gateway controller to publish the components, plus DNS records
+  and TLS certificates for the hostnames you expose the Cloud UI, Enterprise
+  Manager, and Registry Server on. The chart creates Services but no ingress,
+  DNS, or certificates; see [Step 6](#6-expose-the-platform-endpoints).
+- An OIDC-compatible identity provider configured per
+  [Configure platform identity](./configure-identity.mdx)
+- A PostgreSQL database for the [Registry Server](#what-the-chart-includes). The
+  Registry Server serves the MCP and skills catalog the Enterprise Cloud UI
+  reads, and stores it in an external PostgreSQL instance you provide.
+- Your Stacklok Enterprise license, available from the Stacklok install portal
+  at [install.stacklok.com](https://install.stacklok.com). The license grants
+  access to the umbrella chart and the container images it references. Stacklok
+  sends portal access instructions during onboarding.
+
+## What the chart includes
+
+The chart bundles each platform component and gives it an enable flag in a
+single `values.yaml`, so you turn on only the components you want. Each flag
+maps to a platform component:
+
+| Enable flag         | What it deploys                                                                                                               |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `toolhiveOperator`  | The ToolHive Operator and its custom resource definitions (`MCPServer`, `VirtualMCPServer`, and others)                       |
+| `enterpriseManager` | Enterprise Manager service that serves configuration to Stacklok clients                                                      |
+| `cloudUi`           | Enterprise Cloud UI Next.js application                                                                                       |
+| `registryServer`    | Registry Server that serves the MCP and skills catalog to the Enterprise Cloud UI, backed by an external PostgreSQL database. |
+| `aiGateway`         | AI Gateway operator that exposes large language models behind a managed gateway. Disabled by default.                         |
+
+The `toolhiveOperator` subchart deploys the enterprise build of the ToolHive
+Operator: the same operator codebase as ToolHive Community, repackaged as a
+hardened, signed, and versioned image. It manages the same workload types as the
+Community operator, so the existing guides apply unchanged. Use
+[Run MCP servers in Kubernetes](../../toolhive/guides-k8s/run-mcp-k8s.mdx) for
+MCP servers and remote proxies, and the
+[Virtual MCP Server guides](../../toolhive/guides-vmcp/index.mdx) for Virtual
+MCP Server (vMCP) gateways.
+
+:::note[Namespaces]
+
+This guide installs the platform into `stacklok-system` and uses that namespace
+throughout. You can choose a different one; adjust the commands to match.
+
+The operator can manage MCP server workloads in any namespace. Running them in
+their own namespace, separate from the platform components in `stacklok-system`,
+keeps the platform and the workloads it manages apart, and is the recommended
+setup. The Kubernetes guides linked above use `toolhive-system` in their
+examples, so substitute your own namespaces as you follow them.
+
+:::
+
+## Deploy with Helm
+
+### 1. Authenticate to the Replicated registry
+
+Stacklok distributes the platform through Replicated. Your license, the umbrella
+chart, and per-release install instructions all live in the install portal at
+[install.stacklok.com](https://install.stacklok.com). Log in with the
+credentials Stacklok provides during onboarding.
+
+The portal serves the chart from an OCI registry (`oci.stacklok.com`), not a
+classic Helm chart repository, so you authenticate with `helm registry login`
+rather than `helm repo add`. Use your license email as the username and your
+**License ID** as the password:
+
+```bash
+helm registry login oci.stacklok.com \
+  --username <YOUR_EMAIL> \
+  --password <LICENSE_ID>
+```
+
+In the portal, the **Existing cluster with Helm** instructions generate the
+exact login and install commands for your release, including your channel slug
+and the current chart version. Note those values; you reference them when you
+[install the chart](#4-install-the-chart).
+
+:::note[Image pulls during install]
+
+You don't create an image pull secret for this online install. The chart's
+Replicated integration provisions the pull credentials from your license, so the
+cluster pulls component images at install time. The
+[air-gapped path](./airgap-install.mdx) differs: you mirror the images and
+create the pull secret yourself.
+
+:::
+
+### 2. Prepare secrets
+
+The chart expects a few Secrets to already exist. They live in the namespace the
+platform installs into, so create that namespace first:
+
+```bash
+kubectl create namespace stacklok-system
+```
+
+Then prepare the Secrets for the components you're enabling before you configure
+values.
+
+**Enterprise Manager signing key.** Generate the key and create the Secret as
+described in
+[Generate a signing key](../enterprise-manager/configure.mdx#generate-a-signing-key).
+The values file references it by name through
+`enterprise-manager.signingConfig.existingSecret`.
+
+**Better Auth session secret.** The Cloud UI needs a secret of at least 32
+characters to encrypt its sessions. Generate one:
+
+```bash
+openssl rand -base64 32
+```
+
+Use the output as `toolhive-cloud-ui.betterAuth.secret` in the values file.
+
+**Registry Server database passwords.** Create a Secret for the database
+password (and a second one if you use a separate migration user), as described
+in
+[Create the database credential Secrets](./configure-registry-server.mdx#create-the-database-credential-secrets).
+The values file references them through `secretKeyRef`, as the example below
+shows.
+
+### 3. Configure values
+
+Create a `values.yaml` file that enables the components you want and supplies
+their settings. Each component has an enable flag, and its configuration goes
+under that component's own key, as the example shows. The example below installs
+the operator, Enterprise Manager, Cloud UI, and Registry Server, with the AI
+Gateway disabled:
+
+```yaml title="values.yaml"
+# Replicated SDK subchart. Required for the online install: it turns the license
+# credentials injected at chart-pull time into the enterprise-pull-secret image
+# pull secret the platform components reference.
+replicated:
+  enabled: true
+
+# Enable only the components you want.
+toolhiveOperator:
+  enabled: true
+enterpriseManager:
+  enabled: true
+cloudUi:
+  enabled: true
+registryServer:
+  enabled: true
+aiGateway:
+  enabled: false
+
+# Enterprise Manager configuration. See the Enterprise Manager deployment page
+# for the full reference of fields under this key.
+enterprise-manager:
+  idpConfig:
+    issuer: 'https://idp.example.com'
+    audience: 'enterprise-manager'
+    requiredScope: 'toolhive:config:read'
+    idpType: 'generic'
+  signingConfig:
+    # Secret created in "Prepare secrets" above
+    existingSecret: 'enterprise-manager-signing-key'
+  resourceURL: 'https://config.example.com'
+  clientID: '<STACKLOK_CLI_CLIENT_ID>'
+
+# Registry Server configuration. Serves the MCP and skills catalog the Cloud
+# UI reads. Requires an external PostgreSQL database; supply the password from
+# a Secret, never inline.
+toolhive-registry-server:
+  upstream:
+    config:
+      database:
+        host: 'postgres.example.com'
+        port: 5432
+        user: 'thv_user'
+        database: 'toolhive_registry'
+        sslMode: 'require'
+    extraEnv:
+      - name: THV_REGISTRY_DATABASE_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: registry-db-credentials
+            key: password
+
+# Enterprise Cloud UI configuration. See the Cloud UI deployment page for the
+# full reference of fields under this key.
+toolhive-cloud-ui:
+  # URL of the Registry Server. When it runs in this cluster, point at its
+  # in-cluster Service (named registry-api on port 8080).
+  apiBaseUrl: 'http://registry-api.stacklok-system.svc.cluster.local:8080'
+  # Cloud UI backend's URL for the Enterprise Manager; matches resourceURL
+  # above.
+  enterpriseManagerUrl: 'https://config.example.com'
+  oidc:
+    issuerUrl: 'https://idp.example.com'
+    clientId: '<CLOUD_UI_CLIENT_ID>'
+    clientSecret: '<CLOUD_UI_CLIENT_SECRET>'
+  betterAuth:
+    # Generated in "Prepare secrets" above (openssl rand -base64 32)
+    secret: '<BETTER_AUTH_SECRET>'
+    url: 'https://cloud-ui.example.com'
+```
+
+For the full reference of fields each component accepts, see
+[Configure the Enterprise Manager](../enterprise-manager/configure.mdx),
+[Configure the Enterprise Cloud UI](../enterprise-cloud-ui/configure.mdx), and
+[Configure the Registry Server](./configure-registry-server.mdx).
+
+### 4. Install the chart
+
+Install the chart into the `stacklok-system` namespace you created earlier.
+Reference the chart by its `oci://` URL, using the channel slug and version from
+[Step 1](#1-authenticate-to-the-replicated-registry):
+
+```bash
+helm install stacklok-enterprise \
+  oci://oci.stacklok.com/stacklok-enterprise/<CHANNEL>/stacklok-enterprise-platform \
+  --version <VERSION> \
+  --namespace stacklok-system \
+  --values values.yaml
+```
+
+### 5. Verify the install
+
+Wait for the platform pods to reach the `Running` state:
+
+```bash
+kubectl get pods -n stacklok-system
+```
+
+Confirm the ToolHive CRDs registered:
+
+```bash
+kubectl get crd | grep toolhive.stacklok.dev
+```
+
+### 6. Expose the platform endpoints
+
+The chart creates ClusterIP Services for the components but no ingress. Publish
+these three through your ingress or gateway controller so browsers and clients
+outside the cluster can reach them at the hostnames you set in
+[Step 3](#3-configure-values). List the Services to get their names (two are
+prefixed with your Helm release name, `stacklok-enterprise`):
+
+```bash
+kubectl get svc -n stacklok-system
+```
+
+Route each external hostname to its Service with the Ingress, HTTPRoute, or
+Gateway resources your controller uses:
+
+| Component           | Service (port)                                | Reached by                       | Hostname to route             |
+| ------------------- | --------------------------------------------- | -------------------------------- | ----------------------------- |
+| Enterprise Cloud UI | `stacklok-enterprise-toolhive-cloud-ui` (80)  | Browsers                         | `betterAuth.url`              |
+| Enterprise Manager  | `stacklok-enterprise-enterprise-manager` (80) | Stacklok Desktop and CLI clients | `resourceURL`                 |
+| Registry Server     | `registry-api` (8080)                         | Stacklok Desktop and CLI clients | the registry's public API URL |
+
+The in-cluster URLs (`apiBaseUrl`, `enterpriseManagerUrl`) stay as Service DNS
+and need no routing. Once the routes resolve, confirm the Enterprise Manager
+answers at its external hostname:
+
+```bash
+curl -sf https://config.example.com/.well-known/toolhive-configuration | jq .
+```
+
+### 7. Prepare workload namespaces
+
+If you run MCP server and vMCP workloads in a namespace other than
+`stacklok-system` (the recommended setup, see the Namespaces note above), copy
+the image pull secret into that namespace. The operator stamps the
+`enterprise-pull-secret` secret onto every workload pod it spawns, and the
+kubelet resolves it in the pod's own namespace. The Replicated integration
+creates it only in `stacklok-system`:
+
+```bash
+kubectl create namespace <WORKLOAD_NAMESPACE>
+
+# Copy the pull secret from the platform namespace.
+kubectl get secret enterprise-pull-secret -n stacklok-system \
+  -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d \
+  | kubectl create secret generic enterprise-pull-secret \
+      --namespace <WORKLOAD_NAMESPACE> \
+      --type kubernetes.io/dockerconfigjson \
+      --from-file=.dockerconfigjson=/dev/stdin
+```
+
+Repeat for any namespace that hosts operator-managed workloads. If you run
+everything in `stacklok-system`, skip this step.
+
+## Next steps
+
+- [Configure policies](../enterprise-manager/policies/) to control client
+  behavior across your organization
+- [Verify the distribution](./verify-artifacts.mdx) to confirm the signatures,
+  provenance, and SBOMs of the images you pulled
+- [Browse the catalog](../enterprise-cloud-ui/browse-catalog.mdx) once the Cloud
+  UI is running
+
+## Related information
+
+- [Distributed deployments](./distributed-deployments.mdx) to spread components
+  across clusters or maintain separate registries per environment
+- [Install from a private registry (air-gapped)](./airgap-install.mdx) for
+  clusters that can't reach Replicated at install time
+- [Configure platform identity](./configure-identity.mdx) - the identity
+  provider configuration this deployment depends on as a prerequisite

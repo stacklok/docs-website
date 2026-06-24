@@ -1,0 +1,137 @@
+---
+title: Introduction to enterprise authorization
+description:
+  Express MCP access in RBAC terms and let the operator compile it to Cedar, so
+  role-based authorization scales across an MCP fleet.
+---
+
+:::enterprise
+
+Enterprise authorization is a capability of Stacklok Enterprise. For a full
+comparison of ToolHive Community and Stacklok Enterprise capabilities, see
+[Stacklok Enterprise](../index.mdx).
+
+:::
+
+At small scale, hand-writing a Cedar policy for each MCP server works fine. At
+fleet scale, with many servers, many teams, and an identity-provider-driven
+identity model, that approach falls apart. Enterprise authorization turns access
+control into a set of declarative custom resources that the operator compiles
+into the Cedar policies ToolHive enforces at runtime.
+
+## The problem
+
+Open source ToolHive supports rich Cedar policies on every MCP server, and that
+flexibility is exactly what you want when you are securing one or two servers.
+Once you are running a fleet, the same flexibility becomes a liability. Each
+server carries its own policy file. The policies drift. There is no clean place
+to express something as simple as "every engineer can read every server."
+
+The model also conflates two things that should be separate. A Cedar policy
+defines _what_ a role can do _and_ _who_ holds that role, all in one document.
+That works for a single team that owns a single server. It does not work when a
+platform team needs to define a reusable role and a namespace owner needs to
+grant that role to their own users without rewriting the platform team's policy.
+
+The CRDs introduced by enterprise authorization separate these concerns. Cluster
+admins define roles once. Cluster admins or namespace owners bind those roles to
+identity-provider groups and roles. A separate attachment object decides which
+MCP servers a binding applies to. The operator compiles the combination into
+Cedar.
+
+## The model
+
+Enterprise authorization is built on a small set of custom resources. If you
+have used Kubernetes RBAC, the shape will feel familiar.
+
+- **`ClusterPlatformRole`**
+  ([reference](../reference/crds/clusterplatformrole.mdx)) defines _what_ a role
+  can do. It is product-agnostic. Per-product action vocabularies live under
+  `spec.productActions[]`, keyed by API group. The only supported product API
+  group is `toolhive.enterprise.stacklok.com`. Wildcard `"*"` is allowed, which
+  is how the built-in `writer` role grants every action.
+- **`ClusterPlatformRoleBinding`**
+  ([reference](../reference/crds/clusterplatformrolebinding.mdx)) defines _who_
+  gets a role, cluster-wide. It maps identity-provider groups and roles (as
+  carried in the JWT) to a `ClusterPlatformRole`.
+- **`PlatformRoleBinding`**
+  ([reference](../reference/crds/platformrolebinding.mdx)) is the namespaced
+  sibling of `ClusterPlatformRoleBinding`. It lets a namespace owner author
+  grants for resources in their own namespace without involving the cluster
+  admin. Cluster-scoped and namespace-scoped bindings combine with union
+  semantics: a subject is granted a role if any matching binding says so.
+- **`ToolhiveAuthorizationPolicy`**
+  ([reference](../reference/crds/toolhiveauthorizationpolicy.mdx)) defines
+  _where_ access applies. It attaches one or more role bindings to a specific
+  MCP target: an `MCPServer` or `MCPRemoteProxy`. It also supports optional
+  `ruleRestrictions` (narrow the bound role to a specific tool, prompt, or
+  resource), a `toolHintFilter` (gate by the `readOnlyHint` or `destructiveHint`
+  annotations the server advertises), and a `deny[]` list that compiles to a
+  Cedar `forbid` rule and overrides every grant. Multiple
+  `ToolhiveAuthorizationPolicy` objects can attach to the same target; their
+  effective principal sets and deny lists are unioned.
+
+## Claim mapping
+
+Bindings refer to identity-provider groups and roles. Those values come from
+claims in the JWT that ToolHive validates on every request. By default, the
+platform derives the claim names from the IdP type it detects, so a cluster
+admin typically does not need to configure them. For Microsoft Entra ID, the
+defaults are the `roles` claim (the app-role claim) and the `groups` claim.
+
+To override the defaults, set the `groupsClaim` and `rolesClaim` keys on the
+platform identity-provider ConfigMap. The enterprise installer creates this
+ConfigMap with a release-specific name in the platform namespace, for example
+`stacklok-enterprise-platform-enterprise-manager-idp-config`. Find it with
+`kubectl get configmap -A | grep idp-config`, then edit the keys to match the
+claims your IdP emits. For the identity-provider side of this setup, where you
+configure the IdP to emit those group and role claims, see
+[Configure platform identity](../enterprise-platform/configure-identity.mdx).
+
+Inside each binding, the `from[]` field is a list of `PrincipalCondition`
+objects. Each condition has two arrays: `groups[]` and `roles[]`. The two arrays
+inside one condition are AND-ed: the subject must satisfy both the groups list
+and the roles list to match. Across multiple conditions in the same `from[]`,
+the conditions are OR-ed: a subject matches the binding if any one of them
+matches. At least one of `groups[]` or `roles[]` must be non-empty in every
+condition, which the CRD enforces with a CEL validation rule.
+
+For example, this binding matches users who are in the `mcp-engineers` group and
+hold the `mcp-viewer` role, or anyone who holds the `mcp-admin` role:
+
+```yaml
+from:
+  - groups: [mcp-engineers]
+    roles: [mcp-viewer]
+  - roles: [mcp-admin]
+```
+
+For the broader picture of how ToolHive verifies tokens and integrates with an
+OIDC provider, see
+[Authentication and authorization](../../toolhive/concepts/auth-framework.mdx).
+
+## Built-in roles
+
+The operator ships two `ClusterPlatformRole` objects out of the box.
+
+- `reader` grants the MCP read operations and `call_tool`. The `call_tool`
+  surface can be narrowed at bind time with `toolHintFilter.readOnlyHint: true`,
+  which restricts the binding to tools the MCP server itself annotates as
+  read-only.
+- `writer` grants every action via wildcard.
+
+You can list them with `kubectl get clusterplatformroles` (or the short form,
+`kubectl get cpr`). Build a custom `ClusterPlatformRole` only when you need a
+narrower action vocabulary than `reader` and `writer` offer.
+
+## Next steps
+
+- [Quickstart - GitHub MCP with Entra ID](./quickstart-entra.mdx) for a hands-on
+  walkthrough against a real identity provider
+- [Namespace self-service authorization](./namespace-self-service.mdx) to see
+  how a namespace owner authors their own bindings
+- [ToolhiveAuthorizationPolicy](../reference/crds/toolhiveauthorizationpolicy.mdx)
+  for the full schema of the attachment object that ties everything together
+- [Cedar policies](../../toolhive/concepts/cedar-policies.mdx) and the
+  [authorization policy reference](../../toolhive/reference/authz-policy-reference.mdx)
+  for the underlying policy language and the full vocabulary the operator emits

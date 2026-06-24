@@ -263,17 +263,18 @@ Apply the approved changes:
 
 6. **CRD reference updates**: the Kubernetes CRD reference is partially auto-generated. If the release touches CRDs, know the split:
 
-   **Fully auto-generated** (do not hand-edit):
-   - `static/api-specs/crds/*.schema.json` - extracted JSON Schema per CRD
-   - `static/api-specs/crds/*.example.yaml` - minimal required-fields YAML example
-   - `static/api-specs/crds/index.json` - metadata + cross-reference graph
-   - `static/api-specs/crds/sidebar.json` - sidebar fragment consumed by `sidebars.ts`
-   - `src/components/CRDReference/schemas.ts` - Kind -> schema index imported by the `<CRDFields>` component
-   - `docs/toolhive/reference/crds/*.mdx` - per-CRD pages (including the landing `index.mdx`)
+   **Fully auto-generated** (do not hand-edit): the exact paths depend on the project's `crds:` array in `.github/upstream-projects.yaml`. Each entry declares an `out` (static/ schema dir) and `pages` (docs/ MDX dir). For toolhive OSS these are `static/api-specs/toolhive-crds/` and `docs/toolhive/reference/crds/`; for enterprise or gateway CRDs they will differ. Within each pair, the generated files are:
+   - `<out>/*.schema.json` - extracted JSON Schema per CRD
+   - `<out>/*.example.yaml` - minimal required-fields YAML example
+   - `<out>/index.json` - metadata + cross-reference graph
+   - `<out>/sidebar.json` - sidebar fragment consumed by `sidebars.ts`
+   - `<pages>/*.mdx` - per-CRD pages (including the landing `index.mdx`)
 
-   These come from `scripts/extract-crd-schemas.mjs` + `scripts/generate-crd-pages.mjs`, run by `scripts/update-toolhive-reference.sh`. Regenerating just means re-running the script; do not edit the MDX directly.
+   Plus one repo-wide generated file spanning all sets: `src/components/CRDReference/all-schemas.ts`, the consolidated Kind -> schema barrel consumed by `<CRDFields>` (emitted by `scripts/generate-crd-barrel.mjs`). Do not hand-edit it.
 
-   **Hand-written overrides** (`scripts/lib/crd-intros.mjs`): every CRD in `index.json` publishes automatically using schema-derived defaults. Entries in this file override those defaults to polish a page. All fields are optional:
+   These come from `scripts/extract-crd-schemas.mjs` + `scripts/generate-crd-pages.mjs` + `scripts/generate-crd-barrel.mjs`, all driven by `scripts/upstream-release/extract-crds.mjs`. Regenerating means re-running: `node scripts/upstream-release/extract-crds.mjs --id <project-id>`. Do not edit the MDX or schema files directly.
+
+   **Hand-written overrides** (`scripts/lib/crd-intros.mjs`): every CRD in any project's `index.json` publishes automatically using schema-derived defaults. Entries in this file override those defaults to polish a page. All fields are optional:
    - `slug`: URL segment and MDX filename. Default: `Kind.toLowerCase()`.
    - `group`: `'core'` or `'shared'`. Default: `'shared'`.
    - `summary`: one-sentence DocCard pitch. Default: first sentence of the cleaned upstream schema description.
@@ -282,7 +283,7 @@ Apply the approved changes:
 
    **When the release adds a new CRD**:
    - The release PR auto-publishes the new CRD with schema-derived defaults and flags it in a `[!NOTE]` block. No blocker.
-   - Review the generated page. If the upstream kubebuilder description is thin or the CRD should live in the `core` group or appear higher on the landing page, add an override entry for that Kind to `crd-intros.mjs` and re-run `node scripts/generate-crd-pages.mjs`. Overridden entries render before defaults-only entries within each group, in the order they are declared in the file.
+   - Review the generated page. If the upstream kubebuilder description is thin or the CRD should live in the `core` group or appear higher on the landing page, add an override entry for that Kind to `crd-intros.mjs` and re-run `node scripts/upstream-release/extract-crds.mjs --id <project-id>`. Overridden entries render before defaults-only entries within each group, in the order they are declared in the file.
    - Commit the intros change plus the regenerated outputs. You can also land this as a follow-up PR after the release PR merges.
 
    **When the release modifies an existing CRD**: the schema/example regenerate automatically. If the CRD has no override entry, the intro prose will track the upstream description automatically. If it does have an override entry, update the `intro` only if the CRD's role materially shifted.

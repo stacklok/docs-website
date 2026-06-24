@@ -1,0 +1,100 @@
+---
+title: Telemetry policy
+description: Enforce OpenTelemetry settings across Stacklok clients.
+---
+
+This guide walks you through configuring a telemetry policy that routes all
+client traces and metrics to your centralized OpenTelemetry collector,
+regardless of any local configuration developers may have set. For a primer on
+ToolHive's OpenTelemetry support, see the
+[OpenTelemetry integration](../../../toolhive/integrations/opentelemetry.mdx)
+guide.
+
+You'll need the OTLP HTTP endpoint for your collector (for example,
+`https://otel.acme.com`) and the Enterprise Manager already
+[deployed](../configure.mdx) and reachable by clients.
+
+## Configure the telemetry directive
+
+Add the `telemetry` directive to your enterprise configuration. Replace the
+example endpoint and headers with your collector's settings and pick an
+[enforcement level](./index.mdx#enforcement-levels).
+
+```yaml title="values.yaml"
+enterpriseConfig:
+  telemetry:
+    value:
+      # Required: OTLP HTTP endpoint for your OpenTelemetry collector
+      otel_endpoint: 'https://otel.acme.com'
+      # Fraction of traces to sample: 0.0 = none, 1.0 = all
+      sampling_rate: 0.1
+      tracing_enabled: true
+      metrics_enabled: true
+      # Non-sensitive headers only; do not include API keys or credentials
+      headers:
+        x-tenant-id: 'acme-prod'
+    # "enforced" blocks local overrides; "default" lets users override locally
+    enforcement: 'enforced'
+```
+
+Use `enforced` when your organization requires all telemetry to flow to a
+central collector, for example for compliance, cost control, or security
+monitoring. Use `default` when you want to push recommended OpenTelemetry
+settings to developers but allow teams to route telemetry to their own
+collectors for local debugging or testing.
+
+:::warning
+
+The `headers` field is for non-sensitive metadata only (tenant ID, environment
+name, and so on). Do not include API keys, tokens, or other credentials here.
+Use your identity provider and OIDC token exchange for authenticated collector
+access.
+
+:::
+
+After updating your configuration,
+[apply the change](./index.mdx#apply-policy-changes).
+
+## Variations
+
+### Advisory telemetry settings
+
+Push OpenTelemetry settings as org-wide defaults while allowing teams to
+override them:
+
+```yaml title="values.yaml"
+enterpriseConfig:
+  telemetry:
+    value:
+      otel_endpoint: 'https://otel.acme.com'
+      sampling_rate: 0.1
+      tracing_enabled: true
+      metrics_enabled: true
+    enforcement: 'default'
+```
+
+### Plain-text (insecure) collector endpoint
+
+For internal collectors that don't use TLS, for example on a private network,
+set `insecure: true`:
+
+```yaml title="values.yaml"
+enterpriseConfig:
+  telemetry:
+    value:
+      otel_endpoint: 'http://otel.internal.acme.com:4318'
+      insecure: true
+      tracing_enabled: true
+      metrics_enabled: true
+    enforcement: 'enforced'
+```
+
+## Next steps
+
+- [Registry policy](./registry.mdx) to enforce a specific registry URL
+- [Non-registry servers policy](./non-registry-servers.mdx) to block servers
+  outside the registry
+- [Stacklok Desktop policies](./desktop-app.mdx) to control Stacklok Desktop
+  visibility
+- [Degraded mode](../degraded-mode.mdx) to define client behavior when the
+  Enterprise Manager is unreachable

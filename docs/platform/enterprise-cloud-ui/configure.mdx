@@ -1,0 +1,306 @@
+---
+title: Configure the Enterprise Cloud UI
+description:
+  Configuration reference for the Enterprise Cloud UI component in the Stacklok
+  Enterprise platform chart.
+---
+
+The Enterprise Cloud UI runs as a Next.js application in your Kubernetes
+cluster. It ships in the Stacklok Enterprise platform chart, the umbrella chart
+that installs the platform.
+
+:::tip[Deploy the platform first]
+
+Install the Cloud UI with the
+[platform chart](../enterprise-platform/deployment.mdx), which deploys it
+alongside the other components. To run it in its own cluster, enable only this
+component as described in
+[Distributed deployments](../enterprise-platform/distributed-deployments.mdx).
+
+:::
+
+You enable the component with its `cloudUi.enabled` flag and set its
+configuration under the `toolhive-cloud-ui` key in your platform `values.yaml`.
+
+## Prerequisites
+
+Before configuring, ensure you have:
+
+- A [Registry Server](../enterprise-platform/configure-registry-server.mdx)
+  deployed and reachable; its API URL is the `apiBaseUrl` value you set below
+- An OIDC-compatible identity provider (Okta, Entra ID, or generic OIDC)
+  configured with a client application for the Cloud UI
+- An [OpenRouter](https://openrouter.ai) API key, if you want to enable the
+  [AI assistant](./ai-assistant.mdx)
+- Enterprise Cloud UI distribution access (container image and Helm chart,
+  provided by Stacklok during onboarding)
+
+## Configuration values
+
+Enable the Cloud UI and set its configuration:
+
+```yaml title="values.yaml"
+# Enable the Cloud UI.
+cloudUi:
+  enabled: true
+
+# Cloud UI configuration.
+toolhive-cloud-ui:
+  # Required: Registry Server API URL
+  apiBaseUrl: 'https://registry.example.com'
+
+  # Required: OIDC configuration
+  oidc:
+    issuerUrl: 'https://idp.example.com'
+    clientId: '<CLIENT_ID>'
+    clientSecret: '<CLIENT_SECRET>'
+    # scopes: 'openid,email,profile,offline_access'
+
+  # Required: Better Auth session management
+  # Generate secret with: openssl rand -base64 32
+  betterAuth:
+    secret: '<BETTER_AUTH_SECRET>'
+    url: 'https://cloud-ui.example.com'
+
+  # Optional: Enterprise Manager for server-side enterprise config
+  # enterpriseManagerUrl: 'https://enterprise-manager.example.com'
+
+  # Optional: external Redis for caching skill previews.
+  # redisUrl: 'redis://:<PASSWORD>@redis.example.com:6379/0'
+
+  # Optional: White-label branding (see "White-label branding" below)
+  # branding:
+  #   config:
+  #     enabled: true
+  #     json:
+  #       logo_url: 'https://cdn.example.com/acme/logo.svg'
+  #       favicon_url: 'https://cdn.example.com/acme/favicon.ico'
+  #       design_tokens:
+  #         colors:
+  #           light: { primary: '#7a1a1a' }
+  #           dark: { primary: '#b04545' }
+  #   # Simple-override branding (bypasses ConfigMap mount).
+  #   # Overridden by `branding.config.json` when both are set.
+  #   name: 'Acme'
+  #   logoUrl: 'https://cdn.example.com/acme/logo.svg'
+  #   faviconUrl: 'https://cdn.example.com/acme/favicon.ico'
+
+  # Additional env vars not yet exposed as structured keys above.
+  # env:
+  #   - name: OPENROUTER_API_KEY
+  #     value: '<OPENROUTER_API_KEY>'
+```
+
+## Environment variables
+
+The Helm keys in the tables below are relative to the Cloud UI's values. In the
+platform chart, nest them under the `toolhive-cloud-ui` key (for example,
+`toolhive-cloud-ui.apiBaseUrl`). Each maps to the environment variable the Cloud
+UI container reads.
+
+:::note
+
+`API_BASE_URL` and `ENTERPRISE_MANAGER_URL` can use in-cluster Service DNS
+because the Cloud UI backend calls them server-side. `BETTER_AUTH_URL` and
+`OIDC_ISSUER_URL` must be externally reachable URLs because the browser uses
+them during the sign-in flow.
+
+:::
+
+### Required
+
+| Helm key            | Env var              | Description                                                                                           |
+| ------------------- | -------------------- | ----------------------------------------------------------------------------------------------------- |
+| `apiBaseUrl`        | `API_BASE_URL`       | Base URL of the Registry Server API (see [Registry API URL resolution](#registry-api-url-resolution)) |
+| `oidc.issuerUrl`    | `OIDC_ISSUER_URL`    | OIDC issuer/discovery URL for your identity provider                                                  |
+| `oidc.clientId`     | `OIDC_CLIENT_ID`     | OAuth2 client ID                                                                                      |
+| `oidc.clientSecret` | `OIDC_CLIENT_SECRET` | OAuth2 client secret                                                                                  |
+| `betterAuth.secret` | `BETTER_AUTH_SECRET` | Token encryption secret (min 32 chars, generate with `openssl rand -base64 32`)                       |
+| `betterAuth.url`    | `BETTER_AUTH_URL`    | Public URL of the Cloud UI (used for auth callbacks)                                                  |
+
+### Optional (structured)
+
+| Helm key                  | Env var                  | Description                                                                                                                                                                                                                                                                                     |
+| ------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `oidc.scopes`             | `OIDC_SCOPES`            | Comma-separated OIDC scopes. Overrides the defaults: `openid,email,profile,offline_access`. If set, include at least `openid` and `offline_access` to avoid breaking authentication and session refresh.                                                                                        |
+| `enterpriseManagerUrl`    | `ENTERPRISE_MANAGER_URL` | Enterprise Manager URL the Cloud UI server reads enterprise config from (feature-flag gating, plus registry and gateway URLs that override the env-var fallbacks). Server-side only, so this can be in-cluster Service DNS. When unset, the Cloud UI falls back to the env vars for those URLs. |
+| `redisUrl`                | `REDIS_URL`              | External Redis connection URL. The Cloud UI caches unpacked skill previews so it doesn't re-fetch each skill's OCI artifact on every view. The chart does not deploy Redis; when unset or unreachable, previews are hidden rather than re-pulled.                                               |
+| `branding.config.enabled` | `BRANDING_CONFIG_PATH`   | Enable file-based white-label branding. See [White-label branding](#white-label-branding).                                                                                                                                                                                                      |
+| `branding.config.json`    | (none)                   | JSON payload with `logo_url`, `favicon_url`, and `design_tokens.colors`. See [White-label branding](#white-label-branding).                                                                                                                                                                     |
+| `branding.name`           | `BRAND_NAME`             | Simple-override app name. Bypasses the ConfigMap mount. Overridden by `branding.config.json` when both are set.                                                                                                                                                                                 |
+| `branding.logoUrl`        | `BRAND_LOGO_URL`         | Simple-override logo URL. Bypasses the ConfigMap mount.                                                                                                                                                                                                                                         |
+| `branding.faviconUrl`     | `FAVICON_URL`            | Simple-override favicon URL. Bypasses the ConfigMap mount.                                                                                                                                                                                                                                      |
+
+### Optional (additional env vars)
+
+Use the `env` array in `values.yaml` for env vars not exposed as structured
+keys:
+
+| Env var              | Description                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `OPENROUTER_API_KEY` | OpenRouter API key for the AI assistant                                                                       |
+| `TRUSTED_ORIGINS`    | Comma-separated list of trusted origins for CORS and auth callbacks                                           |
+| `DATABASE_URL`       | PostgreSQL connection string for session storage (required for large OIDC tokens, for example, with Entra ID) |
+
+## White-label branding
+
+Replace the Cloud UI's default logo, favicon, and theme colors with your
+organization's branding so the application matches your internal visual
+identity.
+
+The Helm chart delivers branding as a JSON file mounted into the Cloud UI
+container. It writes the contents of `branding.config.json` into a ConfigMap,
+mounts it at `/etc/branding/config.json`, and sets `BRANDING_CONFIG_PATH` to
+point at it. Enable the `branding.config` block in your `values.yaml`:
+
+```yaml title="values.yaml"
+branding:
+  config:
+    enabled: true
+    json:
+      logo_url: 'https://cdn.example.com/acme/logo.svg'
+      favicon_url: 'https://cdn.example.com/acme/favicon.ico'
+      design_tokens:
+        colors:
+          light:
+            primary: '#7a1a1a'
+            nav-background: '#1a1a2e'
+          dark:
+            primary: '#b04545'
+            nav-background: '#0d0d1a'
+```
+
+Changes to `branding.config.json` propagate to running pods automatically. The
+kubelet refreshes the mounted file shortly after the ConfigMap update, without a
+pod rollout. See
+[Mounted ConfigMaps are updated automatically](https://kubernetes.io/docs/concepts/configuration/configmap/#mounted-configmaps-are-updated-automatically)
+in the Kubernetes documentation for the underlying behavior.
+
+### Fields
+
+All fields are optional. Omitted fields fall back to the Cloud UI's defaults.
+
+| Field                  | Description                                                                                                                                                |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `logo_url`             | URL of the logo image (SVG, PNG, or WebP). Shown on the login screen and in the top navigation bar.                                                        |
+| `favicon_url`          | URL of the favicon (ICO, PNG, or SVG).                                                                                                                     |
+| `design_tokens.colors` | Light and dark theme color tokens (see below).                                                                                                             |
+| `app_name`             | Used as the logo's alt text. Does not rename the application elsewhere in the UI. Falls back to the `BRAND_NAME` environment variable, then to `ToolHive`. |
+
+### Simple overrides
+
+For quick name and logo changes without a ConfigMap, set `branding.name`,
+`branding.logoUrl`, and `branding.faviconUrl` directly in `values.yaml`:
+
+```yaml title="values.yaml"
+branding:
+  name: 'Acme'
+  logoUrl: 'https://cdn.example.com/acme/logo.svg'
+  faviconUrl: 'https://cdn.example.com/acme/favicon.ico'
+```
+
+These wire directly to env vars and skip the ConfigMap mount entirely. If you
+also set `branding.config.json`, the config file takes precedence.
+
+### Color tokens
+
+Set CSS color values under `design_tokens.colors.light` and
+`design_tokens.colors.dark` to override the Cloud UI's defaults for each theme.
+
+| Token                        | Controls                                       |
+| ---------------------------- | ---------------------------------------------- |
+| `background`                 | Page background                                |
+| `foreground`                 | Primary text color                             |
+| `card`                       | Card background                                |
+| `card-foreground`            | Card text                                      |
+| `popover`                    | Popover and dropdown menu background           |
+| `popover-foreground`         | Popover and dropdown menu text                 |
+| `primary`                    | Primary button background                      |
+| `primary-foreground`         | Text on primary buttons                        |
+| `secondary`                  | Secondary button background                    |
+| `secondary-foreground`       | Text on secondary buttons                      |
+| `muted`                      | Muted surfaces (subtle backgrounds)            |
+| `muted-foreground`           | Low-emphasis text (labels, captions)           |
+| `accent`                     | Hover and highlight background                 |
+| `accent-foreground`          | Text on accent surfaces                        |
+| `destructive`                | Destructive action background (errors, delete) |
+| `destructive-foreground`     | Text on destructive surfaces                   |
+| `border`                     | Default border color                           |
+| `input`                      | Form input background                          |
+| `ring`                       | Focus ring color                               |
+| `avatar-background`          | User avatar fallback background                |
+| `nav-background`             | Top navigation bar background                  |
+| `nav-border`                 | Top navigation bar border                      |
+| `nav-button-active-bg`       | Active top-nav button background               |
+| `nav-button-active-text`     | Active top-nav button text                     |
+| `success`                    | Success indicator color                        |
+| `warning`                    | Warning indicator color                        |
+| `sidebar`                    | Sidebar background                             |
+| `sidebar-foreground`         | Sidebar text                                   |
+| `sidebar-primary`            | Sidebar primary highlight background           |
+| `sidebar-primary-foreground` | Text on sidebar primary highlights             |
+| `sidebar-accent`             | Sidebar hover background                       |
+| `sidebar-accent-foreground`  | Sidebar hover text                             |
+| `sidebar-border`             | Sidebar border                                 |
+| `sidebar-ring`               | Sidebar focus ring                             |
+
+Any
+[CSS color value](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/color_value)
+is accepted, for example:
+
+- Hex: `#7a1a1a`
+- RGB: `rgb(122 26 26)`
+- HSL: `hsl(0 65% 29%)`
+
+### Asset hosting
+
+The Cloud UI fetches `logo_url` and `favicon_url` server-side and serves them to
+browsers itself. The URLs only need to be reachable from the Cloud UI's
+deployment, not publicly. You can host your assets on an internal CDN or behind
+your firewall.
+
+The `logo_url` and `favicon_url` must start with `http://` or `https://`. URLs
+with any other scheme are rejected and the Cloud UI uses its default logo or
+favicon instead. Using `http://` for an internal CDN is safe: the Cloud UI
+fetches the images itself and re-serves them through its own origin, so the
+browser always loads them over the same protocol it uses to access the Cloud UI
+(typically HTTPS).
+
+## Registry API URL resolution
+
+The Cloud UI resolves the Registry Server API URL dynamically:
+
+1. If an [Enterprise Manager](../enterprise-manager/index.mdx) is configured and
+   the [registry policy](../enterprise-manager/policies/registry.mdx) has an
+   `api_url` value, the Cloud UI uses that URL.
+2. Otherwise, the Cloud UI falls back to the `API_BASE_URL` environment
+   variable.
+
+This means you can omit `API_BASE_URL` entirely and let the Enterprise Manager
+control the registry URL, or set `API_BASE_URL` as a fallback for when the
+Enterprise Manager is unreachable.
+
+## Feature flags
+
+The [Enterprise Manager](../enterprise-manager/index.mdx) controls Cloud UI
+feature visibility via the `assistant` directive. To hide the AI assistant for
+all users, set it in the Enterprise Manager's section of your platform
+`values.yaml`:
+
+```yaml title="values.yaml"
+enterprise-manager:
+  enterpriseConfig:
+    assistant:
+      value: false
+      enforcement: 'enforced'
+```
+
+## Next steps
+
+- [Browse the catalog](./browse-catalog.mdx) to verify the deployment and
+  explore available MCP servers
+- [AI assistant](./ai-assistant.mdx) to configure and use the chat sidebar
+- [Registry management](./administration/) to manage entries, sources, and
+  registries
+- [Configure the Enterprise Manager](../enterprise-manager/configure.mdx) to set
+  up feature flags and policy enforcement
