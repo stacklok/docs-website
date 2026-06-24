@@ -235,6 +235,64 @@ For the full reference of fields each component accepts, see
 [Configure the Enterprise Cloud UI](../enterprise-cloud-ui/configure.mdx), and
 [Configure the Registry Server](./configure-registry-server.mdx).
 
+#### Global Redis/Valkey defaults
+
+Several workloads can share an external Redis or [Valkey](https://valkey.io)
+instance for distributed session storage. Rather than repeating the connection
+on every workload, set it once under `global.redis` and let the components that
+support it inherit the value. Valkey is a drop-in replacement for Redis and is
+accepted wherever Redis is referenced. This block is optional: when
+`global.redis.host` is empty, the global default is inactive and each workload
+falls back to its own configuration.
+
+```yaml title="values.yaml (global Redis/Valkey addition)"
+global:
+  redis:
+    # When empty, the global default is inactive.
+    host: 'redis.example.com'
+    port: 6379
+    # Set true to speak the Redis Cluster protocol to the host.
+    clusterMode: false
+    # Authentication uses a pre-created Secret, not plain-text values.
+    # Create a Secret with the Redis password, then reference it here.
+    existingSecret: 'valkey-auth'
+    existingSecretKey: 'redis-password'
+    tls:
+      enabled: false
+```
+
+Plain-text password fields are intentionally absent: Helm values are stored
+in-cluster and surfaced by `helm get values`, so credentials must come from a
+Secret. Create it alongside the other secrets in [Step 2](#2-prepare-secrets):
+
+```bash
+kubectl create secret generic valkey-auth \
+  --namespace stacklok-system \
+  --from-literal=redis-password="<YOUR_REDIS_PASSWORD>"
+```
+
+The following components inherit `global.redis`:
+
+| Enable flag        | How it uses the global default                                                                                                                                                             |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `toolhiveOperator` | Default session storage for `MCPServer`, `MCPRemoteProxy`, and `VirtualMCPServer` (vMCP) workloads that have no explicit `spec.sessionStorage`. The per-resource setting always overrides. |
+| `aiGateway`        | Rate limiting and virtual API key storage, when the bundled Valkey instance is disabled.                                                                                                   |
+
+The Enterprise Cloud UI, Enterprise Manager, and Registry Server do not use this
+block. The embedded authorization server stores upstream tokens through the
+`MCPExternalAuthConfig` resource, which is configured separately and is not
+covered by the global default. See
+[Configure session storage](../../toolhive/guides-k8s/auth-k8s.mdx#configure-session-storage).
+
+:::note
+
+The operator subchart also exposes
+`toolhive-operator.upstream.operator.defaultRedis.addr` for an operator-specific
+override. When set, it takes precedence over `global.redis.host` and
+`global.redis.port`; when empty, the operator falls back to the global block.
+
+:::
+
 ### 4. Install the chart
 
 Install the chart into the `stacklok-system` namespace you created earlier.
