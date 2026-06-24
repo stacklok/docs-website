@@ -997,7 +997,7 @@ membership. See
 [Upstream identity provider claims](../concepts/cedar-policies.mdx#upstream-identity-provider-claims)
 for details.
 
-You can provide Cedar policies to an `MCPServer` in two ways:
+You can provide Cedar policies to an `MCPServer` in three ways:
 
 - **ConfigMap** (`authzConfig.type: configMap`): store policies in a separate
   ConfigMap and reference it from the MCPServer. This keeps policies decoupled
@@ -1006,8 +1006,15 @@ You can provide Cedar policies to an `MCPServer` in two ways:
 - **Inline** (`authzConfig.type: inline`): define policies directly in the
   MCPServer spec. This is the simplest option for small, server-specific policy
   sets, with no separate resource to manage.
+- **Shared MCPAuthzConfig** (`authzConfigRef`): reference a separate
+  [`MCPAuthzConfig`](../reference/crds/mcpauthzconfig.mdx) resource that holds
+  the policies. The same `MCPAuthzConfig` can be referenced from multiple
+  MCPServer, MCPRemoteProxy, and VirtualMCPServer resources, and the operator
+  blocks deletion while references exist. Prefer this for shared policy sets
+  that you also want to manage as first-class Kubernetes resources.
 
-Both approaches use the same Cedar policy language.
+All three approaches use the same Cedar policy language. `authzConfig` and
+`authzConfigRef` are mutually exclusive at admission.
 
 **Step 1: Create authorization configuration**
 
@@ -1180,6 +1187,65 @@ defaults to `"[]"`.
 
 </TabItem>
 </Tabs>
+
+### Share policies across resources with MCPAuthzConfig
+
+To reuse the same policy set across multiple MCPServer, MCPRemoteProxy, or
+VirtualMCPServer resources, define it once as an
+[`MCPAuthzConfig`](../reference/crds/mcpauthzconfig.mdx) and reference it by
+name. The operator validates the policy bundle once, tracks the references in
+`MCPAuthzConfig.status.referencingWorkloads`, and blocks deletion while any
+workload still references it.
+
+```yaml title="mcp-authz-shared.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPAuthzConfig
+metadata:
+  name: shared-cedar-policies
+  namespace: toolhive-system
+spec:
+  type: cedarv1
+  config:
+    cedar:
+      policies:
+        - 'permit(principal, action == Action::"call_tool", resource ==
+          Tool::"weather");'
+        - 'permit(principal, action == Action::"call_tool", resource) when {
+          principal.claim_roles.contains("premium") };'
+      entities_json: '[]'
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: weather-server-shared-authz
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: sse
+  proxyPort: 8080
+  oidcConfigRef:
+    name: k8s-sa-authz-oidc
+    audience: 'toolhive'
+  # highlight-start
+  # Reference a shared MCPAuthzConfig instead of inline policies
+  authzConfigRef:
+    name: shared-cedar-policies
+  # highlight-end
+```
+
+`authzConfig` and `authzConfigRef` are mutually exclusive and the CRD rejects
+manifests that set both. The referenced `MCPAuthzConfig` must exist in the same
+namespace as the workload.
+
+:::note[VirtualMCPServer support]
+
+VirtualMCPServer only accepts `cedarv1` MCPAuthzConfig resources via
+`spec.incomingAuth.authzConfigRef`. Referencing an MCPAuthzConfig with a
+different `type` (for example, `httpv1`) fails reconciliation with a clear
+condition message because the vMCP runtime authorization middleware is
+Cedar-only.
+
+:::
 
 ## Test your setup
 
