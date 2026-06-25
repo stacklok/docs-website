@@ -1,0 +1,166 @@
+name: Autogen Docs Slack Notify
+
+# Notifies the team's #documentation Slack channel when an
+# `autogen-docs` PR is flipped from draft to ready-for-review.
+#
+# These PRs are the version-bump docs PRs Renovate opens and the
+# Upstream Release Docs workflow augments: that workflow runs the
+# upstream-release-docs skill, assigns reviewers, and at the very
+# end flips the PR draft -> ready via `gh pr ready`. That flip emits
+# the `pull_request` `ready_for_review` event this workflow listens
+# for. `autogen-docs` is a LABEL Renovate applies (not a branch
+# prefix), and the PRs are authored by `renovate[bot]`, so the job
+# gates on both the label and the author below.
+#
+# When it fires, a single claude-code-action run reads the PR
+# (reusing the marker-delimited "At a glance" summary the Upstream
+# Release Docs workflow writes into the PR body) and posts one tight
+# reviewer summary to #documentation via the Slack Web API
+# (chat.postMessage), tagging each requested reviewer.
+#
+# ---------------------------------------------------------------------
+# Before this can run:
+#   - Add a NEW repository secret `SLACK_BOT_TOKEN` (a Slack bot token,
+#     xoxb-...) with these scopes:
+#       * chat:write          - post the message
+#       * users:read          - list users to map GitHub handle -> Slack id
+#       * users.profile:read  - read custom profile fields (the GitHub field)
+#       * users:read.email    - only if email-based matching is used as a fallback
+#   - The Slack bot must be INVITED to the #documentation channel
+#     (channel id C06SZA9HBHU) or chat.postMessage will fail with
+#     `not_in_channel`.
+#   - Reviewer @-tagging in Slack depends on each reviewer's GitHub
+#     handle being present in their Slack profile (a "GitHub" custom
+#     profile field, pushed via Okta). When no match is found the
+#     message falls back to the plain GitHub @handle as text rather
+#     than guessing a Slack id.
+#
+# Channel ids are not secret, so the #documentation channel id is set
+# directly as an env var below (DOCS_SLACK_CHANNEL_ID), not as a secret.
+# ---------------------------------------------------------------------
+
+on:
+  pull_request:
+    types: [ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  # Required by anthropics/claude-code-action@v1 for OIDC token exchange.
+  id-token: write
+  # Required for Claude to read CI results / Actions context on PRs.
+  actions: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only run for the Renovate-authored docs PRs carrying the
+    # `autogen-docs` label. Human PRs that happen to go ready, and
+    # any other bot's PRs, are out of scope.
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'autogen-docs') &&
+      github.event.pull_request.user.login == 'renovate[bot]'
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Notify #documentation reviewers
+        uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695 # v1.0.152
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          DOCS_SLACK_CHANNEL_ID: C06SZA9HBHU
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_REPO: ${{ github.repository }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          additional_permissions: |
+            actions: read
+          # The triggering PR is authored by Renovate; without this,
+          # claude-code-action refuses to run for bot-initiated PRs as
+          # a safety default.
+          allowed_bots: 'renovate'
+          claude_args: |
+            --model claude-opus-4-7
+            --max-turns 30
+            --allowed-tools "Bash(gh:*) Bash(curl:*)"
+          prompt: |
+            You are running in GitHub Actions with no interactive user.
+            Follow these steps exactly and do NOT ask clarifying
+            questions -- proceed best-effort at every decision point.
+            Your job is to post ONE concise reviewer summary about a
+            documentation PR into a Slack channel, then exit.
+
+            Context (available to you as environment variables):
+              PR_NUMBER             - the PR number
+              GH_REPO               - owner/repo of this repository
+              PR_URL                - the PR's html_url
+              DOCS_SLACK_CHANNEL_ID - the Slack channel id to post into
+              SLACK_BOT_TOKEN       - Slack bot token for the Slack Web API
+              GH_TOKEN              - auth for the `gh` CLI
+
+            STEP 1 — Read the PR.
+            Run:
+              gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json title,body,reviewRequests,files,url
+            From the JSON, extract:
+              - the PR title
+              - the PR body. The body contains a marker-delimited
+                section written by the Upstream Release Docs workflow,
+                between `<!-- upstream-release-docs:start -->` and
+                `<!-- upstream-release-docs:end -->`. Inside it is an
+                "At a glance" table / summary. PREFER reusing that
+                summary's content for your bullets; do not pad beyond it.
+              - the list of changed files (for a fallback sense of scope
+                only — do not enumerate every file).
+              - the list of REQUESTED REVIEWERS (reviewRequests[].login
+                are GitHub logins).
+
+            STEP 2 — Resolve each requested reviewer's Slack id.
+            For each requested reviewer GitHub login, try to map it to a
+            Slack user id by calling the Slack Web API with the bot
+            token and matching the GitHub handle stored in the user's
+            Slack custom profile (an Okta-pushed "GitHub" profile
+            field). Approach:
+              - Call `users.list` (paginate via the `cursor` /
+                `response_metadata.next_cursor` fields if needed):
+                  curl -sS "https://slack.com/api/users.list?limit=200" \
+                    -H "Authorization: Bearer $SLACK_BOT_TOKEN"
+              - For each member, inspect profile.fields (the custom
+                profile fields) for a value matching the GitHub login
+                (case-insensitive; tolerate an optional leading "@" and
+                a full github.com profile URL form). You may also call
+                `users.profile.get?user=<id>` for a specific member if
+                the bulk list does not include custom fields.
+              - If a unique match is found, tag that reviewer as
+                `<@SLACKID>`.
+              - If NO confident match is found, FALL BACK to the plain
+                GitHub handle as text `@login`. Do NOT guess or invent a
+                Slack id.
+
+            STEP 3 — Compose ONE Slack message (plain `text`, Slack
+            mrkdwn). Keep it tight and skimmable. No internal IDs, no
+            raw file lists, no padding. Structure:
+              - A one-line headline naming the upstream project/version
+                this docs update is for, with a Slack-mrkdwn link to the
+                PR: `<$PR_URL|...>`.
+              - A 2–4 bullet summary of what changed, reusing the PR's
+                "At a glance" content.
+              - A "Reviewers" section: one line per requested reviewer,
+                tagging them (`<@SLACKID>` if resolved, else `@login`)
+                with the specific thing they should check.
+            (Slack mrkdwn uses `<url|text>` links and `*bold*`, not
+            GitHub markdown. Use real newlines in the JSON via `\n`.)
+
+            STEP 4 — Post to Slack and verify.
+            Build a JSON payload `{"channel": "<DOCS_SLACK_CHANNEL_ID>",
+            "text": "<message>"}` (construct it safely so the message
+            text is correctly JSON-escaped). Post it:
+              curl -sS -X POST https://slack.com/api/chat.postMessage \
+                -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+                -H 'Content-type: application/json; charset=utf-8' \
+                -d @-
+            (Pipe the JSON payload to that curl on stdin.)
+            Parse the JSON response. If its `ok` field is not `true`,
+            print the response (including the `error` field) and EXIT
+            NON-ZERO so the workflow step fails. If `ok` is `true`,
+            print a brief confirmation and finish.
