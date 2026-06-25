@@ -237,13 +237,12 @@ For the full reference of fields each component accepts, see
 
 #### Global Redis/Valkey defaults
 
-Several workloads can share an external Redis or [Valkey](https://valkey.io)
-instance for distributed session storage. Rather than repeating the connection
-on every workload, set it once under `global.redis` and let the components that
-support it inherit the value. Valkey is a drop-in replacement for Redis and is
-accepted wherever Redis is referenced. This block is optional: when
-`global.redis.host` is empty, the global default is inactive and each workload
-falls back to its own configuration.
+Several platform components can share an external Redis or Valkey instance for
+distributed session storage. Rather than repeating the configuration on every
+component, set it once under `global.redis` and let the components that support
+it inherit the value. Valkey is a drop-in replacement for Redis. This block is
+optional: when `global.redis.host` is empty, the global default is inactive and
+each component falls back to its own configuration.
 
 ```yaml title="values.yaml (global Redis/Valkey addition)"
 global:
@@ -251,22 +250,17 @@ global:
     # When empty, the global default is inactive.
     host: 'redis.example.com'
     port: 6379
-    # Set true to speak the Redis Cluster protocol to the host.
+    # Enable the Redis Cluster protocol when connecting to the host.
     clusterMode: false
-    # Authentication is optional. Omit existingSecret for a passwordless
-    # instance. When your Redis/Valkey requires a password, reference a
-    # pre-created Secret here; plain-text password fields are not supported.
+    # Reference a pre-created Secret; omit for a passwordless instance.
     existingSecret: 'valkey-auth'
     existingSecretKey: 'redis-password'
     tls:
       enabled: false
 ```
 
-If your Redis or Valkey instance is passwordless, leave `existingSecret` empty
-and skip the rest of this step. When it requires authentication, the password
-must come from a Secret rather than a plain-text value, because Helm values are
-stored in-cluster and surfaced by `helm get values`. Create the Secret alongside
-the other secrets in [Step 2](#2-prepare-secrets):
+If passwordless, omit existingSecret and skip the Secret creation step. If your
+instance requires authentication, create the Secret before installing the chart:
 
 ```bash
 kubectl create secret generic valkey-auth \
@@ -281,11 +275,10 @@ The following components inherit `global.redis`:
 | `toolhiveOperator` | Default session storage for `MCPServer`, `MCPRemoteProxy`, and `VirtualMCPServer` (vMCP) workloads that have no explicit `spec.sessionStorage`. The per-resource setting always overrides. |
 | `aiGateway`        | Rate limiting and virtual API key storage, when the bundled Valkey instance is disabled.                                                                                                   |
 
-The Enterprise Cloud UI, Enterprise Manager, and Registry Server do not use this
-block. The embedded authorization server stores upstream tokens through the
-`MCPExternalAuthConfig` resource, which is configured separately and is not
-covered by the global default. See
-[Configure session storage](../../toolhive/guides-k8s/auth-k8s.mdx#configure-session-storage).
+Note that the embedded auth server's token storage is configured separately via
+`MCPExternalAuthConfig`. See
+[Configure session storage](../../toolhive/guides-k8s/auth-k8s.mdx#configure-session-storage)
+in the operator guide.
 
 :::note
 
