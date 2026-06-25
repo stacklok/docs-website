@@ -165,6 +165,7 @@ HTTPS_PROXY=http://<SERVER_NAME>-egress:3128
 http_proxy=http://<SERVER_NAME>-egress:3128
 https_proxy=http://<SERVER_NAME>-egress:3128
 NO_PROXY=localhost,127.0.0.1,::1
+no_proxy=localhost,127.0.0.1,::1
 ```
 
 Both uppercase and lowercase variants are injected to cover applications that
@@ -314,7 +315,9 @@ outbound network isolation to include the appropriate hostnames and ports.
 machine's IP address. Docker gateway addresses are blocked by an explicit deny
 in the egress proxy by default, even when `insecure_allow_all` is set. The
 `--allow-docker-gateway` flag removes that deny for `host.docker.internal`,
-`gateway.docker.internal`, and `172.17.0.1`.
+`gateway.docker.internal`, and the Docker bridge gateway IP (resolved
+automatically at runtime; typically `172.17.0.1` on Linux, `192.168.65.1` on
+Docker Desktop).
 
 To allow all outbound HTTP/HTTPS plus gateway access, use the built-in `network`
 profile with the flag:
@@ -346,8 +349,10 @@ thv run --allow-docker-gateway --permission-profile ./host-access-profile.json \
 :::note
 
 `host.docker.internal` is a Docker Desktop feature available on macOS and
-Windows. On Linux hosts running Docker Engine without Docker Desktop, use the
-Docker bridge gateway IP directly (typically `172.17.0.1`) instead.
+Windows. On Linux hosts running Docker Engine without Docker Desktop, the
+hostname does not exist. Use the Docker bridge gateway IP (typically
+`172.17.0.1`) in `allow_host` instead, and still pass `--allow-docker-gateway`
+since the bridge IP is also denied by default.
 
 :::
 
@@ -455,6 +460,12 @@ access entry), the server does not route its traffic through the proxy at all.
 In this case, you need either a different MCP server implementation that
 respects standard proxy environment variables, or opt out of network isolation
 with `--isolate-network=false`.
+
+Note: if you are trying to reach `host.docker.internal` and see DNS errors in
+the server logs, this is expected and harmless. The MCP server container's DNS
+resolver (dnsmasq) cannot resolve `host.docker.internal`, but the Squid egress
+proxy resolves the destination itself. DNS errors in the server's resolver are a
+red herring; the proxy handles resolution for HTTP/HTTPS requests.
 
 </details>
 
