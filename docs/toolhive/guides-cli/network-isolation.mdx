@@ -153,6 +153,30 @@ architecture-beta
 </TabItem>
 </Tabs>
 
+### Outbound traffic routing
+
+ToolHive routes outbound traffic from MCP servers through an explicit HTTP proxy
+using standard environment variables. When network isolation is active, ToolHive
+automatically injects the following into the MCP server container:
+
+```text
+HTTP_PROXY=http://<SERVER_NAME>-egress:3128
+HTTPS_PROXY=http://<SERVER_NAME>-egress:3128
+http_proxy=http://<SERVER_NAME>-egress:3128
+https_proxy=http://<SERVER_NAME>-egress:3128
+NO_PROXY=localhost,127.0.0.1,::1
+```
+
+Both uppercase and lowercase variants are injected to cover applications that
+use either convention.
+
+For this to work, the MCP server must honor these proxy environment variables.
+If a server bypasses them (for example, by using raw TCP sockets, a custom HTTP
+client that ignores environment variables, or hardcoded connections), its
+outbound traffic fails. ToolHive does not transparently redirect all traffic
+with iptables or nftables rules. The Docker network provides no direct path to
+external networks, so non-compliant outbound connections fail.
+
 :::info[Important]
 
 Network isolation supports HTTP and HTTPS protocols. If your MCP server needs to
@@ -280,18 +304,28 @@ server.
 
 ### Outbound access: MCP server to other workloads
 
-To allow an MCP server to access other workloads on the same network, you need
-to configure outbound network isolation to include the appropriate hostnames and
-ports.
+To allow an MCP server to access other workloads on the same network, configure
+outbound network isolation to include the appropriate hostnames and ports.
 
-For example, in Docker environments, you can add `host.docker.internal` to
-access services on the host. `host.docker.internal` is a special hostname
-provided by Docker that resolves to the host machine's IP address from within
-containers.
+**Reaching the host with `host.docker.internal`**
 
-Create a permission profile that allows this hostname and the required port:
+`host.docker.internal` is a Docker Desktop hostname that resolves to the host
+machine's IP address. Docker gateway addresses are blocked by an explicit deny
+in the egress proxy by default, even when `insecure_allow_all` is set. The
+`--allow-docker-gateway` flag removes that deny for `host.docker.internal`,
+`gateway.docker.internal`, and `172.17.0.1`.
 
-```json title="internal-access-profile.json"
+If you are using the default `network` profile (which allows all outbound
+HTTP/HTTPS), `--allow-docker-gateway` alone is enough:
+
+```bash
+thv run --allow-docker-gateway <SERVER>
+```
+
+If you are using a restrictive permission profile, you need both the flag and
+`host.docker.internal` in your `allow_host` list:
+
+```json title="host-access-profile.json"
 {
   "network": {
     "outbound": {
@@ -303,7 +337,35 @@ Create a permission profile that allows this hostname and the required port:
 }
 ```
 
-Run the MCP server with this profile:
+```bash
+thv run --allow-docker-gateway --permission-profile ./host-access-profile.json \
+  <SERVER>
+```
+
+:::note
+
+`host.docker.internal` is a Docker Desktop feature available on macOS and
+Windows. On Linux hosts running Docker Engine without Docker Desktop, use the
+Docker bridge gateway IP directly (typically `172.17.0.1`) instead.
+
+:::
+
+**Reaching other local services**
+
+For other local services, create a permission profile with the required hostname
+and port:
+
+```json title="internal-access-profile.json"
+{
+  "network": {
+    "outbound": {
+      "insecure_allow_all": false,
+      "allow_host": ["my-local-service.example.com"],
+      "allow_port": [3000]
+    }
+  }
+}
+```
 
 ```bash
 thv run --permission-profile ./internal-access-profile.json <SERVER>
@@ -361,6 +423,39 @@ default behavior of allowing traffic only from the container's own hostname,
 - [File system access](./filesystem-access.mdx)
 
 ## Troubleshooting
+
+<details>
+<summary>MCP server can't reach allowed hosts</summary>
+
+If an MCP server fails to connect to a host that is listed in its permission
+profile, the server may not be respecting the `HTTP_PROXY` and `HTTPS_PROXY`
+environment variables that ToolHive injects.
+
+ToolHive uses an explicit proxy model: outbound traffic must flow through the
+egress proxy container. There are no transparent redirect rules, so an HTTP
+client that ignores proxy environment variables has no route to the internet.
+Common causes include:
+
+- The server uses a custom HTTP client that does not read proxy environment
+  variables
+- The server opens raw TCP or UDP sockets directly instead of using standard
+  HTTP libraries
+- The server hardcodes connection targets and bypasses the system proxy
+  configuration
+
+To confirm this is the problem, check the egress proxy logs:
+
+```bash
+docker logs <SERVER_NAME>-egress
+```
+
+If the host you expect is absent from the logs entirely (no denied entry, no
+access entry), the server does not route its traffic through the proxy at all.
+In this case, you need either a different MCP server implementation that
+respects standard proxy environment variables, or opt out of network isolation
+with `--isolate-network=false`.
+
+</details>
 
 <details>
 <summary>Network connectivity issues</summary>
