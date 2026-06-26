@@ -12,12 +12,22 @@ a Slack user id (falling back to the literal @handle when no confident
 match exists), builds one Slack mrkdwn message, and posts it via
 chat.postMessage.
 
+Reviewer resolution reads the workspace's custom "GitHub handle" profile
+field reliably: it first discovers that field's id once via
+team.profile.get, then enumerates members via users.list (used only for
+the id list) and reads each member's custom field value via
+users.profile.get. Slack's bulk users.list does NOT reliably return
+custom profile fields, so the per-user users.profile.get call is required
+to read them.
+
 Python 3 standard library only.
 """
 
 import json
 import os
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -66,6 +76,40 @@ def slack_get(token, method, params):
         return json.loads(response.read().decode("utf-8"))
 
 
+def slack_get_with_retry(token, method, params, max_retries=3,
+                         default_retry_after=3):
+    """GET a Slack Web API method, honoring HTTP 429 rate limits.
+
+    On HTTP 429 the Retry-After response header (seconds) is respected;
+    if it is missing or unparseable a small default delay is used. The
+    same call is retried up to max_retries times. Returns the parsed JSON
+    response (which may still carry "ok": false for non-429 API errors).
+    """
+    url = "{}/api/{}?{}".format(
+        SLACK_BASE_URL, method, urllib.parse.urlencode(params)
+    )
+    attempt = 0
+    while True:
+        request = urllib.request.Request(url, method="GET")
+        request.add_header("Authorization", "Bearer {}".format(token))
+        try:
+            with urllib.request.urlopen(request) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 and attempt < max_retries:
+                retry_after = default_retry_after
+                header = exc.headers.get("Retry-After")
+                if header:
+                    try:
+                        retry_after = int(header)
+                    except (TypeError, ValueError):
+                        retry_after = default_retry_after
+                time.sleep(max(retry_after, 1))
+                attempt += 1
+                continue
+            raise
+
+
 def slack_post_json(token, method, payload):
     """POST JSON to a Slack Web API method and return the parsed JSON."""
     url = "{}/api/{}".format(SLACK_BASE_URL, method)
@@ -102,42 +146,79 @@ def normalize_handle(value):
     return candidate
 
 
-def profile_candidate_values(profile):
-    """Yield candidate strings from a Slack profile that might hold a
-    GitHub handle, including any custom profile field values.
+def find_github_field_id(token):
+    """Find the workspace custom-profile field id for the GitHub handle.
 
-    NOTE: Resolution depends on the workspace returning custom profile
-    fields in users.list (the Okta-pushed "GitHub" profile field). Not
-    all workspaces include custom `fields` in the bulk users.list
-    response; when they are absent this simply finds no match and the
-    caller degrades gracefully to plain @handle text.
+    Uses team.profile.get, whose response carries profile.fields: a list
+    of field definitions each with id (e.g. "Xf0..."), label and hint.
+    Selects the field whose label, lowercased, equals or contains
+    "github" (so "GitHub Handle", "GitHub", "Github Username" all match),
+    preferring an exact-ish "github handle"/"github" label when several
+    match. Returns the field id, or None (with a warning) when no field
+    matches so the caller degrades gracefully to plain @handle text.
     """
-    if not isinstance(profile, dict):
-        return
-    # Standard-ish profile string fields that sometimes carry a handle.
-    for key in ("display_name", "display_name_normalized", "title"):
-        value = profile.get(key)
-        if isinstance(value, str) and value:
-            yield value
-    # Custom profile fields: profile["fields"] maps field-id -> {value,...}.
-    fields = profile.get("fields")
-    if isinstance(fields, dict):
-        for entry in fields.values():
-            if isinstance(entry, dict):
-                value = entry.get("value")
-                if isinstance(value, str) and value:
-                    yield value
+    response = slack_get(token, "team.profile.get", {})
+    if not response.get("ok"):
+        print(
+            "Warning: team.profile.get failed ({}); "
+            "falling back to plain @handles".format(response.get("error")),
+            file=sys.stderr,
+        )
+        return None
+
+    fields = response.get("profile", {}).get("fields")
+    if not isinstance(fields, list):
+        print(
+            "Warning: team.profile.get returned no profile.fields; "
+            "falling back to plain @handles",
+            file=sys.stderr,
+        )
+        return None
+
+    candidates = []
+    for entry in fields:
+        if not isinstance(entry, dict):
+            continue
+        field_id = entry.get("id")
+        label = entry.get("label")
+        if not field_id or not isinstance(label, str):
+            continue
+        label_lower = label.strip().lower()
+        if label_lower == "github" or "github" in label_lower:
+            candidates.append((field_id, label_lower))
+
+    if not candidates:
+        print(
+            "Warning: no custom profile field label matches 'github'; "
+            "falling back to plain @handles",
+            file=sys.stderr,
+        )
+        return None
+
+    # Prefer an exact-ish "github handle"/"github" label.
+    for field_id, label_lower in candidates:
+        if label_lower in ("github handle", "github"):
+            return field_id
+
+    if len(candidates) > 1:
+        print(
+            "Warning: multiple custom profile fields match 'github' "
+            "({}); using the first one ({}).".format(
+                ", ".join(label for _, label in candidates),
+                candidates[0][1],
+            ),
+            file=sys.stderr,
+        )
+    return candidates[0][0]
 
 
-def build_login_to_slack_id(token):
-    """Build a map of normalized GitHub handle -> Slack user id by
-    scanning every non-deleted, non-bot member's profile fields.
+def iter_member_ids(token):
+    """Yield non-deleted, non-bot member ids by paginating users.list.
 
-    A handle that matches more than one member is treated as ambiguous
-    and dropped (the caller then falls back to @handle text).
+    users.list is used only for the member id list here; its bulk
+    response does not reliably include custom profile fields, so those
+    are read per-user via users.profile.get instead.
     """
-    matches = {}
-    ambiguous = set()
     cursor = ""
     while True:
         params = {"limit": 200}
@@ -145,8 +226,6 @@ def build_login_to_slack_id(token):
             params["cursor"] = cursor
         response = slack_get(token, "users.list", params)
         if not response.get("ok"):
-            # Resolution is best-effort; if listing fails we just fall
-            # back to plain @handle text for everyone.
             print(
                 "Warning: users.list failed ({}); "
                 "falling back to plain @handles".format(
@@ -154,7 +233,7 @@ def build_login_to_slack_id(token):
                 ),
                 file=sys.stderr,
             )
-            return {}
+            return
 
         for member in response.get("members", []):
             if not isinstance(member, dict):
@@ -162,22 +241,67 @@ def build_login_to_slack_id(token):
             if member.get("deleted") or member.get("is_bot"):
                 continue
             user_id = member.get("id")
-            if not user_id:
-                continue
-            for value in profile_candidate_values(member.get("profile")):
-                handle = normalize_handle(value)
-                if not handle:
-                    continue
-                if handle in matches and matches[handle] != user_id:
-                    ambiguous.add(handle)
-                else:
-                    matches[handle] = user_id
+            if user_id:
+                yield user_id
 
         cursor = (
             response.get("response_metadata", {}).get("next_cursor") or ""
         )
         if not cursor:
             break
+
+
+def build_login_to_slack_id(token):
+    """Build a map of normalized GitHub handle -> Slack user id.
+
+    Discovers the GitHub-handle custom-profile field id once via
+    team.profile.get, enumerates member ids via users.list, then reads
+    each member's value for that field via users.profile.get. A handle
+    that maps to more than one distinct member is treated as ambiguous
+    and dropped (the caller then falls back to @handle text).
+    """
+    field_id = find_github_field_id(token)
+    if not field_id:
+        return {}
+
+    matches = {}
+    ambiguous = set()
+    for user_id in iter_member_ids(token):
+        # Minimal politeness delay between per-user profile reads.
+        time.sleep(0.05)
+        try:
+            response = slack_get_with_retry(
+                token, "users.profile.get", {"user": user_id}
+            )
+        except urllib.error.URLError as exc:
+            print(
+                "Warning: users.profile.get for {} failed ({}); "
+                "skipping".format(user_id, exc),
+                file=sys.stderr,
+            )
+            continue
+
+        if not response.get("ok"):
+            print(
+                "Warning: users.profile.get for {} returned ok=false "
+                "({}); skipping".format(user_id, response.get("error")),
+                file=sys.stderr,
+            )
+            continue
+
+        fields = response.get("profile", {}).get("fields")
+        if not isinstance(fields, dict):
+            continue
+        entry = fields.get(field_id)
+        if not isinstance(entry, dict):
+            continue
+        handle = normalize_handle(entry.get("value"))
+        if not handle:
+            continue
+        if handle in matches and matches[handle] != user_id:
+            ambiguous.add(handle)
+        else:
+            matches[handle] = user_id
 
     for handle in ambiguous:
         matches.pop(handle, None)
