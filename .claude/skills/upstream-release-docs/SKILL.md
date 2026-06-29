@@ -3,7 +3,6 @@ name: upstream-release-docs
 description: >
   Analyze an upstream project's new release, verify changes against source code, and update documentation. Covers discovery, deep-dive into PRs/issues, docs audit, source-verified implementation, and review feedback handling.
 
-
 argument-hint: '<owner/repo> [tag]'
 ---
 
