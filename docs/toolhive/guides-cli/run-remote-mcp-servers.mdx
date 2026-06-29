@@ -1,0 +1,378 @@
+---
+title: Run remote MCP servers
+description:
+  Connect to remotely hosted MCP servers with the ToolHive CLI, including OAuth,
+  OIDC, and bearer token authentication.
+---
+
+You can run remote MCP servers directly by providing their URL. This allows you
+to connect to MCP servers hosted elsewhere without needing to manage containers
+locally. ToolHive creates a transparent proxy that handles authentication and
+forwards requests to the remote server.
+
+:::note[Remote servers from the registry]
+
+If a remote server is published in the [ToolHive registry](./registry.mdx), you
+can run it by name with the pre-configured URL and authentication settings. See
+[Run a server from the registry](./run-mcp-servers.mdx#run-a-server-from-the-registry).
+This guide covers running remote servers by URL.
+
+:::
+
+## Basic remote server setup
+
+To run a remote MCP server, simply provide its URL:
+
+```bash
+thv run <URL> [--name <SERVER_NAME>]
+```
+
+For example:
+
+```bash
+thv run https://api.example.com/mcp
+```
+
+If you don't specify a name with `--name`, ToolHive will automatically derive a
+name from the URL by extracting the main domain name (e.g., `notion` from
+`https://api.notion.com/mcp`).
+
+By default, remote servers use the `streamable-http` transport. If the server
+uses Server-Sent Events (SSE), specify the transport flag:
+
+```bash
+thv run https://api.example.com/sse --transport sse
+```
+
+:::info[What's happening?]
+
+When you run a remote MCP server, ToolHive:
+
+1. Automatically detects if the remote server requires authentication.
+2. Handles OAuth/OIDC authentication flows if needed.
+3. Starts an HTTP proxy process on a random port to forward client requests to
+   the remote server.
+4. Manages the server like any other ToolHive workload. No container is created
+   for remote MCP servers.
+
+:::
+
+### Stateless remote servers
+
+Some remote MCP servers only accept POST requests and don't support SSE streams.
+For these servers, use the `--stateless` flag:
+
+```bash
+thv run https://example.com/mcp --name my-server --transport streamable-http --stateless
+```
+
+When `--stateless` is set:
+
+- GET, HEAD, and DELETE requests return HTTP 405 at the proxy instead of being
+  forwarded to the remote server
+- Health checks use a POST-based JSON-RPC ping instead of SSE
+
+## Authentication setup
+
+Most remote MCP servers require authentication. ToolHive supports automatic
+authentication detection and OAuth/OIDC flows.
+
+### Auto-detect authentication
+
+ToolHive can automatically detect if a remote server requires authentication by
+examining the server's response headers and status codes:
+
+```bash
+thv run https://protected-api.com/mcp --name my-server
+```
+
+If authentication is required, ToolHive will prompt you to complete the OAuth
+flow. When no client credentials are provided, ToolHive identifies itself to the
+authorization server using one of two mechanisms:
+
+- **Client ID Metadata Document (CIMD).** If the authorization server's
+  discovery document sets `client_id_metadata_document_supported: true`,
+  ToolHive presents
+  [`https://toolhive.dev/oauth/client-metadata.json`](https://toolhive.dev/oauth/client-metadata.json)
+  as its `client_id`. No registration round-trip is needed.
+- **Dynamic Client Registration (DCR, RFC 7591).** When CIMD is unavailable or
+  the authorization server rejects the CIMD `client_id` with
+  `invalid_client`/`unauthorized_client`, ToolHive falls back to registering an
+  OAuth client dynamically.
+
+Either path eliminates the need to pre-configure a client ID and secret for
+authorization servers that support them.
+
+### Bearer token authentication
+
+Some remote MCP servers accept a static bearer token in the `Authorization`
+header instead of a full OAuth flow. Use `--remote-auth-bearer-token` to provide
+the token directly:
+
+```bash
+thv run https://api.example.com/mcp \
+  --name my-server \
+  --remote-auth-bearer-token <TOKEN>
+```
+
+ToolHive sends the value as an `Authorization: Bearer <TOKEN>` header on every
+request forwarded to the remote server. The token is stored in ToolHive's
+secrets manager; only a reference to it is saved in the run configuration, never
+the token itself.
+
+To keep the token out of your shell history and process list, store it in a file
+and reference it with `--remote-auth-bearer-token-file`:
+
+```bash
+thv run https://api.example.com/mcp \
+  --name my-server \
+  --remote-auth-bearer-token-file ./token.txt
+```
+
+For servers that expect the credential in a different header, such as
+`X-API-Key`, use [forwarded headers](#inject-custom-headers) instead.
+
+### OIDC authentication
+
+For servers using OpenID Connect (OIDC), provide the issuer URL, client ID, and
+client secret obtained from the application provider:
+
+```bash
+thv run https://api.example.com/mcp \
+  --name my-server \
+  --remote-auth-issuer https://auth.example.com \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret my-client-secret
+```
+
+To keep the client secret out of your shell history and process list, store it
+in a file and reference it with `--remote-auth-client-secret-file` instead.
+
+### OAuth2 authentication
+
+For servers using OAuth2, specify the authorization and token URLs along with
+the client ID and secret obtained from the application provider:
+
+```bash
+thv run https://api.example.com/mcp \
+  --name my-server \
+  --remote-auth-authorize-url https://auth.example.com/oauth/authorize \
+  --remote-auth-token-url https://auth.example.com/oauth/token \
+  --remote-auth-client-id my-client-id \
+  --remote-auth-client-secret my-client-secret
+```
+
+As with OIDC, use `--remote-auth-client-secret-file` to read the client secret
+from a file instead of passing it on the command line.
+
+### Automatic token refresh
+
+ToolHive automatically handles OAuth token refresh for remote MCP servers. When
+you authenticate with a remote server, ToolHive stores both the access token and
+refresh token securely. The refresh token is used to automatically obtain new
+access tokens when they expire, ensuring uninterrupted service without requiring
+manual re-authentication.
+
+## Advanced remote server configuration
+
+### OAuth scopes and parameters
+
+Specify custom OAuth scopes for the authentication flow:
+
+```bash
+thv run https://api.example.com/mcp \
+  ... \
+  --remote-auth-scopes read,write,admin
+```
+
+### Non-standard OAuth scope parameter name
+
+Some OAuth providers use a non-standard query parameter name for scopes in the
+authorization URL. For example, Slack uses `user_scope` instead of the standard
+`scope` parameter. Use the `--remote-auth-scope-param-name` flag to override the
+parameter name:
+
+```bash
+thv run https://mcp.slack.com/mcp \
+  --name slack \
+  --transport streamable-http \
+  --remote-auth-client-id <CLIENT_ID> \
+  --remote-auth-callback-port 3118 \
+  --remote-auth-authorize-url "https://slack.com/oauth/v2_user/authorize" \
+  --remote-auth-token-url "https://slack.com/api/oauth.v2.user.access" \
+  --remote-auth-scope-param-name user_scope
+```
+
+### Resource indicator (RFC 8707)
+
+When authenticating to remote MCP servers, you can specify a resource indicator
+as defined by [RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707). This
+allows the authorization server to return an access token with a scoped
+audience, which will then be passed to and validated by the remote MCP server.
+
+ToolHive does not auto-derive the resource indicator from the server URL by
+default. Set it explicitly with `--remote-auth-resource` when the authorization
+server requires it:
+
+```bash
+thv run https://api.example.com/mcp \
+  ... \
+  --remote-auth-resource https://api.example.com
+```
+
+The resource parameter must include a scheme and host, and cannot contain
+fragments. If you provide an invalid resource parameter, ToolHive will return an
+error.
+
+### Custom authentication timeout
+
+Adjust the authentication timeout for slow networks:
+
+```bash
+thv run https://api.example.com/mcp \
+  ... \
+  --remote-auth-timeout 2m
+```
+
+### Skip browser authentication
+
+For headless environments, skip the browser-based OAuth flow:
+
+```bash
+thv run https://api.example.com/mcp \
+  ... \
+  --remote-auth-skip-browser
+```
+
+### Inject custom headers
+
+Some remote MCP servers require custom headers for tenant identification, API
+keys, or other purposes. ToolHive can inject headers into every request
+forwarded to the remote server.
+
+To add plaintext headers, use the `--remote-forward-headers` flag:
+
+```bash
+thv run https://api.example.com/mcp \
+  --name my-server \
+  --remote-forward-headers "X-Tenant-ID=tenant123" \
+  --remote-forward-headers "X-Custom-Header=value"
+```
+
+For sensitive values like API keys, use the `--remote-forward-headers-secret`
+flag to reference values stored in ToolHive's secrets manager:
+
+```bash
+# First, store the secret (enter the value when prompted)
+thv secret set my-api-key
+
+# Then reference it by name
+thv run https://api.example.com/mcp \
+  --name my-server \
+  --remote-forward-headers-secret "X-Api-Key=my-api-key"
+```
+
+You can combine plaintext and secret-backed headers in a single command:
+
+```bash
+thv run https://api.example.com/mcp \
+  --name my-server \
+  --remote-forward-headers "X-Tenant-ID=tenant123" \
+  --remote-forward-headers-secret "X-Api-Key=my-api-key"
+```
+
+:::warning[Security considerations]
+
+- Plaintext header values are stored in the server's configuration file. For
+  sensitive values (API keys, tokens), always use
+  `--remote-forward-headers-secret`.
+- Secret-backed header values are resolved at runtime and never stored in
+  configuration files.
+- Certain headers cannot be configured for security reasons, including `Host`,
+  `Connection`, `Transfer-Encoding`, and proxy-related headers like
+  `X-Forwarded-For`.
+
+:::
+
+## Remote server management
+
+Remote MCP servers are managed like any other ToolHive workload:
+
+- **List servers**: `thv list` shows remote servers with their target URLs
+- **View logs**: `thv logs <SERVER_NAME>` shows proxy and authentication logs
+- **Stop/restart**: `thv stop <SERVER_NAME>` and `thv restart <SERVER_NAME>`
+- **Remove**: `thv rm <SERVER_NAME>` removes the proxy and configuration
+
+## Next steps
+
+- [Configure MCP servers](./configure-mcp-servers.mdx) to customize names,
+  ports, tool filtering, and other shared options
+- [Monitor and manage MCP servers](./manage-mcp-servers.mdx) to control your
+  running servers
+- [Secure your servers](./auth.mdx) with OIDC authentication and Cedar policies
+
+## Related information
+
+- [Run MCP servers](./run-mcp-servers.mdx)
+- [`thv run` command reference](../reference/cli/thv_run.md)
+- [Enable telemetry and metrics](./telemetry-and-metrics.mdx)
+- [Secrets management](./secrets-management.mdx)
+- [Run remote MCP servers in Kubernetes](../guides-k8s/remote-mcp-proxy.mdx)
+
+## Troubleshooting
+
+<details>
+<summary>Remote server authentication fails</summary>
+
+If a remote MCP server authentication fails:
+
+1. Check the server logs for authentication errors (see
+   [View server logs](./manage-mcp-servers.mdx#view-server-logs) for the correct
+   log file path on your platform).
+
+2. Verify the issuer URL is correct and reachable from your machine.
+
+3. Confirm the OAuth client ID and secret are valid and that the redirect URI
+   matches what's registered with your identity provider.
+
+4. Re-authenticate by restarting the server:
+
+   ```bash
+   thv restart <SERVER_NAME>
+   ```
+
+</details>
+
+<details>
+<summary>Remote server connection issues</summary>
+
+If you can't connect to a remote MCP server:
+
+1. Confirm the remote server URL is correct and reachable from your machine:
+
+   ```bash
+   curl -I https://api.example.com/mcp
+   ```
+
+2. Check what the remote server is actually advertising through ToolHive. For
+   remote-backed servers, pass the proxy URL from `thv list` rather than the
+   server name (the `--server` flag currently resolves names only for local
+   servers; see [Test MCP servers](./test-mcp-servers.mdx)):
+
+   ```bash
+   thv mcp list tools --server <PROXY_URL>
+   ```
+
+3. Review the server logs for connection or authentication errors:
+
+   ```bash
+   thv logs <SERVER_NAME>
+   ```
+
+4. Re-run with debug logging if you need more detail:
+
+   ```bash
+   thv run --debug https://api.example.com/mcp --name my-server
+   ```
+
+</details>

@@ -97,6 +97,8 @@ const mcpSidebar: SidebarsConfig[string] = [
           id: 'toolhive/guides-cli/run-mcp-servers',
         },
         items: [
+          'toolhive/guides-cli/run-remote-mcp-servers',
+          'toolhive/guides-cli/configure-mcp-servers',
           'toolhive/guides-cli/manage-mcp-servers',
           'toolhive/guides-cli/group-management',
           'toolhive/guides-cli/secrets-management',
