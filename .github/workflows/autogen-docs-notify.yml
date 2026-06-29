@@ -1,0 +1,187 @@
+name: Autogen Docs Slack Notify
+
+# Notifies the team's #documentation Slack channel when an
+# `autogen-docs` PR is flipped from draft to ready-for-review.
+#
+# These PRs are the version-bump docs PRs Renovate opens and the
+# Upstream Release Docs workflow augments: that workflow runs the
+# upstream-release-docs skill, assigns reviewers, and at the very
+# end flips the PR draft -> ready via `gh pr ready`. That flip emits
+# the `ready_for_review` event this workflow listens for.
+# `autogen-docs` is a LABEL Renovate applies (not a branch prefix),
+# and the PRs are authored by `renovate[bot]`, so the job gates on
+# both the label and the author below.
+#
+# SECURITY MODEL
+# --------------
+# This workflow triggers on `pull_request_target` (not
+# `pull_request`). `pull_request_target` runs the workflow definition
+# from the TRUSTED BASE branch rather than from the (potentially
+# attacker-controlled) PR head, while still exposing the PR metadata
+# on `github.event.pull_request`. The label + `renovate[bot]` author
+# guard below works identically on that payload. This is safe here
+# because the workflow NEVER checks out or executes any PR-supplied
+# code -- it only reads PR metadata via the `gh` CLI.
+#
+# The work is split into two steps so the prompt-injectable Claude
+# session can never touch the Slack token or make arbitrary outbound
+# network calls:
+#   STEP 1 (Claude / claude-code-action): composes the message CONTENT
+#     ONLY and writes it to a JSON file. Its tools are limited to
+#     `Bash(gh:*)` and `Write` -- there is NO curl, and the Slack
+#     token is NOT in this step's environment. So even a prompt
+#     injection embedded in PR content cannot exfiltrate the Slack
+#     token (it is absent) nor reach an arbitrary host (no curl, no
+#     general Bash).
+#   STEP 2 (deterministic `run:` step): a small stdlib-only Python
+#     script (`.github/scripts/post_autogen_docs_slack.py`) reads that
+#     JSON, resolves reviewer GitHub handles -> Slack ids, and posts
+#     ONE message to Slack. Only this step holds `SLACK_BOT_TOKEN`,
+#     and it only ever contacts slack.com.
+#
+# ---------------------------------------------------------------------
+# Before this can run:
+#   - Add a NEW repository secret `SLACK_BOT_TOKEN` (a Slack bot token,
+#     xoxb-...) with these scopes:
+#       * chat:write          - post the message
+#       * users:read          - list users to map GitHub handle -> Slack id
+#       * users.profile:read  - read custom profile fields (the GitHub field)
+#       * users:read.email    - only if email-based matching is used as a fallback
+#   - The Slack bot must be INVITED to the #documentation channel
+#     (channel id C06SZA9HBHU) or chat.postMessage will fail with
+#     `not_in_channel`.
+#   - Reviewer @-tagging in Slack depends on each reviewer's GitHub
+#     handle being present in their Slack profile (a "GitHub" custom
+#     profile field, pushed via Okta). When no match is found the
+#     message falls back to the plain GitHub @handle as text rather
+#     than guessing a Slack id.
+#
+# Channel ids are not secret, so the #documentation channel id is set
+# directly as an env var below (DOCS_SLACK_CHANNEL_ID), not as a secret.
+# ---------------------------------------------------------------------
+
+on:
+  pull_request_target:
+    types: [ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  # Required by anthropics/claude-code-action@v1 for OIDC token exchange.
+  id-token: write
+  # Required for Claude to read CI results / Actions context on PRs.
+  actions: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only run for the Renovate-authored docs PRs carrying the
+    # `autogen-docs` label. Human PRs that happen to go ready, and
+    # any other bot's PRs, are out of scope.
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'autogen-docs') &&
+      github.event.pull_request.user.login == 'renovate[bot]'
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MESSAGE_FILE: ${{ github.workspace }}/.autogen-docs-slack-message.json
+    steps:
+      # STEP 1 — Claude composes content only. Tools limited to gh + Write.
+      # No Slack token in this step's env; no curl tool. So even a prompt
+      # injection from PR content cannot exfiltrate the Slack token (absent)
+      # nor make arbitrary network calls (no curl/Bash beyond gh).
+      - name: Compose reviewer summary
+        uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695 # v1.0.152
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_REPO: ${{ github.repository }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          additional_permissions: |
+            actions: read
+          # The triggering PR is authored by Renovate; without this,
+          # claude-code-action refuses to run for bot-initiated PRs as
+          # a safety default.
+          allowed_bots: 'renovate'
+          claude_args: |
+            --model claude-opus-4-7
+            --max-turns 30
+            --allowed-tools "Bash(gh:*) Write"
+          prompt: |
+            You are running in GitHub Actions with no interactive user.
+            Follow these steps exactly and do NOT ask clarifying
+            questions -- proceed best-effort at every decision point.
+            Your ONLY job is to COMPOSE the CONTENT of a reviewer
+            summary about a documentation PR and WRITE it to a JSON
+            file, then exit. You do NOT post anything. You do NOT call
+            curl. You have no Slack token and no network access beyond
+            the `gh` CLI. A later, separate, deterministic step does the
+            actual Slack posting.
+
+            Context (available to you as environment variables):
+              PR_NUMBER    - the PR number
+              GH_REPO      - owner/repo of this repository
+              PR_URL       - the PR's html_url
+              MESSAGE_FILE - the path to write the JSON output file to
+              GH_TOKEN     - auth for the `gh` CLI
+
+            STEP 1 — Read the PR.
+            Run:
+              gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json title,body,reviewRequests,files,url
+            From the JSON, extract:
+              - the PR title
+              - the PR body. The body contains a marker-delimited
+                section written by the Upstream Release Docs workflow,
+                between `<!-- upstream-release-docs:start -->` and
+                `<!-- upstream-release-docs:end -->`. Inside it is an
+                "At a glance" table / summary. PREFER reusing that
+                summary's content for your bullets; do not pad beyond it.
+              - the list of changed files (for a fallback sense of scope
+                only — do not enumerate every file).
+              - the list of REQUESTED REVIEWERS (reviewRequests[].login
+                are GitHub logins).
+
+            STEP 2 — Write the message content as JSON.
+            Use the **Write** tool to write a file at the path given by
+            the env var MESSAGE_FILE. The file MUST be valid JSON with
+            EXACTLY this shape:
+              {
+                "headline": "<one line naming the upstream project/version, plain text>",
+                "summary_bullets": ["...", "..."],
+                "reviewers": [
+                  {"login": "<github login>", "note": "<what THIS reviewer should check>"}
+                ],
+                "pr_url": "<the PR url>"
+              }
+            Rules:
+              - "headline" is plain text only (NO Slack/markdown link
+                syntax, NO ids). The poster step turns it into a link.
+              - "summary_bullets" is a tight list of 2–4 strings,
+                reusing the PR's "At a glance" content. No padding, no
+                raw file lists, no internal ids.
+              - "reviewers" has one entry per REQUESTED reviewer. "login"
+                is the plain GitHub login (no "@"). "note" is the
+                specific thing that reviewer should check. When deciding
+                each note, keep this shared expectation in mind and let
+                it shape the notes: the goal is for everyone involved in
+                the release to review and approve within 2 business days;
+                a given reviewer's contribution to the release may not
+                have produced any user- or docs-facing changes, which is
+                expected and fine, and in that case their approval simply
+                confirms nothing was missed in the generated docs.
+              - "pr_url" is the value of the PR_URL env var.
+            Do NOT include any Slack ids, Slack mrkdwn, `<@...>` tags, or
+            `<url|text>` links — only the plain content above. Do NOT
+            post anything. Do NOT call curl. After writing the file,
+            print a brief confirmation and finish.
+      # STEP 2 — Deterministic Slack post. Only this step holds the Slack
+      # token, and it only contacts slack.com. Resolves reviewer GitHub
+      # handles -> Slack ids here (not in the Claude step).
+      - name: Post summary to Slack
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          DOCS_SLACK_CHANNEL_ID: C06SZA9HBHU
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          python3 .github/scripts/post_autogen_docs_slack.py
