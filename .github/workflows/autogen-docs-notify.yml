@@ -102,10 +102,6 @@ jobs:
       # nor make arbitrary network calls (no curl/Bash beyond gh).
       - name: Compose reviewer summary
         uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695 # v1.0.152
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          GH_REPO: ${{ github.repository }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Skips claude-code-action's OIDC -> GitHub App token exchange
@@ -140,16 +136,11 @@ jobs:
             the `gh` CLI. A later, separate, deterministic step does the
             actual Slack posting.
 
-            Context (available to you as environment variables):
-              PR_NUMBER    - the PR number
-              GH_REPO      - owner/repo of this repository
-              PR_URL       - the PR's html_url
-              MESSAGE_FILE - the path to write the JSON output file to
-              GH_TOKEN     - auth for the `gh` CLI
-
             STEP 1 — Read the PR.
-            Run:
-              gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json title,body,reviewRequests,files,url
+            Run this exact command (the values below are already
+            filled in -- do not substitute shell variables, and do
+            not quote the numbers or the repo name):
+              gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json title,body,reviewRequests,files,url
             From the JSON, extract:
               - the PR title
               - the PR body. The body contains a marker-delimited
@@ -164,16 +155,16 @@ jobs:
                 are GitHub logins).
 
             STEP 2 — Write the message content as JSON.
-            Use the **Write** tool to write a file at the path given by
-            the env var MESSAGE_FILE. The file MUST be valid JSON with
-            EXACTLY this shape:
+            Use the **Write** tool to write a file at exactly this path:
+              ${{ github.workspace }}/.autogen-docs-slack-message.json
+            The file MUST be valid JSON with EXACTLY this shape:
               {
                 "headline": "<one line naming the upstream project/version, plain text>",
                 "summary_bullets": ["...", "..."],
                 "reviewers": [
                   {"login": "<github login>", "note": "<what THIS reviewer should check>"}
                 ],
-                "pr_url": "<the PR url>"
+                "pr_url": "${{ github.event.pull_request.html_url }}"
               }
             Rules:
               - "headline" is plain text only (NO Slack/markdown link
@@ -191,7 +182,7 @@ jobs:
                 have produced any user- or docs-facing changes, which is
                 expected and fine, and in that case their approval simply
                 confirms nothing was missed in the generated docs.
-              - "pr_url" is the value of the PR_URL env var.
+              - "pr_url" must be copied exactly as filled in above.
             Do NOT include any Slack ids, Slack mrkdwn, `<@...>` tags, or
             `<url|text>` links — only the plain content above. Do NOT
             post anything. Do NOT call curl. After writing the file,
