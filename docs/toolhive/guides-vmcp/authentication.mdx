@@ -388,6 +388,92 @@ spec:
           name: exchange-okta
 ```
 
+### Cross-application access (XAA)
+
+The `xaa` outgoing auth strategy implements
+[Identity Assertion Authorization Grant](https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/)
+(ID-JAG), a two-step token exchange that lets a user's session at one identity
+provider obtain an access token at a separate target authorization server
+without prompting the user again. Use it when each backend is fronted by its own
+authorization server and you cannot or do not want to federate them with your
+primary IdP, but you do want a single user login at the vMCP to grant access to
+all of them.
+
+The strategy performs both steps on every backend call:
+
+1. **Step A ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)):**
+   Exchange the user's upstream ID token at the primary IdP for an ID-JAG
+   assertion that names the target audience.
+2. **Step B ([RFC 7523](https://datatracker.ietf.org/doc/html/rfc7523)):**
+   Present the ID-JAG to the target authorization server as a JWT bearer
+   assertion to obtain a backend-scoped access token.
+
+vMCP's `TokenCache` reuses the resulting access token across requests; the
+strategy itself holds no local cache.
+
+Configure XAA on an `MCPExternalAuthConfig` and reference it from the vMCP's
+`outgoingAuth.backends` map:
+
+```yaml title="MCPExternalAuthConfig resource"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPExternalAuthConfig
+metadata:
+  name: xaa-analytics
+  namespace: toolhive-system
+spec:
+  type: xaa
+  xaa:
+    # Step A: exchange the user's ID token at the IdP for an ID-JAG.
+    idpTokenUrl: https://idp.example.com/oauth2/token
+    idpClientId: <YOUR_IDP_CLIENT_ID>
+    idpClientSecretEnv: IDP_CLIENT_SECRET
+    targetAudience: https://analytics.example.com
+    targetResource: https://analytics.example.com/mcp
+
+    # Step B: present the ID-JAG at the target AS for an access token.
+    targetTokenUrl: https://as.analytics.example.com/oauth2/token
+    targetClientId: <YOUR_TARGET_CLIENT_ID>
+    targetClientSecretEnv: TARGET_CLIENT_SECRET
+
+    scopes:
+      - mcp:read
+    # When the embedded auth server is active, this is auto-populated with the
+    # first configured upstream provider. Set explicitly to pick a specific one.
+    subjectProviderName: idp
+```
+
+Then wire the config into a backend in the `outgoingAuth` map:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  outgoingAuth:
+    source: inline
+    backends:
+      backend-analytics:
+        type: externalAuthConfigRef
+        externalAuthConfigRef:
+          name: xaa-analytics
+```
+
+XAA requires an [embedded authorization server](#embedded-authorization-server)
+so that vMCP holds an upstream ID token to use as the Step A subject. The
+`subjectProviderName` field selects which upstream provider's ID token to use;
+when omitted, the embedded auth server fills in the first configured upstream
+provider at admission.
+
+`idpClientSecretEnv` and `targetClientSecretEnv` read the corresponding secrets
+from environment variables on the vmcp container. Inject them from Kubernetes
+Secrets via `podTemplateSpec` so the values never appear in the CRD spec or
+ConfigMap.
+
+:::warning[Plain HTTP for the target token URL]
+
+XAA exposes an `insecureTargetTokenUrl: true` field that allows an `http://`
+`targetTokenUrl`. Set it only for in-cluster development or test endpoints -
+never for production traffic that leaves the cluster.
+
+:::
+
 ## Embedded authorization server
 
 The embedded authorization server runs an OAuth authorization server within the
@@ -512,6 +598,16 @@ re-authenticate. Always configure persistent keys for production. See
 for key generation steps.
 
 :::
+
+The issuer URL must use the `https://` scheme. The single exception is
+`localhost`, which can use `http://` for local development. For in-cluster
+deployments where traffic between the embedded auth server and other pods stays
+on a trusted network (for example, an in-cluster service mesh), you can opt in
+to an `http://` issuer on a non-localhost host by setting
+`insecureAllowHTTP: true`. The VirtualMCPServer controller rejects this
+combination at reconcile time with `AuthServerConfigValidated=False` if the flag
+is unset, so misconfiguration surfaces on the resource rather than crashing the
+pod at startup. Never set this for issuers reachable outside the cluster.
 
 If the browser-facing authorization endpoint needs to be on a different host
 than the issuer (for example, behind an ingress that rewrites paths), set

@@ -349,6 +349,45 @@ thv run --transport streamable-http --target-port <PORT_NUMBER> <SERVER> -- http
 Check your MCP server's documentation for the required transport and port
 configuration.
 
+### Restrict browser Origin headers
+
+ToolHive validates the HTTP `Origin` header on inbound proxy requests to protect
+browser-based clients against DNS-rebinding attacks, per the
+[MCP 2025-11-25 specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#security-warning).
+Requests without an `Origin` header (such as IDE clients, CLI bridges, and
+SDK-based MCP clients) pass through unchanged; only browser cross-origin
+requests are subject to the check.
+
+When ToolHive binds to a loopback address (`127.0.0.1`, `localhost`, or `[::1]`,
+which is the default), it derives a loopback-only allowlist automatically and no
+configuration is required. When you bind to a non-loopback address with `--host`
+and a browser client connects from a different origin, you must pass
+`--allowed-origins` to enable the check:
+
+```bash
+thv run --transport streamable-http \
+  --host 0.0.0.0 \
+  --allowed-origins https://my-web-app.example.com \
+  <SERVER>
+```
+
+The flag is repeatable and matches each value exactly on scheme, host, and port.
+If you bind to a non-loopback address without `--allowed-origins`, ToolHive logs
+a warning and disables the check; this leaves browser clients exposed and is not
+recommended for public binds.
+
+The same `--allowed-origins` flag is also accepted by `thv proxy`.
+
+:::info[Legacy SSE transport CORS]
+
+As of v0.32.0, the legacy SSE transport no longer sends a wildcard
+`Access-Control-Allow-Origin: *` header. Browser clients on a non-loopback
+origin that used to rely on the wildcard must now be added to the
+`--allowed-origins` allowlist, or migrated off SSE to the streamable-HTTP
+transport.
+
+:::
+
 ### Add a custom CA certificate
 
 In corporate environments with TLS inspection or custom certificate authorities,
