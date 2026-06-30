@@ -20,8 +20,10 @@ name: Autogen Docs Slack Notify
 # attacker-controlled) PR head, while still exposing the PR metadata
 # on `github.event.pull_request`. The label + `renovate[bot]` author
 # guard below works identically on that payload. This is safe here
-# because the workflow NEVER checks out or executes any PR-supplied
-# code -- it only reads PR metadata via the `gh` CLI.
+# because the workflow only checks out the TRUSTED BASE branch (the
+# default `actions/checkout` ref on `pull_request_target` is the base,
+# not the PR head) and never executes any PR-supplied code -- Claude
+# only reads PR metadata via the `gh` CLI.
 #
 # The work is split into two steps so the prompt-injectable Claude
 # session can never touch the Slack token or make arbitrary outbound
@@ -84,6 +86,16 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       MESSAGE_FILE: ${{ github.workspace }}/.autogen-docs-slack-message.json
     steps:
+      # claude-code-action unconditionally restores trusted .claude/.mcp.json
+      # config from the base branch via `git fetch`/`git checkout` before
+      # running Claude, even in agent mode -- it requires a git working tree
+      # to exist. We never want to check out the PR head, so rely on
+      # `pull_request_target`'s default checkout ref: with no `ref:` override,
+      # `actions/checkout` resolves `github.sha`, which for this event is the
+      # BASE branch's HEAD, not the PR's. This stays consistent with the
+      # security model above: only trusted code ever lands in the workspace.
+      - name: Checkout base branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # STEP 1 — Claude composes content only. Tools limited to gh + Write.
       # No Slack token in this step's env; no curl tool. So even a prompt
       # injection from PR content cannot exfiltrate the Slack token (absent)
