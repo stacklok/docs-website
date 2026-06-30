@@ -816,27 +816,35 @@ See [Telemetry and metrics](./telemetry-and-metrics.mdx) for more information.
 
 ## Use with Virtual MCP Server
 
-MCPRemoteProxy resources can be added to an MCPGroup and discovered by a
-VirtualMCPServer, enabling you to combine remote MCP servers with local
+MCPRemoteProxy resources can be added to an MCPGroup and aggregated by a
+VirtualMCPServer, letting you combine remote MCP servers with local
 container-based MCPServer resources into a single unified endpoint.
 
-:::caution[Current limitation]
+In [discovered mode](../guides-vmcp/backend-discovery.mdx), the vMCP finds
+MCPRemoteProxy backends through their shared MCPGroup and connects to them like
+any other backend. (In inline mode, you list the backends in the
+VirtualMCPServer spec instead.) If the proxy is configured to validate incoming
+requests, whether through `oidcConfigRef` or an embedded authorization server,
+configure an
+[outgoing authentication strategy](../guides-vmcp/authentication.mdx#outgoing-authentication)
+on the vMCP so it presents a token the proxy accepts, such as `upstreamInject`
+to forward a user's upstream token or `tokenExchange` to obtain a token with the
+proxy's expected audience. A proxy left without an authentication source accepts
+the vMCP's requests without extra configuration.
 
-vMCP can discover MCPRemoteProxy backends in a group, but authentication between
-vMCP and MCPRemoteProxy is not yet fully implemented. Since MCPRemoteProxy
-requires `oidcConfigRef` to validate incoming requests, and vMCP does not
-currently forward authentication tokens to backends, vMCP cannot communicate
-with MCPRemoteProxy backends that require authentication.
+:::tip[Lighter-weight alternative]
 
-This limitation will be addressed in a future release. For now, MCPRemoteProxy
-works best when accessed directly by clients rather than through vMCP
-aggregation.
+If you only need to route a remote MCP server through vMCP and don't need the
+proxy's per-request authorization, audit logging, or tool filtering, use an
+[MCPServerEntry](./mcp-server-entry.mdx) instead. It registers the remote
+endpoint as a catalog entry with no proxy pod, and vMCP handles outgoing
+authentication to the remote server directly.
 
 :::
 
-### Add remote proxy to a group
+### Add a remote proxy to a group
 
-To include a remote proxy in an MCPGroup for future vMCP aggregation, add the
+To include a remote proxy in an MCPGroup for vMCP aggregation, add the
 `groupRef` field to your MCPRemoteProxy spec:
 
 ```yaml
@@ -866,10 +874,9 @@ spec:
     audience: context7-proxy
 ```
 
-### Planned benefits of vMCP aggregation
+### Benefits of vMCP aggregation
 
-When vMCP authentication to MCPRemoteProxy is implemented, the following
-benefits will be available:
+Aggregating MCPRemoteProxy backends behind a vMCP provides:
 
 - **Unified endpoint**: Clients connect to one vMCP URL instead of multiple
   proxy endpoints
