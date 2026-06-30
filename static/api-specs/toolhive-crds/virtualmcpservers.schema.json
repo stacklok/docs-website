@@ -19,7 +19,7 @@
           "description": "AuthServerConfig configures an embedded OAuth authorization server.\nWhen set, the vMCP server acts as an OIDC issuer, drives users through\nupstream IDPs, and issues ToolHive JWTs. The embedded AS becomes the\nIncomingAuth OIDC provider — its issuer must match IncomingAuth.OIDCConfigRef\nso that tokens it issues are accepted by the vMCP's incoming auth middleware.\nWhen nil, IncomingAuth uses an external IDP and behavior is unchanged.",
           "properties": {
             "authorizationEndpointBaseUrl": {
-              "description": "AuthorizationEndpointBaseURL overrides the base URL used for the authorization_endpoint\nin the OAuth discovery document. When set, the discovery document will advertise\n`{authorizationEndpointBaseUrl}/oauth/authorize` instead of `{issuer}/oauth/authorize`.\nAll other endpoints (token, registration, JWKS) remain derived from the issuer.\nThis is useful when the browser-facing authorization endpoint needs to be on a\ndifferent host than the issuer used for backend-to-backend calls.\nMust be a valid HTTPS URL (or HTTP for localhost) without query, fragment, or trailing slash.",
+              "description": "AuthorizationEndpointBaseURL overrides the base URL used for the authorization_endpoint\nin the OAuth discovery document. When set, the discovery document will advertise\n`{authorizationEndpointBaseUrl}/oauth/authorize` instead of `{issuer}/oauth/authorize`.\nAll other endpoints (token, registration, JWKS) remain derived from the issuer.\nThis is useful when the browser-facing authorization endpoint needs to be on a\ndifferent host than the issuer used for backend-to-backend calls.\nMust be a valid HTTPS URL (or HTTP for localhost, or HTTP for trusted in-cluster hosts\nwhen insecureAllowHTTP is true) without query, fragment, or trailing slash.",
               "pattern": "^https?://[^\\s?#]+[^/\\s?#]$",
               "type": "string"
             },
@@ -86,8 +86,13 @@
               "type": "array",
               "x-kubernetes-list-type": "atomic"
             },
+            "insecureAllowHTTP": {
+              "default": false,
+              "description": "InsecureAllowHTTP permits an http:// issuer URL for non-localhost hosts.\nOnly set this for in-cluster Kubernetes deployments where traffic between\npods traverses a trusted network (e.g. the in-cluster service mesh).\nProduction deployments reachable outside the cluster MUST use https://.\n\nOn VirtualMCPServer: when false (the default), http:// issuers for non-localhost\nhosts are rejected at reconcile time with an AuthServerConfigValidated=False condition.\n\nOn MCPServer and MCPRemoteProxy (via MCPExternalAuthConfig): this field is\nstructurally present but enforcement is deferred to pod startup via Config.Validate();\na misconfigured issuer will cause the pod to crash at startup rather than surface\nas an operator condition.",
+              "type": "boolean"
+            },
             "issuer": {
-              "description": "Issuer is the issuer identifier for this authorization server.\nThis will be included in the \"iss\" claim of issued tokens.\nMust be a valid HTTPS URL (or HTTP for localhost) without query, fragment, or trailing slash (per RFC 8414).",
+              "description": "Issuer is the issuer identifier for this authorization server.\nThis will be included in the \"iss\" claim of issued tokens.\nMust be a valid HTTPS URL (or HTTP for localhost, or HTTP for trusted in-cluster hosts when\ninsecureAllowHTTP is true) without query, fragment, or trailing slash (per RFC 8414).",
               "pattern": "^https?://[^\\s?#]+[^/\\s?#]$",
               "type": "string"
             },
@@ -1498,6 +1503,19 @@
             "optimizer": {
               "description": "Optimizer configures the MCP optimizer for context optimization on large toolsets.\nWhen enabled, vMCP exposes only find_tool and call_tool operations to clients\ninstead of all backend tools directly. This reduces token usage by allowing\nLLMs to discover relevant tools on demand rather than receiving all tool definitions.",
               "properties": {
+                "embeddingModel": {
+                  "description": "EmbeddingModel is the model name requested from the embedding service\n(e.g. \"text-embedding-3-small\"). Required when EmbeddingProvider is\n\"openai\". Ignored for the \"tei\" provider, where the model is fixed by the\nrunning TEI container.\n\nThe API key for an OpenAI-compatible service is not configured here: it is\nread from the OPENAI_API_KEY environment variable so the secret never\nlands in a CRD spec or ConfigMap. An empty key omits the Authorization\nheader, which supports keyless in-cluster gateways.",
+                  "type": "string"
+                },
+                "embeddingProvider": {
+                  "default": "tei",
+                  "description": "EmbeddingProvider selects the wire protocol used to talk to the embedding\nservice. \"tei\" speaks the HuggingFace Text Embeddings Inference API;\n\"openai\" speaks the OpenAI-compatible /embeddings API, which lets the\noptimizer use OpenAI, Azure OpenAI, or another OpenAI-compatible gateway.\nDefaults to \"tei\" when empty.\n\nThe \"openai\" provider reads EmbeddingService directly and cannot be combined\nwith EmbeddingServerRef, which provisions a managed TEI server; the operator\nrejects that combination at admission.",
+                  "enum": [
+                    "tei",
+                    "openai"
+                  ],
+                  "type": "string"
+                },
                 "embeddingService": {
                   "description": "EmbeddingService is the full base URL of the embedding service endpoint\n(e.g., http://my-embedding.default.svc.cluster.local:8080) for semantic\ntool discovery.\n\nIn a Kubernetes environment, it is more convenient to use the\nVirtualMCPServerSpec.EmbeddingServerRef field instead of setting this\ndirectly. EmbeddingServerRef references an EmbeddingServer CRD by name,\nand the operator automatically resolves the referenced resource's\nStatus.URL to populate this field. This provides managed lifecycle\n(the operator watches the EmbeddingServer for readiness and URL changes)\nand avoids hardcoding service URLs in the config. If both\nEmbeddingServerRef and this field are set, EmbeddingServerRef takes\nprecedence and this value is overridden with a warning.",
                   "type": "string"
@@ -1623,6 +1641,52 @@
                         ],
                         "type": "object"
                       },
+                      "obo": {
+                        "description": "OBO contains configuration for on-behalf-of (OBO) auth strategy.\nUsed when Type = \"obo\". The default upstream build returns ErrEnterpriseRequired;\nan out-of-tree build registers a real strategy via auth.RegisterOBOStrategy.",
+                        "properties": {
+                          "audience": {
+                            "description": "Audience is the target audience (resource URI) for the exchanged token.",
+                            "type": "string"
+                          },
+                          "cacheSkewSeconds": {
+                            "description": "CacheSkewSeconds is the number of seconds to subtract from a cached token's\nexpiry when deciding whether to refresh it. Defaults to zero (no skew).\nThe operator CRD stores this as CacheSkew *metav1.Duration and converts it\nto an integer-seconds value for the vMCP runtime contract.",
+                            "format": "int32",
+                            "type": "integer"
+                          },
+                          "clientId": {
+                            "description": "ClientID is the OAuth client ID for the OBO request.",
+                            "type": "string"
+                          },
+                          "clientSecret": {
+                            "description": "ClientSecret is the OAuth client secret (use ClientSecretEnv for security).",
+                            "type": "string"
+                          },
+                          "clientSecretEnv": {
+                            "description": "ClientSecretEnv is the environment variable name containing the client secret.\nThe value will be resolved at runtime from this environment variable.",
+                            "type": "string"
+                          },
+                          "scopes": {
+                            "description": "Scopes are the requested scopes for the exchanged token.",
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array",
+                            "x-kubernetes-list-type": "atomic"
+                          },
+                          "subjectTokenProviderName": {
+                            "description": "SubjectTokenProviderName selects which upstream provider's token to use as the\nsubject (assertion) token for the OBO exchange. When set, the token is looked\nup from Identity.UpstreamTokens[SubjectTokenProviderName]; when omitted, the\ninbound end-user token (Identity.Token) is used directly.\nMatches the operator CRD's SubjectTokenProviderName field; the enterprise OBO\nconverter maps both to the runtime contract without renaming.",
+                            "type": "string"
+                          },
+                          "tokenUrl": {
+                            "description": "TokenURL is the Entra token endpoint URL for the OBO exchange.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "tokenUrl"
+                        ],
+                        "type": "object"
+                      },
                       "tokenExchange": {
                         "description": "TokenExchange contains configuration for token exchange auth strategy.\nUsed when Type = \"token_exchange\".",
                         "properties": {
@@ -1647,7 +1711,8 @@
                             "items": {
                               "type": "string"
                             },
-                            "type": "array"
+                            "type": "array",
+                            "x-kubernetes-list-type": "atomic"
                           },
                           "subjectProviderName": {
                             "description": "SubjectProviderName selects which upstream provider's token to use as the\nsubject token. When set, the token is looked up from Identity.UpstreamTokens\ninstead of using Identity.Token.\nWhen left empty and an embedded authorization server is configured, the system\nautomatically populates this field with the first configured upstream provider name.\nSet it explicitly to override that default or to select a specific provider when\nmultiple upstreams are configured.",
@@ -1668,7 +1733,7 @@
                         "type": "object"
                       },
                       "type": {
-                        "description": "Type is the auth strategy: \"unauthenticated\", \"header_injection\", \"token_exchange\", \"upstream_inject\", \"aws_sts\", \"obo\"",
+                        "description": "Type is the auth strategy: \"unauthenticated\", \"header_injection\", \"token_exchange\", \"upstream_inject\", \"aws_sts\", \"obo\", \"xaa\"",
                         "type": "string"
                       },
                       "upstreamInject": {
@@ -1681,6 +1746,73 @@
                         },
                         "required": [
                           "providerName"
+                        ],
+                        "type": "object"
+                      },
+                      "xaa": {
+                        "description": "XAA contains configuration for XAA (Cross-Application Access) auth strategy.\nUsed when Type = \"xaa\".",
+                        "properties": {
+                          "idpClientId": {
+                            "description": "IDPClientID is the OAuth client ID at the IdP for Step A.",
+                            "type": "string"
+                          },
+                          "idpClientSecret": {
+                            "description": "IDPClientSecret is the client secret at the IdP for Step A.",
+                            "type": "string"
+                          },
+                          "idpClientSecretEnv": {
+                            "description": "IDPClientSecretEnv is the env var containing the IdP client secret.",
+                            "type": "string"
+                          },
+                          "idpTokenUrl": {
+                            "description": "IDPTokenURL is the IdP token endpoint for Step A (RFC 8693 exchange).",
+                            "type": "string"
+                          },
+                          "insecureTargetTokenUrl": {
+                            "description": "InsecureTargetTokenURL allows plain HTTP for TargetTokenURL.\nWARNING: this is insecure and must only be set for in-cluster or\ndevelopment/testing endpoints — never in production.",
+                            "type": "boolean"
+                          },
+                          "scopes": {
+                            "description": "Scopes are the requested scopes for Steps A and B.",
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array",
+                            "x-kubernetes-list-type": "atomic"
+                          },
+                          "subjectProviderName": {
+                            "description": "SubjectProviderName selects which upstream provider's ID token to use.\nAuto-populated when embedded AS is active.",
+                            "type": "string"
+                          },
+                          "targetAudience": {
+                            "description": "TargetAudience is the resource AS URL for the ID-JAG audience claim (required).",
+                            "type": "string"
+                          },
+                          "targetClientId": {
+                            "description": "TargetClientID is the OAuth client ID at the target AS for Step B.",
+                            "type": "string"
+                          },
+                          "targetClientSecret": {
+                            "description": "TargetClientSecret is the client secret at the target AS for Step B.",
+                            "type": "string"
+                          },
+                          "targetClientSecretEnv": {
+                            "description": "TargetClientSecretEnv is the env var containing the target AS client secret.",
+                            "type": "string"
+                          },
+                          "targetResource": {
+                            "description": "TargetResource is the RFC 8707 resource indicator sent as the `resource`\nparameter in Step A's RFC 8693 token exchange (draft §4.3, OPTIONAL). It\nidentifies the target resource server — not the access-token audience, which\nis governed by TargetAudience. For MCP backends, set to the MCP server URL.",
+                            "type": "string"
+                          },
+                          "targetTokenUrl": {
+                            "description": "TargetTokenURL is the target AS token endpoint for Step B (JWT Bearer grant).",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "idpTokenUrl",
+                          "targetAudience",
+                          "targetTokenUrl"
                         ],
                         "type": "object"
                       }
@@ -1785,6 +1917,52 @@
                       ],
                       "type": "object"
                     },
+                    "obo": {
+                      "description": "OBO contains configuration for on-behalf-of (OBO) auth strategy.\nUsed when Type = \"obo\". The default upstream build returns ErrEnterpriseRequired;\nan out-of-tree build registers a real strategy via auth.RegisterOBOStrategy.",
+                      "properties": {
+                        "audience": {
+                          "description": "Audience is the target audience (resource URI) for the exchanged token.",
+                          "type": "string"
+                        },
+                        "cacheSkewSeconds": {
+                          "description": "CacheSkewSeconds is the number of seconds to subtract from a cached token's\nexpiry when deciding whether to refresh it. Defaults to zero (no skew).\nThe operator CRD stores this as CacheSkew *metav1.Duration and converts it\nto an integer-seconds value for the vMCP runtime contract.",
+                          "format": "int32",
+                          "type": "integer"
+                        },
+                        "clientId": {
+                          "description": "ClientID is the OAuth client ID for the OBO request.",
+                          "type": "string"
+                        },
+                        "clientSecret": {
+                          "description": "ClientSecret is the OAuth client secret (use ClientSecretEnv for security).",
+                          "type": "string"
+                        },
+                        "clientSecretEnv": {
+                          "description": "ClientSecretEnv is the environment variable name containing the client secret.\nThe value will be resolved at runtime from this environment variable.",
+                          "type": "string"
+                        },
+                        "scopes": {
+                          "description": "Scopes are the requested scopes for the exchanged token.",
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array",
+                          "x-kubernetes-list-type": "atomic"
+                        },
+                        "subjectTokenProviderName": {
+                          "description": "SubjectTokenProviderName selects which upstream provider's token to use as the\nsubject (assertion) token for the OBO exchange. When set, the token is looked\nup from Identity.UpstreamTokens[SubjectTokenProviderName]; when omitted, the\ninbound end-user token (Identity.Token) is used directly.\nMatches the operator CRD's SubjectTokenProviderName field; the enterprise OBO\nconverter maps both to the runtime contract without renaming.",
+                          "type": "string"
+                        },
+                        "tokenUrl": {
+                          "description": "TokenURL is the Entra token endpoint URL for the OBO exchange.",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "tokenUrl"
+                      ],
+                      "type": "object"
+                    },
                     "tokenExchange": {
                       "description": "TokenExchange contains configuration for token exchange auth strategy.\nUsed when Type = \"token_exchange\".",
                       "properties": {
@@ -1809,7 +1987,8 @@
                           "items": {
                             "type": "string"
                           },
-                          "type": "array"
+                          "type": "array",
+                          "x-kubernetes-list-type": "atomic"
                         },
                         "subjectProviderName": {
                           "description": "SubjectProviderName selects which upstream provider's token to use as the\nsubject token. When set, the token is looked up from Identity.UpstreamTokens\ninstead of using Identity.Token.\nWhen left empty and an embedded authorization server is configured, the system\nautomatically populates this field with the first configured upstream provider name.\nSet it explicitly to override that default or to select a specific provider when\nmultiple upstreams are configured.",
@@ -1830,7 +2009,7 @@
                       "type": "object"
                     },
                     "type": {
-                      "description": "Type is the auth strategy: \"unauthenticated\", \"header_injection\", \"token_exchange\", \"upstream_inject\", \"aws_sts\", \"obo\"",
+                      "description": "Type is the auth strategy: \"unauthenticated\", \"header_injection\", \"token_exchange\", \"upstream_inject\", \"aws_sts\", \"obo\", \"xaa\"",
                       "type": "string"
                     },
                     "upstreamInject": {
@@ -1843,6 +2022,73 @@
                       },
                       "required": [
                         "providerName"
+                      ],
+                      "type": "object"
+                    },
+                    "xaa": {
+                      "description": "XAA contains configuration for XAA (Cross-Application Access) auth strategy.\nUsed when Type = \"xaa\".",
+                      "properties": {
+                        "idpClientId": {
+                          "description": "IDPClientID is the OAuth client ID at the IdP for Step A.",
+                          "type": "string"
+                        },
+                        "idpClientSecret": {
+                          "description": "IDPClientSecret is the client secret at the IdP for Step A.",
+                          "type": "string"
+                        },
+                        "idpClientSecretEnv": {
+                          "description": "IDPClientSecretEnv is the env var containing the IdP client secret.",
+                          "type": "string"
+                        },
+                        "idpTokenUrl": {
+                          "description": "IDPTokenURL is the IdP token endpoint for Step A (RFC 8693 exchange).",
+                          "type": "string"
+                        },
+                        "insecureTargetTokenUrl": {
+                          "description": "InsecureTargetTokenURL allows plain HTTP for TargetTokenURL.\nWARNING: this is insecure and must only be set for in-cluster or\ndevelopment/testing endpoints — never in production.",
+                          "type": "boolean"
+                        },
+                        "scopes": {
+                          "description": "Scopes are the requested scopes for Steps A and B.",
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array",
+                          "x-kubernetes-list-type": "atomic"
+                        },
+                        "subjectProviderName": {
+                          "description": "SubjectProviderName selects which upstream provider's ID token to use.\nAuto-populated when embedded AS is active.",
+                          "type": "string"
+                        },
+                        "targetAudience": {
+                          "description": "TargetAudience is the resource AS URL for the ID-JAG audience claim (required).",
+                          "type": "string"
+                        },
+                        "targetClientId": {
+                          "description": "TargetClientID is the OAuth client ID at the target AS for Step B.",
+                          "type": "string"
+                        },
+                        "targetClientSecret": {
+                          "description": "TargetClientSecret is the client secret at the target AS for Step B.",
+                          "type": "string"
+                        },
+                        "targetClientSecretEnv": {
+                          "description": "TargetClientSecretEnv is the env var containing the target AS client secret.",
+                          "type": "string"
+                        },
+                        "targetResource": {
+                          "description": "TargetResource is the RFC 8707 resource indicator sent as the `resource`\nparameter in Step A's RFC 8693 token exchange (draft §4.3, OPTIONAL). It\nidentifies the target resource server — not the access-token audience, which\nis governed by TargetAudience. For MCP backends, set to the MCP server URL.",
+                          "type": "string"
+                        },
+                        "targetTokenUrl": {
+                          "description": "TargetTokenURL is the target AS token endpoint for Step B (JWT Bearer grant).",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "idpTokenUrl",
+                        "targetAudience",
+                        "targetTokenUrl"
                       ],
                       "type": "object"
                     }
@@ -2522,6 +2768,10 @@
         {
           "message": "per-tool perUser rate limiting requires incomingAuth.type oidc",
           "rule": "!has(self.config) || !has(self.config.rateLimiting) || !has(self.config.rateLimiting.tools) || self.config.rateLimiting.tools.all(t, !has(t.perUser)) || (has(self.incomingAuth) && self.incomingAuth.type == 'oidc')"
+        },
+        {
+          "message": "embeddingServerRef provisions a managed TEI server and cannot be combined with optimizer.embeddingProvider 'openai'; openai mode uses embeddingService directly",
+          "rule": "!(has(self.embeddingServerRef) && has(self.config) && has(self.config.optimizer) && has(self.config.optimizer.embeddingProvider) && self.config.optimizer.embeddingProvider == 'openai')"
         }
       ]
     },
