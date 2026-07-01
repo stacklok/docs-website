@@ -37,22 +37,38 @@ Key features include:
 
 ## Usage
 
-The Playwright MCP server supports numerous command-line arguments to customize
-its behavior. Common options include:
+The Playwright MCP server supports numerous options to customize its behavior,
+each available as both a command-line argument and an equivalent
+`PLAYWRIGHT_MCP_*` environment variable. Common options include:
 
-- **Custom viewport**: Set `--viewport-size` to specify browser dimensions
-  (e.g., `1920,1080`)
-- **Device emulation**: Use `--device` to emulate mobile devices (e.g.,
-  `"iPhone 15"`)
-- **Network isolation**: Configure `--allowed-origins` and `--blocked-origins`
-  to control which websites the browser can access
-- **Output directory**: Specify `--output-dir` to save screenshots, PDFs, and
-  other files to a custom location; mount a host directory for persistence (see
-  examples below)
+- **Custom viewport**: Set `--viewport-size` or `PLAYWRIGHT_MCP_VIEWPORT_SIZE`
+  to specify browser dimensions (e.g., `1920x1080`)
+- **Device emulation**: Use `--device` or `PLAYWRIGHT_MCP_DEVICE` to emulate
+  mobile devices (e.g., `"iPhone 15"`)
+- **Session persistence**: Set `--user-data-dir` or
+  `PLAYWRIGHT_MCP_USER_DATA_DIR` to a mounted volume to keep login state and
+  cookies across container restarts; use `--isolated` or
+  `PLAYWRIGHT_MCP_ISOLATED` to run fresh, throwaway sessions instead
+- **Output directory**: Specify `--output-dir` or `PLAYWRIGHT_MCP_OUTPUT_DIR` to
+  save screenshots, PDFs, and other files to a custom location; mount a host
+  directory for persistence (see examples below)
+- **Timeouts**: Increase `--timeout-action` or `PLAYWRIGHT_MCP_TIMEOUT_ACTION`
+  and `--timeout-navigation` or `PLAYWRIGHT_MCP_TIMEOUT_NAVIGATION` for
+  slow-loading pages
+- **Image responses**: Set `--image-responses` or
+  `PLAYWRIGHT_MCP_IMAGE_RESPONSES` to `omit` to stop sending screenshots to the
+  client and reduce context usage
+- **HTTPS errors**: Use `--ignore-https-errors` or
+  `PLAYWRIGHT_MCP_IGNORE_HTTPS_ERRORS` when testing internal sites with
+  self-signed certificates
 
-Refer to the
+The environment variable form is generally easier to use with ToolHive's `-e`
+flag (CLI) or `env` field (Kubernetes), so the examples below use it, but you
+can pass the equivalent command-line arguments instead if you prefer. Refer to
+the
 [Playwright MCP server documentation](https://github.com/microsoft/playwright-mcp?tab=readme-ov-file#configuration)
-for the full list of configuration options and their descriptions.
+for the full list of configuration options and their environment variable
+equivalents.
 
 :::note[Limitations]
 
@@ -67,12 +83,15 @@ headless mode.
 Select the `playwright` MCP server in the ToolHive registry. The server runs
 with default settings that work for most use cases.
 
-To customize the server's behavior, add command-line arguments in the **Command
-arguments** section.
+To customize the server's behavior, configure the available options in the
+**Environment Variables** section (for example, `PLAYWRIGHT_MCP_DEVICE` or
+`PLAYWRIGHT_MCP_OUTPUT_DIR`). You can add command-line arguments in the
+**Command arguments** section instead if you prefer.
 
 To save browser output files like screenshots and traces, mount a host directory
-in the **Storage volumes** section and add the `--output-dir <container-path>`
-command argument as shown in the screenshot below.
+in the **Storage volumes** section and set the `PLAYWRIGHT_MCP_OUTPUT_DIR`
+environment variable (or the `--output-dir` command argument, as shown in the
+screenshot below) to the matching container path.
 
 <ThemedImage
   alt='Playwright MCP server UI'
@@ -95,34 +114,42 @@ thv run playwright
 Emulate a mobile device for responsive testing:
 
 ```bash {2}
-thv run playwright -- --device "iPhone 15"
+thv run -e PLAYWRIGHT_MCP_DEVICE="iPhone 15" playwright
 ```
 
-Restrict access to specific domains:
+Mount a host directory to persist login state and cookies across container
+restarts:
 
-```bash {2}
-thv run playwright -- --allowed-origins "example.com;trusted-site.com"
+```bash {3-4}
+mkdir ~/playwright-profile
+thv run \
+  --volume ~/playwright-profile:/profile \
+  -e PLAYWRIGHT_MCP_USER_DATA_DIR=/profile \
+  playwright
 ```
 
 Mount a host directory (e.g., `~/playwright-output`) to save browser output
 files like screenshots and traces:
 
-```bash {3,5}
+```bash {3-5}
 mkdir ~/playwright-output
 thv run \
-  --volume ~/playwright-output:/browser-output playwright \
-  -- --output-dir /browser-output --save-trace --save-session
+  --volume ~/playwright-output:/browser-output \
+  -e PLAYWRIGHT_MCP_OUTPUT_DIR=/browser-output \
+  -e PLAYWRIGHT_MCP_SAVE_SESSION=true \
+  playwright
 ```
 
 You can run multiple instances of the server with different configurations by
 giving each a unique name:
 
-```bash {1,5}
-thv run --name playwright-desktop playwright \
-  -- --device "Desktop Chrome" --viewport-size 1920,1080
+```bash {1-3,6}
+thv run --name playwright-desktop \
+  -e PLAYWRIGHT_MCP_DEVICE="Desktop Chrome" \
+  -e PLAYWRIGHT_MCP_VIEWPORT_SIZE=1920x1080 \
+  playwright
 
-thv run --name playwright-iphone playwright \
-  -- --device "iPhone 15"
+thv run --name playwright-iphone -e PLAYWRIGHT_MCP_DEVICE="iPhone 15" playwright
 ```
 
 </TabItem>
@@ -142,19 +169,20 @@ spec:
   transport: streamable-http
   mcpPort: 8931
   proxyPort: 8080
-  args:
-    - '--port'
-    - '8931'
-    - '--host'
-    - '0.0.0.0'
-    - '--allowed-hosts'
-    - '*'
+  env:
+    - name: PLAYWRIGHT_MCP_PORT
+      value: '8931'
+    - name: PLAYWRIGHT_MCP_HOST
+      value: '0.0.0.0'
+    - name: PLAYWRIGHT_MCP_ALLOWED_HOSTS
+      value: '*'
 ```
 
 :::note[Important]
 
-Don't remove the `--port 8931`, `--host 0.0.0.0`, or `--allowed-hosts "*"`
-arguments. They are required to run the server using Streamable HTTP.
+Don't remove the `PLAYWRIGHT_MCP_PORT`, `PLAYWRIGHT_MCP_HOST`, or
+`PLAYWRIGHT_MCP_ALLOWED_HOSTS` environment variables. They're required to run
+the server using Streamable HTTP.
 
 :::
 
@@ -164,35 +192,10 @@ Apply the manifest to your Kubernetes cluster:
 kubectl apply -f playwright.yaml
 ```
 
-For production deployments with network restrictions, add the
-`--allowed-origins` argument with a list of trusted domains:
-
-```yaml {18-19} title="playwright-restricted.yaml"
-apiVersion: toolhive.stacklok.dev/v1beta1
-kind: MCPServer
-metadata:
-  name: playwright
-  namespace: toolhive-system
-spec:
-  image: mcr.microsoft.com/playwright/mcp:v0.0.77
-  transport: streamable-http
-  mcpPort: 8931
-  proxyPort: 8080
-  args:
-    - '--port'
-    - '8931'
-    - '--host'
-    - '0.0.0.0'
-    - '--allowed-hosts'
-    - '*'
-    - '--allowed-origins'
-    - 'example.com;trusted-domain.org'
-```
-
 Mount a persistent volume to save browser output files like screenshots and
 traces:
 
-```yaml {18-19,24-27,30-33} title="playwright-with-volume.yaml"
+```yaml {18-21,24-27,29-33} title="playwright-with-volume.yaml"
 apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPServer
 metadata:
@@ -203,17 +206,17 @@ spec:
   transport: streamable-http
   mcpPort: 8931
   proxyPort: 8080
-  args:
-    - '--port'
-    - '8931'
-    - '--host'
-    - '0.0.0.0'
-    - '--allowed-hosts'
-    - '*'
-    - '--output-dir'
-    - '/browser-output'
-    - '--save-trace'
-    - '--save-session'
+  env:
+    - name: PLAYWRIGHT_MCP_PORT
+      value: '8931'
+    - name: PLAYWRIGHT_MCP_HOST
+      value: '0.0.0.0'
+    - name: PLAYWRIGHT_MCP_ALLOWED_HOSTS
+      value: '*'
+    - name: PLAYWRIGHT_MCP_OUTPUT_DIR
+      value: '/browser-output'
+    - name: PLAYWRIGHT_MCP_SAVE_SESSION
+      value: 'true'
   podTemplateSpec:
     spec:
       volumes:
@@ -227,6 +230,48 @@ spec:
               name: playwright-output
               readOnly: false
 ```
+
+To serve multiple concurrent users, scale out the backend and configure Redis
+session storage so each user's requests consistently reach the same pod.
+Playwright's default browser profile persists in that pod's own filesystem, so
+login state and cookies stick around for the life of the pod without needing a
+mounted volume:
+
+```yaml {18-26} title="playwright-scaled.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: playwright
+  namespace: toolhive-system
+spec:
+  image: mcr.microsoft.com/playwright/mcp:v0.0.77
+  transport: streamable-http
+  mcpPort: 8931
+  proxyPort: 8080
+  env:
+    - name: PLAYWRIGHT_MCP_PORT
+      value: '8931'
+    - name: PLAYWRIGHT_MCP_HOST
+      value: '0.0.0.0'
+    - name: PLAYWRIGHT_MCP_ALLOWED_HOSTS
+      value: '*'
+  backendReplicas: 3
+  sessionStorage:
+    provider: redis
+    address: redis.toolhive-system.svc.cluster.local:6379
+    db: 0
+    keyPrefix: playwright-sessions
+    passwordRef:
+      name: redis-password
+      key: password
+```
+
+Sessions aren't migrated between pods, so if a backend pod restarts, its
+in-progress sessions (and any login state in its profile) are lost and clients
+must reconnect. See
+[Horizontal scaling](../guides-k8s/run-mcp-k8s.mdx#horizontal-scaling) and
+[Redis session storage](../guides-k8s/redis-session-storage.mdx) for the full
+setup, including deploying Redis.
 
 </TabItem>
 </Tabs>
@@ -258,9 +303,6 @@ server:
   than visual characteristics.
 - **Leverage browser profiles**: For workflows requiring authentication, use
   persistent profiles or storage state files to maintain login sessions.
-- **Enable network restrictions**: Use `--allowed-origins` and
-  `--blocked-origins` to limit which domains the browser can access, especially
-  in production environments.
 - **Monitor resource usage**: Browser automation can be resource-intensive;
   consider using headless mode and limiting concurrent sessions.
 - **Handle dynamic content**: Use the `browser_wait_for` tool when dealing with
