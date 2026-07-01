@@ -80,9 +80,14 @@ toolset.
 
 ## EmbeddingServer resource
 
-The EmbeddingServer CRD manages the lifecycle of a TEI server. An empty
-`spec: {}` uses all defaults. The two most important fields you can customize
-are:
+The EmbeddingServer CRD manages the lifecycle of a managed TEI server, which is
+the default embedding backend. If you'd rather point the optimizer at an
+external OpenAI-compatible embedding service instead, see
+[Use an OpenAI-compatible embedding service](#use-an-openai-compatible-embedding-service)
+below.
+
+An empty `spec: {}` uses all defaults. The two most important fields you can
+customize are:
 
 - **`model`**: The Hugging Face embedding model to use. The default
   (`BAAI/bge-small-en-v1.5`) is the tested and recommended model. You can
@@ -114,6 +119,77 @@ spec:
 ```
 
 :::
+
+## Use an OpenAI-compatible embedding service
+
+Instead of running a managed TEI EmbeddingServer, you can point the optimizer at
+an external service that speaks the OpenAI `/embeddings` API, such as OpenAI
+itself, Azure OpenAI, or another OpenAI-compatible gateway. Use this when you
+already operate a centralized embedding service and don't want a second copy
+running per vMCP, or when you need a hosted model.
+
+Set `embeddingProvider: openai` under `spec.config.optimizer` and configure
+`embeddingService` and `embeddingModel` directly. Do **not** set
+`embeddingServerRef`; the operator rejects combining the two at admission.
+
+```yaml title="VirtualMCPServer resource"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: VirtualMCPServer
+metadata:
+  name: optimizer-vmcp
+  namespace: toolhive-system
+spec:
+  groupRef:
+    name: my-group
+  config:
+    optimizer:
+      # highlight-start
+      embeddingProvider: openai
+      embeddingService: http://llm-gateway.default.svc.cluster.local:8080/v1
+      embeddingModel: text-embedding-3-small
+      # highlight-end
+      embeddingServiceTimeout: 15s
+  incomingAuth:
+    type: anonymous
+```
+
+`embeddingService` is the base URL of the OpenAI-compatible endpoint;
+`/embeddings` is appended automatically. `embeddingModel` is the model name
+passed in each request and is required for the `openai` provider (the `tei`
+provider ignores it, because the model is fixed by the TEI container).
+
+The API key for the embedding service is read from the `OPENAI_API_KEY`
+environment variable on the vmcp container, never from the CRD spec or
+ConfigMap. Inject it from a Secret via `podTemplateSpec`:
+
+```yaml title="VirtualMCPServer resource (excerpt)"
+spec:
+  podTemplateSpec:
+    spec:
+      containers:
+        - name: vmcp
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: embedding-api-key
+                  key: apiKey
+```
+
+Omit the env var entirely if your gateway is keyless (for example, an in-cluster
+LLM gateway that authenticates by network position). An empty key omits the
+`Authorization` header.
+
+:::warning[Inputs are not truncated]
+
+Unlike the TEI backend, the OpenAI API does not silently truncate over-long
+inputs. A tool description that exceeds the model's context window causes the
+request to fail with an error rather than being truncated.
+
+:::
+
+When `embeddingProvider` is omitted, the optimizer defaults to `tei` and your
+existing TEI-based configuration continues to work unchanged.
 
 ## Local mode (CLI)
 
@@ -256,16 +332,23 @@ spec:
   exclude={['embeddingService']}
 />
 
-:::info[Kubernetes: EmbeddingServer is always required]
+:::info[Kubernetes: EmbeddingServer is required for the default TEI provider]
 
-When using the Kubernetes operator, even if you set `hybridSearchSemanticRatio`
-to `"0.0"` (all keyword search), the optimizer still requires a configured
-`EmbeddingServer`. The EmbeddingServer won't be used at runtime when the
-semantic ratio is `0.0`, but the configuration must be present due to how the
-operator wires the resources internally.
+When using the Kubernetes operator with the default `tei` embedding provider,
+even if you set `hybridSearchSemanticRatio` to `"0.0"` (all keyword search), the
+optimizer still requires a configured `EmbeddingServer`. The EmbeddingServer
+won't be used at runtime when the semantic ratio is `0.0`, but the configuration
+must be present due to how the operator wires the resources internally.
 
-This restriction does not apply to local CLI mode. `thv vmcp serve --optimizer`
-runs keyword-only search with no EmbeddingServer and no container.
+This restriction doesn't apply when you set `optimizer.embeddingService`
+directly, such as with the
+[OpenAI-compatible provider](#use-an-openai-compatible-embedding-service); the
+operator only requires `embeddingServerRef` when no manual embedding service is
+configured.
+
+This restriction also does not apply to local CLI mode.
+`thv vmcp serve --optimizer` runs keyword-only search with no EmbeddingServer
+and no container.
 
 :::
 
