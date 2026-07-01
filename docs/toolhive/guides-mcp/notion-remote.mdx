@@ -86,7 +86,7 @@ server using an `MCPRemoteProxy` resource with an
 [embedded authorization server](../concepts/embedded-auth-server.mdx).
 
 The examples below use `https://notion-mcp.example.com` as a placeholder for
-wherever you'll expose the proxy outside the cluster - set up an Ingress or
+wherever you'll expose the proxy outside the cluster. Set up an Ingress or
 Gateway route pointing at the proxy Service first (see
 [Connect clients to MCP servers](../guides-k8s/connect-clients.mdx#connect-from-outside-the-cluster))
 and substitute your real hostname everywhere this placeholder appears. Notion
@@ -111,7 +111,7 @@ curl -s -X POST https://mcp.notion.com/register \
   }'
 ```
 
-Save the returned `client_id` and `client_secret` - they don't expire. The
+Save the returned `client_id` and `client_secret`; they don't expire. The
 `redirect_uris` value must exactly match the callback URL you configure below.
 
 Generate a signing key and an HMAC key for the embedded authorization server,
@@ -201,9 +201,13 @@ advertise endpoints that nothing actually serves, and every authentication
 attempt fails with a generic "authorization header required" error.
 
 Also set `redirectUri` on the upstream provider explicitly to
-`<issuer>/oauth/callback`, as shown above. Don't rely on the default computed
-from `resourceUrl`: since `resourceUrl` includes the `/mcp` path here, the
-default would land on the same unserved path.
+`<issuer>/oauth/callback`, as shown above, instead of omitting it.
+[Default callback URL for upstream providers](../guides-k8s/auth-k8s.mdx#default-callback-url-for-upstream-providers)
+documents the default as `{resourceUrl}/oauth/callback`, which works when
+`resourceUrl` is a bare host. It breaks here because `resourceUrl` includes the
+`/mcp` path: the callback route is only ever served at the host root, so the
+computed default would land on a path nothing serves. Setting `redirectUri`
+explicitly avoids relying on that default.
 
 :::
 
@@ -222,7 +226,7 @@ kubectl get mcpremoteproxy notion -n toolhive-system
 Connect your MCP client to the proxy's URL. Each client authenticates once
 through the OAuth flow, redirecting through Notion, then reuses the token issued
 by the embedded authorization server. For production deployments, configure
-Redis-backed session storage so tokens survive pod restarts - see
+Redis-backed session storage so tokens survive pod restarts. See
 [Horizontal scaling](../guides-k8s/run-mcp-k8s.mdx#horizontal-scaling) and
 [Redis session storage](../guides-k8s/redis-session-storage.mdx).
 
@@ -291,7 +295,7 @@ kubectl logs -n toolhive-system -l app.kubernetes.io/instance=notion | grep -i o
 ```
 
 The most common causes are a path segment in `issuer` or a `redirectUri` that
-doesn't exactly match what you registered with Notion - see the note above.
+doesn't exactly match what you registered with Notion. See the note above.
 
 </details>
 <details>
