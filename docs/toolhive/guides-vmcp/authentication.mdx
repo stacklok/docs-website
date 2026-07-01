@@ -406,7 +406,7 @@ exchange on each backend call:
 
 - **Step A ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693))**: vMCP
   exchanges the user's upstream ID token at their IdP for an ID-JAG assertion
-  scoped to the target authorization server.
+  addressed to the target authorization server.
 - **Step B ([RFC 7523](https://datatracker.ietf.org/doc/html/rfc7523))**: vMCP
   presents the ID-JAG at the target authorization server, which returns an
   access token for the backend.
@@ -432,6 +432,8 @@ spec:
   xaa:
     # Step A: RFC 8693 token exchange at the user's IdP
     idpTokenUrl: https://idp.example.com/oauth2/v1/token
+    # Optional in the schema, but strongly recommended: conformant IdPs
+    # reject unauthenticated RFC 8693 token exchange requests
     idpClientId: <IDP_CLIENT_ID>
     idpClientSecretRef:
       name: xaa-idp-client-secret
@@ -457,28 +459,37 @@ spec:
     scopes:
       - backend-api:read
 
-    # Optional: pin to a specific upstream provider. When empty, the
-    # controller populates it with the first configured upstream provider.
+    # Effectively required when the VirtualMCPServer has more than one
+    # upstream provider: the controller auto-populates this with the first
+    # configured provider, which may be the wrong IdP. Must match the name
+    # of an entry under authServerConfig.upstreamProviders.
     subjectProviderName: my-idp
 ```
 
-Reference it from the VirtualMCPServer's outgoing auth:
+Attach the `MCPExternalAuthConfig` to the backend `MCPServer`, then use
+discovery mode on the VirtualMCPServer to pick it up automatically:
+
+```yaml title="MCPServer resource"
+spec:
+  externalAuthConfigRef:
+    name: xaa-backend
+```
 
 ```yaml title="VirtualMCPServer resource"
 spec:
   outgoingAuth:
-    source: inline
-    backends:
-      backend-xaa:
-        type: externalAuthConfigRef
-        externalAuthConfigRef:
-          name: xaa-backend
+    source: discovered
 ```
 
-**Required fields**: `idpTokenUrl`, `targetTokenUrl`, and `targetAudience`. Both
-token URLs must be HTTPS. Set `insecureTargetTokenUrl: true` to permit plain
-HTTP on `targetTokenUrl` for in-cluster or development endpoints only, never in
-production.
+Inlining the reference directly in the VirtualMCPServer's
+`outgoingAuth.backends` block (the `source: inline` pattern used by other
+strategies) is structurally valid in the CRD, but XAA's secret mounting and
+`subjectProviderName` auto-population haven't been verified to behave the same
+way under `inline`. Use `discovered` until that's confirmed.
+
+See the
+[MCPExternalAuthConfig reference](../reference/crds/mcpexternalauthconfig.mdx)
+for the full `xaa` field list, including which fields are required.
 
 :::note[Target client credentials are strongly recommended]
 
