@@ -59,6 +59,12 @@ on:
   workflow_run:
     workflows: ['Upstream Release Docs']
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to notify about (manual retry)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -70,41 +76,51 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Only run when the augment workflow succeeded on a pull_request
-    # event. Skipping workflow_dispatch retries (no PR in the payload)
-    # and failed runs (half-written augmentation not worth notifying).
+    # For workflow_run: only when the augment job succeeded on a
+    # pull_request event (skips workflow_dispatch retries and failures).
+    # workflow_dispatch is gated to the default branch so the workflow
+    # definition in use is always the trusted main-branch version.
     if: |
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'pull_request'
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'pull_request')
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       MESSAGE_FILE: ${{ github.workspace }}/.autogen-docs-slack-message.json
     steps:
-      # Fetch the PR number from the workflow_run payload, verify it
-      # carries the autogen-docs label and was authored by renovate[bot],
-      # then surface number + url as step outputs for the steps below.
-      # Sets skip=true and exits cleanly when the PR is out of scope so
-      # the job succeeds without posting anything.
+      # Resolve the PR number (from the workflow_run payload or the
+      # workflow_dispatch input), verify it carries the autogen-docs
+      # label and was authored by Renovate, then surface number + url
+      # as step outputs. For workflow_dispatch the caller is a human
+      # choosing a specific PR; the label/author guard is skipped.
+      # Sets skip=true and exits cleanly when the PR is out of scope.
       - name: Resolve PR and check eligibility
         id: pr
         run: |
-          PR_NUMBER="${{ github.event.workflow_run.pull_requests[0].number }}"
-          if [ -z "$PR_NUMBER" ]; then
-            echo "No PR associated with this workflow run; skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PR_NUMBER="${{ inputs.pr_number }}"
+          else
+            PR_NUMBER="${{ github.event.workflow_run.pull_requests[0].number }}"
+            if [ -z "$PR_NUMBER" ]; then
+              echo "No PR associated with this workflow run; skipping."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
 
           PR_JSON=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
             --json labels,author,url)
-          HAS_LABEL=$(echo "$PR_JSON" \
-            | jq -r '[.labels[].name] | contains(["autogen-docs"])')
-          AUTHOR=$(echo "$PR_JSON" | jq -r '.author.login')
 
-          if [ "$HAS_LABEL" != "true" ] || [ "$AUTHOR" != "renovate[bot]" ]; then
-            echo "PR #$PR_NUMBER is not an autogen-docs renovate PR; skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            HAS_LABEL=$(echo "$PR_JSON" \
+              | jq -r '[.labels[].name] | contains(["autogen-docs"])')
+            AUTHOR=$(echo "$PR_JSON" | jq -r '.author.login')
+            if [ "$HAS_LABEL" != "true" ] || \
+               ([ "$AUTHOR" != "app/renovate" ] && [ "$AUTHOR" != "renovate[bot]" ]); then
+              echo "PR #$PR_NUMBER is not an autogen-docs renovate PR; skipping."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
 
           PR_URL=$(echo "$PR_JSON" | jq -r '.url')
