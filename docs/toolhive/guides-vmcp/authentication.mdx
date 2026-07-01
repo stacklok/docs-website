@@ -388,6 +388,106 @@ spec:
           name: exchange-okta
 ```
 
+### Cross-application access (XAA)
+
+:::warning[Experimental]
+
+XAA implements the IETF draft
+[`draft-ietf-oauth-identity-assertion-authz-grant`](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-identity-assertion-authz-grant)
+(ID-JAG), which is not yet a ratified standard. The CRD surface and runtime
+behavior may change in backward-incompatible ways as the draft evolves.
+
+:::
+
+The `xaa` outgoing auth strategy handles the cross-domain case, where a backend
+trusts a different authorization server than the one that issued the client's
+token, and no federation is configured between them. XAA performs a two-step
+exchange on each backend call:
+
+- **Step A ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693))**: vMCP
+  exchanges the user's upstream ID token at their IdP for an ID-JAG assertion
+  scoped to the target authorization server.
+- **Step B ([RFC 7523](https://datatracker.ietf.org/doc/html/rfc7523))**: vMCP
+  presents the ID-JAG at the target authorization server, which returns an
+  access token for the backend.
+
+Use `xaa` when [`tokenExchange`](#token-exchange-with-upstream-tokens) doesn't
+apply (the backend doesn't trust the client's IdP) and
+[`upstreamInject`](#upstream-token-injection) doesn't apply (the user has not
+previously authenticated to the backend's provider). XAA requires the
+[embedded authorization server](#embedded-authorization-server) so the user's
+upstream ID token is available at request time.
+
+Create an `MCPExternalAuthConfig` with `type: xaa`. The IdP and target
+authorization server credentials are stored in Kubernetes Secrets:
+
+```yaml title="MCPExternalAuthConfig resource"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPExternalAuthConfig
+metadata:
+  name: xaa-backend
+  namespace: toolhive-system
+spec:
+  type: xaa
+  xaa:
+    # Step A: RFC 8693 token exchange at the user's IdP
+    idpTokenUrl: https://idp.example.com/oauth2/v1/token
+    idpClientId: <IDP_CLIENT_ID>
+    idpClientSecretRef:
+      name: xaa-idp-client-secret
+      key: client-secret
+
+    # Step B: RFC 7523 JWT Bearer grant at the target AS
+    targetTokenUrl: https://target-as.example.com/oauth2/v1/token
+    targetClientId: <TARGET_CLIENT_ID>
+    targetClientSecretRef:
+      name: xaa-target-client-secret
+      key: client-secret
+
+    # Required: identifies the target resource AS for the ID-JAG audience claim
+    targetAudience: https://target-as.example.com
+
+    # Optional: RFC 8707 resource indicator sent in Step A. Some IdPs
+    # (e.g. Okta's early ID-JAG implementation) require this even though
+    # the draft marks it optional. Set it to the backend MCP server URL.
+    targetResource: https://backend.example.com/mcp
+
+    # Optional: scopes requested at both steps
+    scopes:
+      - backend-api:read
+
+    # Optional: pin to a specific upstream provider. When empty, the
+    # controller populates it with the first configured upstream provider.
+    subjectProviderName: my-idp
+```
+
+Reference it from the VirtualMCPServer's outgoing auth:
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  outgoingAuth:
+    source: inline
+    backends:
+      backend-xaa:
+        type: externalAuthConfigRef
+        externalAuthConfigRef:
+          name: xaa-backend
+```
+
+**Required fields**: `idpTokenUrl`, `targetTokenUrl`, and `targetAudience`. Both
+token URLs must be HTTPS. Set `insecureTargetTokenUrl: true` to permit plain
+HTTP on `targetTokenUrl` for in-cluster or development endpoints only, never in
+production.
+
+:::note[Target client credentials are strongly recommended]
+
+The ID-JAG draft (§9.1) recommends confidential clients for Step B, and most
+target authorization servers reject unauthenticated JWT-bearer grants. Omitting
+`targetClientId` and `targetClientSecretRef` causes vMCP to log a warning at
+startup, and Step B typically fails at runtime.
+
+:::
+
 ## Embedded authorization server
 
 The embedded authorization server runs an OAuth authorization server within the
