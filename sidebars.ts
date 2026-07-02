@@ -176,6 +176,8 @@ const mcpSidebar: SidebarsConfig[string] = [
       'toolhive/guides-k8s/connect-clients',
       'toolhive/guides-k8s/customize-tools',
       'toolhive/guides-k8s/auth-k8s',
+      'toolhive/guides-k8s/embedded-auth-server-k8s',
+      'toolhive/guides-k8s/authorization-k8s',
       'toolhive/guides-k8s/redis-session-storage',
       'toolhive/guides-k8s/rate-limiting',
       'toolhive/guides-k8s/token-exchange-k8s',

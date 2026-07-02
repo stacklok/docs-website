@@ -1,0 +1,339 @@
+---
+title: Set up Cedar authorization in Kubernetes
+description:
+  Attach Cedar authorization policies to MCPServer, MCPRemoteProxy, and
+  VirtualMCPServer resources in Kubernetes.
+---
+
+import BasicCedarConfig from '../_partials/_basic-cedar-config.mdx';
+
+This guide shows you how to attach Cedar authorization policies to your MCP
+servers in Kubernetes. Authorization works alongside any of the authentication
+approaches in [Authentication and authorization](./auth-k8s.mdx): once a client
+is authenticated, Cedar policies decide what it's allowed to do. When using the
+[embedded authorization server](./embedded-auth-server-k8s.mdx), Cedar policies
+can also evaluate upstream identity provider claims such as group membership.
+See
+[Upstream identity provider claims](../concepts/cedar-policies.mdx#upstream-identity-provider-claims)
+for details.
+
+For the Cedar policy language itself, including syntax, entity types, and
+policy-writing patterns, see [Cedar policies](../concepts/cedar-policies.mdx).
+This guide covers the Kubernetes-specific mechanics of attaching those policies
+to a workload.
+
+## Prerequisites
+
+You'll need:
+
+- Kubernetes cluster with RBAC enabled
+- ToolHive Operator installed (see
+  [Deploy the ToolHive Operator](./deploy-operator.mdx))
+- `kubectl` access to your cluster
+- An MCPServer, MCPRemoteProxy, or VirtualMCPServer with authentication already
+  configured (see [Authentication and authorization](./auth-k8s.mdx))
+
+## Ways to provide Cedar policies
+
+You can provide Cedar policies to an `MCPServer` in three ways:
+
+- **ConfigMap** (`authzConfig.type: configMap`): store policies in a separate
+  ConfigMap and reference it from the MCPServer. This keeps policies decoupled
+  from the server spec and lets you share one policy set across multiple
+  servers. Prefer this for larger or shared policy sets.
+- **Inline** (`authzConfig.type: inline`): define policies directly in the
+  MCPServer spec. This is the simplest option for small, server-specific policy
+  sets, with no separate resource to manage.
+- **Shared MCPAuthzConfig** (`authzConfigRef`): reference a separate
+  [`MCPAuthzConfig`](../reference/crds/mcpauthzconfig.mdx) resource that holds
+  the policies. The same `MCPAuthzConfig` can be referenced from multiple
+  MCPServer, MCPRemoteProxy, and VirtualMCPServer resources, and the operator
+  blocks deletion while references exist. Prefer this for shared policy sets
+  that you also want to manage as first-class Kubernetes resources.
+
+All three approaches use the same Cedar policy language. `authzConfig` and
+`authzConfigRef` are mutually exclusive at admission.
+
+## Step 1: Create authorization configuration
+
+<BasicCedarConfig />
+
+<Tabs groupId="authz-source">
+<TabItem value="configmap" label="ConfigMap" default>
+
+**Step 2: Create a ConfigMap with policies**
+
+Store your authorization configuration in a ConfigMap:
+
+```yaml title="authz-configmap.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authz-config
+  namespace: toolhive-system
+data:
+  authz-config.json: |
+    {
+      "version": "1.0",
+      "type": "cedarv1",
+      "cedar": {
+        "policies": [
+          "permit(principal, action == Action::\"call_tool\", resource == Tool::\"weather\");",
+          "permit(principal == Client::\"alice123\", action == Action::\"call_tool\", resource == Tool::\"admin_tool\");",
+          "permit(principal, action == Action::\"call_tool\", resource) when { principal.claim_roles.contains(\"premium\") };"
+        ],
+        "entities_json": "[]"
+      }
+    }
+```
+
+```bash
+kubectl apply -f authz-configmap.yaml
+```
+
+**Step 3: Update MCPServer to use authorization**
+
+Reference the ConfigMap from your `MCPServer` resource:
+
+```yaml title="mcp-server-with-authz.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: k8s-sa-authz-oidc
+  namespace: toolhive-system
+spec:
+  type: kubernetesServiceAccount
+  kubernetesServiceAccount:
+    serviceAccount: 'mcp-client'
+    namespace: 'client-apps'
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: weather-server-with-authz
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: sse
+  proxyPort: 8080
+  # Authentication configuration
+  oidcConfigRef:
+    name: k8s-sa-authz-oidc
+    audience: 'toolhive'
+  # highlight-start
+  # Authorization configuration
+  authzConfig:
+    type: configMap
+    configMap:
+      name: authz-config
+      key: authz-config.json
+  # highlight-end
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+```
+
+```bash
+kubectl apply -f mcp-server-with-authz.yaml
+```
+
+</TabItem>
+<TabItem value="inline" label="Inline">
+
+**Step 2: Define policies inline on the MCPServer**
+
+Set `authzConfig.type` to `inline` and list your Cedar policies directly under
+`authzConfig.inline.policies`. There's no separate ConfigMap to create:
+
+```yaml title="mcp-server-inline-authz.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: k8s-sa-authz-oidc
+  namespace: toolhive-system
+spec:
+  type: kubernetesServiceAccount
+  kubernetesServiceAccount:
+    serviceAccount: 'mcp-client'
+    namespace: 'client-apps'
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: weather-server-inline-authz
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: sse
+  proxyPort: 8080
+  # Authentication configuration
+  oidcConfigRef:
+    name: k8s-sa-authz-oidc
+    audience: 'toolhive'
+  # highlight-start
+  # Authorization configuration (policies defined inline)
+  authzConfig:
+    type: inline
+    inline:
+      policies:
+        # Allow any authenticated client to call the weather tool
+        - |
+          permit(
+            principal,
+            action == Action::"call_tool",
+            resource == Tool::"weather"
+          );
+        # Allow a specific client to call the admin tool
+        - |
+          permit(
+            principal == Client::"alice123",
+            action == Action::"call_tool",
+            resource == Tool::"admin_tool"
+          );
+        # Allow clients with the premium role to call any tool
+        - |
+          permit(
+            principal,
+            action == Action::"call_tool",
+            resource
+          )
+          when {
+            principal.claim_roles.contains("premium")
+          };
+  # highlight-end
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+```
+
+```bash
+kubectl apply -f mcp-server-inline-authz.yaml
+```
+
+The `policies` list requires at least one entry. To use transitive policies that
+rely on a static entity store (for example, mapping a group claim to a platform
+role), add an `authzConfig.inline.entitiesJson` string alongside `policies`; it
+defaults to `"[]"`.
+
+</TabItem>
+</Tabs>
+
+## Share policies across resources with MCPAuthzConfig
+
+To reuse the same policy set across multiple MCPServer, MCPRemoteProxy, or
+VirtualMCPServer resources, define it once as an
+[`MCPAuthzConfig`](../reference/crds/mcpauthzconfig.mdx) and reference it by
+name. The operator validates the policy bundle once, tracks the references in
+`MCPAuthzConfig.status.referencingWorkloads`, and blocks deletion while any
+workload still references it.
+
+```yaml title="mcp-authz-shared.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPAuthzConfig
+metadata:
+  name: shared-cedar-policies
+  namespace: toolhive-system
+spec:
+  type: cedarv1
+  config:
+    policies:
+      - 'permit(principal, action == Action::"call_tool", resource ==
+        Tool::"weather");'
+      - 'permit(principal, action == Action::"call_tool", resource) when {
+        principal.claim_roles.contains("premium") };'
+    entities_json: '[]'
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: weather-server-shared-authz
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: sse
+  proxyPort: 8080
+  oidcConfigRef:
+    name: k8s-sa-authz-oidc
+    audience: 'toolhive'
+  # highlight-start
+  # Reference a shared MCPAuthzConfig instead of inline policies
+  authzConfigRef:
+    name: shared-cedar-policies
+  # highlight-end
+```
+
+`authzConfig` and `authzConfigRef` are mutually exclusive and the CRD rejects
+manifests that set both. The referenced `MCPAuthzConfig` must exist in the same
+namespace as the workload.
+
+:::note[VirtualMCPServer support]
+
+VirtualMCPServer only accepts `cedarv1` MCPAuthzConfig resources via
+`spec.incomingAuth.authzConfigRef`. Referencing an MCPAuthzConfig with a
+different `type` (for example, `httpv1`) fails reconciliation with a clear
+condition message because the vMCP runtime authorization middleware is
+Cedar-only.
+
+:::
+
+## Test your setup
+
+1. Make requests that should be permitted by your policies
+2. Make requests that should be denied
+3. Check the proxy logs to see authorization decisions
+
+## Next steps
+
+- [Configure rate limiting](./rate-limiting.mdx) to set per-user and shared
+  request limits on MCP servers
+- [Set up audit logging](./logging.mdx) to track authorization decisions and MCP
+  server activity
+
+## Related information
+
+- For the Cedar policy language and policy-writing patterns, see
+  [Cedar policies](../concepts/cedar-policies.mdx)
+- For the complete dictionary of entity types, actions, and attributes, see
+  [Authorization policy reference](../reference/authz-policy-reference.mdx)
+- For the Cedar policy language specification, see
+  [Cedar documentation](https://docs.cedarpolicy.com/)
+- For a complete end-to-end example with Okta OIDC and role-based access
+  control, see [Role-based authorization with Okta](../integrations/okta.mdx)
+- For connecting a Virtual MCP Server to a corporate IdP with Cedar group-based
+  access control, see
+  [Connect ToolHive to an enterprise identity provider](../integrations/vmcp-idp-overview.mdx)
+- For the authentication approaches this authorization layer builds on, see
+  [Authentication and authorization](./auth-k8s.mdx)
+
+## Troubleshooting
+
+**ConfigMap mounting issues:**
+
+- Verify the ConfigMap exists:
+  `kubectl get configmap -n toolhive-system authz-config`
+- Check the ConfigMap content:
+  `kubectl get configmap authz-config -n toolhive-system -o yaml`
+
+**Authorization ConfigMap not resolved:**
+
+When `spec.authzConfig.type: configMap`, the controller pre-validates the
+referenced ConfigMap and surfaces failures on the `AuthConfigured` condition
+with one of two reasons:
+
+- `AuthzConfigMapNotFound`: the ConfigMap does not exist in the namespace.
+  Create it before reconciling, or correct the `name`/`namespace` reference.
+- `AuthzConfigMapInvalid`: the ConfigMap exists but the payload is missing the
+  configured `key`, is empty, has malformed YAML or JSON, or fails Cedar
+  validation. Inspect the payload and the Cedar configuration shape.
+
+```bash
+kubectl describe mcpserver -n toolhive-system <name>
+```
