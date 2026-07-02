@@ -29,14 +29,11 @@ deployments using the ToolHive Operator.
 
 Use the embedded authorization server when your MCP servers call external APIs
 on behalf of individual users and no federation relationship exists between your
-identity provider and those services.
-
-| Scenario                                                            | Pattern to use                                                                         |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Backend only accepts API keys or static credentials                 | [Static credentials](./backend-auth.mdx#static-credentials-and-api-keys)               |
-| Backend trusts the same IdP as your clients                         | [Token exchange (same IdP)](./backend-auth.mdx#same-idp-with-token-exchange)           |
-| Backend trusts a federated IdP (for example, Google Cloud, AWS)     | [Token exchange (federation)](./backend-auth.mdx#federated-idps-with-identity-mapping) |
-| Backend is an external API with no federation (for example, GitHub) | **Embedded authorization server** (this page)                                          |
+identity provider and those services - for example, GitHub, Google Workspace, or
+Atlassian. If your backend accepts static credentials, or trusts the same (or a
+federated) IdP as your clients, a different backend pattern is a better fit. See
+[Choosing the right backend authentication pattern](./backend-auth.mdx#choosing-the-right-backend-authentication-pattern)
+for the full comparison across all four patterns.
 
 ## How the OAuth flow works
 
@@ -266,7 +263,7 @@ restart, requiring users to re-authenticate.
 
 For production deployments, configure Redis Sentinel as the storage backend for
 persistent, highly available session storage. See
-[Configure session storage](../guides-k8s/auth-k8s.mdx#configure-session-storage)
+[Configure session storage](../guides-k8s/embedded-auth-server-k8s.mdx#configure-session-storage)
 for a quick setup, or the full
 [Redis Sentinel session storage](../guides-k8s/redis-session-storage.mdx) guide
 for an end-to-end walkthrough.
@@ -289,9 +286,25 @@ The `authServerRef` field uses a `TypedLocalObjectReference`, so you must
 specify both `kind: MCPExternalAuthConfig` and the `name` of the resource.
 
 For setup instructions, see
-[Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication).
+[Set up the embedded authorization server in Kubernetes](../guides-k8s/embedded-auth-server-k8s.mdx).
 For the combined auth pattern with AWS STS, see
 [Combine embedded auth with AWS STS](../integrations/aws-sts.mdx#combine-embedded-auth-with-aws-sts).
+
+## The issuer must be a bare host
+
+The embedded auth server's OAuth endpoints (`/oauth/register`,
+`/oauth/authorize`, `/oauth/token`, `/oauth/callback`) are always served at the
+host root, regardless of any path in `issuer`. Set `issuer` to a bare host, with
+no path, even if the resource it protects lives at a path (for example, an MCP
+endpoint at `/mcp`). Adding a path to `issuer` makes discovery advertise
+endpoints that nothing actually serves, and every authentication attempt fails
+with a generic "authorization header required" error.
+
+This also affects the default callback URL: when an upstream provider omits
+`redirectUri`, it defaults to `{resourceUrl}/oauth/callback`. That default only
+lands somewhere real when `resourceUrl` is also a bare host. If `resourceUrl`
+includes a path, set `redirectUri` explicitly to `<issuer>/oauth/callback`
+instead of relying on the default.
 
 ## MCPServer vs. VirtualMCPServer
 
@@ -314,7 +327,7 @@ or
 
 ## Next steps
 
-- [Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
+- [Set up the embedded authorization server in Kubernetes](../guides-k8s/embedded-auth-server-k8s.mdx)
   for step-by-step setup of MCPServer resources in Kubernetes
 - [Configure the vMCP embedded authorization server](../guides-vmcp/authentication.mdx#embedded-authorization-server)
   for multiple upstream providers on a VirtualMCPServer
