@@ -43,6 +43,23 @@ a dedicated `obo` authentication type for this flow.
 
 ## Create the token exchange configuration
 
+The steps below create an `MCPExternalAuthConfig` that exchanges the client's
+token for a backend-scoped one, and reference it from the `MCPServer` alongside
+the `MCPOIDCConfig` that validates the client's original token. Unlike the
+embedded auth server, token exchange doesn't issue the client a new token: it
+validates the one the client already has, then separately exchanges it for a
+different token when forwarding the request to the backend.
+
+```mermaid
+flowchart LR
+    Client[MCP client] -->|"Bearer token<br/>(scoped for MCP server)"| Server[MCPServer]
+    Server -->|oidcConfigRef| OIDC[("MCPOIDCConfig")]
+    Server -->|externalAuthConfigRef| ExtAuth[("MCPExternalAuthConfig<br/>type: tokenExchange")]
+    ExtAuth -->|clientSecretRef| Secret[(Kubernetes Secret)]
+    ExtAuth -.->|"exchange at tokenUrl"| IdP[Identity provider]
+    Server -->|"Bearer token<br/>(exchanged, backend-scoped)"| Backend[Backend service]
+```
+
 ### Step 1: Create a Secret for client credentials
 
 Store the OAuth client secret that ToolHive uses to authenticate when performing
