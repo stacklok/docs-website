@@ -157,56 +157,18 @@ the OAuth flow.
 - **Configurable token lifespans:** Access tokens, refresh tokens, and
   authorization codes have configurable durations with sensible defaults.
 
-## Baseline scopes for DCR clients
-
-Some MCP clients (for example, Claude Code) register via DCR with a narrowed
-`scope` value, then request a wider set of scopes at `/oauth/authorize`. By
-default, the embedded authorization server rejects those requests with
-`invalid_scope` because the registered client's scope set does not include the
-scopes being requested.
-
-To support this pattern, configure `baselineClientScopes` on the embedded auth
-server. The server merges these scopes into every DCR-registered client's scope
-set, so clients can request them at `/oauth/authorize` regardless of what they
-originally registered with. If `scopesSupported` is set explicitly on the
-embedded auth server, all baseline values must appear in it; if
-`scopesSupported` is omitted, the server validates against its default scope set
-(`openid`, `profile`, `email`, `offline_access`).
-
-Keep the baseline narrow (typically `openid` and `offline_access`). Every
-DCR-registered client gains the ability to request these scopes, including
-public clients like Claude Code, Cursor, and VS Code, so privileged scopes do
-not belong in the baseline.
-
 ## Client ID Metadata Document (CIMD)
 
 DCR requires every client to register before its first authorization request.
 Some MCP clients, including recent VS Code builds, can instead present an HTTPS
 URL that hosts a Client ID Metadata Document (CIMD), letting the authorization
-server resolve client metadata on demand without a prior registration step.
+server resolve client metadata on demand without a prior registration step. CIMD
+is the MCP specification's preferred client registration mechanism; DCR is the
+backward-compatibility fallback for clients that don't support it.
 
-To allow CIMD-style client IDs, enable CIMD on the embedded authorization
-server. When enabled, the server accepts HTTPS URLs as `client_id` values,
-fetches the document from the URL, and caches the result. When disabled (the
-default), only DCR-registered `client_id` values are accepted.
-
-```yaml
-spec:
-  embeddedAuthServer:
-    cimd:
-      enabled: true
-      cacheMaxSize: 256
-      cacheFallbackTtl: '5m'
-```
-
-`cacheMaxSize` sets the LRU cache capacity (default `256`), and
-`cacheFallbackTtl` sets the TTL applied to every cached entry as a Go duration
-string (default `5m`). The CIMD fetcher does not yet honor `Cache-Control`
-headers; every cached document uses the fallback TTL.
-
-If you also set `baselineClientScopes`, those scopes apply to CIMD-resolved
-clients too. Because CIMD clients can be resolved from arbitrary HTTPS URLs,
-keep the baseline narrow.
+For the configuration steps, cache settings, and the document validation rules
+the embedded AS enforces, see
+[Enable CIMD for zero-registration clients](../guides-k8s/embedded-auth-server-k8s.mdx#enable-cimd-for-zero-registration-clients).
 
 ### Two-layer architecture
 
@@ -236,25 +198,19 @@ The upstream IDP never sees the client's CIMD URL. This means you must still
 configure an upstream client ID and secret for the embedded AS regardless of
 whether clients use CIMD or DCR.
 
-### Document validation
+## Baseline scopes for DCR clients
 
-The embedded AS enforces the following rules on fetched CIMD documents:
+Some MCP clients (for example, Claude Code) register via DCR with a narrowed
+`scope` value, then request a wider set of scopes at `/oauth/authorize`. By
+default, the embedded authorization server rejects those requests with
+`invalid_scope` because the registered client's scope set does not include the
+scopes being requested. `baselineClientScopes` solves this by merging a fixed
+set of scopes into every DCR-registered client's scope set, regardless of what
+it originally registered with.
 
-- The URL must use `https` (loopback `http://localhost` is accepted in
-  development environments only).
-- The `client_id` field inside the document must exactly match the URL it was
-  fetched from.
-- `redirect_uris` must be present and pass strict validation.
-- Symmetric shared-secret `token_endpoint_auth_method` values are forbidden.
-- `grant_types` must include `authorization_code` and be a subset of
-  `[authorization_code, refresh_token]`.
-- `response_types` must be a subset of `[code]`.
-- Declared scopes must be a subset of the AS's configured `scopes_supported`
-  list (when set).
-
-The fetcher also applies SSRF protection: DNS resolution runs before dialing,
-private IP ranges are blocked, redirects are not followed, and each fetch is
-subject to a five-second timeout and a 10 KB response cap.
+For the exact defaults, the `scopesSupported` interaction, and guidance on
+keeping the baseline narrow, see
+[Enable baseline scopes for DCR clients](../guides-k8s/embedded-auth-server-k8s.mdx#enable-baseline-scopes-for-dcr-clients).
 
 ## Session storage
 

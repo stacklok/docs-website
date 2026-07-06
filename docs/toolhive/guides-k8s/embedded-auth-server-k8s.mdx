@@ -206,8 +206,8 @@ with a generic "authorization header required" error.
 | `hmacSecretRefs`                | References to Secrets with symmetric keys for signing authorization codes and refresh tokens.                                                                                                                                                                                                                                                                                                                              |
 | `tokenLifespans`                | Configurable durations for access tokens (default: 1h), refresh tokens (default: 168h), and auth codes (default: 10m).                                                                                                                                                                                                                                                                                                     |
 | `upstreamProviders`             | Configuration for upstream identity providers. MCPServer and MCPRemoteProxy support one provider; VirtualMCPServer supports multiple providers for sequential authentication.                                                                                                                                                                                                                                              |
-| `baselineClientScopes`          | Optional list of OAuth 2.0 scopes merged into every DCR-registered client's scope set. Use this when MCP clients register with a narrowed `scope` field but then request wider scopes at `/oauth/authorize`. See [Baseline scopes for DCR clients](../concepts/embedded-auth-server.mdx#baseline-scopes-for-dcr-clients).                                                                                                  |
-| `cimd`                          | Optional Client ID Metadata Document (CIMD) configuration. When `cimd.enabled` is `true`, the auth server accepts HTTPS URLs as `client_id` values and resolves them via CIMD, letting clients (for example, VS Code) authenticate without prior Dynamic Client Registration. See [Client ID Metadata Document (CIMD)](../concepts/embedded-auth-server.mdx#client-id-metadata-document-cimd).                             |
+| `cimd`                          | Optional Client ID Metadata Document (CIMD) configuration. When `cimd.enabled` is `true`, the auth server accepts HTTPS URLs as `client_id` values and resolves them via CIMD, letting clients (for example, VS Code) authenticate without prior Dynamic Client Registration. See [Enable CIMD for zero-registration clients](#enable-cimd-for-zero-registration-clients).                                                 |
+| `baselineClientScopes`          | Optional list of OAuth 2.0 scopes merged into every DCR-registered client's scope set. Use this when MCP clients register with a narrowed `scope` field but then request wider scopes at `/oauth/authorize`. See [Enable baseline scopes for DCR clients](#enable-baseline-scopes-for-dcr-clients).                                                                                                                        |
 | `disableUpstreamTokenInjection` | Optional. When `true`, the embedded auth server authenticates clients normally but the proxy strips `Authorization`, `Cookie`, and `Proxy-Authorization` from forwarded requests instead of swapping the JWT for an upstream token. Use this for public backends (such as documentation servers) that you still want to gate behind client auth. Cannot be combined with `tokenExchange` or `awsSts` on the same workload. |
 
 ## Step 5: Create the MCPOIDCConfig and MCPServer resources
@@ -378,6 +378,85 @@ kubectl create secret generic redis-acl-secret \
 
 For a complete walkthrough including deploying Redis Sentinel from scratch, see
 [Redis session storage](./redis-session-storage.mdx).
+
+### Enable CIMD for zero-registration clients
+
+DCR requires every client to register before its first authorization request.
+Some MCP clients, including recent VS Code builds, can instead present an HTTPS
+URL that hosts a Client ID Metadata Document (CIMD), letting the authorization
+server resolve client metadata on demand with no prior registration step. CIMD
+is the MCP specification's preferred client registration mechanism; DCR is the
+backward-compatibility fallback. Enable it by adding a `cimd` block:
+
+```yaml
+spec:
+  embeddedAuthServer:
+    cimd:
+      enabled: true
+      cacheMaxSize: 256
+      cacheFallbackTtl: '5m'
+```
+
+`cacheMaxSize` sets the LRU cache capacity (default `256`), and
+`cacheFallbackTtl` sets the TTL applied to every cached entry as a Go duration
+string (default `5m`). The CIMD fetcher doesn't yet honor `Cache-Control`
+headers; every cached document uses the fallback TTL. When disabled (the
+default), only DCR-registered `client_id` values are accepted.
+
+If you also set `baselineClientScopes`, those scopes apply to CIMD-resolved
+clients too. Because CIMD clients can be resolved from arbitrary HTTPS URLs,
+keep the baseline narrow.
+
+The embedded AS enforces the following rules on fetched CIMD documents:
+
+- The URL must use `https` (loopback `http://localhost` is accepted in
+  development environments only).
+- The `client_id` field inside the document must exactly match the URL it was
+  fetched from.
+- `redirect_uris` must be present and pass strict validation.
+- Symmetric shared-secret `token_endpoint_auth_method` values are forbidden.
+- `grant_types` must include `authorization_code` and be a subset of
+  `[authorization_code, refresh_token]`.
+- `response_types` must be a subset of `[code]`.
+- Declared scopes must be a subset of the AS's configured `scopes_supported`
+  list (when set).
+
+The fetcher also applies SSRF protection: DNS resolution runs before dialing,
+private IP ranges are blocked, redirects are not followed, and each fetch is
+subject to a five-second timeout and a 10 KB response cap.
+
+For the two-layer trust model behind CIMD (why the upstream IdP never sees the
+client's CIMD URL), see
+[Client ID Metadata Document (CIMD)](../concepts/embedded-auth-server.mdx#client-id-metadata-document-cimd).
+
+### Enable baseline scopes for DCR clients
+
+Some MCP clients (for example, Claude Code) register via DCR with a narrowed
+`scope` value, then request a wider set of scopes at `/oauth/authorize`. By
+default, the embedded authorization server rejects those requests with
+`invalid_scope` because the registered client's scope set doesn't include the
+scopes being requested. To support this pattern, set `baselineClientScopes`:
+
+```yaml
+spec:
+  embeddedAuthServer:
+    baselineClientScopes:
+      - openid
+      - offline_access
+```
+
+The server merges these scopes into every DCR-registered client's scope set, so
+clients can request them at `/oauth/authorize` regardless of what they
+originally registered with. If `scopesSupported` is set explicitly on the
+embedded auth server, all baseline values must appear in it; if
+`scopesSupported` is omitted, the server validates against its default scope set
+(`openid`, `profile`, `email`, `offline_access`).
+
+Keep the baseline narrow (typically `openid` and `offline_access`). Every
+DCR-registered client gains the ability to request these scopes, including
+public clients like Claude Code, Cursor, and VS Code, so privileged scopes don't
+belong in the baseline. For the conceptual reason this exists, see
+[Baseline scopes for DCR clients](../concepts/embedded-auth-server.mdx#baseline-scopes-for-dcr-clients).
 
 ### Using an OAuth 2.0 upstream provider
 
