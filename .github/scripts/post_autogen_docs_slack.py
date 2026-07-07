@@ -126,19 +126,25 @@ def slack_post_json(token, method, payload):
 def normalize_handle(value):
     """Normalize a possible GitHub handle for comparison.
 
-    Lowercases, strips a leading "@", and reduces a full
-    https://github.com/<login> URL form to just <login>.
+    Lowercases, strips a leading "@", and reduces a full GitHub profile
+    URL form (with or without a scheme or "www." subdomain) to just
+    <login>.
     """
     if not isinstance(value, str):
         return ""
     candidate = value.strip().lower()
     if not candidate:
         return ""
-    # Tolerate a full GitHub profile URL form.
-    for prefix in ("https://github.com/", "http://github.com/", "github.com/"):
-        if candidate.startswith(prefix):
-            candidate = candidate[len(prefix):]
+    # Tolerate a URL scheme and/or a "www." subdomain, in either order
+    # of presence, before checking for the "github.com/" host.
+    for scheme in ("https://", "http://"):
+        if candidate.startswith(scheme):
+            candidate = candidate[len(scheme):]
             break
+    if candidate.startswith("www."):
+        candidate = candidate[len("www."):]
+    if candidate.startswith("github.com/"):
+        candidate = candidate[len("github.com/"):]
     # Drop a trailing slash and anything after it (e.g. URL path tail).
     candidate = candidate.split("/", 1)[0]
     if candidate.startswith("@"):
