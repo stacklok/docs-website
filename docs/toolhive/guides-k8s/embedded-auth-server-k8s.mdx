@@ -1,0 +1,871 @@
+---
+title: Set up the embedded authorization server in Kubernetes
+sidebar_label: Embedded authorization server
+description:
+  Configure ToolHive's embedded OAuth authorization server on MCPServer and
+  MCPRemoteProxy resources in Kubernetes.
+---
+
+This guide shows you how to configure the
+[embedded authorization server](../concepts/embedded-auth-server.mdx) on
+`MCPServer` and `MCPRemoteProxy` resources in Kubernetes. Use this approach when
+you want ToolHive to handle the full OAuth flow, including redirecting users to
+an upstream identity provider for authentication. It's ideal for MCP servers or
+remote MCP endpoints that accept `Authorization: Bearer` tokens but have no
+federation relationship with your identity provider, such as GitHub, Google
+Workspace, or Atlassian.
+
+For the other ways to authenticate MCP servers in Kubernetes (connecting to an
+external IdP directly, or Kubernetes service-to-service authentication), see
+[Authentication and authorization](./auth-k8s.mdx).
+
+## Prerequisites
+
+You'll need:
+
+- An upstream identity provider that supports the OAuth 2.0 authorization code
+  flow (such as Okta, Microsoft Entra ID, Auth0, or any OIDC-compliant provider)
+- A registered OAuth application/client with your upstream provider
+- Client ID and client secret from your upstream provider
+
+This setup uses the `MCPExternalAuthConfig` custom resource, following the same
+pattern as [token exchange configuration](./token-exchange-k8s.mdx).
+
+The steps below create four resources and wire them together: an
+`MCPExternalAuthConfig` that runs the embedded auth server against your upstream
+provider, an `MCPOIDCConfig` that validates the JWTs it issues, and the
+`MCPServer` that references both.
+
+```mermaid
+flowchart LR
+    Client[MCP client] -->|"Bearer token<br/>(issued by embedded AS)"| Server[MCPServer]
+    Server -->|authServerRef| ExtAuth[("MCPExternalAuthConfig<br/>type: embeddedAuthServer")]
+    Server -->|"oidcConfigRef<br/>(issuer must match)"| OIDC[("MCPOIDCConfig")]
+    ExtAuth -->|"signingKeySecretRefs,<br/>hmacSecretRefs,<br/>clientSecretRef"| Secrets[(Kubernetes Secrets)]
+    ExtAuth -.->|OAuth flow| IdP[Upstream identity provider]
+```
+
+## Step 1: Create a Secret for the upstream provider client credentials
+
+Store the OAuth client secret for your upstream identity provider:
+
+```yaml title="upstream-idp-secret.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: upstream-idp-secret
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  client-secret: '<YOUR_UPSTREAM_CLIENT_SECRET>'
+```
+
+```bash
+kubectl apply -f upstream-idp-secret.yaml
+```
+
+## Step 2: Create a Secret for JWT signing keys
+
+The embedded authorization server signs JWTs with a private key you provide.
+Generate a PEM-encoded private key (RSA or EC), for example:
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out signing-key.pem
+```
+
+Then create a Secret containing the key:
+
+```yaml title="auth-server-signing-key.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-server-signing-key
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  signing-key: |
+    -----BEGIN PRIVATE KEY-----
+    <YOUR_PEM_ENCODED_PRIVATE_KEY>
+    -----END PRIVATE KEY-----
+```
+
+```bash
+kubectl apply -f auth-server-signing-key.yaml
+```
+
+:::tip[Key rotation]
+
+For key rotation, you can reference multiple signing key Secrets in the
+`signingKeySecretRefs` list. The first key is used for signing new tokens.
+Additional keys are used for verification only, so tokens signed before rotation
+remain valid.
+
+:::
+
+## Step 3: Create a Secret for HMAC keys
+
+The embedded authorization server uses a symmetric HMAC key to sign
+authorization codes and refresh tokens. The key must be at least 32 bytes and
+cryptographically random, for example:
+
+```bash
+openssl rand -base64 32
+```
+
+```yaml title="auth-server-hmac-secret.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-server-hmac-secret
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  hmac-key: '<YOUR_CRYPTOGRAPHICALLY_RANDOM_KEY>'
+```
+
+```bash
+kubectl apply -f auth-server-hmac-secret.yaml
+```
+
+:::warning[Ephemeral keys for development only]
+
+If you omit the `signingKeySecretRefs` and `hmacSecretRefs` fields, ToolHive
+generates ephemeral keys that are lost on pod restart. All previously issued
+tokens become invalid after a restart. Only omit these Secrets for development
+and testing.
+
+:::
+
+## Step 4: Create the MCPExternalAuthConfig resource
+
+Create an `MCPExternalAuthConfig` resource with the `embeddedAuthServer` type.
+This example configures an OIDC upstream provider (the most common case):
+
+```yaml title="embedded-auth-config.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPExternalAuthConfig
+metadata:
+  name: embedded-auth-server
+  namespace: toolhive-system
+spec:
+  type: embeddedAuthServer
+  embeddedAuthServer:
+    issuer: 'https://mcp.example.com'
+    signingKeySecretRefs:
+      - name: auth-server-signing-key
+        key: signing-key
+    hmacSecretRefs:
+      - name: auth-server-hmac-secret
+        key: hmac-key
+    tokenLifespans:
+      accessTokenLifespan: '1h'
+      refreshTokenLifespan: '168h'
+      authCodeLifespan: '10m'
+    upstreamProviders:
+      - name: google
+        type: oidc
+        oidcConfig:
+          issuerUrl: 'https://accounts.google.com'
+          clientId: '<YOUR_GOOGLE_CLIENT_ID>'
+          clientSecretRef:
+            name: upstream-idp-secret
+            key: client-secret
+          # redirectUri is set explicitly because resourceUrl (set on the
+          # MCPServer in Step 5) includes a path; the default computed from
+          # resourceUrl would land on a path nothing serves. See "Default
+          # callback URL for upstream providers" below.
+          redirectUri: 'https://mcp.example.com/oauth/callback'
+          # Scopes must be set explicitly when using access_type=offline, to avoid
+          # sending the default offline_access scope alongside Google's
+          # access_type=offline mechanism (they serve the same purpose).
+          scopes:
+            - openid
+            - email
+            - profile
+          additionalAuthorizationParams:
+            access_type: 'offline'
+```
+
+```bash
+kubectl apply -f embedded-auth-config.yaml
+```
+
+:::note[Keep `issuer` path-free]
+
+Set `issuer` to a bare host, with no path (for example,
+`https://mcp.example.com`, not `https://mcp.example.com/mcp`). The embedded
+authorization server's OAuth endpoints (`/oauth/register`, `/oauth/authorize`,
+`/oauth/token`, `/oauth/callback`) are always served at the host root,
+regardless of any path in `issuer`. Adding a path here makes discovery advertise
+endpoints that nothing actually serves, and every authentication attempt fails
+with a generic "authorization header required" error.
+
+:::
+
+**Configuration reference:**
+
+| Field                           | Description                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `issuer`                        | HTTPS URL identifying this authorization server. Appears in the `iss` claim of issued JWTs. Must be a bare host with no path.                                                                                                                                                                                                                                                                                              |
+| `signingKeySecretRefs`          | References to Secrets containing JWT signing keys. First key is active; additional keys support rotation.                                                                                                                                                                                                                                                                                                                  |
+| `hmacSecretRefs`                | References to Secrets with symmetric keys for signing authorization codes and refresh tokens.                                                                                                                                                                                                                                                                                                                              |
+| `tokenLifespans`                | Configurable durations for access tokens (default: 1h), refresh tokens (default: 168h), and auth codes (default: 10m).                                                                                                                                                                                                                                                                                                     |
+| `upstreamProviders`             | Configuration for upstream identity providers. MCPServer and MCPRemoteProxy support one provider; VirtualMCPServer supports multiple providers for sequential authentication.                                                                                                                                                                                                                                              |
+| `cimd`                          | Optional Client ID Metadata Document (CIMD) configuration. When `cimd.enabled` is `true`, the auth server accepts HTTPS URLs as `client_id` values and resolves them via CIMD, letting clients (for example, VS Code) authenticate without prior Dynamic Client Registration. See [Enable CIMD for zero-registration clients](#enable-cimd-for-zero-registration-clients).                                                 |
+| `baselineClientScopes`          | Optional list of OAuth 2.0 scopes merged into every DCR-registered client's scope set. Use this when MCP clients register with a narrowed `scope` field but then request wider scopes at `/oauth/authorize`. See [Enable baseline scopes for DCR clients](#enable-baseline-scopes-for-dcr-clients).                                                                                                                        |
+| `disableUpstreamTokenInjection` | Optional. When `true`, the embedded auth server authenticates clients normally but the proxy strips `Authorization`, `Cookie`, and `Proxy-Authorization` from forwarded requests instead of swapping the JWT for an upstream token. Use this for public backends (such as documentation servers) that you still want to gate behind client auth. Cannot be combined with `tokenExchange` or `awsSts` on the same workload. |
+
+## Step 5: Create the MCPOIDCConfig and MCPServer resources
+
+The MCPServer needs two configuration references: `authServerRef` enables the
+embedded authorization server, and `oidcConfigRef` validates the JWTs that the
+embedded authorization server issues. Unlike connecting directly to an external
+identity provider, here the OIDC config points to the embedded authorization
+server itself. The MCPOIDCConfig issuer must match the `issuer` in your
+`MCPExternalAuthConfig`.
+
+```yaml title="mcp-server-embedded-auth.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: embedded-auth-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    # This must match the embedded authorization server issuer url
+    issuer: 'https://mcp.example.com'
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: weather-server-embedded
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/stackloklabs/weather-mcp/server
+  transport: streamable-http
+  proxyPort: 8080
+  # highlight-start
+  # Reference the embedded authorization server configuration
+  authServerRef:
+    kind: MCPExternalAuthConfig
+    name: embedded-auth-server
+  # highlight-end
+  # Validate JWTs issued by the embedded authorization server
+  oidcConfigRef:
+    name: embedded-auth-oidc
+    audience: 'https://mcp.example.com/mcp'
+    resourceUrl: 'https://mcp.example.com/mcp'
+  resources:
+    limits:
+      cpu: '100m'
+      memory: '128Mi'
+    requests:
+      cpu: '50m'
+      memory: '64Mi'
+```
+
+```bash
+kubectl apply -f mcp-server-embedded-auth.yaml
+```
+
+The `authServerRef` field is a `TypedLocalObjectReference` that requires both
+`kind` and `name`. This field is also available on `MCPRemoteProxy` resources.
+
+:::note
+
+The embedded authorization server exposes a JWKS endpoint that the proxy uses to
+validate the JWTs it issues. The proxy also exposes OAuth discovery endpoints
+(`/.well-known/oauth-authorization-server`) so MCP clients can discover the
+authorization endpoints automatically.
+
+:::
+
+### Combine embedded auth with outgoing token exchange
+
+A single MCP server can use the embedded authorization server for incoming
+client authentication and token exchange for outgoing calls to backend services.
+This works the same way regardless of which outgoing strategy you use:
+[RFC 8693 token exchange](./token-exchange-k8s.mdx) against your own IdP, or
+[AWS STS](../integrations/aws-sts.mdx) for AWS-hosted backends. Set both
+`authServerRef` and `externalAuthConfigRef` on the same `MCPServer` or
+`MCPRemoteProxy` resource:
+
+```yaml
+spec:
+  # Embedded auth server for incoming client authentication
+  authServerRef:
+    kind: MCPExternalAuthConfig
+    name: embedded-auth-server
+  # Outgoing token exchange (type: tokenExchange or type: awsSts)
+  externalAuthConfigRef:
+    name: backend-auth-config
+  oidcConfigRef:
+    name: embedded-auth-oidc
+```
+
+For a complete walkthrough using AWS STS, see
+[Combine embedded auth with AWS STS](../integrations/aws-sts.mdx#combine-embedded-auth-with-aws-sts).
+For plain token exchange, use the same pattern, but point
+`externalAuthConfigRef` at an `MCPExternalAuthConfig` with
+[`type: tokenExchange`](./token-exchange-k8s.mdx#step-2-create-the-mcpexternalauthconfig-resource)
+instead.
+
+### Configure session storage
+
+By default, the embedded authorization server stores sessions in memory.
+Upstream tokens are lost when pods restart, requiring users to re-authenticate.
+For production deployments, configure a Redis backend by adding a `storage`
+block to your `MCPExternalAuthConfig`. The `redis` block supports three
+connection modes; you must set exactly one:
+
+- **Sentinel** (`sentinelConfig`) - self-managed Redis with Sentinel-based high
+  availability (HA)
+- **Standalone** (`addr` only) - managed Redis services that expose a single
+  endpoint, such as GCP Memorystore Basic/Standard or Azure Cache for Redis
+- **Cluster** (`addr` with `clusterMode: true`) - managed Redis Cluster
+  services, such as GCP Memorystore Cluster or AWS ElastiCache with cluster mode
+  enabled
+
+```yaml title="storage block for MCPExternalAuthConfig - Sentinel"
+storage:
+  type: redis
+  redis:
+    sentinelConfig:
+      masterName: mymaster
+      sentinelService:
+        name: redis-sentinel
+        namespace: redis
+    aclUserConfig:
+      usernameSecretRef:
+        name: redis-acl-secret
+        key: username
+      passwordSecretRef:
+        name: redis-acl-secret
+        key: password
+```
+
+```yaml title="storage block for MCPExternalAuthConfig - Standalone"
+storage:
+  type: redis
+  redis:
+    addr: redis.example.com:6379
+    aclUserConfig:
+      # usernameSecretRef is optional - omit for managed tiers without ACL
+      # users (GCP Memorystore Basic/Standard, Azure Cache for Redis)
+      passwordSecretRef:
+        name: redis-acl-secret
+        key: password
+```
+
+```yaml title="storage block for MCPExternalAuthConfig - Cluster"
+storage:
+  type: redis
+  redis:
+    addr: redis-cluster.example.com:6379
+    clusterMode: true
+    aclUserConfig:
+      passwordSecretRef:
+        name: redis-acl-secret
+        key: password
+```
+
+Create the Secret containing your Redis credentials. The example below includes
+the username for ACL-enabled deployments; omit `--from-literal=username=...`
+when targeting a managed tier that does not support ACL users:
+
+```bash
+kubectl create secret generic redis-acl-secret \
+  --namespace toolhive-system \
+  --from-literal=username=toolhive-auth \
+  --from-literal=password="YOUR_REDIS_PASSWORD"
+```
+
+For a complete walkthrough including deploying Redis Sentinel from scratch, see
+[Redis session storage](./redis-session-storage.mdx).
+
+### Enable CIMD for zero-registration clients
+
+DCR requires every client to register before its first authorization request.
+Some MCP clients, including recent VS Code builds, can instead present an HTTPS
+URL that hosts a Client ID Metadata Document (CIMD), letting the authorization
+server resolve client metadata on demand with no prior registration step. CIMD
+is the MCP specification's preferred client registration mechanism; DCR is the
+backward-compatibility fallback. Enable it by adding a `cimd` block:
+
+```yaml
+spec:
+  embeddedAuthServer:
+    cimd:
+      enabled: true
+      cacheMaxSize: 256
+      cacheFallbackTtl: '5m'
+```
+
+`cacheMaxSize` sets the LRU cache capacity (default `256`), and
+`cacheFallbackTtl` sets the TTL applied to every cached entry as a Go duration
+string (default `5m`). The CIMD fetcher doesn't yet honor `Cache-Control`
+headers; every cached document uses the fallback TTL. When disabled (the
+default), only DCR-registered `client_id` values are accepted.
+
+If you also set `baselineClientScopes`, those scopes apply to CIMD-resolved
+clients too. Because CIMD clients can be resolved from arbitrary HTTPS URLs,
+keep the baseline narrow.
+
+The embedded AS enforces the following rules on fetched CIMD documents:
+
+- The URL must use `https` (loopback `http://localhost` is accepted in
+  development environments only).
+- The `client_id` field inside the document must exactly match the URL it was
+  fetched from.
+- `redirect_uris` must be present and pass strict validation.
+- Symmetric shared-secret `token_endpoint_auth_method` values are forbidden.
+- `grant_types` must include `authorization_code` and be a subset of
+  `[authorization_code, refresh_token]`.
+- `response_types` must be a subset of `[code]`.
+- Declared scopes must be a subset of the AS's configured `scopes_supported`
+  list (when set).
+
+The fetcher also applies SSRF protection: DNS resolution runs before dialing,
+private IP ranges are blocked, redirects are not followed, and each fetch is
+subject to a five-second timeout and a 10 KB response cap.
+
+For the two-layer trust model behind CIMD (why the upstream IdP never sees the
+client's CIMD URL), see
+[Client ID Metadata Document (CIMD)](../concepts/embedded-auth-server.mdx#client-id-metadata-document-cimd).
+
+### Enable baseline scopes for DCR clients
+
+Some MCP clients (for example, Claude Code) register via DCR with a narrowed
+`scope` value, then request a wider set of scopes at `/oauth/authorize`. By
+default, the embedded authorization server rejects those requests with
+`invalid_scope` because the registered client's scope set doesn't include the
+scopes being requested. To support this pattern, set `baselineClientScopes`:
+
+```yaml
+spec:
+  embeddedAuthServer:
+    baselineClientScopes:
+      - openid
+      - offline_access
+```
+
+The server merges these scopes into every DCR-registered client's scope set, so
+clients can request them at `/oauth/authorize` regardless of what they
+originally registered with. If `scopesSupported` is set explicitly on the
+embedded auth server, all baseline values must appear in it; if
+`scopesSupported` is omitted, the server validates against its default scope set
+(`openid`, `profile`, `email`, `offline_access`).
+
+Keep the baseline narrow (typically `openid` and `offline_access`). Every
+DCR-registered client gains the ability to request these scopes, including
+public clients like Claude Code, Cursor, and VS Code, so privileged scopes don't
+belong in the baseline. For the conceptual reason this exists, see
+[Baseline scopes for DCR clients](../concepts/embedded-auth-server.mdx#baseline-scopes-for-dcr-clients).
+
+### Using an OAuth 2.0 upstream provider
+
+If your upstream identity provider does not support OIDC discovery, you can
+configure it as an OAuth 2.0 provider with explicit endpoints. This is useful
+for providers like GitHub that use OAuth 2.0 but don't implement the full OIDC
+specification.
+
+```yaml title="embedded-auth-oauth2-config.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPExternalAuthConfig
+metadata:
+  name: embedded-auth-oauth2
+  namespace: toolhive-system
+spec:
+  type: embeddedAuthServer
+  embeddedAuthServer:
+    issuer: 'https://mcp.example.com'
+    signingKeySecretRefs:
+      - name: auth-server-signing-key
+        key: signing-key
+    hmacSecretRefs:
+      - name: auth-server-hmac-secret
+        key: hmac-key
+    upstreamProviders:
+      - name: github
+        type: oauth2
+        oauth2Config:
+          authorizationEndpoint: 'https://github.com/login/oauth/authorize'
+          tokenEndpoint: 'https://github.com/login/oauth/access_token'
+          userInfo:
+            endpointUrl: 'https://api.github.com/user'
+            httpMethod: GET
+            additionalHeaders:
+              Accept: 'application/vnd.github+json'
+            fieldMapping:
+              subjectFields:
+                - id
+                - login
+              nameFields:
+                - name
+                - login
+              emailFields:
+                - email
+          clientId: '<YOUR_GITHUB_CLIENT_ID>'
+          clientSecretRef:
+            name: upstream-idp-secret
+            key: client-secret
+          # See the note on the Google example above: set redirectUri
+          # explicitly whenever resourceUrl includes a path.
+          redirectUri: 'https://mcp.example.com/oauth/callback'
+          scopes:
+            - user:email
+            - read:user
+```
+
+:::note
+
+OAuth 2.0 providers require explicit endpoint configuration, unlike OIDC
+providers which auto-discover these from the issuer URL. The `userInfo` section
+is optional: when present, the embedded auth server fetches user identity claims
+from the configured endpoint, and the `fieldMapping` section maps
+provider-specific response fields to standard user identity fields (for example,
+GitHub returns `login` instead of the standard `name` field).
+
+When you omit `userInfo` and `identityFromToken`, the embedded auth server runs
+in synthesis mode for this upstream: it derives a non-personally-identifying
+subject (with a `tk-` prefix) from the access token and leaves `name` and
+`email` empty. Use this configuration for OAuth 2.0 servers that don't expose a
+userinfo endpoint and don't return identity in the token response, such as MCP
+authorization servers that comply with the
+[MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
+For OAuth 2.0 servers that return identity in the token response itself, see
+[Extract identity from the token response](#extract-identity-from-the-token-response).
+
+:::
+
+### Extract identity from the token response
+
+Some providers don't expose a userinfo endpoint but return user identity in the
+OAuth 2.0 token response itself. For these providers, set `identityFromToken` on
+`oauth2Config` instead of `userInfo`. The embedded auth server then skips the
+userinfo HTTP call and extracts identity from the token response body using
+[gjson dot-notation paths](https://github.com/tidwall/gjson#path-syntax):
+`username` extracts a top-level field, `authed_user.id` extracts a nested field,
+and the pipe operator chains modifiers like `@upstreamjwt`.
+
+For example, Slack's `oauth.v2.access` response includes the authenticated user
+ID at `authed_user.id`:
+
+```yaml title="oauth2Config snippet for Slack"
+oauth2Config:
+  # highlight-start
+  identityFromToken:
+    subjectPath: authed_user.id
+  # highlight-end
+```
+
+Snowflake returns the authenticated login name as a top-level `username` field
+in every authorization-code grant response, and does not expose a userinfo
+endpoint:
+
+```yaml title="oauth2Config snippet for Snowflake"
+oauth2Config:
+  # highlight-start
+  identityFromToken:
+    subjectPath: username
+    namePath: username
+  # highlight-end
+```
+
+For providers whose token response embeds identity inside a JWT-shaped access
+token, the `@upstreamjwt` modifier decodes the JWT payload so subsequent path
+segments can drill into it:
+
+```yaml title="oauth2Config snippet for JWT-embedded identity"
+oauth2Config:
+  # highlight-start
+  identityFromToken:
+    subjectPath: 'access_token|@upstreamjwt|sub'
+  # highlight-end
+```
+
+`subjectPath` is required; `namePath` and `emailPath` are optional. Omit
+`namePath` and `emailPath` rather than setting them to empty strings.
+
+If you set both `identityFromToken` and `userInfo`, `identityFromToken` takes
+precedence and the userinfo HTTP call is skipped. If `identityFromToken` is set
+and extraction fails (path missing or unexpected type), authentication fails for
+that login attempt. There is no fallback to `userInfo`.
+
+:::warning[Trust model]
+
+Claims read from the token response are trusted via TLS only and are not
+cryptographically verified. The `@upstreamjwt` modifier decodes the JWT payload
+without verifying its signature. Prefer OIDC ID tokens when you need
+cryptographically verifiable claims.
+
+:::
+
+### Upstream-specific authorization parameters
+
+Some identity providers require custom query parameters on the authorization URL
+that aren't part of the standard OAuth 2.0 or OIDC specs. The most common case
+is Google, which issues refresh tokens only when the authorization request
+includes `access_type=offline` - Google's non-standard alternative to the
+`offline_access` scope.
+
+To pass these parameters, set `additionalAuthorizationParams` on the
+`oidcConfig` or `oauth2Config` of an upstream provider:
+
+```yaml title="upstreamProviders configuration block"
+upstreamProviders:
+  - name: google
+    type: oidc
+    oidcConfig:
+      issuerUrl: 'https://accounts.google.com'
+      clientId: '<YOUR_GOOGLE_CLIENT_ID>'
+      clientSecretRef:
+        name: upstream-idp-secret
+        key: client-secret
+      scopes:
+        - openid
+        - email
+        - profile
+      additionalAuthorizationParams:
+        access_type: 'offline'
+```
+
+**Scope interaction:** When an OIDC upstream does not specify `scopes`
+explicitly, ToolHive sends the default `["openid", "offline_access"]`. If you're
+using `access_type=offline` for a provider that does not understand
+`offline_access` (such as Google), set `scopes` explicitly so the two mechanisms
+don't conflict.
+
+**First consent only:** Google only issues a refresh token on the user's first
+consent. If users previously authorized the app without `access_type=offline`,
+they won't receive a refresh token until their current access token expires and
+they sign in again. To force re-consent immediately (for example, after losing
+refresh-token state), add `prompt: 'consent'` alongside
+`access_type: 'offline'`. Google then shows the consent screen on every login
+and re-issues a refresh token each time.
+
+### Default callback URL for upstream providers
+
+When you omit `redirectUri` from an upstream provider's `oidcConfig` or
+`oauth2Config`, the operator defaults it to `{resourceUrl}/oauth/callback`.
+`resourceUrl` is the `oidcConfigRef.resourceUrl` set on the MCPServer or
+VirtualMCPServer that references this MCPExternalAuthConfig. It's typically the
+external URL that MCP clients use to reach the server.
+
+You still need to register this callback URL with your upstream OAuth2 or OIDC
+provider before the flow can complete. Use the same URL on both sides: the value
+computed from `resourceUrl` here, and the authorized redirect URI in your
+provider's application settings.
+
+For example, given this `oidcConfigRef` on an MCPServer:
+
+```yaml
+spec:
+  oidcConfigRef:
+    name: embedded-auth-oidc
+    audience: 'https://mcp.example.com/mcp'
+    resourceUrl: 'https://mcp.example.com/mcp'
+```
+
+Omitting `redirectUri` on the upstream provider resolves the callback to
+`https://mcp.example.com/mcp/oauth/callback`:
+
+```yaml
+upstreamProviders:
+  - name: google
+    type: oidc
+    oidcConfig:
+      issuerUrl: 'https://accounts.google.com'
+      clientId: '<YOUR_GOOGLE_CLIENT_ID>'
+      clientSecretRef:
+        name: upstream-idp-secret
+        key: client-secret
+      # redirectUri omitted - defaults to:
+      # https://mcp.example.com/mcp/oauth/callback
+```
+
+Set `redirectUri` explicitly if you need a non-default callback path, for
+example to route the callback through a separate gateway hostname. If
+`resourceUrl` is also unset, no default is applied and the upstream provider
+must have `redirectUri` set explicitly.
+
+:::warning[Set `redirectUri` explicitly when `resourceUrl` has a path]
+
+The default above only works when `resourceUrl` is a bare host. In the examples
+on this page, `resourceUrl` includes a path (`/mcp`), so the computed default
+(`https://mcp.example.com/mcp/oauth/callback`) lands on a path nothing serves:
+the callback route is only ever served at the host root, matching the path-free
+`issuer` from [Step 4](#step-4-create-the-mcpexternalauthconfig-resource).
+Whenever `resourceUrl` has a path, set `redirectUri` explicitly to
+`<issuer>/oauth/callback` instead of relying on the default. This is the most
+common cause of "authorization header required" errors on every authentication
+attempt.
+
+:::
+
+## Test your setup
+
+1. Deploy the `MCPExternalAuthConfig` and `MCPServer` resources
+2. Check that the MCPServer is running:
+
+   ```bash
+   kubectl get mcpserver -n toolhive-system weather-server-embedded
+   ```
+
+3. If the server is exposed outside the cluster, verify the OAuth discovery
+   endpoint is available:
+
+   ```bash
+   curl https://<YOUR_SERVER_URL>/.well-known/oauth-authorization-server
+   ```
+
+4. Connect with an MCP client that supports the MCP OAuth specification. The
+   client should be redirected to your upstream identity provider for
+   authentication.
+5. Check the proxy logs for successful authentication:
+
+   ```bash
+   kubectl logs -n toolhive-system \
+     -l app.kubernetes.io/name=weather-server-embedded
+   ```
+
+## Next steps
+
+- [Configure token exchange](./token-exchange-k8s.mdx) to let MCP servers
+  authenticate to backend services
+- [Deploy Redis session storage](./redis-session-storage.mdx) for production
+  session persistence
+- [Set up audit logging](./logging.mdx) to track authentication decisions and
+  MCP server activity
+
+## Related information
+
+- For conceptual background, see
+  [Embedded authorization server](../concepts/embedded-auth-server.mdx)
+- For the other Kubernetes authentication approaches, see
+  [Authentication and authorization](./auth-k8s.mdx)
+- For multi-upstream provider support with vMCP, see
+  [vMCP embedded authorization server](../guides-vmcp/authentication.mdx#embedded-authorization-server)
+- For a similar configuration pattern using token exchange, see
+  [Configure token exchange](./token-exchange-k8s.mdx)
+- For combining the embedded auth server with AWS STS, see
+  [Combine embedded auth with AWS STS](../integrations/aws-sts.mdx#combine-embedded-auth-with-aws-sts)
+- For the complete field reference, see
+  [MCPExternalAuthConfig](../reference/crds/mcpexternalauthconfig.mdx)
+
+## Troubleshooting
+
+<details>
+<summary>OAuth flow not initiating</summary>
+
+- Verify the `MCPExternalAuthConfig` resource exists in the same namespace:
+  `kubectl get mcpexternalauthconfig -n toolhive-system`
+- Check that the `authServerRef.name` in your `MCPServer` matches the
+  `MCPExternalAuthConfig` resource name
+- Verify the upstream provider's client ID and redirect URI are correctly
+  configured in the `MCPExternalAuthConfig`
+
+</details>
+<details>
+<summary>Consumer reports <code>ExternalAuthConfigValidated=False</code></summary>
+
+When the referenced `MCPExternalAuthConfig` has its own `Valid` condition set to
+`False`, the consumer resource (`MCPServer`, `MCPRemoteProxy`, or
+`VirtualMCPServer`) mirrors that condition onto its own status with the same
+reason and message. Check both objects:
+
+```bash
+kubectl describe mcpserver -n toolhive-system <name>
+kubectl describe mcpexternalauthconfig -n toolhive-system <authConfigName>
+```
+
+A reason like `EnterpriseRequired` on the consumer indicates the source
+`MCPExternalAuthConfig` is using a type (such as OBO) that requires Stacklok
+Enterprise. Fix the configuration on the `MCPExternalAuthConfig` and the
+consumer's mirrored condition clears on the next reconcile.
+
+</details>
+<details>
+<summary>Token validation failures after restart</summary>
+
+- Ensure you have configured `signingKeySecretRefs` and `hmacSecretRefs` with
+  persistent keys
+- Without these, ephemeral keys are generated on startup, invalidating all
+  previously issued tokens
+
+</details>
+<details>
+<summary>Upstream IdP redirect errors</summary>
+
+- Verify the redirect URI configured in your upstream provider matches the
+  ToolHive proxy's callback URL (typically
+  `https://<YOUR_SERVER_URL>/oauth/callback`)
+- Check that the upstream provider's issuer URL is accessible from within the
+  cluster
+- For OIDC providers, ensure the `/.well-known/openid-configuration` endpoint is
+  reachable from the proxy pod
+- If every authentication attempt fails immediately with a generic
+  "authorization header required" error, check whether `issuer` has a path. See
+  [Keep issuer path-free](#step-4-create-the-mcpexternalauthconfig-resource)
+  above.
+
+</details>
+<details>
+<summary>JWT signing key issues</summary>
+
+- Verify signing key Secrets exist:
+  `kubectl get secret -n toolhive-system auth-server-signing-key`
+- Ensure the key format is correct (PEM-encoded RSA or EC private key)
+- Check proxy logs for key loading errors:
+  `kubectl logs -n toolhive-system -l app.kubernetes.io/name=weather-server-embedded`
+
+</details>
+<details>
+<summary>OIDC configuration mismatch</summary>
+
+- Ensure the MCPOIDCConfig issuer matches the `issuer` in your
+  `MCPExternalAuthConfig`
+- Verify the `resourceUrl` in `oidcConfigRef` matches the external URL of the
+  MCP server
+
+</details>
+<details>
+<summary>CIMD client not using CIMD (falling back to DCR)</summary>
+
+- Verify `cimd.enabled: true` is set in the `MCPExternalAuthConfig` and the
+  operator has reconciled the change:
+  `kubectl describe mcpexternalauthconfig <name> -n toolhive-system`
+- Confirm the discovery document advertises CIMD support:
+  ```bash
+  curl -s https://<YOUR_ISSUER_URL>/.well-known/oauth-authorization-server | \
+    python3 -m json.tool | grep client_id_metadata_document
+  ```
+  Replace `<YOUR_ISSUER_URL>` with the `issuer` value from your
+  `MCPExternalAuthConfig`. You should see
+  `"client_id_metadata_document_supported": true`.
+- Restart the proxy runner pod after updating an existing resource.
+
+</details>
+<details>
+<summary>CIMD authentication failing with <code>invalid_client</code></summary>
+
+- The `client_id` field inside the fetched document must exactly match the URL
+  used to fetch it.
+- Documents must not declare `token_endpoint_auth_method` values that use a
+  symmetric shared secret (`client_secret_post`, `client_secret_basic`,
+  `client_secret_jwt`).
+- `grant_types` must include `authorization_code`. `response_types` must only
+  contain `code`.
+- `redirect_uris` must be present and valid.
+
+</details>
+<details>
+<summary>CIMD fetch failing (egress / timeout)</summary>
+
+- The proxy runner pod needs outbound HTTPS access to the client's metadata URL
+  (for example, `https://vscode.dev`). Check cluster egress policies.
+- Fetches time out after five seconds. Ensure the metadata host is reachable
+  from within the cluster.
+
+</details>
