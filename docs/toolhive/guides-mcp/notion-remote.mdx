@@ -14,8 +14,9 @@ agents to search, read, create, and manage pages, databases, and other content
 in your Notion workspace.
 
 This is a remote MCP server that uses the **Auto-Discovered** authorization
-method, meaning ToolHive handles OAuth authentication automatically with minimal
-configuration required.
+method, meaning ToolHive discovers Notion's OAuth endpoints automatically. On
+the CLI and UI, this requires minimal configuration. On Kubernetes, it takes an
+embedded authorization server setup, described below.
 
 ## Metadata
 
@@ -79,49 +80,136 @@ thv restart notion-remote
 </TabItem>
 <TabItem value='k8s' label='Kubernetes'>
 
-:::note
+The ToolHive operator deploys a proxy in front of Notion's hosted remote MCP
+server using an `MCPRemoteProxy` resource with an
+[embedded authorization server](../concepts/embedded-auth-server.mdx).
 
-The ToolHive Kubernetes Operator does not currently support remote MCP servers
-using dynamic OAuth authentication. Instead, you can run the
-[local Notion MCP server](https://github.com/makenotion/notion-mcp-server) in
-Kubernetes using a static integration key.
+The examples below use `https://notion-mcp.example.com` as a placeholder for
+wherever you'll expose the proxy outside the cluster. Set up an Ingress or
+Gateway route pointing at the proxy Service first (see
+[Connect clients to MCP servers](../guides-k8s/connect-clients.mdx#connect-from-outside-the-cluster))
+and substitute your real hostname everywhere this placeholder appears. Notion
+redirects the user's browser to this URL during authentication, so it must be
+genuinely reachable over HTTPS, not just resolvable inside the cluster.
 
-:::
+Notion's remote MCP server (`mcp.notion.com`) uses Dynamic Client Registration
+(RFC 7591) for third-party OAuth clients. The embedded authorization server's
+`dcrConfig` field handles this automatically: it registers a client with Notion
+at startup using Notion's discovery document and caches the returned
+credentials, so there's no manual registration step and no client secret to
+store.
 
-Create an integration in Notion to obtain an authentication token by following
-the instructions in the MCP server's
-[README](https://github.com/makenotion/notion-mcp-server?tab=readme-ov-file#installation).
-
-Create a Kubernetes secret containing your Notion integration token
-("`ntn_****`"):
+Generate a signing key and an HMAC key for the embedded authorization server,
+and store them as Secrets:
 
 ```bash
-kubectl -n toolhive-system create secret generic notion-token --from-literal=token=<YOUR_TOKEN>
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out signing-key.pem
+openssl rand -base64 32 > hmac-key.txt
+
+kubectl create secret generic notion-auth-signing-key -n toolhive-system \
+  --from-file=signing-key=signing-key.pem
+kubectl create secret generic notion-auth-hmac-key -n toolhive-system \
+  --from-literal=hmac-key="$(cat hmac-key.txt)"
 ```
 
-Create a Kubernetes manifest to deploy the Notion MCP server using your secret:
+Create the embedded authorization server configuration, the OIDC config that
+validates its own issued tokens, and the remote proxy:
 
-```yaml title="notion.yaml"
+```yaml title="notion-proxy.yaml"
 apiVersion: toolhive.stacklok.dev/v1beta1
-kind: MCPServer
+kind: MCPExternalAuthConfig
+metadata:
+  name: notion-embedded-auth
+  namespace: toolhive-system
+spec:
+  type: embeddedAuthServer
+  embeddedAuthServer:
+    issuer: 'https://notion-mcp.example.com'
+    signingKeySecretRefs:
+      - name: notion-auth-signing-key
+        key: signing-key
+    hmacSecretRefs:
+      - name: notion-auth-hmac-key
+        key: hmac-key
+    upstreamProviders:
+      - name: notion
+        type: oauth2
+        oauth2Config:
+          authorizationEndpoint: 'https://mcp.notion.com/authorize'
+          tokenEndpoint: 'https://mcp.notion.com/token'
+          redirectUri: 'https://notion-mcp.example.com/oauth/callback'
+          dcrConfig:
+            discoveryUrl: 'https://mcp.notion.com/.well-known/oauth-authorization-server'
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPOIDCConfig
+metadata:
+  name: notion-embedded-oidc
+  namespace: toolhive-system
+spec:
+  type: inline
+  inline:
+    issuer: 'https://notion-mcp.example.com'
+---
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPRemoteProxy
 metadata:
   name: notion
   namespace: toolhive-system
 spec:
-  image: ghcr.io/stacklok/dockyard/npx/notion:2.2.1
-  transport: stdio
+  remoteUrl: https://mcp.notion.com/mcp
+  transport: streamable-http
   proxyPort: 8080
-  secrets:
-    - name: notion-token
-      key: token
-      targetEnvName: NOTION_TOKEN
+  authServerRef:
+    kind: MCPExternalAuthConfig
+    name: notion-embedded-auth
+  oidcConfigRef:
+    name: notion-embedded-oidc
+    audience: 'https://notion-mcp.example.com/mcp'
+    resourceUrl: 'https://notion-mcp.example.com/mcp'
+  audit:
+    enabled: true
 ```
+
+:::note[Keep `issuer` path-free]
+
+Set `issuer` on both the `MCPExternalAuthConfig` and `MCPOIDCConfig` to a bare
+host, with no path. The embedded authorization server's OAuth endpoints
+(`/oauth/register`, `/oauth/authorize`, `/oauth/token`, `/oauth/callback`) are
+always served at the host root, so a path in `issuer` breaks discovery and every
+authentication attempt fails with a generic "authorization header required"
+error.
+
+For the same reason, set `redirectUri` on the upstream provider explicitly to
+`<issuer>/oauth/callback`, as shown above. Because `resourceUrl` includes the
+`/mcp` path, the
+[default computed from it](../guides-k8s/embedded-auth-server-k8s.mdx#default-callback-url-for-upstream-providers)
+would land on a path nothing serves.
+
+:::
 
 Apply the manifest to your Kubernetes cluster:
 
 ```bash
-kubectl apply -f notion.yaml
+kubectl apply -f notion-proxy.yaml
 ```
+
+Check the proxy status:
+
+```bash
+kubectl get mcpremoteproxy notion -n toolhive-system
+```
+
+Connect your MCP client to the proxy's URL. Each client authenticates once
+through the OAuth flow, redirecting through Notion, then reuses the token issued
+by the embedded authorization server. For production deployments, configure
+Redis-backed session storage so tokens survive pod restarts. This matters more
+than usual here: the DCR-issued client credentials live in the same store as
+sessions, so without Redis-backed storage, a pod restart also registers a
+brand-new OAuth client with Notion instead of reusing the previous one, leaving
+the old registration orphaned. See
+[Horizontal scaling](../guides-k8s/run-mcp-k8s.mdx#horizontal-scaling) and
+[Redis session storage](../guides-k8s/redis-session-storage.mdx).
 
 </TabItem>
 </Tabs>
@@ -158,8 +246,12 @@ Here are some sample prompts you can use to interact with the Notion MCP server:
 - **Be cautious with updates**: The MCP server can modify and delete content in
   your Notion workspace. Always review changes before applying them to important
   pages or databases.
-- **Handle authentication errors**: If you see authentication errors, restart
-  the server to trigger a new OAuth flow: `thv restart notion-remote`
+- **Handle authentication errors**: On the CLI or UI, restart the server to
+  trigger a new OAuth flow: `thv restart notion-remote`. On Kubernetes, a proxy
+  pod restart invalidates all sessions unless you've configured Redis-backed
+  session storage, so every client must re-authenticate; with Redis-backed
+  storage, only re-authenticate a client whose underlying Notion token was
+  revoked or can't be refreshed.
 
 ## Troubleshooting
 
@@ -168,19 +260,41 @@ Here are some sample prompts you can use to interact with the Notion MCP server:
 
 If OAuth authentication fails or times out:
 
+**CLI or UI:**
+
 1. Ensure the callback port is not blocked by a firewall
 2. Check that your browser allows pop-ups from ToolHive
 3. Try restarting the server with `thv restart notion-remote`
+
+**Kubernetes:** Your client authenticates against the embedded authorization
+server, which then completes a separate OAuth exchange with Notion using
+credentials obtained automatically via Dynamic Client Registration. Check the
+proxy pod logs for errors from either leg of that flow:
+
+```bash
+kubectl logs -n toolhive-system -l app.kubernetes.io/instance=notion | grep -i oauth
+```
+
+The most common causes are a path segment in `issuer` or a `redirectUri` that
+doesn't match your externally reachable hostname. See the note above.
 
 </details>
 <details>
 <summary>Server shows "Running" but tools don't work</summary>
 
-The server may have lost authentication. Restart the server to re-authenticate:
+The server may have lost authentication.
+
+**CLI or UI:** Restart the server to re-authenticate:
 
 ```bash
 thv restart notion-remote
 ```
+
+**Kubernetes:** Check whether the proxy pod restarted recently
+(`kubectl get pods -n toolhive-system`). Without Redis-backed session storage, a
+restart invalidates every session and all clients must re-authenticate. With
+Redis-backed storage, this instead means the affected client's underlying Notion
+token was revoked or couldn't be refreshed; re-authenticate from that client.
 
 </details>
 <details>
