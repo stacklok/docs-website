@@ -92,13 +92,12 @@ and substitute your real hostname everywhere this placeholder appears. Notion
 redirects the user's browser to this URL during authentication, so it must be
 genuinely reachable over HTTPS, not just resolvable inside the cluster.
 
-Notion's remote MCP server (`mcp.notion.com`) only supports Dynamic Client
-Registration (RFC 7591) for third-party OAuth clients; there's no
-dashboard-based app registration for it, unlike Notion's classic API
-integrations. The embedded authorization server's `dcrConfig` field handles this
-automatically: it registers a client with Notion at startup using Notion's
-discovery document and caches the returned credentials, so there's no manual
-registration step and no client secret to store.
+Notion's remote MCP server (`mcp.notion.com`) uses Dynamic Client Registration
+(RFC 7591) for third-party OAuth clients. The embedded authorization server's
+`dcrConfig` field handles this automatically: it registers a client with Notion
+at startup using Notion's discovery document and caches the returned
+credentials, so there's no manual registration step and no client secret to
+store.
 
 Generate a signing key and an HMAC key for the embedded authorization server,
 and store them as Secrets:
@@ -174,22 +173,18 @@ spec:
 
 :::note[Keep `issuer` path-free]
 
-Set `issuer` on both the `MCPExternalAuthConfig` and `MCPOIDCConfig` to your
-bare host, with no path. The embedded authorization server's OAuth endpoints
+Set `issuer` on both the `MCPExternalAuthConfig` and `MCPOIDCConfig` to a bare
+host, with no path. The embedded authorization server's OAuth endpoints
 (`/oauth/register`, `/oauth/authorize`, `/oauth/token`, `/oauth/callback`) are
-always served at the host root, regardless of any path in `issuer`. Adding a
-path here (for example, matching your MCP resource path) makes discovery
-advertise endpoints that nothing actually serves, and every authentication
-attempt fails with a generic "authorization header required" error.
+always served at the host root, so a path in `issuer` breaks discovery and every
+authentication attempt fails with a generic "authorization header required"
+error.
 
-Also set `redirectUri` on the upstream provider explicitly to
-`<issuer>/oauth/callback`, as shown above, instead of omitting it.
-[Default callback URL for upstream providers](../guides-k8s/embedded-auth-server-k8s.mdx#default-callback-url-for-upstream-providers)
-documents the default as `{resourceUrl}/oauth/callback`, which works when
-`resourceUrl` is a bare host. It breaks here because `resourceUrl` includes the
-`/mcp` path: the callback route is only ever served at the host root, so the
-computed default would land on a path nothing serves. Setting `redirectUri`
-explicitly avoids relying on that default.
+For the same reason, set `redirectUri` on the upstream provider explicitly to
+`<issuer>/oauth/callback`, as shown above. Because `resourceUrl` includes the
+`/mcp` path, the
+[default computed from it](../guides-k8s/embedded-auth-server-k8s.mdx#default-callback-url-for-upstream-providers)
+would land on a path nothing serves.
 
 :::
 
