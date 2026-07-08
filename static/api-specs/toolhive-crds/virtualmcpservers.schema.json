@@ -1503,6 +1503,18 @@
             "optimizer": {
               "description": "Optimizer configures the MCP optimizer for context optimization on large toolsets.\nWhen enabled, vMCP exposes only find_tool and call_tool operations to clients\ninstead of all backend tools directly. This reduces token usage by allowing\nLLMs to discover relevant tools on demand rather than receiving all tool definitions.",
               "properties": {
+                "embeddingHeaders": {
+                  "additionalProperties": {
+                    "description": "EmbeddingHeaderValue is a custom embedding request header value: 1 to 8192\ncharacters with no control characters other than tab.",
+                    "maxLength": 8192,
+                    "minLength": 1,
+                    "pattern": "^[^\\x00-\\x08\\x0A-\\x1F\\x7F]*$",
+                    "type": "string"
+                  },
+                  "description": "EmbeddingHeaders holds additional HTTP headers sent with every embedding\nrequest. Only supported when EmbeddingProvider is \"openai\". Values are\nstored in plain text and must not contain secrets; Authorization\n(derived from OPENAI_API_KEY) and Content-Type cannot be set.",
+                  "maxProperties": 32,
+                  "type": "object"
+                },
                 "embeddingModel": {
                   "description": "EmbeddingModel is the model name requested from the embedding service\n(e.g. \"text-embedding-3-small\"). Required when EmbeddingProvider is\n\"openai\". Ignored for the \"tei\" provider, where the model is fixed by the\nrunning TEI container.\n\nThe API key for an OpenAI-compatible service is not configured here: it is\nread from the OPENAI_API_KEY environment variable so the secret never\nlands in a CRD spec or ConfigMap. An empty key omits the Authorization\nheader, which supports keyless in-cluster gateways.",
                   "type": "string"
@@ -1543,7 +1555,17 @@
                   "type": "string"
                 }
               },
-              "type": "object"
+              "type": "object",
+              "x-kubernetes-validations": [
+                {
+                  "message": "embeddingHeaders is only supported when embeddingProvider is 'openai'",
+                  "rule": "!has(self.embeddingHeaders) || (has(self.embeddingProvider) && self.embeddingProvider == 'openai')"
+                },
+                {
+                  "message": "embeddingHeaders names must be valid HTTP header names and must not include Authorization or Content-Type",
+                  "rule": "!has(self.embeddingHeaders) || self.embeddingHeaders.all(k, k.matches('^[!#$%&\\\\x27*+.^_\\\\x60|~0-9A-Za-z-]+$') && !(k.lowerAscii() in ['authorization', 'content-type']))"
+                }
+              ]
             },
             "outgoingAuth": {
               "description": "OutgoingAuth configures how the virtual MCP server authenticates to backends.\nWhen using the Kubernetes operator, this is populated by the converter from\nVirtualMCPServerSpec.OutgoingAuth and any values set here will be superseded.",
@@ -1753,11 +1775,11 @@
                         "description": "XAA contains configuration for XAA (Cross-Application Access) auth strategy.\nUsed when Type = \"xaa\".",
                         "properties": {
                           "idpClientId": {
-                            "description": "IDPClientID is the OAuth client ID at the IdP for Step A.",
+                            "description": "IDPClientID is the OAuth client ID at the IdP for IdP exchange.",
                             "type": "string"
                           },
                           "idpClientSecret": {
-                            "description": "IDPClientSecret is the client secret at the IdP for Step A.",
+                            "description": "IDPClientSecret is the client secret at the IdP for IdP exchange.",
                             "type": "string"
                           },
                           "idpClientSecretEnv": {
@@ -1765,7 +1787,7 @@
                             "type": "string"
                           },
                           "idpTokenUrl": {
-                            "description": "IDPTokenURL is the IdP token endpoint for Step A (RFC 8693 exchange).",
+                            "description": "IDPTokenURL is the IdP token endpoint for IdP exchange (RFC 8693 exchange).",
                             "type": "string"
                           },
                           "insecureTargetTokenUrl": {
@@ -1773,7 +1795,7 @@
                             "type": "boolean"
                           },
                           "scopes": {
-                            "description": "Scopes are the requested scopes for Steps A and B.",
+                            "description": "Scopes are the requested scopes for IdP exchange and target grant.",
                             "items": {
                               "type": "string"
                             },
@@ -1785,7 +1807,7 @@
                             "type": "string"
                           },
                           "subjectTokenType": {
-                            "description": "SubjectTokenType is the token-type URN of the upstream subject token\nused in Step A. Defaults to TokenTypeIDToken when empty. Currently only\nurn:ietf:params:oauth:token-type:id_token is accepted; the field exists\nto allow future expansion to SAML upstreams without an API break.",
+                            "description": "SubjectTokenType is the token-type URN of the upstream subject token\nused in IdP exchange. Defaults to TokenTypeIDToken when empty. Currently only\nurn:ietf:params:oauth:token-type:id_token is accepted; the field exists\nto allow future expansion to SAML upstreams without an API break.",
                             "type": "string"
                           },
                           "targetAudience": {
@@ -1793,11 +1815,11 @@
                             "type": "string"
                           },
                           "targetClientId": {
-                            "description": "TargetClientID is the OAuth client ID at the target AS for Step B.",
+                            "description": "TargetClientID is the OAuth client ID at the target AS for target grant.",
                             "type": "string"
                           },
                           "targetClientSecret": {
-                            "description": "TargetClientSecret is the client secret at the target AS for Step B.",
+                            "description": "TargetClientSecret is the client secret at the target AS for target grant.",
                             "type": "string"
                           },
                           "targetClientSecretEnv": {
@@ -1805,11 +1827,11 @@
                             "type": "string"
                           },
                           "targetResource": {
-                            "description": "TargetResource is the RFC 8707 resource indicator sent as the `resource`\nparameter in Step A's RFC 8693 token exchange (draft §4.3, OPTIONAL). It\nidentifies the target resource server — not the access-token audience, which\nis governed by TargetAudience. For MCP backends, set to the MCP server URL.",
+                            "description": "TargetResource is the RFC 8707 resource indicator sent as the `resource`\nparameter in IdP exchange's RFC 8693 token exchange (draft §4.3, OPTIONAL). It\nidentifies the target resource server — not the access-token audience, which\nis governed by TargetAudience. For MCP backends, set to the MCP server URL.",
                             "type": "string"
                           },
                           "targetTokenUrl": {
-                            "description": "TargetTokenURL is the target AS token endpoint for Step B (JWT Bearer grant).",
+                            "description": "TargetTokenURL is the target AS token endpoint for target grant (JWT Bearer grant).",
                             "type": "string"
                           }
                         },
@@ -2033,11 +2055,11 @@
                       "description": "XAA contains configuration for XAA (Cross-Application Access) auth strategy.\nUsed when Type = \"xaa\".",
                       "properties": {
                         "idpClientId": {
-                          "description": "IDPClientID is the OAuth client ID at the IdP for Step A.",
+                          "description": "IDPClientID is the OAuth client ID at the IdP for IdP exchange.",
                           "type": "string"
                         },
                         "idpClientSecret": {
-                          "description": "IDPClientSecret is the client secret at the IdP for Step A.",
+                          "description": "IDPClientSecret is the client secret at the IdP for IdP exchange.",
                           "type": "string"
                         },
                         "idpClientSecretEnv": {
@@ -2045,7 +2067,7 @@
                           "type": "string"
                         },
                         "idpTokenUrl": {
-                          "description": "IDPTokenURL is the IdP token endpoint for Step A (RFC 8693 exchange).",
+                          "description": "IDPTokenURL is the IdP token endpoint for IdP exchange (RFC 8693 exchange).",
                           "type": "string"
                         },
                         "insecureTargetTokenUrl": {
@@ -2053,7 +2075,7 @@
                           "type": "boolean"
                         },
                         "scopes": {
-                          "description": "Scopes are the requested scopes for Steps A and B.",
+                          "description": "Scopes are the requested scopes for IdP exchange and target grant.",
                           "items": {
                             "type": "string"
                           },
@@ -2065,7 +2087,7 @@
                           "type": "string"
                         },
                         "subjectTokenType": {
-                          "description": "SubjectTokenType is the token-type URN of the upstream subject token\nused in Step A. Defaults to TokenTypeIDToken when empty. Currently only\nurn:ietf:params:oauth:token-type:id_token is accepted; the field exists\nto allow future expansion to SAML upstreams without an API break.",
+                          "description": "SubjectTokenType is the token-type URN of the upstream subject token\nused in IdP exchange. Defaults to TokenTypeIDToken when empty. Currently only\nurn:ietf:params:oauth:token-type:id_token is accepted; the field exists\nto allow future expansion to SAML upstreams without an API break.",
                           "type": "string"
                         },
                         "targetAudience": {
@@ -2073,11 +2095,11 @@
                           "type": "string"
                         },
                         "targetClientId": {
-                          "description": "TargetClientID is the OAuth client ID at the target AS for Step B.",
+                          "description": "TargetClientID is the OAuth client ID at the target AS for target grant.",
                           "type": "string"
                         },
                         "targetClientSecret": {
-                          "description": "TargetClientSecret is the client secret at the target AS for Step B.",
+                          "description": "TargetClientSecret is the client secret at the target AS for target grant.",
                           "type": "string"
                         },
                         "targetClientSecretEnv": {
@@ -2085,11 +2107,11 @@
                           "type": "string"
                         },
                         "targetResource": {
-                          "description": "TargetResource is the RFC 8707 resource indicator sent as the `resource`\nparameter in Step A's RFC 8693 token exchange (draft §4.3, OPTIONAL). It\nidentifies the target resource server — not the access-token audience, which\nis governed by TargetAudience. For MCP backends, set to the MCP server URL.",
+                          "description": "TargetResource is the RFC 8707 resource indicator sent as the `resource`\nparameter in IdP exchange's RFC 8693 token exchange (draft §4.3, OPTIONAL). It\nidentifies the target resource server — not the access-token audience, which\nis governed by TargetAudience. For MCP backends, set to the MCP server URL.",
                           "type": "string"
                         },
                         "targetTokenUrl": {
-                          "description": "TargetTokenURL is the target AS token endpoint for Step B (JWT Bearer grant).",
+                          "description": "TargetTokenURL is the target AS token endpoint for target grant (JWT Bearer grant).",
                           "type": "string"
                         }
                       },
