@@ -388,6 +388,120 @@ spec:
           name: exchange-okta
 ```
 
+### Cross-application access (XAA)
+
+:::warning[Experimental]
+
+XAA implements the IETF draft
+[`draft-ietf-oauth-identity-assertion-authz-grant`](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-identity-assertion-authz-grant)
+(ID-JAG), which is not yet a ratified standard. The CRD surface and runtime
+behavior may change in backward-incompatible ways as the draft evolves.
+
+:::
+
+The `xaa` outgoing auth strategy handles the cross-domain case, where a backend
+trusts a different authorization server than the one that issued the client's
+token, and no federation is configured between them. XAA performs a two-step
+exchange on each backend call:
+
+- **Step A ([RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693))**: vMCP
+  exchanges the user's upstream ID token at their IdP for an ID-JAG assertion
+  addressed to the target authorization server.
+- **Step B ([RFC 7523](https://datatracker.ietf.org/doc/html/rfc7523))**: vMCP
+  presents the ID-JAG at the target authorization server, which returns an
+  access token for the backend.
+
+Use `xaa` when [`tokenExchange`](#token-exchange-with-upstream-tokens) doesn't
+apply (the backend doesn't trust the client's IdP) and
+[`upstreamInject`](#upstream-token-injection) doesn't apply (the user has not
+previously authenticated to the backend's provider). XAA requires the
+[embedded authorization server](#embedded-authorization-server) so the user's
+upstream ID token is available at request time.
+
+Create an `MCPExternalAuthConfig` with `type: xaa`. Store the IdP and target
+authorization server client secrets in Kubernetes Secrets:
+
+```yaml title="MCPExternalAuthConfig resource"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPExternalAuthConfig
+metadata:
+  name: xaa-backend
+  namespace: toolhive-system
+spec:
+  type: xaa
+  xaa:
+    # Step A: RFC 8693 token exchange at the user's IdP
+    idpTokenUrl: https://idp.example.com/oauth2/v1/token
+    # Optional in the schema, but strongly recommended: conformant IdPs
+    # reject unauthenticated RFC 8693 token exchange requests
+    idpClientId: <IDP_CLIENT_ID>
+    idpClientSecretRef:
+      name: xaa-idp-client-secret
+      key: client-secret
+
+    # Step B: RFC 7523 JWT Bearer grant at the target AS
+    targetTokenUrl: https://target-as.example.com/oauth2/v1/token
+    targetClientId: <TARGET_CLIENT_ID>
+    targetClientSecretRef:
+      name: xaa-target-client-secret
+      key: client-secret
+
+    # Required: URL of the target authorization server, used as the
+    # ID-JAG audience claim
+    targetAudience: https://target-as.example.com
+
+    # Optional: RFC 8707 resource indicator sent in Step A. Some IdPs
+    # (e.g. Okta's early ID-JAG implementation) require this even though
+    # the draft marks it optional. Set it to the backend MCP server URL.
+    targetResource: https://backend.example.com/mcp
+
+    # Optional: scopes requested at both steps
+    scopes:
+      - backend-api:read
+
+    # Required when the VirtualMCPServer has more than one upstream provider:
+    # with multiple upstreams and this field unset, admission rejects the
+    # backend with an AmbiguousSubjectProvider condition (the rest of the
+    # server keeps reconciling). With a single upstream provider, the
+    # controller auto-populates this field. Must match the name of an entry
+    # under authServerConfig.upstreamProviders.
+    subjectProviderName: my-idp
+```
+
+Attach the `MCPExternalAuthConfig` to the backend `MCPServer`, then use
+discovery mode on the VirtualMCPServer to pick it up automatically:
+
+```yaml title="MCPServer resource"
+spec:
+  externalAuthConfigRef:
+    name: xaa-backend
+```
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  outgoingAuth:
+    source: discovered
+```
+
+Inlining the reference directly in the VirtualMCPServer's
+`outgoingAuth.backends` block (the `source: inline` pattern used by other
+strategies) is structurally valid in the CRD, but XAA's secret mounting and
+`subjectProviderName` auto-population haven't been verified to behave the same
+way under `inline`. Use `discovered` until that's confirmed.
+
+See the
+[MCPExternalAuthConfig reference](../reference/crds/mcpexternalauthconfig.mdx)
+for the full `xaa` field list, including which fields are required.
+
+:::note[Target client credentials are strongly recommended]
+
+The ID-JAG draft (§9.1) recommends confidential clients for Step B, and most
+target authorization servers reject unauthenticated JWT-bearer grants. Omitting
+`targetClientId` and `targetClientSecretRef` causes vMCP to log a warning at
+startup, and Step B typically fails at runtime.
+
+:::
+
 ## Embedded authorization server
 
 The embedded authorization server runs an OAuth authorization server within the
@@ -415,7 +529,7 @@ OAuth flow, token storage and forwarding, and when to use it), see
 [Embedded authorization server](../concepts/embedded-auth-server.mdx). For
 configuring the embedded auth server on individual MCPServer resources (single
 upstream provider), see
-[Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication).
+[Set up the embedded authorization server in Kubernetes](../guides-k8s/embedded-auth-server-k8s.mdx).
 
 :::
 
@@ -474,8 +588,8 @@ VirtualMCPServer or an MCPServer. The key differences for vMCP are:
 
 Add an `authServerConfig` block to your VirtualMCPServer. The configuration
 fields are the same as for the
-[MCPServer embedded auth server](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
--- see that guide for generating keys and creating Secrets.
+[MCPServer embedded auth server](../guides-k8s/embedded-auth-server-k8s.mdx) --
+see that guide for generating keys and creating Secrets.
 
 ```yaml title="VirtualMCPServer resource"
 spec:
@@ -508,10 +622,20 @@ convenient for development, but **tokens become invalid after pod restart**.
 JWTs can no longer be verified (signing keys) and authorization codes and
 refresh tokens can no longer be decoded (HMAC secrets), forcing all users to
 re-authenticate. Always configure persistent keys for production. See
-[Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
+[Set up the embedded authorization server in Kubernetes](../guides-k8s/embedded-auth-server-k8s.mdx)
 for key generation steps.
 
 :::
+
+The issuer URL must use the `https://` scheme. The single exception is
+`localhost`, which can use `http://` for local development. For in-cluster
+deployments where traffic between the embedded auth server and other pods stays
+on a trusted network (for example, an in-cluster service mesh), you can opt in
+to an `http://` issuer on a non-localhost host by setting
+`insecureAllowHTTP: true`. The VirtualMCPServer controller rejects this
+combination at reconcile time with `AuthServerConfigValidated=False` if the flag
+is unset, so misconfiguration surfaces on the resource rather than crashing the
+pod at startup. Never set this for issuers reachable outside the cluster.
 
 If the browser-facing authorization endpoint needs to be on a different host
 than the issuer (for example, behind an ingress that rewrites paths), set
@@ -550,7 +674,7 @@ and hyphens, max 63 characters). This name is what
 [token exchange](#token-exchange-with-upstream-tokens) configs reference to map
 backends to providers. For details on configuring OIDC vs OAuth 2.0 upstream
 providers, see
-[Using an OAuth 2.0 upstream provider](../guides-k8s/auth-k8s.mdx#using-an-oauth-20-upstream-provider).
+[Using an OAuth 2.0 upstream provider](../guides-k8s/embedded-auth-server-k8s.mdx#using-an-oauth-20-upstream-provider).
 The [complete example](#complete-example) below shows full provider
 configurations.
 
@@ -603,7 +727,7 @@ When an upstream returns user identity in the token response itself (Slack
 returns it at `authed_user.id`; Snowflake embeds it in the access-token JWT),
 set `identityFromToken` on the `oauth2Config` with gjson dot-notation paths for
 `subjectPath` (required), `namePath`, and `emailPath`. See
-[Extract identity from the token response](../guides-k8s/auth-k8s.mdx#extract-identity-from-the-token-response)
+[Extract identity from the token response](../guides-k8s/embedded-auth-server-k8s.mdx#extract-identity-from-the-token-response)
 for the full pattern and trust-model caveats.
 
 :::
@@ -714,7 +838,7 @@ requests to a GitHub MCP server backend.
 
 **Prerequisites:** Create Secrets for signing keys, HMAC keys, and upstream
 provider credentials following the steps in
-[Set up embedded authorization server authentication](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication).
+[Set up the embedded authorization server in Kubernetes](../guides-k8s/embedded-auth-server-k8s.mdx).
 You need: `auth-signing-key`, `auth-hmac-key`, `github-client-secret`, and
 `google-client-secret`.
 
@@ -881,5 +1005,5 @@ automatically include your GitHub access token.
 - [Cedar policies](../concepts/cedar-policies.mdx) for detailed policy syntax
 - [VirtualMCPServer configuration](./configuration.mdx)
 - [Token exchange in Kubernetes](../guides-k8s/token-exchange-k8s.mdx)
-- [Embedded auth server for MCPServer](../guides-k8s/auth-k8s.mdx#set-up-embedded-authorization-server-authentication)
+- [Embedded auth server for MCPServer](../guides-k8s/embedded-auth-server-k8s.mdx)
 - [Redis Sentinel session storage](../guides-k8s/redis-session-storage.mdx)

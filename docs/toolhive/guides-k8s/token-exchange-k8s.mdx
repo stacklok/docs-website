@@ -5,6 +5,8 @@ description:
   services in Kubernetes using the ToolHive Operator.
 ---
 
+import ConfigureTokenExchangeIdp from '../_partials/_configure-token-exchange-idp.mdx';
+
 This guide shows you how to configure token exchange in Kubernetes, which allows
 MCP servers to authenticate to backend APIs using short-lived, properly scoped
 tokens instead of embedded secrets.
@@ -15,12 +17,8 @@ For conceptual background on how token exchange works, see
 
 ## Prerequisites
 
-Before you begin, make sure you have:
+You'll need:
 
-- Kubernetes cluster with RBAC enabled
-- ToolHive Operator installed (see
-  [Deploy the ToolHive Operator](./deploy-operator.mdx))
-- `kubectl` access to your cluster
 - An identity provider that supports
   [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) token exchange (such
   as Okta, Auth0, or Keycloak)
@@ -28,20 +26,39 @@ Before you begin, make sure you have:
 - Familiarity with
   [Authentication and authorization in Kubernetes](./auth-k8s.mdx)
 
+:::enterprise
+
+Microsoft Entra ID doesn't implement RFC 8693 token exchange. It has its own
+On-Behalf-Of (OBO) flow, based on the RFC 7523 JWT bearer grant, that solves the
+same backend-federation problem in a non-standard way. Stacklok Enterprise adds
+a dedicated `obo` authentication type for this flow.
+
+[Learn more about Stacklok Enterprise](../../platform/index.mdx).
+
+:::
+
 ## Configure your identity provider
 
-Token exchange requires your identity provider to issue tokens for the backend
-service when presented with a valid MCP server token. This involves:
-
-- Registering a token exchange client with credentials
-- Defining audience and scopes for the backend service
-- Creating access policies that permit token exchange
-
-For detailed IdP configuration steps, see
-[Configure your identity provider](../guides-cli/token-exchange.mdx#configure-your-identity-provider)
-in the CLI guide.
+<ConfigureTokenExchangeIdp />
 
 ## Create the token exchange configuration
+
+The steps below create an `MCPExternalAuthConfig` that exchanges the client's
+token for a backend-scoped one, and reference it from the `MCPServer` alongside
+the `MCPOIDCConfig` that validates the client's original token. Unlike the
+embedded auth server, token exchange doesn't issue the client a new token: it
+validates the one the client already has, then separately exchanges it for a
+different token when forwarding the request to the backend.
+
+```mermaid
+flowchart LR
+    Client[MCP client] -->|"Bearer token<br/>(scoped for MCP server)"| Server[MCPServer]
+    Server -->|oidcConfigRef| OIDC[("MCPOIDCConfig")]
+    Server -->|externalAuthConfigRef| ExtAuth[("MCPExternalAuthConfig<br/>type: tokenExchange")]
+    ExtAuth -->|clientSecretRef| Secret[(Kubernetes Secret)]
+    ExtAuth -.->|"exchange at tokenUrl"| IdP[Identity provider]
+    Server -->|"Bearer token<br/>(exchanged, backend-scoped)"| Backend[Backend service]
+```
 
 ### Step 1: Create a Secret for client credentials
 
@@ -288,3 +305,6 @@ Key points in this example:
 - [AWS STS integration](../integrations/aws-sts.mdx) - for AWS services,
   ToolHive has built-in STS support using `MCPExternalAuthConfig` with
   `type: awsSts`
+- [Combine embedded auth with outgoing token exchange](./embedded-auth-server-k8s.mdx#combine-embedded-auth-with-outgoing-token-exchange) -
+  set both `authServerRef` and `externalAuthConfigRef` on the same MCPServer to
+  pair the two

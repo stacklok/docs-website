@@ -281,11 +281,11 @@ const config: Config = {
           label: 'Resources',
           position: 'left',
         },
-        {
+        /* {
           to: '/toolhive/updates',
           label: 'Updates',
           position: 'left',
-        },
+        }, */
         {
           href: 'https://github.com/stacklok',
           className: 'navbar-icon-link fa-brands fa-github fa-lg',
