@@ -15,9 +15,8 @@ in your Notion workspace.
 
 This is a remote MCP server that uses the **Auto-Discovered** authorization
 method, meaning ToolHive discovers Notion's OAuth endpoints automatically. On
-the CLI and UI, this requires minimal configuration. On Kubernetes, it takes a
-one-time OAuth client registration and an embedded authorization server setup,
-described below.
+the CLI and UI, this requires minimal configuration. On Kubernetes, it takes an
+embedded authorization server setup, described below.
 
 ## Metadata
 
@@ -96,26 +95,13 @@ genuinely reachable over HTTPS, not just resolvable inside the cluster.
 Notion's remote MCP server (`mcp.notion.com`) only supports Dynamic Client
 Registration (RFC 7591) for third-party OAuth clients; there's no
 dashboard-based app registration for it, unlike Notion's classic API
-integrations. Once your hostname is live, register once to mint a persistent
-client ID and secret:
-
-```bash
-curl -s -X POST https://mcp.notion.com/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "client_name": "my-toolhive-proxy",
-    "redirect_uris": ["https://notion-mcp.example.com/oauth/callback"],
-    "grant_types": ["authorization_code", "refresh_token"],
-    "response_types": ["code"],
-    "token_endpoint_auth_method": "client_secret_post"
-  }'
-```
-
-Save the returned `client_id` and `client_secret`; they don't expire. The
-`redirect_uris` value must exactly match the callback URL you configure below.
+integrations. The embedded authorization server's `dcrConfig` field handles this
+automatically: it registers a client with Notion at startup using Notion's
+discovery document and caches the returned credentials, so there's no manual
+registration step and no client secret to store.
 
 Generate a signing key and an HMAC key for the embedded authorization server,
-and store all three credentials as Secrets:
+and store them as Secrets:
 
 ```bash
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out signing-key.pem
@@ -125,8 +111,6 @@ kubectl create secret generic notion-auth-signing-key -n toolhive-system \
   --from-file=signing-key=signing-key.pem
 kubectl create secret generic notion-auth-hmac-key -n toolhive-system \
   --from-literal=hmac-key="$(cat hmac-key.txt)"
-kubectl create secret generic notion-client-secret -n toolhive-system \
-  --from-literal=client-secret=<YOUR_CLIENT_SECRET>
 ```
 
 Create the embedded authorization server configuration, the OIDC config that
@@ -154,11 +138,9 @@ spec:
         oauth2Config:
           authorizationEndpoint: 'https://mcp.notion.com/authorize'
           tokenEndpoint: 'https://mcp.notion.com/token'
-          clientId: '<YOUR_CLIENT_ID>'
-          clientSecretRef:
-            name: notion-client-secret
-            key: client-secret
           redirectUri: 'https://notion-mcp.example.com/oauth/callback'
+          dcrConfig:
+            discoveryUrl: 'https://mcp.notion.com/.well-known/oauth-authorization-server'
 ---
 apiVersion: toolhive.stacklok.dev/v1beta1
 kind: MCPOIDCConfig
@@ -226,7 +208,11 @@ kubectl get mcpremoteproxy notion -n toolhive-system
 Connect your MCP client to the proxy's URL. Each client authenticates once
 through the OAuth flow, redirecting through Notion, then reuses the token issued
 by the embedded authorization server. For production deployments, configure
-Redis-backed session storage so tokens survive pod restarts. See
+Redis-backed session storage so tokens survive pod restarts. This matters more
+than usual here: the DCR-issued client credentials live in the same store as
+sessions, so without Redis-backed storage, a pod restart also registers a
+brand-new OAuth client with Notion instead of reusing the previous one, leaving
+the old registration orphaned. See
 [Horizontal scaling](../guides-k8s/run-mcp-k8s.mdx#horizontal-scaling) and
 [Redis session storage](../guides-k8s/redis-session-storage.mdx).
 
@@ -286,16 +272,16 @@ If OAuth authentication fails or times out:
 3. Try restarting the server with `thv restart notion-remote`
 
 **Kubernetes:** Your client authenticates against the embedded authorization
-server, which then completes a separate OAuth exchange with Notion using your
-registered client credentials. Check the proxy pod logs for errors from either
-leg of that flow:
+server, which then completes a separate OAuth exchange with Notion using
+credentials obtained automatically via Dynamic Client Registration. Check the
+proxy pod logs for errors from either leg of that flow:
 
 ```bash
 kubectl logs -n toolhive-system -l app.kubernetes.io/instance=notion | grep -i oauth
 ```
 
 The most common causes are a path segment in `issuer` or a `redirectUri` that
-doesn't exactly match what you registered with Notion. See the note above.
+doesn't match your externally reachable hostname. See the note above.
 
 </details>
 <details>
