@@ -412,6 +412,12 @@ servers into a single endpoint. It's written with a lowercase "v" followed by
 "MC" in all caps and a capital "P" (not "VMCP" or "Vmcp"). Use "Virtual MCP
 Server (vMCP)" on first use, "vMCP" thereafter.
 
+**Microsoft Entra ID**: Microsoft's cloud identity and access management
+platform. Microsoft rebranded it from "Azure AD" (Azure Active Directory) in
+2023, so don't use "Azure AD" except when quoting a literal API, CLI, or field
+value that still uses the old name. Use "Microsoft Entra ID" on first reference,
+"Entra ID" thereafter.
+
 **npm**: The registry for JavaScript packages (the "npm registry"), and the
 default package manager for JavaScript. Since it's both the registry _and_ the
 package manager, it may be useful to disambiguate "the npm registry". It's not
