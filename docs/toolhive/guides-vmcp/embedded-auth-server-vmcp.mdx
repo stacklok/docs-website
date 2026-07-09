@@ -69,6 +69,32 @@ order, and the auth server stores each provider's tokens before moving to the
 next. After the final provider completes, the auth server issues a single JWT to
 the client.
 
+## How the references link by name
+
+Two of the references around the embedded auth server link by matching string
+values, not by resource name, which is a common source of misconfiguration. The
+`MCPOIDCConfig` that validates incoming requests must carry the same `issuer` as
+`authServerConfig`, and each outgoing strategy's `providerName` (upstream
+injection) or `subjectProviderName` (token exchange, XAA) must match a `name`
+under `authServerConfig.upstreamProviders`.
+
+```mermaid
+flowchart TB
+    subgraph VMCP[VirtualMCPServer]
+        IN["incomingAuth.oidcConfigRef"]
+        AS["authServerConfig<br/>issuer + upstreamProviders[].name"]
+        OUT["outgoingAuth.backends.&lt;name&gt;"]
+    end
+
+    IN -->|oidcConfigRef| OIDC[("MCPOIDCConfig<br/>issuer")]
+    OIDC -.->|"issuer must match"| AS
+
+    OUT -->|externalAuthConfigRef| EAC[("MCPExternalAuthConfig<br/>upstreamInject / tokenExchange / xaa")]
+    EAC -.->|"providerName /<br/>subjectProviderName<br/>must match a provider name"| AS
+
+    AS -.->|OAuth login| IdP[Upstream IdPs<br/>GitHub, Google, Okta]
+```
+
 ## Differences from the MCPServer embedded auth server
 
 The embedded auth server uses the same configuration structure whether on a
@@ -298,6 +324,15 @@ embedded auth server, because they read tokens it acquired during the user's
 interactive login. For backend strategies that do not depend on the embedded
 auth server (static credentials, plain token exchange, AWS STS, pass-through),
 see [Authentication](./authentication.mdx#backend-authentication).
+
+The same backend-linkage rules from
+[How the resources connect](./authentication.mdx#how-the-resources-connect)
+still apply here: the token a strategy produces must satisfy the backend's own
+`oidcConfigRef`, and the `MCPExternalAuthConfig` is referenced either inline
+(`outgoingAuth.backends`) or through discovery (the backend's own
+`externalAuthConfigRef`). `upstreamInject`, for instance, only works when the
+backend accepts the upstream provider's token directly; when it doesn't,
+exchange the token instead.
 
 ### Forward a stored upstream token (upstream injection)
 

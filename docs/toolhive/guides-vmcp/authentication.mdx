@@ -14,13 +14,12 @@ allowed), and backend authentication (how vMCP reaches each backend).
 
 ```mermaid
 flowchart LR
-    subgraph Boundary1[" "]
+    subgraph Boundary1["<strong>Boundary 1:</strong> Client → vMCP"]
         direction TB
         Client[MCP Client]
-        B1Label["**Boundary 1**<br>Client → vMCP"]
     end
 
-    subgraph vMCP["Virtual MCP Server (vMCP)"]
+    subgraph vMCP["<strong>Virtual MCP Server (vMCP)</strong>"]
         direction TB
         Auth["Token validation<br>(issuer, audience, expiry,<br>signature/introspection)"]
         Authz["Authorization<br>(Cedar policies)"]
@@ -28,16 +27,13 @@ flowchart LR
         Auth --> Authz --> Proxy
     end
 
-    subgraph Boundary2[" "]
+    subgraph Boundary2["<strong>Boundary 2:</strong> vMCP → Backend APIs"]
         direction TB
-        B2Label["**Boundary 2**<br>vMCP → Backend APIs"]
-        GitHub[GitHub API]
-        Jira[Jira API]
+        Backends[Backend APIs]
     end
 
     Client -->|"vMCP-scoped<br>token"| Auth
-    Proxy -->|"Backend-scoped<br>token"| GitHub
-    Proxy -->|"Backend-scoped<br>token"| Jira
+    Proxy -->|"Backend-scoped<br>token"| Backends
 ```
 
 **Boundary 1 (incoming):** Clients authenticate to vMCP using OAuth 2.1
@@ -53,6 +49,49 @@ and [Authorize requests](#authorize-requests).
 **Boundary 2 (outgoing):** vMCP obtains credentials for each backend API using
 the configured backend authentication strategy. See
 [Backend authentication](#backend-authentication) for how to choose one.
+
+## How the resources connect
+
+The VirtualMCPServer references other resources for both boundaries: an
+`MCPOIDCConfig` (and optionally an `MCPAuthzConfig`) for incoming requests, and
+an `MCPExternalAuthConfig` for outgoing credentials.
+
+The piece that's easy to miss is that each backend is itself a ToolHive resource
+with its own authentication surface. A backend MCPServer or MCPRemoteProxy
+validates its inbound requests against its own `oidcConfigRef`, exactly as a
+standalone server would. So vMCP's outgoing boundary meets the backend's
+incoming boundary at that hop: the credential vMCP presents must satisfy the
+backend's own `oidcConfigRef`.
+
+```mermaid
+flowchart LR
+    Client[MCP client] -->|token| VMCP[VirtualMCPServer]
+
+    VMCP -->|oidcConfigRef| OIDC[("MCPOIDCConfig")]
+    VMCP -.->|"authzConfig /<br/>authzConfigRef"| Authz[("MCPAuthzConfig")]
+
+    VMCP -->|outgoing token| Backend["Backend<br/>(MCPServer /<br/>MCPRemoteProxy)"]
+    Backend -->|"oidcConfigRef<br/>(validates vMCP's token)"| BOIDC[("MCPOIDCConfig")]
+
+    VMCP -.->|"outgoingAuth.backends[]<br/>(inline mode)"| Ext[("MCPExternalAuthConfig")]
+    Backend -.->|"externalAuthConfigRef<br/>(discovery mode)"| Ext
+```
+
+The `MCPExternalAuthConfig` is the shared resource, and which side references it
+depends on the [backend discovery mode](./backend-discovery.mdx):
+
+- **Inline** (`outgoingAuth.source: inline`): vMCP owns the reference under
+  `outgoingAuth.backends.<name>.externalAuthConfigRef`, and each key must match
+  a backend name in the `MCPGroup`.
+- **Discovery** (`outgoingAuth.source: discovered`): vMCP reads the backend's
+  own `externalAuthConfigRef`, the same field the backend would use standalone.
+  One `MCPExternalAuthConfig` can be shared across several backends.
+
+An `MCPServerEntry` backend has only an `externalAuthConfigRef`, not its own
+`oidcConfigRef`. When vMCP runs the
+[embedded authorization server](./embedded-auth-server-vmcp.mdx), some
+references also link by name (issuer and upstream provider); that wiring is
+shown on the embedded auth server page.
 
 ## Incoming authentication
 
