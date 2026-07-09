@@ -222,7 +222,19 @@ const mcpSidebar: SidebarsConfig[string] = [
       'toolhive/guides-vmcp/quickstart',
       'toolhive/guides-vmcp/configuration',
       'toolhive/guides-vmcp/backend-discovery',
-      'toolhive/guides-vmcp/authentication',
+      {
+        type: 'category',
+        label: 'Authentication and authorization',
+        description:
+          'How to secure vMCP with client authentication, authorization, and backend auth',
+        collapsed: false,
+        collapsible: false,
+        link: {
+          type: 'doc',
+          id: 'toolhive/guides-vmcp/authentication',
+        },
+        items: ['toolhive/guides-vmcp/embedded-auth-server-vmcp'],
+      },
       'toolhive/guides-vmcp/tool-aggregation',
       'toolhive/guides-vmcp/composite-tools',
       'toolhive/guides-vmcp/optimizer',
