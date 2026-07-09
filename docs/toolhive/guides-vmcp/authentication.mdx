@@ -1,7 +1,8 @@
 ---
 title: Authentication and authorization
 description:
-  Configure client authentication, authorization, and backend auth for vMCP.
+  Configure client authentication, authorization, and backend authentication for
+  vMCP.
 ---
 
 Virtual MCP Server (vMCP) implements a two-boundary authentication model that
@@ -56,12 +57,20 @@ The VirtualMCPServer references other resources for both boundaries: an
 `MCPOIDCConfig` (and optionally an `MCPAuthzConfig`) for incoming requests, and
 an `MCPExternalAuthConfig` for outgoing credentials.
 
-The piece that's easy to miss is that each backend is itself a ToolHive resource
-with its own authentication surface. A backend MCPServer or MCPRemoteProxy
-validates its inbound requests against its own `oidcConfigRef`, exactly as a
-standalone server would. So vMCP's outgoing boundary meets the backend's
-incoming boundary at that hop: the credential vMCP presents must satisfy the
-backend's own `oidcConfigRef`.
+The piece that's easy to miss is that each backend has its own authentication
+surface, and it differs by
+[backend type](./configuration.mdx#add-backends-to-a-group):
+
+- A **ToolHive-managed backend** (MCPServer or MCPRemoteProxy) validates its
+  inbound requests against its own `oidcConfigRef`, exactly as a standalone
+  server would. vMCP's outgoing boundary meets that backend's incoming boundary
+  at the hop: the credential vMCP presents must satisfy the backend's own
+  `oidcConfigRef`.
+- An **MCPServerEntry** is a zero-infrastructure pointer to a remote MCP server
+  that ToolHive doesn't run, so it has no `oidcConfigRef` of its own. The remote
+  service validates the request, and vMCP simply presents whatever credential
+  the outgoing strategy produces (commonly the user's upstream OAuth token).
+  This is the usual shape for remote SaaS backends.
 
 ```mermaid
 flowchart LR
@@ -70,11 +79,14 @@ flowchart LR
     VMCP -->|oidcConfigRef| OIDC[("MCPOIDCConfig")]
     VMCP -.->|"authzConfig /<br/>authzConfigRef"| Authz[("MCPAuthzConfig")]
 
-    VMCP -->|outgoing token| Backend["Backend<br/>(MCPServer /<br/>MCPRemoteProxy)"]
-    Backend -->|"oidcConfigRef<br/>(validates vMCP's token)"| BOIDC[("MCPOIDCConfig")]
+    VMCP -->|token| Backend["MCPServer /<br/>MCPRemoteProxy"]
+    Backend -->|"own oidcConfigRef<br/>(validates vMCP's token)"| BOIDC[("MCPOIDCConfig")]
+
+    VMCP -->|token| Entry["MCPServerEntry<br/>→ remote server<br/>(no oidcConfigRef)"]
 
     VMCP -.->|"outgoingAuth.backends[]<br/>(inline mode)"| Ext[("MCPExternalAuthConfig")]
     Backend -.->|"externalAuthConfigRef<br/>(discovery mode)"| Ext
+    Entry -.-> Ext
 ```
 
 The `MCPExternalAuthConfig` is the shared resource, and which side references it
@@ -87,8 +99,7 @@ depends on the [backend discovery mode](./backend-discovery.mdx):
   own `externalAuthConfigRef`, the same field the backend would use standalone.
   One `MCPExternalAuthConfig` can be shared across several backends.
 
-An `MCPServerEntry` backend has only an `externalAuthConfigRef`, not its own
-`oidcConfigRef`. When vMCP runs the
+When vMCP runs the
 [embedded authorization server](./embedded-auth-server-vmcp.mdx), some
 references also link by name (issuer and upstream provider); that wiring is
 shown on the embedded auth server page.
@@ -330,11 +341,9 @@ so they require the
 covered below.
 
 To forward a header the client already holds (its own token in the same trust
-domain, or an API key the backend resolves to a user itself) to _all_ backends,
+domain, or an API key the backend resolves to a user itself) to all backends,
 use the top-level [`passthroughHeaders`](#pass-through-client-headers) allowlist
-instead. It is a global, lower-precedence fallback: on any overlapping header
-such as `Authorization`, a per-backend strategy from the table above overrides
-it.
+instead.
 
 ### Discovery mode
 
