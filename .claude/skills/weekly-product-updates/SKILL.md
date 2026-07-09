@@ -332,7 +332,7 @@ Flexibility is okay -- not every bullet needs the exact same format if the benef
 
 **The Kubernetes Operator** now supports deploying MCP servers with built-in authentication, eliminating the need for users to manage credentials locally:
 
-- **Embedded authorization server** lets you deploy standalone MCP servers where users authenticate directly to your existing identity provider (like Okta or Azure AD), receiving the appropriate access based on your organization's policies.
+- **Embedded authorization server** lets you deploy standalone MCP servers where users authenticate directly to your existing identity provider (like Okta or Entra ID), receiving the appropriate access based on your organization's policies.
 - **AWS STS token exchange** converts OIDC identity tokens into temporary AWS credentials automatically -- users log in to your company IDP and receive the right AWS IAM role without configuring the AWS CLI or storing credentials on their machine.
 ```
 

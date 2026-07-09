@@ -230,6 +230,7 @@ ALWAYS use these exact terms and capitalizations. When editing documentation, re
 - open source (not "open-source")
 - large language model (LLM)
 - Visual Studio Code ("VS Code" after first use)
+- Microsoft Entra ID ("Entra ID" after first use; avoid "Azure AD" unless you are quoting a literal API, CLI, or field value)
 - Virtual MCP Server (vMCP) - a feature of ToolHive that aggregates multiple MCP servers into a single endpoint; use "Virtual MCP Server (vMCP)" on first use, "vMCP" thereafter
 - Stacklok Enterprise - the commercial, enterprise-licensed distribution of ToolHive, adding turnkey IdP integration, centralized policy enforcement, hardened and signed releases, and SLA-backed support
 - Stacklok Desktop - the enterprise edition of the ToolHive desktop app, with enterprise lockdown policies controlled by the Enterprise Manager (not "Enterprise UI", "Enterprise Studio", or "Stacklok UI")
