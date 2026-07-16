@@ -47,6 +47,14 @@ Grafana instance:
 - `GRAFANA_ORG_ID` (optional): The numeric organization ID if your Grafana
   instance has multiple organizations
 
+:::note[Important]
+
+The **Command arguments** section is pre-populated with `--transport stdio` from
+the registry. Don't remove it; the server needs it to run with the stdio
+transport.
+
+:::
+
 :::tip[Security tip]
 
 Enable outbound network filtering on the **Network Isolation** tab to restrict
@@ -81,6 +89,14 @@ thv run \
   --secret grafana-token,target=GRAFANA_SERVICE_ACCOUNT_TOKEN \
   grafana
 ```
+
+:::note[Important]
+
+ToolHive runs the Grafana server with the stdio transport by default. If you
+pass your own arguments to the server after the `--` separator, include
+`--transport stdio` as well, since custom arguments replace the defaults.
+
+:::
 
 ToolHive
 [isolates the server's network access](../guides-cli/network-isolation.mdx) by
@@ -117,13 +133,14 @@ environment variable with the numeric organization ID (for example,
 :::tip[Debug mode]
 
 Add the `--` separator followed by `-debug` to enable detailed logging of HTTP
-requests and responses:
+requests and responses. Because you're passing your own arguments, reproduce
+`--transport stdio` as well:
 
 ```bash
 thv run \
   -e GRAFANA_URL=http://localhost:3000 \
   --secret grafana-token,target=GRAFANA_SERVICE_ACCOUNT_TOKEN \
-  -- -debug
+  -- --transport stdio -debug
 ```
 
 :::
@@ -149,13 +166,15 @@ metadata:
   name: grafana
   namespace: toolhive-system
 spec:
-  image: docker.io/grafana/mcp-grafana:0.17.0
+  image: docker.io/grafana/mcp-grafana:0.17.2
   transport: streamable-http
   mcpPort: 8000
   proxyPort: 8080
   args:
     - --transport
     - streamable-http
+    - --allowed-hosts
+    - '*'
   env:
     - name: GRAFANA_URL
       value: 'http://grafana.observability.svc.cluster.local:3000'
@@ -164,6 +183,17 @@ spec:
       key: token
       targetEnvName: GRAFANA_SERVICE_ACCOUNT_TOKEN
 ```
+
+:::note[Important]
+
+Don't remove the `--allowed-hosts` argument. Grafana MCP v0.17.1 added
+DNS-rebinding protection that rejects any request whose `Host` header isn't in
+the allowlist. In Kubernetes, the ToolHive proxy reaches the server over an
+internal ClusterIP address that isn't known ahead of time, so `*` is required to
+accept those requests. This is safe because the server runs behind the ToolHive
+proxy with its network access isolated.
+
+:::
 
 Apply the manifest to your Kubernetes cluster:
 
