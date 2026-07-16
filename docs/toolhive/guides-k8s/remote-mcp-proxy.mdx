@@ -455,6 +455,62 @@ via `AssumeRoleWithWebIdentity` and signs requests with SigV4. See the
 
 :::
 
+### Customize the remote proxy pod
+
+Use `podTemplateSpec` to set pod-level options that aren't exposed as
+first-class fields on `MCPRemoteProxy`, such as security contexts, resource
+limits, node selectors, and tolerations. The field follows the standard
+Kubernetes
+[`PodTemplateSpec`](https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/pod-template-v1/#PodTemplateSpec)
+format, and you only need to specify the fields you want to add or override.
+
+This example sets resource limits on the proxy container and adds a node
+selector:
+
+```yaml {15-27} title="analytics-proxy-custom-pod.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPRemoteProxy
+metadata:
+  name: analytics-proxy
+  namespace: toolhive-system
+spec:
+  remoteUrl: https://mcp.analytics.example.com
+  proxyPort: 8080
+  transport: streamable-http
+
+  oidcConfigRef:
+    name: analytics-oidc
+    audience: analytics-mcp-proxy
+
+  podTemplateSpec:
+    spec:
+      nodeSelector:
+        workload-tier: platform
+      containers:
+        - name: toolhive # This name must be "toolhive"
+          resources:
+            limits:
+              cpu: '500m'
+              memory: '512Mi'
+            requests:
+              cpu: '100m'
+              memory: '128Mi'
+```
+
+:::info[Container name requirement]
+
+To override the proxy container, use `name: toolhive`. The operator applies
+overrides by matching the container name; any other name adds a sidecar instead.
+This differs from [`MCPServer`](./run-mcp-k8s.mdx#customize-the-mcp-server-pod),
+where the main container is `mcp`.
+
+:::
+
+If the pod template fails validation, the operator sets the `PodTemplateValid`
+condition to `False`, moves the resource to phase `Failed`, and stops updating
+the Deployment. See [Check remote proxy status](#check-remote-proxy-status) to
+inspect the failure message.
+
 ### Inject custom headers
 
 Some remote MCP servers require custom headers for tenant identification, API
@@ -742,7 +798,9 @@ The status shows:
 - **Phase**: Current state (Pending, Ready, Failed, Terminating)
 - **URL**: Internal cluster URL
 - **External URL**: External URL if exposed via Ingress
-- **Conditions**: Detailed status conditions
+- **Conditions**: Detailed status conditions, including `PodTemplateValid` when
+  you use [`podTemplateSpec`](#customize-the-remote-proxy-pod). Check the
+  `message` field of any condition reporting `status: "False"` to see why.
 
 ## Telemetry and observability
 
