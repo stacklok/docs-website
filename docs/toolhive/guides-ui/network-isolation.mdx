@@ -11,14 +11,15 @@ access APIs, download data, or communicate with other services. However,
 malicious or misconfigured servers can also exfiltrate sensitive data or
 download unwanted content.
 
-When you install an MCP server in ToolHive, you can optionally enable _network
-isolation_. This feature restricts the MCP server's network access to only the
-resources you specify.
+When you install an MCP server in ToolHive, you choose how the server reaches
+the network. _Network isolation_ routes the server's outbound HTTP and HTTPS
+traffic through an egress proxy that restricts it to the destinations you allow.
 
 :::note
 
-Network isolation currently supports HTTP and HTTPS connections only. Other
-protocols are not supported.
+Network isolation supports HTTP and HTTPS connections only. Other protocols are
+not filtered by the proxy; use **No isolation** or **Host networking** if your
+server needs raw TCP or a non-HTTP protocol.
 
 :::
 
@@ -34,19 +35,42 @@ hardcoded connections).
 
 :::
 
-## Enabling network isolation
+## Configuring network access
 
-Network isolation is available for local MCP servers installed from the registry
-or custom servers. It is not available for remote MCP servers, which are hosted
-and outside of ToolHive.
+Network access modes are available for local MCP servers installed from the
+registry or custom servers. They do not apply to remote MCP servers, which are
+hosted and reached over the internet outside of ToolHive's control.
 
-During the MCP server installation, select the **Network isolation** tab in the
-configuration form. Click the toggle to enable it.
+During the MCP server installation, select the **Network access** tab in the
+configuration form and choose one of three modes:
 
-When you enable network isolation, any safe default configuration defined in the
-registry is pre-loaded in the form. You can accept these defaults or customize
-the settings to specify which hosts and ports the MCP server is allowed to
-access:
+- **No isolation**: the server has unrestricted outbound network access. Use
+  this for trusted servers or when your server needs a protocol other than HTTP
+  or HTTPS.
+- **Host networking (Advanced)**: the server's container shares the host
+  machine's network namespace directly. No egress filtering is applied. Use this
+  only when you understand the security implications.
+- **Isolate behind an HTTP proxy**: the server's outbound HTTP and HTTPS traffic
+  is routed through ToolHive's egress proxy, which only forwards connections to
+  the destinations you allow.
+
+Registry servers default to **Isolate behind an HTTP proxy** unless the registry
+entry declares a different mode. Custom servers default to **No isolation**;
+switch to the proxy mode to opt in.
+
+### Restricting proxied traffic
+
+When you choose **Isolate behind an HTTP proxy**, an **Allowed destinations**
+radio appears:
+
+- **Anywhere**: allow HTTP and HTTPS traffic to any destination.
+- **Selected destinations**: only allow the specific hosts and ports you list
+  below.
+
+If **Selected destinations** is chosen, any safe defaults defined by the
+registry entry are pre-loaded in the form. You can accept these defaults or
+customize the settings to specify which hosts and ports the MCP server is
+allowed to access:
 
 - **Allowed hosts**:\
   A list of hostnames or IP addresses that the MCP server is allowed to access.
@@ -69,18 +93,18 @@ access:
 
 :::info[Important]
 
-If you do not specify any allowed hosts or ports, the MCP server will not be
-able to access any external resources, including the internet. This can be
+If you choose **Selected destinations** but leave both allowed hosts and allowed
+ports empty, the MCP server cannot reach any external resources. This can be
 useful for MCP servers that do not require network access or for testing
-purposes.
+purposes; the form displays a warning when this configuration is detected.
 
 :::
 
 ## Example configuration
 
-The configuration pictured below allows the MCP server to access
-`api.github.com` and all subdomains of `githubusercontent.com` on port 443
-(HTTPS):
+With **Isolate behind an HTTP proxy** and **Selected destinations** chosen, the
+configuration pictured below allows the MCP server to access `api.github.com`
+and all subdomains of `githubusercontent.com` on port 443 (HTTPS):
 
 <ThemedImage
   alt='Network isolation configuration showing allowed hosts and ports'
@@ -94,11 +118,11 @@ The configuration pictured below allows the MCP server to access
 
 ### Accessing other workloads on the same container network
 
-To allow an MCP server to access other workloads on the same network, you need
-to configure network isolation to include the appropriate hostnames and ports.
-This is commonly needed when your MCP server needs to communicate with
-databases, APIs, or other services that are running on your local host during
-development.
+To allow an MCP server to access other workloads on the same network, choose
+**Isolate behind an HTTP proxy** with **Selected destinations**, then list the
+appropriate hostnames and ports. This is commonly needed when your MCP server
+needs to communicate with databases, APIs, or other services that are running on
+your local host during development.
 
 For example, in Docker environments, you can add `host.docker.internal` to
 access services on the host. `host.docker.internal` is a special hostname
@@ -126,10 +150,13 @@ containers.
 <details>
 <summary>MCP server can't reach an external service</summary>
 
-1. Check your allowed hosts and ports. Open the server's settings and confirm
-   the hostname and port the server needs are listed. Network isolation only
-   supports HTTP and HTTPS, so direct TCP connections (databases, custom
-   protocols) won't work.
+1. Check the network access mode and allowed destinations. Open the server's
+   settings, select the **Network access** tab, and confirm the mode is
+   appropriate for the server. If the server is set to **Isolate behind an HTTP
+   proxy** with **Selected destinations**, confirm the hostname and port the
+   server needs are listed. Proxied network isolation only supports HTTP and
+   HTTPS, so direct TCP connections (databases, custom protocols) won't work in
+   this mode.
 
 2. Check the server logs from the **MCP servers** page. Select the server, open
    the logs panel, and look for connection errors or denied requests.
