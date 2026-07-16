@@ -15,6 +15,10 @@ When you install an MCP server in ToolHive, you choose how the server reaches
 the network. _Network isolation_ routes the server's outbound HTTP and HTTPS
 traffic through an egress proxy that restricts it to the destinations you allow.
 
+By default, ToolHive enables network isolation for local MCP servers, matching
+the ToolHive CLI. New servers start behind the HTTP proxy, and you can relax or
+tighten this from the **Network access** tab as described below.
+
 :::note
 
 Network isolation supports HTTP and HTTPS connections only. Other protocols are
@@ -54,9 +58,10 @@ configuration form and choose one of three modes:
   is routed through ToolHive's egress proxy, which only forwards connections to
   the destinations you allow.
 
-Registry servers default to **Isolate behind an HTTP proxy** unless the registry
-entry declares a different mode. Custom servers default to **No isolation**;
-switch to the proxy mode to opt in.
+Both registry and custom servers default to **Isolate behind an HTTP proxy**,
+because ToolHive enables network isolation by default. Registry servers pre-load
+any allowed destinations declared in their registry entry. To give a server
+unrestricted network access, switch to **No isolation**.
 
 ### Restricting proxied traffic
 
@@ -100,6 +105,21 @@ purposes; the form displays a warning in this case.
 
 :::
 
+### Allowing host machine access
+
+When a server runs behind the HTTP proxy, ToolHive blocks connections to Docker
+gateway addresses (`host.docker.internal`, `gateway.docker.internal`, and the
+Docker bridge gateway IP) by default, even when you allow all destinations.
+Reaching the host machine is a separate, more privileged opt-in.
+
+Enable **Allow host machine access** to let the server connect to these gateway
+addresses. Turn this on when your MCP server needs to reach a service running on
+your host machine, such as a database or a local development server.
+
+Host machine access is port-independent: once enabled, the gateway is reachable
+on any port, regardless of the allowed ports you list. You don't need to add the
+gateway hostname to the allowed hosts.
+
 ## Example configuration
 
 With **Isolate behind an HTTP proxy** and **Selected destinations** chosen, the
@@ -118,19 +138,19 @@ and all subdomains of `githubusercontent.com` on port 443 (HTTPS):
 
 ### Accessing other workloads on the same container network
 
-To allow an MCP server to access other workloads on the same network, choose
-**Isolate behind an HTTP proxy** with **Selected destinations**, then list the
-appropriate hostnames and ports. This is commonly needed when your MCP server
-needs to communicate with databases, APIs, or other services that are running on
-your local host during development.
+MCP servers often need to reach services running elsewhere during development,
+such as databases, APIs, or other local servers.
 
-For example, in Docker environments, you can add `host.docker.internal` to
-access services on the host. `host.docker.internal` is a special hostname
-provided by Docker that resolves to the host machine's IP address from within
-containers.
+To reach a service on your **host machine**, enable
+[**Allow host machine access**](#allowing-host-machine-access). The server can
+then connect to `host.docker.internal` (on macOS and Windows) or the Docker
+bridge gateway IP (typically `172.17.0.1` on Linux) on any port. Because these
+gateway addresses are blocked by default, adding them to the allowed hosts list
+alone is not enough; you must enable this option.
 
-- **Allowed hosts**: `host.docker.internal`
-- **Allowed ports**: `3000`
+To reach a service that is **not** on the host machine, add its hostname and
+port to the allowed hosts and ports under **Selected destinations**, as
+described in [Restricting proxied traffic](#restricting-proxied-traffic).
 
 ## Next steps
 
@@ -154,9 +174,10 @@ containers.
    settings, select the **Network access** tab, and confirm the mode is
    appropriate for the server. If the server is set to **Isolate behind an HTTP
    proxy** with **Selected destinations**, confirm the hostname and port the
-   server needs are listed. Proxied network isolation only supports HTTP and
-   HTTPS, so direct TCP connections (databases, custom protocols) won't work in
-   this mode.
+   server needs are listed. If the server needs to reach a service on your host
+   machine, make sure **Allow host machine access** is enabled. Proxied network
+   isolation only supports HTTP and HTTPS, so direct TCP connections (databases,
+   custom protocols) won't work in this mode.
 
 2. Check the server logs from the **MCP servers** page. Select the server, open
    the logs panel, and look for connection errors or denied requests.
