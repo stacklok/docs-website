@@ -248,32 +248,38 @@ oras discover "$IMAGE"
 
 ## Which images are signed
 
-| Image (`<IMAGE>`)                                                                   | Signing workflow                   | Verifiable |
-| ----------------------------------------------------------------------------------- | ---------------------------------- | :--------: |
-| `operator`, `proxyrunner`, `vmcp`, `registry-api`, `toolhive-enterprise`            | `_release-image.yml`               |     ✓      |
-| `ai-gateway-operator`, `ai-gateway-main-processor`, `ai-gateway-api-key-service`    | `_release-image.yml`               |     ✓      |
-| `cloud-ui`                                                                          | `_release-toolhive-cloud-ui.yml`   |     ✓      |
-| `ai-gateway-controller`, `ai-gateway-extproc`                                       | `_release-upstream-repackaged.yml` |     ✓      |
-| Third-party dependencies (Envoy Gateway, Envoy Ratelimit, Presidio, Replicated SDK) | upstream, not re-signed            |    n/a     |
+| Image (`<IMAGE>`)                                                                                      | Signing workflow                   | Verifiable |
+| ------------------------------------------------------------------------------------------------------ | ---------------------------------- | :--------: |
+| `thv`, `operator`, `proxyrunner`, `vmcp`, `registry-api`, `toolhive-enterprise`                        | `_release-image.yml`               |     ✓      |
+| `ai-gateway-operator`, `ai-gateway-main-processor`, `ai-gateway-api-key-service`                       | `_release-image.yml`               |     ✓      |
+| `cloud-ui`                                                                                             | `_release-toolhive-cloud-ui.yml`   |     ✓      |
+| `ai-gateway-controller`, `ai-gateway-extproc`, `envoy-gateway`, `envoy-ratelimit`, `presidio-analyzer` | `_release-upstream-repackaged.yml` |     ✓      |
+| Third-party dependencies (Replicated SDK)                                                              | upstream, not re-signed            |    n/a     |
+
+Envoy Gateway, Envoy Ratelimit, and Presidio are repackaged (re-signed with a
+Stacklok signature, SBOM, and provenance) rather than shipped as upstream
+passthrough — verify them the same way as any other image in this table. Only
+the Replicated SDK image remains genuine third-party passthrough.
 
 :::note[Third-party dependency images]
 
-Third-party dependency images are served through the proxy for license-gated
-distribution but are not re-signed by Stacklok. Verify those against their
-original publishers' signatures if required. They are pulled by digest, so their
-content is pinned. Their proxy paths use the upstream host, for example
-`.../proxy/stacklok-enterprise/docker.io/<UPSTREAM>/<IMAGE>`.
+The Replicated SDK image is not re-signed by Stacklok, and unlike every other
+image on this page, it is not rewritten through `image-proxy.stacklok.com` at
+all — it is pulled directly from Replicated's own registry at
+`proxy.replicated.com/library/replicated-sdk-image`. Verify it against its
+original publisher's signature if required. It is pulled by digest, so its
+content is pinned.
 
 :::
 
-Each third-party dependency plays a specific role in the platform:
+The repackaged third-party images each play a specific role in the platform:
 
-| Dependency      | Role in the stack                                                            |
-| --------------- | ---------------------------------------------------------------------------- |
-| Envoy Gateway   | Kubernetes Gateway API data plane that fronts the AI gateway                 |
-| Envoy Ratelimit | Rate-limiting service backing the AI gateway's token budget enforcement      |
-| Presidio        | Microsoft Presidio engine for PII and PCI detection and redaction in prompts |
-| Replicated SDK  | In-cluster SDK that reports install status and license state to Replicated   |
+| Dependency      | Role in the stack                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------ |
+| Envoy Gateway   | Kubernetes Gateway API data plane that fronts the AI gateway                               |
+| Envoy Ratelimit | Rate-limiting service backing the AI gateway's token budget enforcement                    |
+| Presidio        | Microsoft Presidio engine for PII and PCI detection and redaction in prompts               |
+| Replicated SDK  | In-cluster SDK that reports install status and license state to Replicated (not re-signed) |
 
 ## Verify across all images
 
@@ -285,9 +291,10 @@ IDENTITY='^https://github\.com/stacklok/stacklok-enterprise-platform/\.github/wo
 ISSUER='https://token.actions.githubusercontent.com'
 VERSION='<VERSION>'
 
-for IMAGE in operator proxyrunner vmcp registry-api toolhive-enterprise cloud-ui \
+for IMAGE in thv operator proxyrunner vmcp registry-api toolhive-enterprise cloud-ui \
              ai-gateway-operator ai-gateway-main-processor ai-gateway-api-key-service \
-             ai-gateway-controller ai-gateway-extproc; do
+             ai-gateway-controller ai-gateway-extproc \
+             envoy-gateway envoy-ratelimit presidio-analyzer; do
   # Digest lookup via docker buildx (swap for `crane digest` or `oras resolve`).
   DIGEST=$(docker buildx imagetools inspect "$BASE/$IMAGE:$VERSION" \
     --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"')
