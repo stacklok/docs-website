@@ -1,1 +1,0 @@
-- Updated `docs/toolhive/guides-cli/network-isolation.mdx` to document the v0.40.0 reconciliation between `--isolate-network` and `--network host`/`--network none`: added an interaction table + change-note, plus a forward-reference in "How the default works".
