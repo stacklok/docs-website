@@ -5,25 +5,12 @@ description:
   Registry Server
 ---
 
-The Registry server provides a claims-based authorization model that controls
+The Registry Server provides a claims-based authorization model that controls
 who can manage sources, registries, and entries. Authorization builds on top of
 [authentication](./authentication.mdx). You need OAuth authentication enabled
 before configuring authorization.
 
 ## How authorization works
-
-When a client accesses registry data, the server checks three layers in order:
-
-1. **Registry claims** (access gate): can the caller access this registry at
-   all? If the registry has claims and the caller's JWT doesn't satisfy them,
-   the server returns `403 Forbidden` before any data is returned.
-2. **Entry claims** (visibility filter): which entries can the caller see? Each
-   entry can carry claims inherited from its source (for synced sources) or set
-   explicitly (via publish payload or Kubernetes annotation). Only entries whose
-   claims the caller's JWT satisfies are included in the response.
-3. **Role checks** (admin operations): can the caller perform this write
-   operation? Publishing, deleting, and managing sources/registries require
-   specific [roles](#configure-roles).
 
 When a caller makes an API request, the server:
 
@@ -43,6 +30,20 @@ flowchart LR
   ClaimCheck -->|Yes| Allow["Allow"]
   ClaimCheck -->|No| Deny403
 ```
+
+### Claim scopes
+
+Claims attach to three kinds of resource. Each scope controls a different part
+of the request:
+
+| Scope               | What its claims govern                                                                                                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Registry claims** | Access to the registry's consumer API. A caller whose JWT doesn't satisfy them gets `403` on the whole `/registry/{name}` surface.                                           |
+| **Entry claims**    | Per-entry visibility within a registry the caller can already reach. A consumer sees an entry only if their JWT satisfies both the registry's claims and the entry's claims. |
+| **Source claims**   | Admin visibility of the source, linking the source into a registry, and publishing into a managed source. Source claims never filter entries at read time.                   |
+
+See [Source claims](#source-claims) for how each source type assigns claims to
+its entries.
 
 ## Configure roles
 
@@ -131,11 +132,23 @@ For synced sources (Git, API, File), claims on a source are **inherited by all
 entries** during sync. Every MCP server or skill ingested from that source
 carries the source's claims.
 
-For Kubernetes and managed sources, source claims control who can manage the
-source via the admin API but are **not** inherited by entries. Kubernetes
-entries get claims from the
+For Kubernetes and managed sources, source claims are **not** inherited by
+entries. Kubernetes entries get claims from the
 [`authz-claims` annotation](./configuration.mdx#per-entry-claims-via-annotation)
-on each CRD. Managed source entries get claims from the publish request payload.
+on each CRD, and managed source entries get claims from the publish request
+payload.
+
+A managed source's own claims decide who can publish into it. To publish, a
+caller needs the `manageEntries` role, and their JWT must satisfy the source's
+existing claims using the [visibility rule](#claim-matching-rules). A managed
+source with no claims can only be published to by a super-admin.
+
+This check controls publishing, not entry visibility. Give the source a claim
+that matches everyone who should be able to publish there, such as
+`org: "acme"`. Each published entry's own claims control who can read it.
+
+Source claims also decide who can see and manage the source through the admin
+API, and whether the source can be added to a registry.
 
 ```yaml title="config-source-claims.yaml"
 sources:
@@ -204,10 +217,10 @@ that differ only in how they handle array-valued claims. Every check does an AND
 across keys (the caller must satisfy every key present on the resource), and
 both rules default-deny on unlabeled resources.
 
-| Rule           | Within-array test                                  | Used for                                                                                                                                                                                         |
-| -------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Visibility** | OR - the caller must share **any one** array value | Reads and access gates: list and get on sources, registries, and entries; the registry access gate on `/registry/{name}`; delete on sources, registries, and entry versions.                     |
-| **Subset**     | AND - the caller must hold **every** array value   | Writes: create or update a source or registry; publish an entry; update the claims on a published entry. Applied to the **incoming** claims in the request, not to the resource's existing tags. |
+| Rule           | Within-array test                                  | Used for                                                                                                                                                                                                                 |
+| -------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Visibility** | OR - the caller must share **any one** array value | Reads and access gates: list and get on sources, registries, and entries; the registry access gate on `/registry/{name}`; publishing into a managed source; delete on sources, registries, and entry versions.           |
+| **Subset**     | AND - the caller must hold **every** array value   | Writes: create or update a source or registry; set incoming entry claims during publish; update the claims on a published entry. Applied to the **incoming** claims in the request, not to the resource's existing tags. |
 
 For scalar (string) claims the two rules behave identically. The difference only
 shows up on array values.
@@ -280,8 +293,9 @@ on the next sync.
 
 ## Claims on published entries
 
-When you publish an MCP server version or skill to a managed source, you can
-attach claims to the entry. The server enforces three rules:
+Before publishing, your JWT must satisfy the managed source's existing claims.
+See [Source claims](#source-claims). The server then enforces three rules on the
+entry's claims:
 
 1. **Claims are required when authentication is enabled.** Publishing without
    claims, or with an empty `claims` object, against an authenticated endpoint
@@ -535,8 +549,9 @@ With this configuration:
 - **Data team members** (JWT with `org: "acme"`, `team: "data"`) can access the
   `data` registry and see entries from `data-tools` and `shared`.
 - **Writers** in the `acme` org (JWT with `org: "acme"`, `role: "writer"`) can
-  publish to the `shared` managed source. The `org: "acme"` claim on the source
-  is what makes it reachable to non-super-admin callers under default-deny.
+  publish to the `shared` managed source because their JWT satisfies the
+  source's `org: "acme"` claim. Publishing checks that source claim, so without
+  it only super-admins could publish to the source (default-deny).
 - **Admins** (JWT with `org: "acme"`, `role: "admin"`) can manage sources and
   registries within the `acme` org.
 - **Super-admins** (JWT with `role: "super-admin"`) can access and manage
@@ -551,14 +566,10 @@ that team's registry surfaces the entry. See
 
 ## Next steps
 
-- [Configure authentication](./authentication.mdx) to set up OAuth providers
-- [Configure audit logging](./audit-logging.mdx) to track who does what in the
-  registry
-- [Configure sources and registries](./configuration.mdx) to set up your data
-  sources
-- [Manage skills](./skills.mdx) to publish and discover reusable skills
+- [Configure audit logging](./audit-logging.mdx) to record who performs which
+  operations
 
 ## Related information
 
-- [Registry server introduction](./intro.mdx) - architecture and features
+- [Registry Server introduction](./intro.mdx) - architecture and features
   overview
