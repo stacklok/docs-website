@@ -1,0 +1,173 @@
+---
+title: Set up directory admin access
+description:
+  Grant admin access to the enterprise directory (Users) with a
+  ClusterPlatformRole and a binding, for both group- and role-based identity
+  providers.
+---
+
+The enterprise directory powers the Cloud UI's **Users** page and its REST API
+(`/v1/users`, `/v1/groups`, and related endpoints). Access to it is a separate
+grant from the `toolhive.enterprise.stacklok.com` roles described in
+[Introduction to enterprise authorization](./intro.mdx): the built-in `reader`
+and `writer` `ClusterPlatformRole` objects only cover MCP server access, so a
+directory-scoped role is always required, even for a cluster admin who already
+holds `writer`.
+
+Without this grant, a caller sees `403 caller is not a directory admin` on every
+directory endpoint.
+
+## The directory product action
+
+The directory service registers its own product API group,
+`directory.enterprise.stacklok.com`, with a single action:
+
+| Action  | Grants                                                             |
+| ------- | ------------------------------------------------------------------ |
+| `admin` | Full access to every directory read endpoint (users, groups, keys) |
+
+There is no narrower `read`-only action yet; `admin` is all-or-nothing until the
+directory write surface ships a more granular vocabulary. `actions: ["*"]` also
+satisfies this check, since the wildcard expands to every action registered for
+the group.
+
+## Step 1: Define the ClusterPlatformRole
+
+```yaml title="directory-admin-role.yaml"
+apiVersion: platform.enterprise.stacklok.com/v1alpha1
+kind: ClusterPlatformRole
+metadata:
+  name: directory-admin
+spec:
+  description: 'Full admin over the enterprise directory (Users)'
+  productActions:
+    - apiGroup: directory.enterprise.stacklok.com
+      actions: ['admin']
+```
+
+## Step 2: Bind it to your identity provider
+
+Which claim to bind on depends on your IdP.
+
+### Group-based IdPs (Okta, generic OIDC)
+
+```yaml title="directory-admin-binding.yaml"
+apiVersion: platform.enterprise.stacklok.com/v1alpha1
+kind: ClusterPlatformRoleBinding
+metadata:
+  name: directory-admins
+spec:
+  bindings:
+    - roleRef:
+        kind: ClusterPlatformRole
+        name: directory-admin
+      from:
+        - groups: ['platform-admins']
+```
+
+The value must match exactly what your IdP emits in the `groups` claim (a group
+name, not necessarily a display name — check a decoded token if you're unsure).
+
+### Microsoft Entra ID
+
+Entra's default `groups` claim carries group **object IDs** (GUIDs), not display
+names, so bind on an **App Role** instead — the same pattern used in
+[Quickstart - GitHub MCP with Entra ID](./quickstart-entra.mdx):
+
+1. On your app registration, add an **App role** with member type
+   **Users/Groups** and a **Value** of `directory-admin` (or any string matching
+   `^[a-z][a-z0-9_]*$`).
+2. On the matching **Enterprise application** > **Users and groups**, assign the
+   role to the users or groups who need directory access.
+3. On that Enterprise application's **Properties**, set **Assignment required**
+   to **Yes**, so unassigned users get tokens with an empty `roles` claim rather
+   than an implicit grant.
+
+```yaml title="directory-admin-binding.yaml"
+apiVersion: platform.enterprise.stacklok.com/v1alpha1
+kind: ClusterPlatformRoleBinding
+metadata:
+  name: directory-admins
+spec:
+  bindings:
+    - roleRef:
+        kind: ClusterPlatformRole
+        name: directory-admin
+      from:
+        - roles: ['directory-admin']
+```
+
+No claim-name configuration is needed on the platform side for this: Entra ID is
+auto-detected from OIDC discovery, and both the `groups` and `roles` claims are
+read by default. See [Claim mapping](./intro.mdx#claim-mapping) if your tenant
+customizes claim names.
+
+## Step 3: Apply both resources
+
+```bash
+kubectl apply -f directory-admin-role.yaml -f directory-admin-binding.yaml
+```
+
+## Verify
+
+Sign in as a bound user and call the directory REST API directly:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" https://<your-enterprise-manager-host>/v1/users
+```
+
+A `200` with a user list confirms the grant took effect. The **Users** item in
+the Cloud UI's navigation is also gated on this same grant, so it should now
+appear for that user.
+
+## Troubleshooting
+
+<details>
+<summary>Still getting 403 after applying the binding</summary>
+
+The `actions` value is matched with an exact, case-sensitive string comparison —
+`Admin`, `administrator`, or a trailing typo never matches `admin`, and there is
+currently no status condition that surfaces an unrecognized action. Double-check
+the `ClusterPlatformRole`'s `productActions[].actions` reads exactly `admin` (or
+`*`).
+
+Also confirm the binding's `from[].groups` or `from[].roles` value matches what
+your IdP actually emits — decode the caller's JWT (`jwt decode <token>` or
+`https://jwt.io`) and compare against the claim your platform identity-provider
+ConfigMap is configured to read (see
+[Claim mapping](./intro.mdx#claim-mapping)).
+
+</details>
+
+<details>
+<summary>Getting a 503 instead of a 403</summary>
+
+A `503 admin auth not yet configured` means the directory module's admin
+determiner never got wired up (no cluster cache client available at startup),
+which is a platform configuration issue, not a missing grant. This is
+independent of anything covered on this page — check the enterprise manager's
+startup logs for cache/controller-runtime errors.
+
+</details>
+
+<details>
+<summary>Tokens are missing the `roles` or `groups` claim</summary>
+
+For Entra, this means the user isn't assigned to the App Role yet. Open the
+enterprise application's **Users and groups** page and add the assignment; see
+the equivalent troubleshooting entry in
+[Quickstart - GitHub MCP with Entra ID](./quickstart-entra.mdx) for how to
+verify with the Microsoft Graph API.
+
+</details>
+
+## Next steps
+
+- See every field on both resources in the
+  [ClusterPlatformRole](../reference/crds/clusterplatformrole.mdx) and
+  [ClusterPlatformRoleBinding](../reference/crds/clusterplatformrolebinding.mdx)
+  CRD references.
+- Read [Introduction to enterprise authorization](./intro.mdx) for how claim
+  mapping and bindings work in general.
+- [Quickstart - GitHub MCP with Entra ID](./quickstart-entra.mdx) walks the same
+  App Role pattern end-to-end against a real Entra tenant.

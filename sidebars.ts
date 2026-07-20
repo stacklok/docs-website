@@ -390,6 +390,7 @@ const platformSidebar: SidebarsConfig[string] = [
       'platform/enterprise-authz/intro',
       'platform/enterprise-authz/quickstart-entra',
       'platform/enterprise-authz/namespace-self-service',
+      'platform/enterprise-authz/directory-admin',
     ],
   },
 
