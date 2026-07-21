@@ -319,15 +319,15 @@ instead.
 
 ## Configure session storage
 
-The embedded authorization server caches upstream tokens and DCR-issued client
-credentials in the same store as sessions. By default, that store is in memory,
-so these values are lost when pods restart and users must re-authenticate. When
-you use DCR, a restart also registers a new client with the upstream and leaves
-the previous registration orphaned. For production deployments, configure a
-Redis backend so ToolHive can reuse the DCR credentials and sessions after a
-restart. Add one of the following `storage` blocks at
-`spec.embeddedAuthServer.storage` in the `MCPExternalAuthConfig`. The `redis`
-block supports three connection modes; you must set exactly one:
+The embedded authorization server caches upstream tokens and client credentials
+obtained through DCR with an upstream provider in the same store as sessions. By
+default, that store is in memory, so these values are lost when pods restart and
+users must re-authenticate. When you use upstream DCR, a restart also registers
+a new client with the upstream and leaves the previous registration orphaned.
+For production deployments, configure a Redis backend so ToolHive can reuse the
+DCR credentials and sessions after a restart. Add one of the following `storage`
+blocks at `spec.embeddedAuthServer.storage` in the `MCPExternalAuthConfig`. The
+`redis` block supports three connection modes; you must set exactly one:
 
 - **Sentinel** (`sentinelConfig`) - self-managed Redis with Sentinel-based high
   availability (HA)
@@ -396,21 +396,22 @@ For a complete walkthrough including deploying Redis Sentinel from scratch, see
 
 ## Configure MCP client registration
 
-MCP clients must identify themselves to the embedded authorization server. DCR
-is enabled by default for backward compatibility. Enable CIMD for clients that
-support the MCP specification's preferred registration mechanism. You can also
-set baseline scopes for clients that need to request scopes beyond those in
-their registration metadata.
+MCP clients must identify themselves to the embedded authorization server. The
+server always accepts Dynamic Client Registration (DCR) requests from MCP
+clients; no configuration is required. Enable CIMD for clients that support the
+MCP specification's preferred registration mechanism. You can also set baseline
+scopes for clients that need to request scopes beyond those in their
+registration metadata.
 
 ### Enable CIMD for zero-registration clients
 
-DCR requires every client to register before its first authorization request.
-Some MCP clients, including recent VS Code builds, can instead present an HTTPS
-URL that hosts a Client ID Metadata Document (CIMD), letting the authorization
-server resolve client metadata on demand with no prior registration step. CIMD
-is the MCP specification's preferred client registration mechanism; DCR is the
-backward-compatibility fallback. Add `cimd` under `spec.embeddedAuthServer` in
-the `MCPExternalAuthConfig`:
+Client-side DCR requires every client to register before its first authorization
+request. Some MCP clients, including recent VS Code builds, can instead present
+an HTTPS URL that hosts a Client ID Metadata Document (CIMD), letting the
+authorization server resolve client metadata on demand with no prior
+registration step. CIMD is the MCP specification's preferred client registration
+mechanism; client-side DCR is the backward-compatibility fallback. Add `cimd`
+under `spec.embeddedAuthServer` in the `MCPExternalAuthConfig`:
 
 ```yaml title="MCPExternalAuthConfig: CIMD configuration"
 spec:
@@ -580,6 +581,11 @@ to create an application in a provider dashboard. Add `dcrConfig` to an
 `oauth2Config` upstream to have the embedded authorization server register
 itself at runtime using RFC 7591.
 
+In this flow, ToolHive registers with the upstream provider as an OAuth client.
+This is separate from MCP clients registering with ToolHive's embedded
+authorization server in
+[Configure MCP client registration](#configure-mcp-client-registration).
+
 This example uses an RFC 8414 discovery document. ToolHive reads the
 `registration_endpoint` and other provider metadata from `discoveryUrl`:
 
@@ -615,6 +621,9 @@ spec:
 Set `authorizationEndpoint` and `tokenEndpoint` even when the discovery document
 advertises them. The CRD requires both fields on `oauth2Config`.
 
+For a complete deployment that uses `discoveryUrl` with Notion, see the
+[Notion MCP server guide](../guides-mcp/notion-remote.mdx).
+
 If the provider gives you a registration URL directly, use
 `registrationEndpoint` instead of `discoveryUrl` in the `MCPExternalAuthConfig`
 provider's `oauth2Config`:
@@ -641,17 +650,10 @@ endpoints and the scopes that ToolHive should request.
 Don't set `clientId` or `clientSecretRef` when you set `dcrConfig`. ToolHive
 obtains the client ID and client secret from the DCR response.
 
-#### Optional DCR fields
+#### Authorize registration with an initial access token
 
-Use these fields only when the upstream provider requires them:
-
-| Field                   | Purpose                                                                                                                                  |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `initialAccessTokenRef` | References a Secret containing the bearer token that authorizes the registration request.                                                |
-| `softwareId`            | Sends an RFC 7591 `software_id` value that identifies the client software independently of a particular registration.                    |
-| `softwareStatement`     | Sends a signed RFC 7591 `software_statement` JWT. The value is visible in the resource and etcd backups, so don't put secrets inside it. |
-
-For an initial access token, create a Secret in the same namespace:
+If the upstream provider requires an initial access token, create a Secret in
+the same namespace:
 
 ```yaml title="dcr-initial-access-token.yaml"
 apiVersion: v1
@@ -664,21 +666,17 @@ stringData:
   token: '<YOUR_DCR_INITIAL_ACCESS_TOKEN>'
 ```
 
-Then add the reference to the upstream provider's `oauth2Config.dcrConfig` in
-the `MCPExternalAuthConfig`:
+Then add `initialAccessTokenRef` to the upstream provider's
+`oauth2Config.dcrConfig` in the `MCPExternalAuthConfig`. ToolHive sends the
+Secret value as a bearer token when it calls the registration endpoint:
 
-```yaml title="MCPExternalAuthConfig: optional DCR fields"
+```yaml title="MCPExternalAuthConfig: DCR initial access token"
 dcrConfig:
   registrationEndpoint: 'https://mcp.example.com/register'
   initialAccessTokenRef:
     name: dcr-initial-access-token
     key: token
-  softwareId: 'toolhive-embedded-auth'
-  softwareStatement: '<YOUR_SIGNED_SOFTWARE_STATEMENT_JWT>'
 ```
-
-The `softwareStatement` is a signed attestation, not a secret. Anyone who can
-read the `MCPExternalAuthConfig` can see its contents.
 
 ### Extract identity from the token response
 

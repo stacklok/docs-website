@@ -49,102 +49,15 @@ authenticated, your MCP server or `MCPRemoteProxy` may separately need its own
 way to authenticate to the backend API it calls. Which pattern fits depends on
 that backend's relationship to your identity provider:
 
-| Scenario                                                            | Pattern                       | K8s guide                                                                                                                                                                                                              |
-| ------------------------------------------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Backend only accepts API keys or static credentials                 | Static credentials            | [Inject static backend credentials](#inject-static-backend-credentials), [run a server with secrets](./run-mcp-k8s.mdx#run-a-server-with-secrets), or use the [HashiCorp Vault integration](../integrations/vault.mdx) |
-| Backend trusts the same IdP as your clients                         | Token exchange (RFC 8693)     | [Configure token exchange](./token-exchange-k8s.mdx)                                                                                                                                                                   |
-| Backend trusts a federated IdP (for example, AWS)                   | Federated token exchange      | [AWS STS integration](../integrations/aws-sts.mdx)                                                                                                                                                                     |
-| Backend is an external API with no federation (for example, GitHub) | Embedded authorization server | [Run an embedded OAuth server](#run-an-embedded-oauth-server)                                                                                                                                                          |
+| Scenario                                                            | Pattern                       | K8s guide                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Backend only accepts API keys or static credentials                 | Static credentials            | [Run a server with secrets](./run-mcp-k8s.mdx#run-a-server-with-secrets) or use the [HashiCorp Vault integration](../integrations/vault.mdx) for `MCPServer`; [inject headers into upstream requests](./remote-mcp-proxy.mdx#inject-headers-into-upstream-requests) for `MCPRemoteProxy` |
+| Backend trusts the same IdP as your clients                         | Token exchange (RFC 8693)     | [Configure token exchange](./token-exchange-k8s.mdx)                                                                                                                                                                                                                                     |
+| Backend trusts a federated IdP (for example, AWS)                   | Federated token exchange      | [AWS STS integration](../integrations/aws-sts.mdx)                                                                                                                                                                                                                                       |
+| Backend is an external API with no federation (for example, GitHub) | Embedded authorization server | [Run an embedded OAuth server](#run-an-embedded-oauth-server)                                                                                                                                                                                                                            |
 
 For the full comparison and why each pattern fits its scenario, see
 [Choosing the right backend authentication pattern](../concepts/backend-auth.mdx#choosing-the-right-backend-authentication-pattern).
-
-### Inject static backend credentials
-
-Use an `MCPExternalAuthConfig` when the MCP server can't read a credential from
-an environment variable, or when you want multiple workloads to share one
-authentication configuration. ToolHive injects the credential into outbound HTTP
-requests at the proxy layer.
-
-This differs from [`spec.secrets`](./run-mcp-k8s.mdx#run-a-server-with-secrets)
-and the [HashiCorp Vault integration](../integrations/vault.mdx), which pass
-credentials to the MCP server process as environment variables.
-
-Two static credential types are available:
-
-- `headerInjection` adds one custom header using `headerName` and a
-  `valueSecretRef`.
-- `bearerToken` reads `tokenSecretRef` and adds it as
-  `Authorization: Bearer <TOKEN_VALUE>`.
-
-First, store the credential in a Secret:
-
-```yaml title="backend-api-key-secret.yaml"
-apiVersion: v1
-kind: Secret
-metadata:
-  name: backend-api-key
-  namespace: toolhive-system
-type: Opaque
-stringData:
-  api-key: '<YOUR_API_KEY>'
-```
-
-Then create the `MCPExternalAuthConfig`:
-
-```yaml title="backend-api-key-auth.yaml"
-apiVersion: toolhive.stacklok.dev/v1beta1
-kind: MCPExternalAuthConfig
-metadata:
-  name: backend-api-key
-  namespace: toolhive-system
-spec:
-  type: headerInjection
-  headerInjection:
-    headerName: X-API-Key
-    valueSecretRef:
-      name: backend-api-key
-      key: api-key
-```
-
-For an `Authorization: Bearer` header, use this configuration instead. Store
-only the token value in the Secret, without the `Bearer` prefix:
-
-```yaml title="backend-bearer-auth.yaml"
-apiVersion: toolhive.stacklok.dev/v1beta1
-kind: MCPExternalAuthConfig
-metadata:
-  name: backend-bearer-token
-  namespace: toolhive-system
-spec:
-  type: bearerToken
-  bearerToken:
-    tokenSecretRef:
-      name: backend-bearer-token
-      key: token
-```
-
-Reference the configuration from an `MCPServer` or `MCPRemoteProxy` in the same
-namespace:
-
-```yaml title="MCPServer or MCPRemoteProxy: externalAuthConfigRef"
-spec:
-  externalAuthConfigRef:
-    name: backend-api-key
-```
-
-The same `MCPExternalAuthConfig` can be referenced by multiple workloads. To
-configure headers specifically for one `MCPRemoteProxy`, including multiple
-plaintext or Secret-backed headers, use
-[`headerForward`](./remote-mcp-proxy.mdx#inject-custom-headers) instead.
-
-:::note[Client authentication is separate]
-
-Static credential injection authenticates ToolHive to the backend. It does not
-authenticate clients connecting to ToolHive. Configure client authentication
-separately using one of the approaches below.
-
-:::
 
 ## Authenticate with OIDC
 
