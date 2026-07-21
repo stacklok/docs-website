@@ -77,12 +77,12 @@ auth:
 
 ### Available roles
 
-| Role               | Grants access to                                              |
-| ------------------ | ------------------------------------------------------------- |
-| `superAdmin`       | All operations; bypasses all claim checks                     |
-| `manageSources`    | Create, update, delete, and list sources via the admin API    |
-| `manageRegistries` | Create, update, delete, and list registries via the admin API |
-| `manageEntries`    | Publish and delete MCP server versions and skills             |
+| Role               | Grants access to                                                     |
+| ------------------ | -------------------------------------------------------------------- |
+| `superAdmin`       | All operations; bypasses all claim checks                            |
+| `manageSources`    | Create, update, delete, and list sources via the admin API           |
+| `manageRegistries` | Create, update, delete, and list registries via the admin API        |
+| `manageEntries`    | Publish, delete, and manage claims on MCP server versions and skills |
 
 ### Role rule matching
 
@@ -197,10 +197,30 @@ A caller who requests `GET /registry/platform/v0.1/servers` must have JWT claims
 that include `org: "acme"` and `team: "platform"`. Otherwise, the server returns
 `403 Forbidden`.
 
-### Claim containment
+### Claim matching rules
 
-The server uses **containment** (superset check) for claim validation: the
-caller's claims must be a superset of the resource's claims. For example:
+The server compares caller claims against a resource's claims with two rules
+that differ only in how they handle array-valued claims. Every check does an AND
+across keys (the caller must satisfy every key present on the resource), and
+both rules default-deny on unlabeled resources.
+
+| Rule           | Within-array test                                  | Used for                                                                                                                                                                                         |
+| -------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Visibility** | OR - the caller must share **any one** array value | Reads and access gates: list and get on sources, registries, and entries; the registry access gate on `/registry/{name}`; delete on sources, registries, and entry versions.                     |
+| **Subset**     | AND - the caller must hold **every** array value   | Writes: create or update a source or registry; publish an entry; update the claims on a published entry. Applied to the **incoming** claims in the request, not to the resource's existing tags. |
+
+For scalar (string) claims the two rules behave identically. The difference only
+shows up on array values.
+
+For example, a resource tagged `team: ["platform", "data"]` is an allow-list:
+under the visibility rule, a caller whose JWT has `team: "platform"` can see and
+delete it. Under the subset rule, the same caller could **not** create or update
+a resource tagged that way, because they don't hold both `platform` and `data`
+in their own JWT. This split prevents a caller from stamping a resource with
+wider visibility than their own identity while keeping shared resources visible
+to every eligible team.
+
+Examples on scalar claims:
 
 | Resource claims                   | Caller JWT claims                 | Result                             |
 | --------------------------------- | --------------------------------- | ---------------------------------- |
@@ -208,6 +228,19 @@ caller's claims must be a superset of the resource's claims. For example:
 | `{org: "acme", team: "platform"}` | `{org: "acme"}`                   | Denied                             |
 | `{}` (no claims)                  | `{org: "acme"}`                   | Denied (default-deny on unlabeled) |
 | `{org: "acme"}`                   | `{org: "contoso"}`                | Denied                             |
+
+:::info[Upgrading from earlier releases]
+
+Registry Server v1.4.x treated array-valued claims as AND-within-array for every
+check, so a resource tagged `team: ["platform", "data"]` was invisible to a
+caller who held only one of the team values. From v1.5.0, reads and access gates
+use the visibility (OR) rule instead, so callers who share any of the tagged
+values can see and delete the resource. Writes still enforce the subset (AND)
+rule to prevent visibility escalation. If you relied on AND-within-array to keep
+an array-tagged resource hidden from callers who held only one value, retag the
+resource with the specific set you want to require.
+
+:::
 
 ### Unlabeled resources
 
@@ -288,11 +321,32 @@ curl -X POST \
 See the [Registry API reference](../reference/registry-api.mdx) for the full
 server payload schema, including `packages`, `remotes`, and `_meta` fields.
 
-### Update claims on an existing entry
+### Read and update claims on an existing entry
 
-Use `PUT /v1/entries/{type}/{name}/claims` to change the claims on every version
-of a previously published entry. The `type` path parameter is either `server` or
-`skill`.
+Use `GET /v1/entries/{type}/{name}/claims` to fetch the claims on a previously
+published entry, and `PUT /v1/entries/{type}/{name}/claims` to change them. The
+`type` path parameter is either `server` or `skill`, and the endpoints require
+the `manageEntries` role. Because entry names contain a slash separating
+namespace from server name, URL-encode the slash as `%2F` so the path is treated
+as a single `{name}` path parameter.
+
+```bash title="Read claims on a published server"
+curl -X GET \
+  "https://registry.example.com/v1/entries/server/io.github.acme%2Fmy-server/claims" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+The response envelope is always a JSON object, even when the entry has no
+claims:
+
+```json title="Response: 200 OK"
+{
+  "claims": {
+    "org": "acme",
+    "team": "platform"
+  }
+}
+```
 
 ```bash title="Update claims on a published server"
 curl -X PUT \
@@ -307,25 +361,34 @@ curl -X PUT \
   }'
 ```
 
-Because entry names contain a slash separating namespace from server name,
-URL-encode the slash as `%2F` so the path is treated as a single `{name}` path
-parameter.
+Pass an empty `claims` object (`{"claims": {}}`) to clear claims entirely.
+Successful updates return `204 No Content`.
 
-Pass an empty `claims` object (`{"claims": {}}`) to clear claims entirely. The
-same authorization rules apply: your JWT claims must satisfy both the existing
-claims on the entry (so you can modify it) and the new claims you're setting (so
-you can't escalate visibility beyond what you're entitled to). Successful
-updates return `204 No Content`.
+Both endpoints apply the standard [claim matching rules](#claim-matching-rules)
+to the caller's JWT:
+
+- The GET returns `403 Forbidden` unless the caller can see the entry under the
+  visibility rule (or is a super-admin).
+- The PUT requires that the caller can see the existing entry (visibility)
+  **and** that the new claims are a subset of the caller's JWT (subset), so a
+  caller can't broaden an entry's visibility past their own identity.
+
+Both endpoints are scoped to managed-source entries. Entries synced from a Git,
+API, file, or Kubernetes source get their claims from upstream (the source
+manifest, or the `toolhive.stacklok.dev/authz-claims` annotation for
+Kubernetes), and every sync overwrites them, so any API write would be
+ephemeral. To inspect the claims on synced entries, use
+`/v1/sources/{name}/entries` or `/v1/registries/{name}/entries`.
 
 ## Admin API claim scoping
 
 When authorization is enabled, the admin API endpoints for managing sources and
 registries are also scoped by claims:
 
-- **List sources/registries**: Only returns resources whose claims the caller's
-  JWT satisfies.
+- **List sources/registries**: Only returns resources the caller can see under
+  the visibility rule.
 - **Get source/registry by name**: Returns `404 Not Found` (not `403`) when the
-  caller's claims don't match. This prevents information disclosure about
+  caller can't see the resource. This prevents information disclosure about
   resources the caller cannot access.
 - **List source/registry entries**: `GET /v1/sources/{name}/entries` and
   `GET /v1/registries/{name}/entries` return the raw entries (servers and skills
@@ -333,9 +396,17 @@ registries are also scoped by claims:
   same claim scoping: the parent source or registry must be accessible to the
   caller.
 - **Create source/registry**: The request claims must be a subset of the
-  caller's JWT claims.
-- **Update/delete source/registry**: The caller's JWT claims must satisfy the
-  existing resource's claims.
+  caller's JWT claims (subset rule).
+- **Update source/registry**: The caller must be able to see the existing
+  resource (visibility rule) and the incoming claims must be a subset of the
+  caller's JWT (subset rule).
+- **Delete source/registry**: The caller must be able to see the resource
+  (visibility rule). On shared resources tagged with an array of allowed values,
+  any caller who can see the resource can delete it, so list, get, and delete
+  now agree.
+
+See [Claim matching rules](#claim-matching-rules) for how visibility and subset
+differ on array-valued claims.
 
 ## Auth-only mode
 

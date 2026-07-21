@@ -31,6 +31,10 @@ accepted:
 thv run [--permission-profile </path/to/custom-profile.json>] <SERVER>
 ```
 
+Isolation requires bridge networking. If you also pass `--network host` or
+`--network none`, ToolHive drops isolation for that workload (see
+[Interaction with `--network host` and `--network none`](#interaction-with---network-host-and---network-none)).
+
 :::info[Changed in v0.30.1]
 
 Earlier versions of ToolHive required `--isolate-network` to turn on network
@@ -200,6 +204,34 @@ thv run --isolate-network=false <SERVER>
 
 The container's own network namespace still isolates it from the host; only
 ToolHive's allowlist enforcement is disabled.
+
+## Interaction with `--network host` and `--network none`
+
+Network isolation is a bridge-network construct: the egress, DNS, and ingress
+sidecars only work when the MCP container lives on a container-runtime bridge.
+When you pass `--network host` or `--network none`, the container shares the
+host network namespace or has no network at all, so the isolation sidecars have
+no way to intercept traffic. In v0.40.0 and later, ToolHive reconciles the two
+flags automatically:
+
+| `--network` mode           | `--isolate-network` source        | Behavior                                                                                                                                                          |
+| -------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| bridge (unset or `bridge`) | any                               | Isolation as designed.                                                                                                                                            |
+| `host` or custom           | default (implicit)                | Isolation is dropped with a warning in the run log, restoring outbound connectivity for host-networked workloads.                                                 |
+| `host` or custom           | explicit `--isolate-network=true` | `thv run` fails fast with an error naming both flags. Drop `--network host` to keep enforced isolation, or set `--isolate-network=false` to keep host networking. |
+| `none`                     | any                               | Isolation is silently dropped (`none` is already maximally confined; isolation would be redundant).                                                               |
+
+:::info[Changed in v0.40.0]
+
+Before v0.40.0, `thv run --network host` silently built the isolation sidecars
+against an internal-only network, breaking outbound DNS and connectivity.
+Isolation is now dropped for `host`/`none` modes so host-networked workloads
+keep working. If you rely on host networking, no change is needed. If you
+previously combined `--isolate-network` with `--network host` explicitly, pick
+one: drop `--network host` to keep enforced isolation, or set
+`--isolate-network=false` to keep host networking.
+
+:::
 
 ## Example: Enable network isolation using registry defaults
 

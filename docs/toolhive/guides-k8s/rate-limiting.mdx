@@ -234,6 +234,65 @@ A request must pass both the server-level vMCP limit and the per-tool limit (if
 defined). Limits apply to the vMCP aggregator and are independent from any
 limits configured on the backend MCPServers it routes to.
 
+## Observe rate limit activity
+
+When telemetry is enabled on the MCPServer or VirtualMCPServer (via a
+[`MCPTelemetryConfig`](./telemetry-and-metrics.mdx) referenced by
+`telemetryConfigRef`), the rate limiter emits OpenTelemetry metrics for each
+Redis bucket check. Use them to watch for rejections, spot Redis health issues,
+and track how long the atomic Lua check takes.
+
+All three metrics carry `namespace` and `server` attributes identifying the
+resource that owns the bucket. Prometheus appends `_total` to counter names. The
+latency histogram is exported with the `_seconds` unit suffix and the standard
+`_bucket`, `_sum`, and `_count` series suffixes.
+
+| Metric                              | Type      | Additional attributes                                                                                         |
+| ----------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------- |
+| `toolhive_rate_limit_decisions`     | Counter   | `decision` (`allowed` or `rejected`), `scope` (`shared` or `per_user`), `operation_type` (`server` or `tool`) |
+| `toolhive_rate_limit_redis_errors`  | Counter   | `error_type` (`timeout`, `connection`, `auth`, or `other`)                                                    |
+| `toolhive_rate_limit_check_latency` | Histogram | (none)                                                                                                        |
+
+Counting semantics for `toolhive_rate_limit_decisions`:
+
+- An **allowed** request increments the counter once for every applicable
+  bucket. For example, a request that satisfies both a shared and a per-user
+  bucket increments the counter twice.
+- A **rejected** request increments only for the first bucket rejected by the
+  atomic Redis check, so a single rejection is never double-counted across
+  scopes.
+- Requests with no applicable bucket do not increment the counter. This includes
+  discovery methods that pass through unconditionally (`tools/list`,
+  `prompts/list`, `initialize`, `ping`) and unauthenticated requests against a
+  server that only has per-user buckets configured.
+
+The `toolhive_rate_limit_check_latency` histogram records the duration of each
+Redis Lua call, whether the call succeeds or fails. Rate limit enforcement
+[fails open](#how-rate-limiting-works) when Redis is unreachable, so watch
+`toolhive_rate_limit_redis_errors` alongside decisions to detect fail-open
+periods.
+
+Example PromQL queries against a Prometheus scrape of the server's `/metrics`
+endpoint:
+
+```promql
+# Rejection rate across all buckets, by server
+sum by (namespace, server) (
+  rate(toolhive_rate_limit_decisions_total{decision="rejected"}[5m])
+)
+
+# 95th-percentile Redis check latency
+histogram_quantile(
+  0.95,
+  sum by (le) (rate(toolhive_rate_limit_check_latency_seconds_bucket[5m]))
+)
+
+# Redis errors by class. Non-zero timeout or connection rates warrant attention.
+sum by (error_type) (
+  rate(toolhive_rate_limit_redis_errors_total[5m])
+)
+```
+
 :::info[Per-tool limits with the optimizer]
 
 When the [tool discovery optimizer](../guides-vmcp/optimizer.mdx) is enabled,
@@ -281,6 +340,8 @@ spec:
 
 ## Next steps
 
+- [Telemetry and metrics](./telemetry-and-metrics.mdx) to enable OpenTelemetry
+  collection and export for these metrics
 - [Token exchange](./token-exchange-k8s.mdx) to configure token exchange for
   upstream service authentication
 - [CRD reference](../reference/crds/index.mdx) for complete field definitions
