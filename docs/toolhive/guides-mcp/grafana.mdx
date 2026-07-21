@@ -42,16 +42,32 @@ existing secret that contains the token.
 In the **Environment Variables** section, configure the connection to your
 Grafana instance:
 
-- `GRAFANA_URL`: Your Grafana instance URL (for example, `http://localhost:3000`
-  for local instances or `https://myinstance.grafana.net` for Grafana Cloud)
+- `GRAFANA_URL`: Your Grafana instance URL (for example,
+  `http://host.docker.internal:3000` for local instances or
+  `https://myinstance.grafana.net` for Grafana Cloud)
 - `GRAFANA_ORG_ID` (optional): The numeric organization ID if your Grafana
   instance has multiple organizations
 
+For a Grafana instance running on your host machine, use
+`http://host.docker.internal:3000` (rather than `localhost`, which points to the
+server's own container) and enable **Allow host machine access** on the
+**Network Isolation** tab so the server can reach it. On Docker and Podman
+Desktop (macOS and Windows), `host.docker.internal` resolves to the host; on
+Linux, use the Docker bridge gateway IP instead (typically `172.17.0.1`).
+
+:::note[Important]
+
+The **Command arguments** section is pre-populated with `--transport stdio` from
+the registry. Don't remove it; the server needs it to run with the stdio
+transport.
+
+:::
+
 :::tip[Security tip]
 
-Enable outbound network filtering on the **Network Isolation** tab to restrict
-the server's network access. Update the allowed hosts to match your Grafana
-instance domain.
+On the **Network Isolation** tab, **Allowed destinations** defaults to
+**Anywhere**. Change it to **Selected destinations** to restrict the server's
+outbound access to your Grafana instance's host and ports.
 
 :::
 
@@ -64,14 +80,24 @@ Create a secret containing your Grafana service account token:
 thv secret set grafana-token
 ```
 
-Run the server with your Grafana instance URL and the secret:
+Run the server with your Grafana instance URL and the secret. This example
+connects to a Grafana instance running on your host machine:
 
 ```bash
 thv run \
-  -e GRAFANA_URL=http://localhost:3000 \
+  -e GRAFANA_URL=http://host.docker.internal:3000 \
   --secret grafana-token,target=GRAFANA_SERVICE_ACCOUNT_TOKEN \
+  --allow-docker-gateway \
   grafana
 ```
+
+Here, `http://host.docker.internal:3000` reaches a Grafana instance on your host
+machine, since `localhost` would resolve to the server's own container. The
+`--allow-docker-gateway` flag is required because ToolHive's network isolation
+blocks Docker gateway addresses by default. On Docker and Podman Desktop (macOS
+and Windows), `host.docker.internal` resolves to the host; on Linux, use the
+Docker bridge gateway IP (typically `172.17.0.1`), which the flag also allows.
+See [network isolation](../guides-cli/network-isolation.mdx) for details.
 
 For Grafana Cloud, use your cloud instance URL:
 
@@ -81,6 +107,14 @@ thv run \
   --secret grafana-token,target=GRAFANA_SERVICE_ACCOUNT_TOKEN \
   grafana
 ```
+
+:::note[Important]
+
+ToolHive runs the Grafana server with the stdio transport by default. If you
+pass your own arguments to the server after the `--` separator, include
+`--transport stdio` as well, since custom arguments replace the defaults.
+
+:::
 
 ToolHive
 [isolates the server's network access](../guides-cli/network-isolation.mdx) by
@@ -116,14 +150,16 @@ environment variable with the numeric organization ID (for example,
 
 :::tip[Debug mode]
 
-Add the `--` separator followed by `-debug` to enable detailed logging of HTTP
-requests and responses:
+Add the `--` separator followed by `--log-level debug` to increase the log
+verbosity. Because you're passing your own arguments, reproduce
+`--transport stdio` as well:
 
 ```bash
 thv run \
-  -e GRAFANA_URL=http://localhost:3000 \
+  -e GRAFANA_URL=http://host.docker.internal:3000 \
   --secret grafana-token,target=GRAFANA_SERVICE_ACCOUNT_TOKEN \
-  -- -debug
+  --allow-docker-gateway \
+  -- --transport stdio --log-level debug
 ```
 
 :::
@@ -156,6 +192,8 @@ spec:
   args:
     - --transport
     - streamable-http
+    - --allowed-hosts
+    - '*'
   env:
     - name: GRAFANA_URL
       value: 'http://grafana.observability.svc.cluster.local:3000'
@@ -164,6 +202,17 @@ spec:
       key: token
       targetEnvName: GRAFANA_SERVICE_ACCOUNT_TOKEN
 ```
+
+:::note[Important]
+
+Don't remove the `--allowed-hosts` argument. Grafana MCP v0.17.1 added
+DNS-rebinding protection that rejects any request whose `Host` header isn't in
+the allowlist. In Kubernetes, the ToolHive proxy reaches the server over an
+internal ClusterIP address that isn't known ahead of time, so `*` is required to
+accept those requests. This is safe because the server runs behind the ToolHive
+proxy with its network access isolated.
+
+:::
 
 Apply the manifest to your Kubernetes cluster:
 
@@ -218,6 +267,12 @@ server:
 - Create service accounts with least-privilege permissions. Use fine-grained
   RBAC scopes to limit access to only the datasources, dashboards, and features
   required for your specific use case.
+- For read-only use cases like querying metrics, viewing dashboards, or triaging
+  incidents, pass the `--disable-write` argument to block mutating tools (such
+  as creating incidents, updating dashboards, and managing alert rules) while
+  keeping all read operations available. The MCP server enforces this as defense
+  in depth, so pair it with a read-only service account token rather than
+  relying on it alone.
 - Regularly rotate service account tokens and update the secrets in ToolHive.
 - Customize the network isolation permission profile to restrict the server's
   outbound network access to your Grafana instance domain only, since the
