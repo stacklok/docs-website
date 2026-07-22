@@ -25,8 +25,9 @@ You'll need:
 
 - An upstream identity provider that supports the OAuth 2.0 authorization code
   flow (such as Okta, Microsoft Entra ID, Auth0, or any OIDC-compliant provider)
-- A registered OAuth application/client with your upstream provider
-- Client ID and client secret from your upstream provider
+- Either a registered OAuth application/client or an upstream provider that
+  supports RFC 7591 Dynamic Client Registration (DCR)
+- For a registered client, its client ID and client secret
 
 This setup uses the `MCPExternalAuthConfig` custom resource, following the same
 pattern as [token exchange configuration](./token-exchange-k8s.mdx).
@@ -47,7 +48,8 @@ flowchart LR
 
 ## Step 1: Create a Secret for the upstream provider client credentials
 
-Store the OAuth client secret for your upstream identity provider:
+If you registered a client with the upstream provider, store its OAuth client
+secret:
 
 ```yaml title="upstream-idp-secret.yaml"
 apiVersion: v1
@@ -63,6 +65,10 @@ stringData:
 ```bash
 kubectl apply -f upstream-idp-secret.yaml
 ```
+
+Skip this step if you use DCR without an initial access token. If the upstream
+requires an initial access token for DCR, create a Secret for that token in
+[Use dynamic client registration with an upstream provider](#use-dynamic-client-registration-with-an-upstream-provider).
 
 ## Step 2: Create a Secret for JWT signing keys
 
@@ -281,7 +287,7 @@ authorization endpoints automatically.
 
 :::
 
-### Combine embedded auth with outgoing token exchange
+## Combine embedded auth with outgoing token exchange
 
 A single MCP server can use the embedded authorization server for incoming
 client authentication and token exchange for outgoing calls to backend services.
@@ -291,7 +297,7 @@ This works the same way regardless of which outgoing strategy you use:
 `authServerRef` and `externalAuthConfigRef` on the same `MCPServer` or
 `MCPRemoteProxy` resource:
 
-```yaml
+```yaml title="MCPServer or MCPRemoteProxy: authentication references"
 spec:
   # Embedded auth server for incoming client authentication
   authServerRef:
@@ -311,13 +317,17 @@ For plain token exchange, use the same pattern, but point
 [`type: tokenExchange`](./token-exchange-k8s.mdx#step-2-create-the-mcpexternalauthconfig-resource)
 instead.
 
-### Configure session storage
+## Configure session storage
 
-By default, the embedded authorization server stores sessions in memory.
-Upstream tokens are lost when pods restart, requiring users to re-authenticate.
-For production deployments, configure a Redis backend by adding a `storage`
-block to your `MCPExternalAuthConfig`. The `redis` block supports three
-connection modes; you must set exactly one:
+The embedded authorization server caches upstream tokens and client credentials
+obtained through DCR with an upstream provider in the same store as sessions. By
+default, that store is in memory, so these values are lost when pods restart and
+users must re-authenticate. When you use upstream DCR, a restart also registers
+a new client with the upstream and leaves the previous registration orphaned.
+For production deployments, configure a Redis backend so ToolHive can reuse the
+DCR credentials and sessions after a restart. Add one of the following `storage`
+blocks at `spec.embeddedAuthServer.storage` in the `MCPExternalAuthConfig`. The
+`redis` block supports three connection modes; you must set exactly one:
 
 - **Sentinel** (`sentinelConfig`) - self-managed Redis with Sentinel-based high
   availability (HA)
@@ -327,7 +337,7 @@ connection modes; you must set exactly one:
   services, such as GCP Memorystore Cluster or AWS ElastiCache with cluster mode
   enabled
 
-```yaml title="storage block for MCPExternalAuthConfig - Sentinel"
+```yaml title="MCPExternalAuthConfig: Sentinel storage"
 storage:
   type: redis
   redis:
@@ -345,7 +355,7 @@ storage:
         key: password
 ```
 
-```yaml title="storage block for MCPExternalAuthConfig - Standalone"
+```yaml title="MCPExternalAuthConfig: standalone storage"
 storage:
   type: redis
   redis:
@@ -358,7 +368,7 @@ storage:
         key: password
 ```
 
-```yaml title="storage block for MCPExternalAuthConfig - Cluster"
+```yaml title="MCPExternalAuthConfig: cluster storage"
 storage:
   type: redis
   redis:
@@ -384,16 +394,26 @@ kubectl create secret generic redis-acl-secret \
 For a complete walkthrough including deploying Redis Sentinel from scratch, see
 [Redis session storage](./redis-session-storage.mdx).
 
+## Configure MCP client registration
+
+MCP clients must identify themselves to the embedded authorization server. The
+server always accepts Dynamic Client Registration (DCR) requests from MCP
+clients; no configuration is required. Enable CIMD for clients that support the
+MCP specification's preferred registration mechanism. You can also set baseline
+scopes for clients that need to request scopes beyond those in their
+registration metadata.
+
 ### Enable CIMD for zero-registration clients
 
-DCR requires every client to register before its first authorization request.
-Some MCP clients, including recent VS Code builds, can instead present an HTTPS
-URL that hosts a Client ID Metadata Document (CIMD), letting the authorization
-server resolve client metadata on demand with no prior registration step. CIMD
-is the MCP specification's preferred client registration mechanism; DCR is the
-backward-compatibility fallback. Enable it by adding a `cimd` block:
+Client-side DCR requires every client to register before its first authorization
+request. Some MCP clients, including recent VS Code builds, can instead present
+an HTTPS URL that hosts a Client ID Metadata Document (CIMD), letting the
+authorization server resolve client metadata on demand with no prior
+registration step. CIMD is the MCP specification's preferred client registration
+mechanism; client-side DCR is the backward-compatibility fallback. Add `cimd`
+under `spec.embeddedAuthServer` in the `MCPExternalAuthConfig`:
 
-```yaml
+```yaml title="MCPExternalAuthConfig: CIMD configuration"
 spec:
   embeddedAuthServer:
     cimd:
@@ -440,9 +460,10 @@ Some MCP clients (for example, Claude Code) register via DCR with a narrowed
 `scope` value, then request a wider set of scopes at `/oauth/authorize`. By
 default, the embedded authorization server rejects those requests with
 `invalid_scope` because the registered client's scope set doesn't include the
-scopes being requested. To support this pattern, set `baselineClientScopes`:
+scopes being requested. Set `baselineClientScopes` under
+`spec.embeddedAuthServer` in the `MCPExternalAuthConfig`:
 
-```yaml
+```yaml title="MCPExternalAuthConfig: baseline client scopes"
 spec:
   embeddedAuthServer:
     baselineClientScopes:
@@ -463,12 +484,26 @@ public clients like Claude Code, Cursor, and VS Code, so privileged scopes don't
 belong in the baseline. For the conceptual reason this exists, see
 [Baseline scopes for DCR clients](../concepts/embedded-auth-server.mdx#baseline-scopes-for-dcr-clients).
 
+## Configure upstream providers
+
+The base setup in Step 4 uses a pre-registered OIDC client. Use the options in
+this section to adapt that upstream connection:
+
+- Use `oauth2Config` instead of `oidcConfig` when the upstream provider does not
+  support OIDC discovery.
+- Within `oauth2Config`, set either pre-provisioned client credentials or
+  `dcrConfig`, not both.
+- Add identity mapping, authorization parameters, and an explicit callback URL
+  as the upstream provider requires.
+
 ### Using an OAuth 2.0 upstream provider
 
 If your upstream identity provider does not support OIDC discovery, you can
 configure it as an OAuth 2.0 provider with explicit endpoints. This is useful
 for providers like GitHub that use OAuth 2.0 but don't implement the full OIDC
-specification.
+specification. If the provider supports RFC 7591 instead of pre-provisioned
+client credentials, see
+[Use dynamic client registration with an upstream provider](#use-dynamic-client-registration-with-an-upstream-provider).
 
 ```yaml title="embedded-auth-oauth2-config.yaml"
 apiVersion: toolhive.stacklok.dev/v1beta1
@@ -539,12 +574,117 @@ For OAuth 2.0 servers that return identity in the token response itself, see
 
 :::
 
+### Use dynamic client registration with an upstream provider
+
+Some OAuth 2.0 providers register clients dynamically instead of requiring you
+to create an application in a provider dashboard. Add `dcrConfig` to an
+`oauth2Config` upstream to have the embedded authorization server register
+itself at runtime using RFC 7591.
+
+In this flow, ToolHive registers with the upstream provider as an OAuth client.
+This is separate from MCP clients registering with ToolHive's embedded
+authorization server in
+[Configure MCP client registration](#configure-mcp-client-registration).
+
+This example uses an RFC 8414 discovery document. ToolHive reads the
+`registration_endpoint` and other provider metadata from `discoveryUrl`:
+
+```yaml title="embedded-auth-config-dcr.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPExternalAuthConfig
+metadata:
+  name: embedded-auth-server-dcr
+  namespace: toolhive-system
+spec:
+  type: embeddedAuthServer
+  embeddedAuthServer:
+    issuer: 'https://toolhive.example.com'
+    signingKeySecretRefs:
+      - name: auth-server-signing-key
+        key: signing-key
+    hmacSecretRefs:
+      - name: auth-server-hmac-secret
+        key: hmac-key
+    upstreamProviders:
+      - name: remote-mcp
+        type: oauth2
+        oauth2Config:
+          authorizationEndpoint: 'https://mcp.example.com/authorize'
+          tokenEndpoint: 'https://mcp.example.com/token'
+          redirectUri: 'https://toolhive.example.com/oauth/callback'
+          # highlight-start
+          dcrConfig:
+            discoveryUrl: 'https://mcp.example.com/.well-known/oauth-authorization-server'
+          # highlight-end
+```
+
+Set `authorizationEndpoint` and `tokenEndpoint` even when the discovery document
+advertises them. The CRD requires both fields on `oauth2Config`.
+
+For a complete deployment that uses `discoveryUrl` with Notion, see the
+[Notion MCP server guide](../guides-mcp/notion-remote.mdx).
+
+If the provider gives you a registration URL directly, use
+`registrationEndpoint` instead of `discoveryUrl` in the `MCPExternalAuthConfig`
+provider's `oauth2Config`:
+
+```yaml title="MCPExternalAuthConfig: direct DCR endpoint"
+upstreamProviders:
+  - name: remote-mcp
+    type: oauth2
+    oauth2Config:
+      authorizationEndpoint: 'https://mcp.example.com/authorize'
+      tokenEndpoint: 'https://mcp.example.com/token'
+      scopes:
+        - mcp:read
+      # highlight-start
+      dcrConfig:
+        registrationEndpoint: 'https://mcp.example.com/register'
+      # highlight-end
+```
+
+Set exactly one of `discoveryUrl` or `registrationEndpoint`. A direct
+registration endpoint bypasses discovery, so specify the authorization and token
+endpoints and the scopes that ToolHive should request.
+
+Don't set `clientId` or `clientSecretRef` when you set `dcrConfig`. ToolHive
+obtains the client ID and client secret from the DCR response.
+
+#### Authorize registration with an initial access token
+
+If the upstream provider requires an initial access token, create a Secret in
+the same namespace:
+
+```yaml title="dcr-initial-access-token.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dcr-initial-access-token
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  token: '<YOUR_DCR_INITIAL_ACCESS_TOKEN>'
+```
+
+Then add `initialAccessTokenRef` to the upstream provider's
+`oauth2Config.dcrConfig` in the `MCPExternalAuthConfig`. ToolHive sends the
+Secret value as a bearer token when it calls the registration endpoint:
+
+```yaml title="MCPExternalAuthConfig: DCR initial access token"
+dcrConfig:
+  registrationEndpoint: 'https://mcp.example.com/register'
+  initialAccessTokenRef:
+    name: dcr-initial-access-token
+    key: token
+```
+
 ### Extract identity from the token response
 
 Some providers don't expose a userinfo endpoint but return user identity in the
 OAuth 2.0 token response itself. For these providers, set `identityFromToken` on
-`oauth2Config` instead of `userInfo`. The embedded auth server then skips the
-userinfo HTTP call and extracts identity from the token response body using
+the upstream provider's `oauth2Config` in the `MCPExternalAuthConfig` instead of
+`userInfo`. The embedded auth server then skips the userinfo HTTP call and
+extracts identity from the token response body using
 [gjson dot-notation paths](https://github.com/tidwall/gjson#path-syntax):
 `username` extracts a top-level field, `authed_user.id` extracts a nested field,
 and the pipe operator chains modifiers like `@upstreamjwt`.
@@ -552,7 +692,7 @@ and the pipe operator chains modifiers like `@upstreamjwt`.
 For example, Slack's `oauth.v2.access` response includes the authenticated user
 ID at `authed_user.id`:
 
-```yaml title="oauth2Config snippet for Slack"
+```yaml title="MCPExternalAuthConfig: Slack identity mapping"
 oauth2Config:
   # highlight-start
   identityFromToken:
@@ -564,7 +704,7 @@ Snowflake returns the authenticated login name as a top-level `username` field
 in every authorization-code grant response, and does not expose a userinfo
 endpoint:
 
-```yaml title="oauth2Config snippet for Snowflake"
+```yaml title="MCPExternalAuthConfig: Snowflake identity mapping"
 oauth2Config:
   # highlight-start
   identityFromToken:
@@ -577,7 +717,7 @@ For providers whose token response embeds identity inside a JWT-shaped access
 token, the `@upstreamjwt` modifier decodes the JWT payload so subsequent path
 segments can drill into it:
 
-```yaml title="oauth2Config snippet for JWT-embedded identity"
+```yaml title="MCPExternalAuthConfig: JWT-embedded identity mapping"
 oauth2Config:
   # highlight-start
   identityFromToken:
@@ -611,9 +751,10 @@ includes `access_type=offline` - Google's non-standard alternative to the
 `offline_access` scope.
 
 To pass these parameters, set `additionalAuthorizationParams` on the
-`oidcConfig` or `oauth2Config` of an upstream provider:
+`oidcConfig` or `oauth2Config` under `spec.embeddedAuthServer.upstreamProviders`
+in the `MCPExternalAuthConfig`:
 
-```yaml title="upstreamProviders configuration block"
+```yaml title="MCPExternalAuthConfig: Google OIDC provider"
 upstreamProviders:
   - name: google
     type: oidc
@@ -658,9 +799,9 @@ provider before the flow can complete. Use the same URL on both sides: the value
 computed from `resourceUrl` here, and the authorized redirect URI in your
 provider's application settings.
 
-For example, given this `oidcConfigRef` on an MCPServer:
+For example, given this `oidcConfigRef` on an `MCPServer`:
 
-```yaml
+```yaml title="MCPServer: oidcConfigRef"
 spec:
   oidcConfigRef:
     name: embedded-auth-oidc
@@ -671,7 +812,7 @@ spec:
 Omitting `redirectUri` on the upstream provider resolves the callback to
 `https://mcp.example.com/mcp/oauth/callback`:
 
-```yaml
+```yaml title="MCPExternalAuthConfig: Google OIDC provider"
 upstreamProviders:
   - name: google
     type: oidc
