@@ -2,38 +2,25 @@
 title: 'Quickstart: Registry Server'
 sidebar_label: Quickstart
 description:
-  Deploy the ToolHive Registry Server on a local Kubernetes cluster with a
-  file-based source and query its API.
+  Deploy the ToolHive Registry Server with Helm on a local Kubernetes cluster,
+  load a file-based catalog, and query its API.
 schema_type: tutorial
 ---
 
-In this tutorial, you'll deploy the ToolHive Registry Server on a local
-Kubernetes cluster and query its API. By the end, you'll have a working Registry
-Server serving MCP server entries from a local file, with anonymous
-authentication for fast experimentation.
+In this tutorial, you'll deploy the ToolHive Registry Server with Helm on a
+local Kubernetes cluster. You'll load one MCP server entry from a file and query
+it through the Registry API.
 
-This quickstart covers the standalone Registry Server that you host and curate
-yourself. If you're looking for the built-in catalog that ships with the
-ToolHive CLI and UI, see the [Introduction](./intro.mdx) for a comparison.
-
-:::warning[MCPRegistry CRD is deprecated]
-
-This quickstart uses the `MCPRegistry` CRD, which is deprecated and will be
-removed in a future release. The CRD remains fully functional and is the fastest
-path to a running Registry Server for experimentation. For new long-lived
-deployments, use the [toolhive-registry-server Helm chart](./deploy-helm.mdx)
-instead. See [Deploy the Registry Server](./deployment.mdx) for a comparison of
-the deployment methods.
-
-:::
+This quickstart covers the standalone Registry Server that you host and curate.
+If you're looking for the built-in catalog that ships with the ToolHive CLI and
+UI, see the [Introduction](./intro.mdx) for a comparison.
 
 ## What you'll learn
 
-- How to install the ToolHive Operator, which bundles the `MCPRegistry` CRD
-- How to deploy a minimal PostgreSQL database for the Registry Server
-- How to define registry data in a ConfigMap using the
+- How to deploy a minimal PostgreSQL database for local testing
+- How to define registry data in the
   [ToolHive registry format](../reference/registry-schema-upstream.mdx)
-- How to create an `MCPRegistry` resource that reads from that ConfigMap
+- How to configure and install the Registry Server with Helm
 - How to query the Registry API
 
 ## Prerequisites
@@ -46,8 +33,7 @@ Before starting, make sure you have:
 - [Docker](https://docs.docker.com/get-docker/) or
   [Podman](https://podman-desktop.io/downloads) running
 - [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
-- [`jq`](https://jqlang.org/download/) for formatting the API responses in Step
-  6
+- [`jq`](https://jqlang.org/download/) for formatting API responses
 - Basic familiarity with Kubernetes concepts
 
 ## Step 1: Create a kind cluster
@@ -58,55 +44,17 @@ Create a local Kubernetes cluster named `registry-quickstart`:
 kind create cluster --name registry-quickstart
 ```
 
-Verify the cluster is running:
+Create the namespace for the database and Registry Server:
 
 ```bash
-kubectl cluster-info
+kubectl create namespace toolhive-system
 ```
 
-## Step 2: Install the ToolHive Operator
+## Step 2: Deploy PostgreSQL
 
-The Registry Server is managed through the ToolHive Operator using `MCPRegistry`
-custom resources. Install the operator and its CRDs (which include
-`MCPRegistry`):
-
-```bash
-helm upgrade --install toolhive-operator-crds \
-  oci://ghcr.io/stacklok/toolhive/toolhive-operator-crds \
-  -n toolhive-system --create-namespace
-```
-
-```bash
-helm upgrade --install toolhive-operator \
-  oci://ghcr.io/stacklok/toolhive/toolhive-operator \
-  -n toolhive-system --create-namespace
-```
-
-Wait for the operator pod to become ready:
-
-```bash
-kubectl wait --for=condition=Ready pod \
-  -l app.kubernetes.io/name=toolhive-operator \
-  -n toolhive-system --timeout=120s
-```
-
-:::info[What's happening?]
-
-The operator CRDs chart bundles `MCPRegistry` alongside the other ToolHive CRDs,
-so installing it makes the Registry Server resource type available in your
-cluster. The operator itself watches for `MCPRegistry` resources and provisions
-the Registry Server pod, service, and RBAC for each one.
-
-:::
-
-## Step 3: Deploy a PostgreSQL database
-
-The Registry Server requires a PostgreSQL database. For this quickstart, you
-deploy a minimal single-pod PostgreSQL instance in the `toolhive-system`
-namespace. This setup has no persistent storage or TLS, so don't use it for
-production workloads. Production deployments should use separate application and
-migration users with distinct privileges. See
-[Database configuration](./database.mdx) for the production pattern.
+The Registry Server requires PostgreSQL. For this quickstart, deploy a
+single-pod database without persistent storage or TLS. Do not use this database
+configuration for production workloads.
 
 Create a manifest that defines the credentials Secret, Deployment, and Service:
 
@@ -164,7 +112,7 @@ spec:
       targetPort: 5432
 ```
 
-Apply the manifest and wait for the database to be ready:
+Apply the manifest and wait for PostgreSQL to become ready:
 
 ```bash
 kubectl apply -f postgres.yaml
@@ -172,31 +120,15 @@ kubectl wait --for=condition=Ready pod -l app=postgres \
   -n toolhive-system --timeout=120s
 ```
 
-Create a pgpass Secret for the Registry Server to use when connecting:
+The Secret initializes the local database and later supplies the same password
+to the Registry Server. For production, use persistent storage, TLS, and
+separate application and migration users. See
+[Configure the database](./database.mdx) for that pattern.
 
-```bash
-kubectl create secret generic registry-pgpass \
-  -n toolhive-system \
-  --from-literal=.pgpass='postgres:5432:registry:registry:quickstart'
-```
+## Step 3: Define the registry data
 
-:::info[What's happening?]
-
-The Registry Server uses PostgreSQL's standard
-[pgpass](https://www.postgresql.org/docs/current/libpq-pgpass.html) file format
-for credentials. The line above maps to
-`hostname:port:database:username:password`. The operator mounts this Secret into
-the Registry Server pod and points the server at it automatically when you set
-`pgpassSecretRef` on the `MCPRegistry` resource.
-
-:::
-
-## Step 4: Define your registry data
-
-Define registry data in a ConfigMap. The Registry Server reads it through a
-file-based source. The ConfigMap uses the
-[ToolHive registry format](../reference/registry-schema-upstream.mdx) with a
-single example server entry:
+Create a ConfigMap containing one MCP server entry in the
+[ToolHive registry format](../reference/registry-schema-upstream.mdx):
 
 ```yaml title="registry-data.yaml"
 apiVersion: v1
@@ -255,111 +187,114 @@ Apply the ConfigMap:
 kubectl apply -f registry-data.yaml
 ```
 
-## Step 5: Create an MCPRegistry resource
+## Step 4: Configure the Registry Server
 
-Create an `MCPRegistry` that mounts the ConfigMap, reads from the file, and
-exposes the data through a registry named `default`:
+Create a Helm values file that connects the Registry Server to PostgreSQL and
+mounts the registry data:
 
-```yaml title="my-registry.yaml"
-apiVersion: toolhive.stacklok.dev/v1beta1
-kind: MCPRegistry
-metadata:
-  name: my-registry
-  namespace: toolhive-system
-spec:
-  displayName: My Registry
-  pgpassSecretRef:
-    name: registry-pgpass
-    key: .pgpass
-  volumes:
-    - name: registry-data
-      configMap:
-        name: registry-data
-  volumeMounts:
-    - name: registry-data
-      mountPath: /data/registry
-      readOnly: true
-  configYAML: |
-    sources:
-      - name: local
-        file:
-          path: /data/registry/registry.json
-        syncPolicy:
-          interval: '15m'
-    registries:
-      - name: default
-        sources: ["local"]
-    auth:
-      mode: anonymous
-    database:
-      host: postgres
-      port: 5432
-      user: registry
-      database: registry
-      sslMode: disable
+```yaml title="values.yaml"
+fullnameOverride: registry-server
+
+config:
+  sources:
+    - name: local
+      file:
+        path: /data/registry/registry.json
+      syncPolicy:
+        interval: '15m'
+  registries:
+    - name: default
+      sources: ['local']
+  auth:
+    mode: anonymous
+  database:
+    host: postgres
+    port: 5432
+    user: registry
+    database: registry
+    sslMode: disable
+
+extraEnv:
+  - name: THV_REGISTRY_DATABASE_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: postgres-credentials
+        key: POSTGRES_PASSWORD
+
+extraVolumes:
+  - name: registry-data
+    configMap:
+      name: registry-data
+
+extraVolumeMounts:
+  - name: registry-data
+    mountPath: /data/registry
+    readOnly: true
 ```
 
-Apply the resource and wait for the Registry Server pod to become ready:
+This is the complete Registry Server configuration for the quickstart. It
+defines a file source, exposes that source through the `default` registry, uses
+anonymous access, and supplies the database password from a Kubernetes Secret.
+This example injects the password through an environment variable to keep the
+local setup short. For a persistent deployment, use the
+[pgpass pattern](./deploy-helm.mdx#provide-database-credentials).
+
+Anonymous access and disabled database TLS are suitable only for this local
+cluster. You will replace both settings in a production deployment.
+
+## Step 5: Install the Registry Server
+
+Install the Helm chart with the values file:
 
 ```bash
-kubectl apply -f my-registry.yaml
-kubectl wait --for=condition=Ready pod \
-  -l app.kubernetes.io/instance=my-registry \
-  -n toolhive-system --timeout=180s
+helm upgrade --install registry-server \
+  oci://ghcr.io/stacklok/toolhive-registry-server \
+  -n toolhive-system \
+  -f values.yaml \
+  --wait --timeout=3m
 ```
 
-:::info[What's happening?]
+Helm creates a Deployment and Service named `registry-server`. On startup, the
+Registry Server runs database migrations, loads the entry from the mounted file,
+and starts serving the API on port 8080.
 
-The operator reconciles the `MCPRegistry` resource and creates a Deployment that
-runs the Registry Server container. On startup, the server:
+Confirm that the pod is ready:
 
-1. Runs database migrations against the `registry` database
-2. Reads the registry JSON from the mounted ConfigMap
-3. Starts serving the MCP Registry API on port 8080
-
-The `auth.mode: anonymous` setting disables authentication entirely, which is
-appropriate for local experimentation. Never use anonymous mode in production.
-
-:::
+```bash
+kubectl get pods -n toolhive-system \
+  -l app.kubernetes.io/instance=registry-server
+```
 
 ## Step 6: Query the Registry API
 
-The operator exposes each `MCPRegistry` through a Service named
-`<registry-name>-api`. For this quickstart, that's `my-registry-api`. Confirm it
-exists:
+Port-forward the Registry Server Service to your local machine. This command
+blocks, so leave it running and open a separate terminal for the API requests:
 
 ```bash
-kubectl get svc my-registry-api -n toolhive-system
+kubectl port-forward svc/registry-server 8080:8080 -n toolhive-system
 ```
 
-Port-forward the Service to your local machine. This command blocks, so leave it
-running and open a separate terminal for the curl commands below:
-
-```bash
-kubectl port-forward svc/my-registry-api 8080:8080 -n toolhive-system
-```
-
-In the separate terminal, list servers in the `default` registry:
+In the separate terminal, list the entries in the `default` registry:
 
 ```bash
 curl -s http://localhost:8080/registry/default/v0.1/servers | jq .
 ```
 
-You should see a response containing the `io.github.stacklok/fetch` entry you
-defined in the ConfigMap.
+The response should contain the `io.github.stacklok/fetch` entry from the
+ConfigMap.
 
-Fetch a specific entry by name. The `/` inside server names is part of the
-identifier (reverse-DNS convention), so URL-encode it as `%2F`:
+Fetch version `1.0.0` of that entry. Server names use a reverse-domain
+identifier, so URL-encode the `/` as `%2F`:
 
 ```bash
-curl -s http://localhost:8080/registry/default/v0.1/servers/io.github.stacklok%2Ffetch \
+curl -s http://localhost:8080/registry/default/v0.1/servers/io.github.stacklok%2Ffetch/versions/1.0.0 \
   | jq .
 ```
 
 ## Step 7: Clean up
 
-When you're done experimenting, delete the kind cluster to remove every resource
-you created:
+Stop the port-forward with `Ctrl+C`. Then delete the kind cluster to remove all
+resources created in this tutorial:
 
 ```bash
 kind delete cluster --name registry-quickstart
@@ -368,9 +303,9 @@ kind delete cluster --name registry-quickstart
 :::enterprise
 
 The Registry Server is available in both ToolHive Community and Stacklok
-Enterprise. Enterprise adds turnkey IdP integration (Okta, Entra ID),
-supply-chain-attested images, and SLA-backed support for teams running an
-internal MCP catalog at scale.
+Enterprise. Enterprise adds turnkey IdP integration, supply-chain-attested
+images, and SLA-backed support for teams running an internal MCP catalog at
+scale.
 
 [Learn more about Stacklok Enterprise](../../platform/index.mdx).
 
@@ -378,94 +313,74 @@ internal MCP catalog at scale.
 
 ## Next steps
 
-You've deployed the Registry Server, defined a registry in a file, and queried
-the API. From here, explore the pieces you're most likely to need for a real
-deployment:
-
-- [Configure sources and registries](./configuration.mdx) to sync from Git
-  repositories, upstream APIs, or Kubernetes discovery instead of a single file
-- [Set up authentication](./authentication.mdx) with OAuth/OIDC to replace the
-  anonymous mode used here
-- [Deploy the Registry Server](./deployment.mdx) in production using the Helm
-  chart or raw manifests
-- [Configure the database](./database.mdx) for production, including separate
-  application and migration users, TLS, and persistent storage
-- [Deploy the Cloud UI](../guides-cloud-ui/index.mdx) to give your team a
-  browsable web catalog backed by this Registry Server
+- [Configure sources and registries](./configuration.mdx) to replace the local
+  file with Git, an upstream API, or Kubernetes discovery
+- [Deploy with Helm](./deploy-helm.mdx) to adapt this installation for a
+  persistent environment
+- [Set up authentication](./authentication.mdx) to replace anonymous access
 
 ## Related information
 
-- [Deploy the ToolHive Operator](../guides-k8s/deploy-operator.mdx) covers
-  production installation, upgrades, and namespace-consistency considerations
-  for the operator used in this quickstart
-- [Deploy the Registry Server](./deployment.mdx) compares the operator, Helm,
-  and manual deployment methods
+- [Configure the database](./database.mdx) explains production credentials,
+  migration users, TLS, and connection settings
+- [Deployment options](./deployment.mdx) compares Helm with the other supported
+  deployment methods
 
 ## Troubleshooting
 
 <details>
-<summary>MCPRegistry pod stuck in pending or crash-looping</summary>
+<summary>The Helm installation times out</summary>
 
-Check the Registry Server pod status and logs:
+Check the pod status, events, and Registry Server logs:
 
 ```bash
-kubectl get pods -n toolhive-system -l app.kubernetes.io/instance=my-registry
-kubectl logs -n toolhive-system -l app.kubernetes.io/instance=my-registry
+kubectl get pods -n toolhive-system
+kubectl describe pods -n toolhive-system \
+  -l app.kubernetes.io/instance=registry-server
+kubectl logs -n toolhive-system deployment/registry-server
 ```
 
-The most common startup failures are:
+Common causes include:
 
-- **Database not reachable.** Look for `connection refused` or
-  `could not connect to server` in the logs. Confirm the `postgres` pod is Ready
-  (`kubectl get pods -l app=postgres -n toolhive-system`) and that the pgpass
-  Secret matches the credentials you set on the PostgreSQL Deployment.
-- **Migration user lacks privileges.** Look for
-  `permission denied for schema public` or similar SQL errors. The quickstart
-  uses a single user with full privileges, so this is unusual here, but it can
-  happen if you reused an existing PostgreSQL instance with a restricted user.
-- **Malformed registry JSON.** Look for `failed to parse registry` or JSON
-  decoding errors. Re-apply the ConfigMap with valid JSON, then either wait for
-  the next sync interval or restart the Registry Server pod with
-  `kubectl rollout restart deployment my-registry-api -n toolhive-system`.
+- **PostgreSQL is not ready.** Confirm the pod is running with
+  `kubectl get pods -l app=postgres -n toolhive-system`.
+- **The database password does not match.** Reapply `postgres.yaml`, then
+  reinstall the chart so both containers use the same Secret.
+- **The registry JSON is invalid.** Check the logs for parsing errors and
+  compare `registry-data.yaml` with the example in Step 3.
 
 </details>
 
 <details>
-<summary>Empty response from the `/servers` endpoint</summary>
+<summary>The `/servers` endpoint returns no entries</summary>
 
-Confirm the source synced successfully by describing the `MCPRegistry`:
+Check that the ConfigMap contains the registry file:
 
 ```bash
-kubectl describe mcpregistry my-registry -n toolhive-system
+kubectl get configmap registry-data -n toolhive-system \
+  -o jsonpath='{.data.registry\.json}' | jq .
 ```
 
-The status conditions report sync state. If the source reports a parse error,
-re-apply the ConfigMap with corrected JSON and wait for the next sync interval,
-or restart the pod to force an immediate sync.
+If you changed the ConfigMap after installation, restart the Deployment to
+trigger an immediate source sync:
+
+```bash
+kubectl rollout restart deployment/registry-server -n toolhive-system
+kubectl rollout status deployment/registry-server \
+  -n toolhive-system --timeout=120s
+```
 
 </details>
 
 <details>
-<summary>ConfigMap or volume mount errors</summary>
+<summary>Port 8080 is already in use</summary>
 
-If pod events show `MountVolume.SetUp failed` or
-`configmap "registry-data" not found`, the `MCPRegistry` resource references a
-ConfigMap that doesn't exist in the same namespace. Apply `registry-data.yaml`
-from Step 4 before applying `my-registry.yaml` from Step 5. Both must be in the
-`toolhive-system` namespace for this quickstart.
-
-</details>
-
-<details>
-<summary>Operator pod not running</summary>
-
-If the operator pod never becomes ready, check its logs:
+Forward the Service to a different local port, such as 8081:
 
 ```bash
-kubectl logs -n toolhive-system deployment/toolhive-operator
+kubectl port-forward svc/registry-server 8081:8080 -n toolhive-system
 ```
 
-Make sure the operator CRDs chart was installed before the operator chart. The
-operator needs the CRDs to exist before it starts.
+Then send requests to `http://localhost:8081`.
 
 </details>
