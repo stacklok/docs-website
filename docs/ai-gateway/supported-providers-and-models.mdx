@@ -1,0 +1,164 @@
+---
+title: Supported providers and models
+sidebar_label: Providers and models
+description:
+  LLM providers, model APIs, and capabilities supported by the Stacklok AI
+  Gateway, and how to route models to provider backends.
+---
+
+The Stacklok AI Gateway is a self-hosted proxy that sits between your
+applications and the large language model (LLM) providers they call. It gives
+platform teams a single, policy-enforced entry point for AI traffic, with
+guardrails, budgets, authentication, and observability, while letting developers
+keep using the OpenAI and Anthropic API formats they already know.
+
+This page lists the providers and model APIs the gateway supports and explains
+how models are routed to provider backends.
+
+## Supported providers
+
+Providers are configured declaratively. You register each provider backend once,
+with its endpoint and credentials, and the gateway handles routing, policy, and
+metering for every request.
+
+| Provider                   | API schema                 | Authentication          |
+| -------------------------- | -------------------------- | ----------------------- |
+| OpenAI                     | `OpenAI`                   | API key                 |
+| Anthropic                  | `Anthropic`                | API key                 |
+| AWS Bedrock                | `AWSBedrock`               | AWS IAM (role + region) |
+| Azure OpenAI               | `AzureOpenAI`              | API key                 |
+| Google Vertex AI           | `GCPVertexAI`              | Google service account  |
+| Google Gemini (AI Studio)  | `GeminiAIStudio`           | API key                 |
+| Google Gemini (Gemini API) | `GoogleGenerativeLanguage` | API key                 |
+
+Google Gemini can be reached two ways: through Google AI Studio's
+OpenAI-compatible endpoint (`GeminiAIStudio`), or through the native Gemini API
+at `generativelanguage.googleapis.com` (`GoogleGenerativeLanguage`). Both
+authenticate with an API key. Google Vertex AI (`GCPVertexAI`) connects to a
+regional Vertex endpoint and authenticates with a Google service account.
+
+You can also point the OpenAI schema at any OpenAI-compatible endpoint
+(self-hosted or third-party) by setting a custom hostname and API key. This is
+useful for gateways, inference servers, and open-model providers that expose the
+OpenAI API.
+
+:::info[Need a provider that isn't listed?]
+
+The gateway uses a pluggable provider model, and Stacklok adds backends based on
+customer demand. If you need a provider that isn't listed here, contact your
+Stacklok representative.
+
+:::
+
+## Supported models
+
+The gateway does not maintain a fixed list of models. Any model your configured
+provider exposes is available through the gateway. You map model names to
+provider backends in configuration, and new models work as soon as the provider
+offers them, with no gateway upgrade required.
+
+You route models to providers by declaring routes. For example:
+
+```yaml
+routes:
+  - name: gpt-4o
+    match:
+      model: 'gpt-4o'
+    backendRefs:
+      - provider: openai
+  - name: claude
+    match:
+      model: 'claude-sonnet-4-5'
+    backendRefs:
+      - provider: anthropic
+  - name: gemini
+    match:
+      model: 'gemini-2.5-pro'
+    backendRefs:
+      - provider: gemini
+  - name: default
+    backendRefs:
+      - provider: openai
+```
+
+Requests are matched on the requested model name and forwarded to the
+corresponding provider. Any request whose model does not match a specific route
+falls through to the default route.
+
+For teams that want to restrict which models a given group or application may
+use, the gateway supports per-principal model allow-lists through its policy
+layer. This is optional. Without a policy, routing is unrestricted.
+
+## API compatibility
+
+Applications call the gateway using standard provider APIs. No client SDK
+changes are required beyond pointing the base URL at the gateway.
+
+| API                     | Endpoint                 | Streaming |
+| ----------------------- | ------------------------ | :-------: |
+| OpenAI Chat Completions | `/v1/chat/completions`   |    Yes    |
+| Anthropic Messages      | `/anthropic/v1/messages` |    Yes    |
+
+Server-sent event (SSE) streaming is fully supported for both APIs. Requests to
+Google and Azure providers are accepted in these same formats and translated to
+the provider's native API by the gateway.
+
+## Capabilities across every provider
+
+The following capabilities are provider-agnostic. They apply to all traffic
+routed through the gateway, regardless of which provider serves the request:
+
+- **Sensitive-data guardrails**: detect and block or redact personally
+  identifiable information (PII) and payment card (PCI) data in prompts, with
+  built-in detectors for identifiers such as credit cards, national IDs, emails,
+  and phone numbers, plus custom patterns and optional machine-learning
+  detection.
+- **Token budgets and rate limiting**: enforce per-team, per-application, or
+  per-model token budgets.
+- **Failover and resilience**: weighted load balancing, priority-based failover
+  between providers, retries, circuit breaking, and health checks.
+- **Authentication**: OpenID Connect (OIDC) authentication with role-based
+  authorization, plus virtual API keys for issuing scoped, revocable credentials
+  to teams.
+- **Observability**: OpenTelemetry traces, access logs, token-usage metrics, and
+  prebuilt Grafana dashboards.
+- **Interaction journaling**: optional capture of prompts and responses for
+  audit and compliance.
+
+## How to add a provider
+
+1. Store the provider credential as a Kubernetes Secret.
+2. Add the provider to your gateway configuration with its schema, endpoint, and
+   credential reference.
+3. Add at least one route that references the provider.
+4. Apply the configuration. The gateway reconciles the backend automatically.
+
+```yaml
+providers:
+  - name: openai
+    schema: OpenAI
+    endpoint:
+      hostname: api.openai.com
+      port: 443
+    credentials:
+      type: APIKey
+      secretRef:
+        name: openai-key
+        key: apiKey
+routes:
+  - name: default
+    backendRefs:
+      - provider: openai
+```
+
+Credentials can be rotated in place by updating the Secret. No configuration
+change or restart is required.
+
+## Deployment requirements
+
+The AI Gateway is Kubernetes-native and deployed with a Helm-installed operator.
+It is built on Envoy AI Gateway and Envoy Gateway, which the operator installs
+and manages for you.
+
+For full installation and day-2 operations guidance, see the operator
+documentation.
