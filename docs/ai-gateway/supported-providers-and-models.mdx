@@ -103,6 +103,41 @@ Server-sent event (SSE) streaming is fully supported for both APIs. Requests to
 Google and Azure providers are accepted in these same formats and translated to
 the provider's native API by the gateway.
 
+## Supported clients
+
+Because the gateway speaks the standard OpenAI and Anthropic APIs, any tool that
+can target a custom base URL works with it. The gateway authenticates callers
+with OpenID Connect (OIDC) tokens, and AI coding tools fall into two groups
+based on how they handle authentication:
+
+- **Token-helper tools** run a command on each request and use its output as the
+  bearer token, so they authenticate against the gateway directly.
+- **Static-key tools** accept only a fixed API key and base URL and cannot
+  perform an OIDC login on their own. They connect through a small localhost
+  proxy that injects the token for them.
+
+| Client      | Auth style   | How it connects             |
+| ----------- | ------------ | --------------------------- |
+| Claude Code | Token helper | Directly (`apiKeyHelper`)   |
+| Gemini CLI  | Token helper | Directly                    |
+| Codex CLI   | Token helper | Directly (`auth.command`)   |
+| avante.nvim | Token helper | Directly (`cmd:` prefix)    |
+| Cursor      | Static key   | Through the localhost proxy |
+| VS Code     | Static key   | Through the localhost proxy |
+| Roo Code    | Static key   | Through the localhost proxy |
+| Cline       | Static key   | Through the localhost proxy |
+| Continue    | Static key   | Through the localhost proxy |
+| Aider       | Static key   | Through the localhost proxy |
+| Zed         | Static key   | Through the localhost proxy |
+| Xcode       | Static key   | Through the localhost proxy |
+
+[ToolHive](https://github.com/stacklok/toolhive) bridges both paths through its
+`thv llm` command: it supplies fresh tokens to token-helper tools and runs the
+localhost proxy that injects credentials for static-key tools. A single
+`thv llm setup` can auto-configure detected tools. The list above is
+representative, not exhaustive: any tool that fits one of the two auth styles
+can connect the same way.
+
 ## Capabilities across every provider
 
 The following capabilities are provider-agnostic. They apply to all traffic
@@ -117,9 +152,8 @@ routed through the gateway, regardless of which provider serves the request:
   per-model token budgets.
 - **Failover and resilience**: weighted load balancing, priority-based failover
   between providers, retries, circuit breaking, and health checks.
-- **Authentication**: OpenID Connect (OIDC) authentication with role-based
-  authorization, plus virtual API keys for issuing scoped, revocable credentials
-  to teams.
+- **Authentication**: OIDC authentication with role-based authorization, plus
+  virtual API keys for issuing scoped, revocable credentials to teams.
 - **Observability**: OpenTelemetry traces, access logs, token-usage metrics, and
   prebuilt Grafana dashboards.
 - **Interaction journaling**: optional capture of prompts and responses for
