@@ -511,11 +511,12 @@ condition to `False`, moves the resource to phase `Failed`, and stops updating
 the Deployment. See [Check remote proxy status](#check-remote-proxy-status) to
 inspect the failure message.
 
-### Inject custom headers
+### Inject headers into upstream requests
 
 Some remote MCP servers require custom headers for tenant identification, API
 keys, or other purposes. Use the `headerForward` field to inject headers into
-every request forwarded to the remote server.
+every request forwarded to the remote server. This configuration belongs to one
+`MCPRemoteProxy` and supports multiple plaintext or Secret-backed values.
 
 For non-sensitive values like tenant IDs or correlation headers, use
 `addPlaintextHeaders`:
@@ -601,6 +602,58 @@ spec:
   applies regardless of casing.
 
 :::
+
+#### Reuse a bearer token across remote proxies
+
+To inject the same `Authorization: Bearer <TOKEN>` header from multiple
+`MCPRemoteProxy` resources, store the token behind a shared
+`MCPExternalAuthConfig` of type `bearerToken`.
+
+First, create a Secret containing only the token value, without the `Bearer`
+prefix:
+
+```yaml title="backend-bearer-token-secret.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backend-bearer-token
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  token: '<YOUR_BEARER_TOKEN>'
+```
+
+Create the authentication configuration in the same namespace:
+
+```yaml title="backend-bearer-auth.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPExternalAuthConfig
+metadata:
+  name: backend-bearer-auth
+  namespace: toolhive-system
+spec:
+  type: bearerToken
+  bearerToken:
+    tokenSecretRef:
+      name: backend-bearer-token
+      key: token
+```
+
+Reference it from each remote proxy that uses the token:
+
+```yaml title="MCPRemoteProxy: externalAuthConfigRef"
+spec:
+  externalAuthConfigRef:
+    name: backend-bearer-auth
+```
+
+Both `headerForward` and `bearerToken` authenticate the proxy to the remote MCP
+server. They do not authenticate clients connecting to the proxy. Configure
+client authentication separately with `oidcConfigRef` or `authServerRef`.
+
+For static credentials sent from a Virtual MCP Server (vMCP) directly to its
+backends, see
+[Inject a static credential](../guides-vmcp/authentication.mdx#inject-a-static-credential-header-injection).
 
 ## Quick start example
 
