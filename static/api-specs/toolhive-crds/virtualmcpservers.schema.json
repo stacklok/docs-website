@@ -785,11 +785,11 @@
                   "properties": {
                     "prefixFormat": {
                       "default": "{workload}_",
-                      "description": "PrefixFormat defines the prefix format for the \"prefix\" strategy.\nSupports placeholders: {workload}, {workload}_, {workload}.",
+                      "description": "PrefixFormat defines the prefix format for the \"prefix\" tool strategy\nand for backend-prefixed prompt names (the default for every prompt;\nunder the \"priority\" strategy, backends listed in priorityOrder keep\ntheir own prompt names).\nSupports placeholders: {workload}, {workload}_, {workload}.",
                       "type": "string"
                     },
                     "priorityOrder": {
-                      "description": "PriorityOrder defines the workload priority order for the \"priority\" strategy.",
+                      "description": "PriorityOrder defines the workload priority order for the \"priority\" strategy.\nListed workloads also keep their own prompt names (unlisted workloads'\nprompts stay backend-prefixed).",
                       "items": {
                         "type": "string"
                       },
@@ -938,6 +938,12 @@
                 "maxDataSize": {
                   "default": 1024,
                   "description": "MaxDataSize limits the size of request/response data included in audit logs (in bytes).",
+                  "type": "integer"
+                },
+                "maxDelegationDepth": {
+                  "default": 10,
+                  "description": "MaxDelegationDepth caps how many nested RFC 8693 \"act\" entries are\nrecorded in an audit event's delegation chain. Deeper chains are\ntruncated (marked with truncated=true). Defaults to 10 when unset.",
+                  "minimum": 1,
                   "type": "integer"
                 }
               },
@@ -1327,6 +1333,10 @@
                       "description": "Audience is the required token audience.",
                       "type": "string"
                     },
+                    "caBundlePath": {
+                      "description": "CABundlePath is the absolute file path to a PEM-encoded CA certificate bundle\nused when the OIDC middleware performs HTTPS requests to the issuer\n(OIDC discovery, JWKS fetch, token introspection). When set, the CA bundle\nat this path is added to the trust store used for verifying the issuer's\nTLS certificate. Typically populated by the Kubernetes operator from\nMCPOIDCConfig.spec.inline.caBundleRef (ConfigMap) or from the in-cluster\nservice-account CA when using Kubernetes service-account auth.",
+                      "type": "string"
+                    },
                     "clientId": {
                       "description": "ClientID is the OAuth client ID.",
                       "type": "string"
@@ -1501,7 +1511,7 @@
               "type": "object"
             },
             "optimizer": {
-              "description": "Optimizer configures the MCP optimizer for context optimization on large toolsets.\nWhen enabled, vMCP exposes only find_tool and call_tool operations to clients\ninstead of all backend tools directly. This reduces token usage by allowing\nLLMs to discover relevant tools on demand rather than receiving all tool definitions.",
+              "description": "Optimizer configures the MCP optimizer for context optimization on large toolsets.\nWhen enabled, vMCP exposes only find_tool and call_tool operations to clients\ninstead of all backend tools directly. This reduces token usage by allowing\nLLMs to discover relevant tools on demand rather than receiving all tool definitions.\nEnabling the optimizer currently pins this instance to MCP 2025-11-25: the\nfind_tool/call_tool meta-tools are session-scoped, so Modern-capable (2026-07-28)\nclients are negotiated down to the Legacy revision (see\npkg/vmcp/server/modern_gate.go; Modern parity is tracked in stacklok/toolhive#6089).",
               "properties": {
                 "embeddingHeaders": {
                   "additionalProperties": {
@@ -2910,6 +2920,10 @@
               "lastHealthCheck": {
                 "description": "LastHealthCheck is the timestamp of the last health check",
                 "format": "date-time",
+                "type": "string"
+              },
+              "mcpRevision": {
+                "description": "MCPRevision is the backend's negotiated MCP protocol revision\n(\"2026-07-28\" or \"2025-11-25\"). Empty when the backend has not been probed.",
                 "type": "string"
               },
               "message": {
