@@ -35,7 +35,7 @@ to manage the Registry Server like any other Helm release without installing the
 ToolHive Operator.
 
 The steps below build a values file, create a Secret holding the database
-password, and install the chart.
+password, install the chart, and route traffic to the resulting Service.
 
 ## Create a values file
 
@@ -173,6 +173,55 @@ Confirm that the pod is ready:
 ```bash
 kubectl get pods -n toolhive-system \
   -l app.kubernetes.io/instance=registry-server
+```
+
+## Expose the Registry Server
+
+The chart creates a ClusterIP Service on port 8080, named after the release and
+chart in the form `<RELEASE_NAME>-toolhive-registry-server`. For the
+`registry-server` release above, that's
+`registry-server-toolhive-registry-server`. Confirm the name:
+
+```bash
+kubectl get svc -n toolhive-system \
+  -l app.kubernetes.io/instance=registry-server
+```
+
+Set `fullnameOverride` in your values file if you want a shorter, stable name to
+reference from routing resources.
+
+The chart doesn't create an Ingress, HTTPRoute, or any other external entry
+point, so route to the Service with whatever your cluster already uses:
+
+- **Ingress controller**: create an Ingress with the Service as its backend on
+  port 8080.
+- **Gateway API**: create an HTTPRoute with the Service as its `backendRef`.
+- **Cloud load balancer**: change the Service type in your values file and add
+  your provider's annotations under `service.annotations`.
+
+```yaml title="values.yaml (excerpt)"
+service:
+  type: LoadBalancer
+  annotations: {}
+```
+
+Whichever you choose, [set up authentication](./authentication.mdx) before the
+server becomes reachable outside the cluster. The values file above sets
+`mode: anonymous`, which lets any caller read the registry.
+
+To check the API before you wire up routing, port-forward the Service. This
+command blocks, so leave it running and open a separate terminal for the
+request:
+
+```bash
+kubectl port-forward -n toolhive-system \
+  svc/registry-server-toolhive-registry-server 8080:8080
+```
+
+In the separate terminal, query one of the registries you defined in `config`:
+
+```bash
+curl -s http://localhost:8080/registry/default/v0.1/servers | jq .
 ```
 
 ## Share a database host across subcharts
