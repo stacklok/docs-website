@@ -320,6 +320,102 @@ authenticated before pushing.
 
 :::
 
+## Pin a project's skills for reproducible installs
+
+:::warning[Experimental in v0.41.0]
+
+The skills lock file, `thv skill sync`, and `thv skill upgrade` are experimental
+in v0.41.0. Set `TOOLHIVE_SKILLS_LOCK_ENABLED=true` on the process running the
+ToolHive API server (either the `thv serve` shell or the ToolHive desktop app)
+before using any lock-file command. Without it, sync and upgrade fail with:
+
+```text
+skills lock file support is experimental; set TOOLHIVE_SKILLS_LOCK_ENABLED=true to use it
+```
+
+Behavior, flag names, and file format may change before the feature stabilizes.
+
+:::
+
+If you install project-scoped skills across a team or a CI environment, you
+usually want everyone (and every build) to end up with exactly the same skill
+content. ToolHive records project-scope installs in a `toolhive.lock.yaml` file
+at the project root; `thv skill sync` restores that pinned set on another
+machine, and `thv skill upgrade` re-resolves pinned entries to newer content in
+a controlled way.
+
+The lock file sits next to `.git` in the project root and pins each skill's
+resolved reference, digest, content digest, and (when available) Sigstore
+provenance. Commit it to the repository like `package-lock.json` or `go.sum`.
+
+### Restore pinned skills with `thv skill sync`
+
+`thv skill sync` reads `toolhive.lock.yaml` from the project root, compares it
+to what is currently installed, and reinstalls anything that's missing or has
+drifted, restoring each entry to its pinned digest:
+
+```bash
+export TOOLHIVE_SKILLS_LOCK_ENABLED=true
+thv skill sync --project-root /path/to/project
+```
+
+Because skill content is a set of instructions that AI agents follow, sync
+prompts for confirmation before installing anything. In CI, pass `--yes` to skip
+the prompt (required when stdin isn't a terminal):
+
+```bash
+thv skill sync --project-root . --yes
+```
+
+A few flags are worth knowing for CI use:
+
+- `--check` reports drift without installing, writing, or removing anything. Use
+  this as a freshness gate.
+- `--adopt` writes lock entries for existing project-scope installs that aren't
+  tracked yet; use it when onboarding an existing project.
+- `--prune` removes installs no longer present in the lock file.
+- `--clients <csv>` restricts sync to specific client apps (for example,
+  `claude-code,cursor`), or `all` for every available client.
+
+### Upgrade pinned skills with `thv skill upgrade`
+
+`thv skill upgrade` re-resolves lock entries and installs newer content where
+available. Immutable references (an OCI digest or a full git commit hash) are
+reported as not-upgradable because there is nothing newer to resolve to.
+
+```bash
+thv skill upgrade --project-root /path/to/project
+```
+
+Preview a plan without persisting anything (OCI sources are still fetched into
+the local artifact store so digests can be compared):
+
+```bash
+thv skill upgrade --preview
+```
+
+`--fail-on-changes` evaluates the same plan but never installs; use it as a CI
+freshness gate that fails when the pinned set is not up to date.
+`--allow-ref-change` permits the resolved reference itself to change (for
+example, when a registry entry has been repointed at a different repository);
+without it, ref changes are refused for safety.
+
+### Typed exit codes for CI
+
+Both `thv skill sync` and `thv skill upgrade` use typed exit codes so CI
+pipelines can distinguish outcomes:
+
+| Exit code | Meaning                                                                                                 |
+| --------- | ------------------------------------------------------------------------------------------------------- |
+| `0`       | Success                                                                                                 |
+| `1`       | Command usage or setup error (standard Cobra/CLI default)                                               |
+| `2`       | Check failure: `sync --check` or `upgrade --fail-on-changes` found drift; nothing was applied           |
+| `3`       | Partial failure: some (not all) targeted skills failed during sync or upgrade                           |
+| `4`       | Policy rejection: refused non-interactively without `--yes`, or ref change without `--allow-ref-change` |
+
+When multiple failures apply, partial failure (`3`) takes precedence over check
+failure (`2`), which takes precedence over policy rejection (`4`).
+
 ## List and remove locally-built skill artifacts
 
 After building skills locally, you can view and manage the artifacts stored in
@@ -377,6 +473,8 @@ pointing to that digest are removed.
 - [Manage agent skills in the ToolHive UI](../guides-ui/skills.mdx) to browse,
   install, and build skills without leaving the app
 - [`thv skill` command reference](../reference/cli/thv_skill.md)
+- [`thv skill sync` command reference](../reference/cli/thv_skill_sync.md)
+- [`thv skill upgrade` command reference](../reference/cli/thv_skill_upgrade.md)
 - [`thv serve` command reference](../reference/cli/thv_serve.md)
 - [Agent Skills specification](https://agentskills.io/specification)
 

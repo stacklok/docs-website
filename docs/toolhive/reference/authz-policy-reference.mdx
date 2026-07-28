@@ -121,6 +121,59 @@ subject of an [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)
 delegation `act` claim. Nesting deeper than 10 levels is dropped rather than
 converted, since claim values can originate from an unverified upstream token.
 
+### Multi-valued claim normalization
+
+OAuth scope claims can arrive in two shapes depending on the identity provider:
+a space-delimited string (`"read write admin"`) or a JSON array
+(`["read", "write", "admin"]`). Without normalization, Cedar policies that match
+on scope values have to handle both shapes, or fail closed when the shape
+changes.
+
+Starting in v0.41.0, the Cedar authorizer config accepts a `multi_valued_claims`
+list. Naming a claim in this list changes how the authorizer exposes it: a new
+set-shaped `claimset_<name>` attribute becomes available, and the existing
+`claim_<name>` attribute is normalized to a canonical space-delimited string:
+
+| Attribute         | Cedar type     | How to use                                                            |
+| ----------------- | -------------- | --------------------------------------------------------------------- |
+| `claimset_<name>` | Set of Strings | Exact-element membership: `.contains`, `.containsAll`, `.containsAny` |
+| `claim_<name>`    | String         | Canonical space-delimited form, for `like` or `==`                    |
+
+```yaml title="cedar-config.yaml"
+version: 1
+type: cedarv1
+cedar:
+  # highlight-next-line
+  multi_valued_claims: ['scope', 'scp']
+  policies:
+    - |
+      permit(
+        principal,
+        action == Action::"call_tool",
+        resource
+      ) when {
+        principal.claimset_scope.contains("mcp:tools")
+      };
+```
+
+Only list claims whose element values contain no spaces (for example, OAuth
+scopes per
+[RFC 6749 §3.3](https://datatracker.ietf.org/doc/html/rfc6749#section-3.3) such
+as `scope` and `scp`). Don't list group or role claims, or any claim whose
+values can contain spaces; their internal spaces would be mis-tokenized into
+separate elements.
+
+:::warning[Migration hazard for existing `like` policies]
+
+Adding an array-shaped claim to `multi_valued_claims` changes its `claim_<name>`
+attribute from a Cedar `Set` to a `String`. If an existing policy did
+`principal.claim_scope like "*mcp:tools*"` against the same claim, it will start
+matching more permissively (substring, not exact element). Audit `like` policies
+against any claim before opting it in, and prefer
+`claimset_<name>.contains(...)` for exact-element membership.
+
+:::
+
 ## Resource attributes
 
 Resource attributes vary depending on the type of MCP operation. Each operation

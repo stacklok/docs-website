@@ -436,6 +436,68 @@ You can switch between cluster mode and namespace mode by updating the
 `values.yaml` file and reapplying the Helm chart as shown above. Migration in
 both directions is supported.
 
+### Storage version migrator (namespace-mode opt-out)
+
+Starting in v0.41.0, the operator chart enables the storage version migrator
+controller by default. This controller trims deprecated API versions from the
+`status.storedVersions` list on ToolHive CRDs so that a future release can drop
+those versions cleanly. It watches cluster-scoped CustomResourceDefinitions and
+re-stores resources across all namespaces, which a namespace-scoped operator
+cannot do.
+
+Cluster-scoped installs (the default) get the migrator automatically. The chart
+doesn't create new pods or RBAC objects; the existing operator container gains
+the controller after it restarts.
+
+**Namespace-scoped installs must opt out.** `helm install` or `helm upgrade`
+fails at render time with:
+
+```text
+operator.features.storageVersionMigrator requires operator.rbac.scope=cluster
+```
+
+Add the opt-out to your `values.yaml`:
+
+```yaml title="values.yaml"
+operator:
+  rbac:
+    scope: 'namespace'
+  # highlight-start
+  features:
+    storageVersionMigrator: false
+  # highlight-end
+```
+
+Because namespace-scoped installs cannot run the migrator, plan to clean CRD
+`status.storedVersions` by other means (for example, a one-off run of
+[kube-storage-version-migrator](https://github.com/kubernetes-sigs/kube-storage-version-migrator))
+before any future release drops a deprecated CRD version.
+
+### Static image discovery for air-gapped installs
+
+The operator injects three runtime images (the ToolHive runner, the vMCP image,
+and the Registry API image) into workloads at runtime, so they never appear in
+the operator Deployment manifest. In air-gapped environments where
+image-mirroring tooling scans manifests statically, these references are
+invisible.
+
+Set `operator.imageDiscovery.enabled: true` to render an
+`<RELEASE>-image-discovery` Deployment with `replicas: 0`. The Deployment exists
+only to expose the three image references behind `image:` keys so static
+scanners can find them; because `replicas` is zero, no pods schedule and the
+container runtime pulls no images.
+
+```yaml title="values.yaml"
+operator:
+  # highlight-start
+  imageDiscovery:
+    enabled: true
+    # Optional: set resource requests/limits to satisfy LimitRange or
+    # policy controllers even on a zero-replica Deployment.
+    resources: {}
+  # highlight-end
+```
+
 ## Check operator status
 
 To verify the operator is working correctly:

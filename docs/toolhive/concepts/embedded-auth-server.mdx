@@ -126,6 +126,39 @@ client's credential headers (`Authorization`, `Cookie`, and
 `Proxy-Authorization`) instead of swapping them for an upstream token, so the
 backend receives an unauthenticated request.
 
+## Delegated tokens via RFC 8693 token exchange
+
+Starting in v0.41.0, the embedded authorization server's token endpoint accepts
+[RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) token exchange
+requests. A client that already holds a ToolHive-issued JWT can present it as a
+`subject_token` and receive a new token, minted with a different audience or a
+narrower scope set, that acts on behalf of the same user. An agent framework
+uses this pattern when it needs to call several downstream services under a
+single user's identity without re-prompting the user.
+
+The token endpoint uses the grant type
+`urn:ietf:params:oauth:grant-type:token-exchange`. Only confidential clients
+that were registered with the token-exchange grant may call it; public clients
+are refused. The exchanged token's audience is bounded by the subject token's
+own audience so a compromised client cannot broaden its reach.
+
+### Delegation chain in audit logs
+
+When the exchange succeeds, ToolHive mints an `act` claim on the new token
+recording which client is acting for the user. If the subject token already
+carried a prior `act`, it is nested inside the new one, giving an auditable
+delegation chain rather than dropping the earlier hop. The chain depth is capped
+at 10 hops; exchanges that would exceed the cap are refused.
+
+Audit events for delegated calls carry a `delegation` object with the full
+`chain` (each hop's actor client ID), so "agent X acting for Alice" is
+distinguishable from "Alice directly" in the audit log. Non-delegated tokens
+(plain user tokens with no `act` claim) omit the `delegation` field entirely.
+
+Cedar policies can also read the `act` claim through the standard
+`claim_`-prefixed attributes; see
+[Principal attributes](../reference/authz-policy-reference.mdx#principal-attributes).
+
 ## Automatic token refresh
 
 Upstream access tokens expire independently of the ToolHive JWT lifespan. When
