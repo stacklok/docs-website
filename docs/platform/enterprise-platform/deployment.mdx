@@ -88,10 +88,9 @@ Before you authenticate and install, run the platform's **preflight** spec
 against your target cluster. The umbrella chart ships a `Preflight` custom
 resource as a labeled Secret, so rendering the chart and piping it to the
 `kubectl-preflight` plugin analyzes real prerequisites automatically. It catches
-the misconfigurations that cause the most opaque install failures, a Kubernetes
-version below the chart floor, tight node capacity, an unreachable OIDC issuer,
-a missing signing-key Secret, before they surface later as failed pods or a
-stuck rollout.
+misconfigurations before they surface later as failed pods or a stuck rollout: a
+Kubernetes version below the chart floor, tight node capacity, an unreachable
+OIDC issuer, a missing signing-key Secret.
 
 ### Install the CLI plugin
 
@@ -124,8 +123,8 @@ compare `kubectl preflight version` against the pinned version above.
 Use the `values.yaml` you build in [Step 3](#3-configure-values), not an empty
 or minimal render. The opt-in analyzers (OIDC issuer, signing-key Secret,
 registry database) only render when their corresponding values are set, so
-preflighting against an empty file silently skips them, a `pass` result that
-verified less than your real install will.
+preflighting against an empty file silently skips them, and a `pass` result
+verifies less than your real install actually needs.
 
 ```bash
 helm template stacklok-enterprise \
@@ -141,15 +140,15 @@ username and your **License ID** as the password.
 
 ### What it checks
 
-| Check                          | Renders when                                                                      | Outcome                                                                                    |
-| ------------------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Kubernetes version             | Always                                                                            | `fail` below 1.28 (the chart's floor)                                                      |
-| Node capacity (CPU and memory) | Always                                                                            | `warn` if tight, evaluated on the smallest node                                            |
-| Distribution                   | Always                                                                            | `warn` on OpenShift OCP                                                                    |
-| Egress reachability            | `preflight.checkEgress=true`                                                      | `warn` only; off by default, always fails in air gap                                       |
-| Registry database reachability | `registryServer.enabled` and a run-time `preflightDatabaseUri` is supplied        | `fail` if unreachable                                                                      |
-| OIDC issuer reachability       | `enterpriseManager.enabled=true` and `enterprise-manager.idpConfig.issuer` is set | `fail` if unreachable or misconfigured                                                     |
-| Signing-key Secret exists      | `enterpriseManager.enabled=true`                                                  | `fail` if the Secret named in `enterprise-manager.signingConfig.existingSecret` is missing |
+| Check                          | Renders when                                                                                        | Outcome                                                                                    |
+| ------------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Kubernetes version             | Always                                                                                              | `fail` below 1.28 (the chart's floor)                                                      |
+| Node capacity (CPU and memory) | Always                                                                                              | `warn` if tight, evaluated on the smallest node                                            |
+| Distribution                   | Always                                                                                              | `warn` on OpenShift OCP                                                                    |
+| Egress reachability            | `preflight.checkEgress=true`                                                                        | `warn` only; off by default, always fails in air gap                                       |
+| Registry database reachability | `registryServer.enabled` and a run-time `toolhive-registry-server.preflightDatabaseUri` is supplied | `fail` if unreachable                                                                      |
+| OIDC issuer reachability       | `enterpriseManager.enabled=true` and `enterprise-manager.idpConfig.issuer` is set                   | `fail` if unreachable or misconfigured                                                     |
+| Signing-key Secret exists      | `enterpriseManager.enabled=true`                                                                    | `fail` if the Secret named in `enterprise-manager.signingConfig.existingSecret` is missing |
 
 :::warning[Registry database credential]
 
@@ -180,9 +179,10 @@ the underlying cluster condition first.
 
 ### Optional: enforce preflight checks in-cluster
 
-Set `--set preflight.enforce=true` in your values to opt into an in-cluster
-pre-install and pre-upgrade Helm hook Job that runs the same spec and genuinely
-fails `helm install` or `helm upgrade` on a `fail` outcome, real blocking, not
+Set `preflight.enforce: true` in your values (or pass
+`--set preflight.enforce=true`) to opt into an in-cluster pre-install and
+pre-upgrade Helm hook Job that runs the same spec and genuinely fails
+`helm install` or `helm upgrade` on a `fail` outcome, real blocking, not
 advisory.
 
 This is off by default because it carries cost you should accept deliberately:
