@@ -126,38 +126,62 @@ client's credential headers (`Authorization`, `Cookie`, and
 `Proxy-Authorization`) instead of swapping them for an upstream token, so the
 backend receives an unauthenticated request.
 
-## Delegated tokens via RFC 8693 token exchange
+## Delegated identities and the `act` claim
 
-Starting in v0.41.0, the embedded authorization server's token endpoint accepts
-[RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) token exchange
-requests. A client that already holds a ToolHive-issued JWT can present it as a
-`subject_token` and receive a new token, minted with a different audience or a
-narrower scope set, that acts on behalf of the same user. Use this pattern when
-an agent framework needs to call several downstream services under a single
-user's identity without re-prompting the user.
+When a request arrives with a token that acts on behalf of a user rather than
+representing that user directly,
+[RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) records the acting
+party in an `act` claim. ToolHive reads this claim during token validation, so
+audit logs and Cedar policies can distinguish "agent X acting for Alice" from
+"Alice directly."
 
-The token endpoint uses the grant type
-`urn:ietf:params:oauth:grant-type:token-exchange`. Only confidential clients
-that were registered with the token-exchange grant may call it; public clients
-are refused. The exchanged token's audience is bounded by the subject token's
-own audience so a compromised client cannot broaden its reach.
+ToolHive reads `act` from any JWT it validates, regardless of which
+authorization server minted the token. If your identity provider performs its
+own token exchange and issues tokens carrying `act`, the delegation chain is
+picked up with no extra configuration.
 
-### Delegation chain in audit logs
+:::note
 
-When the exchange succeeds, ToolHive mints an `act` claim on the new token
-recording which client is acting for the user. If the subject token already
-carried a prior `act`, it is nested inside the new one, giving an auditable
-delegation chain rather than dropping the earlier hop. The chain depth is capped
-at 10 hops; exchanges that would exceed the cap are refused.
+Delegation data is only available when ToolHive validates the token as a JWT
+using JWKS. If you configure opaque token introspection instead, claims outside
+the standard introspection response (including `act`) don't reach the audit and
+authorization layers.
 
-Audit events for delegated calls carry a `delegation` object with the full
-`chain` (each hop's actor client ID), so "agent X acting for Alice" is
-distinguishable from "Alice directly" in the audit log. Non-delegated tokens
-(plain user tokens with no `act` claim) omit the `delegation` field entirely.
+:::
 
-Cedar policies can also read the `act` claim through the standard
-`claim_`-prefixed attributes; see
-[Principal attributes](../reference/authz-policy-reference.mdx#principal-attributes).
+### Delegation chains in audit logs
+
+Delegation is recorded on every call made with a delegated token, not once when
+the token is minted. Each audited MCP request, each SSE connection, and each
+vMCP workflow step carries a `delegation` object holding the full chain, so
+every hop's activity is independently traceable.
+
+Each entry in `chain` records the acting party's issuer and subject, ordered
+with the most recent actor first. Chains deeper than 10 hops are truncated and
+flagged rather than rejected.
+
+Tokens with no `act` claim omit the `delegation` field entirely. A token that
+asserts a delegation ToolHive can't parse is recorded with a malformed flag
+instead of being silently treated as non-delegated.
+
+### Reading the `act` claim in Cedar policies
+
+The `act` claim is converted to a nested Cedar record under the standard
+`claim_` prefix, and is available as both a principal and a context attribute:
+
+```text
+permit(
+  principal,
+  action == Action::"call_tool",
+  resource
+) when {
+  principal.claim_act.sub == "agent-orchestrator"
+};
+```
+
+Claims nested deeper than 10 levels are dropped rather than converted. See
+[Principal attributes](../reference/authz-policy-reference.mdx#principal-attributes)
+for the full claim type mapping.
 
 ## Automatic token refresh
 
