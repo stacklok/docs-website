@@ -27,15 +27,11 @@ Parse the arguments by checking if the first word is `summary` or `blog`. If not
 
 ## Terminology
 
-Use correct product names consistently:
+Follow the word list in the project's AGENTS.md ("Word list" section); it is the single source of truth for product names and capitalization. Additions and clarifications specific to these updates:
 
 - **ToolHive**: Bi-capitalized, one word (not "Toolhive" or "Tool Hive")
-- **Virtual MCP Server (vMCP)**: Full name on first use, "vMCP" thereafter. Lowercase "v" (not "VMCP")
 - **ToolHive Registry Server**: Capitalized as product name. Lowercase "registry server" when generic.
-- **ToolHive Gateway**: Capitalized as product name. vMCP is the implementation.
-- **ToolHive Portal**: The web-based frontend (Cloud UI).
-- **MCP**: Model Context Protocol. Always all-caps abbreviation.
-- **open source**: Two words, lowercase (not "open-source")
+- **ToolHive UI**: The desktop app. The `toolhive-studio` repo name is internal only; never write "Studio" in user-facing copy.
 
 ## ToolHive Repositories
 
@@ -43,8 +39,8 @@ Use correct product names consistently:
 | --- | --- |
 | `stacklok/toolhive-registry-server` | Registry Server (discovery, sync, API) |
 | `stacklok/toolhive` | CLI, Kubernetes Operator, Virtual MCP Server (vMCP) |
-| `stacklok/toolhive-studio` | Desktop UI |
-| `stacklok/toolhive-cloud-ui` | Cloud UI (ToolHive Portal) |
+| `stacklok/toolhive-studio` | ToolHive UI (desktop app) |
+| `stacklok/toolhive-cloud-ui` | Cloud UI |
 
 Note: The `toolhive` repo contains both Runtimes and vMCP components -- distinguish updates by subdirectories or PR labels.
 
@@ -192,7 +188,7 @@ Use this for Slack, email, Google Docs, or any non-blog context.
 For detailed release notes, check the project repositories:
 
 - [ToolHive Runtimes](https://github.com/stacklok/toolhive/releases) (CLI and Kubernetes Operator)
-- [ToolHive Desktop UI](https://github.com/stacklok/toolhive-studio/releases)
+- [ToolHive UI](https://github.com/stacklok/toolhive-studio/releases)
 - [ToolHive Cloud UI](https://github.com/stacklok/toolhive-cloud/releases)
 - [ToolHive Registry Server](https://github.com/stacklok/toolhive-registry-server/releases)
 
@@ -230,7 +226,7 @@ description:
 For detailed release notes, check the project repositories:
 
 - [ToolHive Runtimes](https://github.com/stacklok/toolhive/releases) (CLI and Kubernetes Operator)
-- [ToolHive Desktop UI](https://github.com/stacklok/toolhive-studio/releases)
+- [ToolHive UI](https://github.com/stacklok/toolhive-studio/releases)
 - [ToolHive Cloud UI](https://github.com/stacklok/toolhive-cloud/releases)
 - [ToolHive Registry Server](https://github.com/stacklok/toolhive-registry-server/releases)
 
