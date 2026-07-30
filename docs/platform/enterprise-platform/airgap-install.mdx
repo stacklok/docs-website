@@ -510,6 +510,35 @@ alongside the chart and image transfer in
 [pinned version](./deployment.mdx#install-the-cli-plugin) rather than krew here,
 since krew needs index access an air-gapped host doesn't have.
 
+The advisory workflow above needs nothing in your registry, only the CLI binary.
+
+:::note[Enabling in-cluster enforcement]
+
+The optional
+[enforcement mode](./deployment.mdx#optional-enforce-preflight-checks-in-cluster)
+runs the same checks as a pre-install hook Job that blocks a failing install.
+Enabling it on this path takes three things:
+
+- Confirm the `preflight-runner` image reached your registry. It's on the
+  portal's image list, so [Step 3](#step-3-mirror-the-chart-and-images) mirrors
+  it like any other image, but it's easy to skip as an optional component's
+  image.
+- Repoint `preflight.image.repository` at your registry, the same way you
+  repoint every other component in
+  [Step 4](#step-4-point-the-install-at-your-registry). It defaults to a
+  Stacklok-hosted host that an air-gapped cluster can't reach, and the chart has
+  no global registry override to do this for you.
+- Set `global.replicated.dockerconfigjson` to credentials for your registry. The
+  Job renders its own hook-ordered pull secret from that value, and it can't use
+  the `stacklok-enterprise-pull` secret you created above, because a pre-install
+  hook runs before ordinary chart resources exist. This value is still required
+  even though you set `replicated.enabled: false`.
+
+Because the Job runs before anything else installs, missing any of these hangs
+the install rather than surfacing as an `ImagePullBackOff` later.
+
+:::
+
 ### Install and verify
 
 Install the chart from your registry with the merged values. Reference the chart

@@ -119,8 +119,9 @@ sudo install -m 0755 preflight /usr/local/bin/kubectl-preflight
 ```
 
 Pinning matters because the CLI and the spec move independently. Stacklok tests
-this spec against the version above, so a CLI that drifts ahead of it can report
-behavior the spec was never exercised with.
+this spec against the version above, so a newer CLI can grade a check
+differently than Stacklok validated it, giving you a `pass` or `fail` that
+doesn't reflect your cluster's real state.
 
 ### Alternative: install with krew
 
@@ -158,10 +159,11 @@ helm template stacklok-enterprise \
 
 `<CHANNEL>` and `<VERSION>` are the channel slug and chart version the install
 portal at [install.stacklok.com](https://install.stacklok.com) generates for
-your release, in its **Existing cluster with Helm** instructions.
-`helm template` prompts for the same registry credentials you use in
-[Step 1](#1-authenticate-to-the-replicated-registry): your license email as the
-username and your **License ID** as the password.
+your release, in its **Existing cluster with Helm** instructions. Templating an
+`oci://` reference pulls the chart, so it reuses the `helm registry login`
+credentials from [Step 1](#1-authenticate-to-the-replicated-registry). There's
+no credential prompt: if that login is missing or expired, `helm template` fails
+with an authorization error. Log in again and rerun.
 
 ### What it checks
 
@@ -172,8 +174,23 @@ username and your **License ID** as the password.
 | Distribution                   | Always                                                                                              | `warn` on OpenShift OCP                                                                    |
 | Egress reachability            | `preflight.checkEgress=true`                                                                        | `warn` only; off by default, always fails in air gap                                       |
 | Registry database reachability | `registryServer.enabled` and a run-time `toolhive-registry-server.preflightDatabaseUri` is supplied | `fail` if unreachable                                                                      |
-| OIDC issuer reachability       | `enterpriseManager.enabled=true` and `enterprise-manager.idpConfig.issuer` is set                   | `fail` if unreachable or misconfigured                                                     |
+| OIDC issuer reachability       | `enterpriseManager.enabled=true` and `enterprise-manager.idpConfig.issuer` is set                   | `fail` if unreachable or misconfigured (see the note below)                                |
 | Signing-key Secret exists      | `enterpriseManager.enabled=true`                                                                    | `fail` if the Secret named in `enterprise-manager.signingConfig.existingSecret` is missing |
+
+:::note[A cluster-internal OIDC issuer can fail from your workstation]
+
+The OIDC check probes the issuer from wherever you run `kubectl preflight`, not
+from inside the cluster. If your issuer is only reachable on the cluster
+network, the check reports `fail` from a workstation even though the Enterprise
+Manager pod would reach it fine.
+
+That's a difference in network vantage point, not a misconfiguration. Confirm it
+by running the check from inside the cluster, which is what
+[enforcement mode](#optional-enforce-preflight-checks-in-cluster) does. For a
+publicly reachable issuer, treat a `fail` as real: it usually means a typo in
+the issuer URL.
+
+:::
 
 ### Check registry database reachability
 
@@ -219,28 +236,42 @@ the underlying cluster condition first.
 Set `preflight.enforce: true` in your values (or pass
 `--set preflight.enforce=true`) to opt into an in-cluster pre-install and
 pre-upgrade Helm hook Job that runs the same spec and genuinely fails
-`helm install` or `helm upgrade` on a `fail` outcome, real blocking, not
-advisory.
+`helm install` or `helm upgrade` on a `fail` outcome. This is real blocking
+rather than advisory.
 
 This is off by default because it carries cost you should accept deliberately:
 
 - The Job needs `global.replicated.dockerconfigjson` set. It pulls a
   license-gated `preflight-runner` image before the Replicated SDK provisions
   the ordinary pull secret; without it, the Job's pod can't pull its image and
-  the install hangs. On this standard (non-air-gapped) install path, you don't
-  set this value by hand: the Replicated registry injects it into `values.yaml`
-  automatically when you pull the chart with `helm pull` or `helm template`
-  after [authenticating](#1-authenticate-to-the-replicated-registry). Confirm
-  it's present in your pulled `values.yaml` rather than adding it yourself.
+  the install hangs. On this standard (non-air-gapped) install path, Replicated
+  injects this value from your license when Helm pulls the chart, so you
+  normally don't set it by hand. If enforcement fails on an image pull, get the
+  value from the install portal's **Existing cluster with Helm** instructions
+  and set it explicitly.
 - The Job runs under its own ServiceAccount with cluster-scoped read RBAC
   (nodes, namespaces, storage classes, CRDs), plus a namespaced read on the
   signing-key Secret when `enterpriseManager.enabled` is set.
+
+If you also set `toolhive-registry-server.preflightDatabaseUri` persistently,
+enforcement widens the credential exposure described in
+[Check registry database reachability](#check-registry-database-reachability):
+the password renders into the long-lived `stacklok-enterprise-preflight` Secret,
+not just the Job's own Secret, which is deleted when the hook finishes. Keep
+passing the URI as a one-off `--set`.
+
+Enabling this on the [air-gapped path](./airgap-install.mdx) takes extra setup,
+since the Job's image defaults to a Stacklok-hosted registry. See
+[Run preflight checks against the mirrored chart](./airgap-install.mdx#run-preflight-checks-against-the-mirrored-chart).
 
 If enforcement blocks an install, read the Job's log to see why:
 
 ```bash
 kubectl logs job/stacklok-enterprise-preflight-check -n stacklok-system
 ```
+
+The Job and both Secrets are named after your Helm release, so substitute your
+own release name if it isn't `stacklok-enterprise`.
 
 To bypass a known false positive for one run, re-run the same `helm` command
 with `--set preflight.enforce=false`.
