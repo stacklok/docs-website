@@ -49,7 +49,7 @@ When Phase 2 step 4 would normally ask the user for a major feature's "why", ins
 
 1. Fetch the PR body and author with `gh pr view <NUMBER> --repo <OWNER>/<REPO> --json title,body,author`. The PR body usually carries the "why" the author wrote at open time: motivation, intended consumers, design decisions.
 2. If the PR body references linked issues ("Closes #N", "Fixes #N", "Refs #N"), fetch the likely-context-bearing ones with `gh issue view <N> --repo <OWNER>/<REPO>`.
-3. Write the "why"/consumer narrative directly into the relevant page using what you learned. This is best-effort; reviewers refine it later.
+3. Write the "why"/consumer narrative directly into the relevant page using what you learned, translated into reader-facing language rather than the PR's engineering shorthand. This is best-effort; reviewers refine it later.
 4. Defer to `GAPS.md` only when the rationale demonstrably cannot be derived from available sources: the PR points to an internal design doc you cannot access, multiple plausible consumer narratives exist and choosing one would mislead readers, or a release timeline or commitment needs product-team confirmation.
 
 ### Artifacts (unattended mode only, written at repo root)
@@ -206,7 +206,11 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 
 ## Phase 4: Implementation
 
-Apply the approved changes:
+Apply the approved changes.
+
+**Write the end state, not the transition.** Your input is a release delta, but the reader's page is not: docs state how the product works now, not how it changed. When the displacement audit flags a falsified sentence, rewrite it to state the new behavior plainly. Don't preserve the old behavior alongside it ("previously X; as of vX.Y, Y"), and don't add version-stamped change notes or upgrade-ordering warnings to guides; that's release-notes material.
+
+One exception: a breaking change or major behavioral change (a changed default, behavior that silently differs for existing setups) may get a clearly labeled, versioned admonition (`:::info[Changed in vX.Y]`) when upgraders need an explanation or action they can't infer from an error message. Keep the surrounding prose standalone about current behavior; the admonition carries only the upgrade delta and action. Changes that fail loudly with an obvious cause don't qualify; surface those to the reviewer (in `SUMMARY.md` when unattended, conversationally when interactive) rather than writing them into a page. Large migrations get a dedicated migration guide with short pointers from affected pages, following the `guides-k8s/migrate-to-v1beta1.mdx` pattern. The same discipline applies to vocabulary: PR bodies are written for maintainers, and their shorthand ("consumers", "shapes", "surface area") must be translated into the concrete components, fields, and values the reader sees.
 
 1. **Update existing pages, and prefer extending them over creating new ones.** Edit files using the impact map, preserving the existing writing style and conventions. When a feature _extends_ a capability the docs already cover (a new auth mechanism alongside an existing one, a new flag on a documented command, an additional option on a documented resource), the right move is almost always to add a section to the existing page and reconcile the surrounding prose (see the displacement audit in Phase 3), not to spin up a standalone page. A standalone page for an extension fragments the concept across two locations, duplicates context, and is a common over-documentation failure mode. Reserve new pages for genuinely standalone capabilities (see the next step).
 
@@ -327,6 +331,7 @@ When receiving review comments (from humans or automated reviewers):
 
 - **Triple verification**: verify during deep dive (Phase 2), before finalizing (Phase 5), and when handling reviews (Phase 6)
 - **Document what the release falsifies, not just what it adds**: a new capability usually makes prior "only / default / automatic / planned" statements wrong. Audit the _displaced_ concept's vocabulary across the whole docs set, and treat a purely additive (`+N / -0`) prose edit as a smell. The reviewer cannot catch a sin of omission in a zero-deletion diff; the skill must (Phase 3 displacement audit).
+- **Write the end state, not the transition**: docs describe current behavior, not the change history. No "Starting in vX.Y", no "moved from A to B", no upgrade-ordering warnings in guides. The one exception is a clearly labeled, versioned admonition for a breaking or silently-behavioral change upgraders must act on; route other migration guidance to the reviewer (Phase 4).
 - **Transparency**: log the categorized summary (after Phase 1) and impact map (after Phase 3) for auditability, but do not stop; run all phases to completion
 - **Respect auto-generated content**: don't manually edit auto-generated files, but always create the surrounding conceptual/guide content that auto-generated reference docs don't provide
 - **Separate by Diataxis type, at the right granularity**: keep concept and how-to content distinguishable, but prefer extending an existing page over a new one when the feature extends a documented capability. Reserve new pages for standalone capabilities, and split a section out only when it would overload its host (Phase 4).

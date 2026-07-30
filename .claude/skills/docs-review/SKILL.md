@@ -1,7 +1,7 @@
 ---
 name: docs-review
 description: >
-  Perform comprehensive editorial reviews of documentation with a tech writer / copyeditor lens. Use when asked to review docs, documentation PRs, or documentation changes - especially net-new documentation or LLM-generated content. Reviews can be for single documents or multiple related documents. Focuses on information architecture, clarity, conciseness, structure, readability, and style. Identifies common LLM writing patterns that harm documentation quality and catches multi-document issues like content duplication or misplaced content.
+  Perform comprehensive editorial reviews of documentation with a tech writer / copyeditor lens. Use when asked to review docs, documentation changes, or a set of changed files - especially net-new documentation or LLM-generated content. Reviews can be for single documents or multiple related documents. Focuses on information architecture, clarity, conciseness, structure, readability, and style. Identifies common LLM writing patterns that harm documentation quality and catches multi-document issues like content duplication or misplaced content. For reviewing a pull request end-to-end (fetching the PR branch, checking review threads, drafting a review to post), use the review-docs-pr skill, which applies these criteria as one of its steps.
 ---
 
 # Documentation Review
@@ -68,8 +68,12 @@ Watch for these telltale signs of AI-generated docs that need human intervention
 | Hedging language | "may," "might," "could potentially" | Be direct or remove |
 | Em/en dashes | `—` or `–` used as inline separators | Rephrase naturally: use commas, split sentences, or restructure. Use spaced hyphens (`-`) only in list-style contexts |
 | Hedged lists | "such as," "including," "clients include" when listing supported items | Be definitive: state the full list, or link to a canonical reference |
-| Placeholder examples | `my-skill`, `example-org`, `my-app` instead of real values | Use real, working examples from the actual product |
+| Placeholder examples | `my-skill`, `example-org`, `my-app` where a real product value exists | Use real values for fixed things (commands, flags, image names); use `<ALL_CAPS>` placeholders for values the reader supplies; use reserved domains (`example.com`) in URLs, never real domains |
 | Features without context | Introduces a flag/option without explaining why a reader would use it | Explain the user benefit and how it connects to concepts the reader already knows |
+| Changelog framing | "Starting in vX.Y," "previously," "moved from X to Y" - narrating the transition instead of the current behavior | State current behavior only; transitions belong in release notes. Common in release-driven PRs where the diff (the delta) leaks into the prose. Exception: a clearly labeled, versioned admonition for a breaking or silently-behavioral change that upgraders must act on is valid (see the style guide); flag those only when stale (several releases old) or duplicating adjacent prose |
+| Negative restatement | "X, not Y" or a "Don't do Z" sentence that inverts the positive statement just made | Cut it, or fold any genuinely new fact into the positive statement |
+| Redundant admonitions | A note or warning that restates adjacent body text, often with added negation | Cut it; an admonition must add information beyond the surrounding prose |
+| PR jargon leak | Engineering shorthand from PR descriptions ("consumers," "shapes," "surface area," "wire up") | Name the concrete components, fields, and values |
 
 ### Section Structure and Navigation
 
@@ -100,7 +104,7 @@ The docs follow a product-area-based information architecture under `docs/toolhi
 Docs that readers can't trust are worse than no docs. Actively verify:
 
 - **Cross-check against reference material**: Does the prose contradict the auto-generated CLI reference, the API spec, or the upstream project's docs? Flag contradictions. Note: docs are often drafted before a release, so auto-generated references may not yet include new features - absence from the reference is not the same as a contradiction. But if an existing reference explicitly describes different behavior (e.g., "by name or OCI reference" when the prose also claims Git support), that's a real conflict to flag
-- **Code examples must work**: Could a reader copy-paste this and get the described result? Check for correct syntax, realistic flag combinations, and valid argument values. Placeholder examples (`my-skill`, `example.com`) should be replaced with real, working values wherever possible
+- **Code examples must work**: Could a reader copy-paste this and get the described result? Check for correct syntax, realistic flag combinations, and valid argument values. Generic placeholders (`my-skill`, `foo`) should be replaced with real product values where the value is fixed, or `<ALL_CAPS>` placeholders where the reader supplies it. Domains in example URLs are the exception: use reserved domains (`example.com`), not real ones
 - **Feature coverage completeness**: When documenting a new feature, check that the full surface area is covered. Are all subcommands/endpoints mentioned? Are common error states addressed? A how-to that covers the happy path but ignores the most likely failure mode will generate support questions
 - **Consistency across the doc set**: Do the same terms, flag names, and behaviors described here match how they're described in related pages? Cross-document inconsistencies (e.g., one page says "space-delimited," another uses comma-separated) erode trust
 
