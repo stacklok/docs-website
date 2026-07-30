@@ -23,7 +23,8 @@ currently using it, see
   with your cluster
 - [Helm](https://helm.sh/docs/intro/install/) v3.10 or later (v3.14+ is
   recommended)
-- PostgreSQL 14 or later
+- A PostgreSQL 14 or later instance reachable from the cluster, with a database
+  and user already created for the Registry Server
 
 ## Overview
 
@@ -33,22 +34,15 @@ repository deploys a standalone Registry Server. Use this method when you want
 to manage the Registry Server like any other Helm release without installing the
 ToolHive Operator.
 
-## Install the chart
+The steps below build a values file, create a Secret holding the database
+password, install the chart, and route traffic to the resulting Service.
 
-Install the chart from its OCI registry into the `toolhive-system` namespace:
-
-```bash
-helm upgrade --install registry-server \
-  oci://ghcr.io/stacklok/toolhive-registry-server \
-  -n toolhive-system --create-namespace \
-  -f values.yaml
-```
-
-## Configure the Registry Server
+## Create a values file
 
 The chart's `config` block maps directly to the Registry Server's
-[configuration file](./configuration.mdx). Any valid configuration field can be
-set under `config` in your values file:
+[configuration file](./configuration.mdx), so any valid configuration field can
+be set under `config`. Start with a minimal file that points the server at a
+catalog source and your PostgreSQL instance:
 
 ```yaml title="values.yaml"
 config:
@@ -73,47 +67,34 @@ config:
     sslMode: require
 ```
 
-### Share a database host across subcharts
+This configuration serves a single registry with anonymous access. Replace
+`host`, `port`, `database`, and `user` with the values for your own PostgreSQL
+instance. The pgpass entry in the next step must repeat those same four values,
+because libpq matches them field by field when it looks up the password.
 
-When the Registry Server chart runs as a subchart of an umbrella chart whose
-bundled services share a single PostgreSQL instance, you can set the database
-host once at the umbrella level under `global.postgres` instead of repeating it
-per subchart. This is a standard Helm `global.*` mechanism, so any umbrella
-chart can use it:
-
-```yaml title="values.yaml (umbrella excerpt)"
-global:
-  postgres:
-    host: 'postgres.example.com'
-    port: 5432
-    sslMode: 'require'
-```
-
-When `config.database.host` on the Registry Server subchart is empty, the chart
-falls back to `global.postgres.{host,port,sslMode}` (port defaults to `5432`). A
-locally set `config.database.host` always wins, so per-subchart overrides keep
-working. Only `host`, `port`, and `sslMode` are inherited. The `user`,
-`database`, and credentials still go in the subchart's own `config.database`
-block.
-
-:::enterprise
-
-If you run the full Stacklok Enterprise platform, its canonical umbrella chart
-already wires up `global.postgres`, so you set the shared database host once at
-the umbrella level rather than per subchart. See the
-[platform-wide PostgreSQL defaults](../../platform/enterprise-platform/deployment.mdx#global-postgresql-defaults)
-for the credential Secrets and the other components that read `global.postgres`.
-
-:::
+See [Configure sources and registries](./configuration.mdx) for the full field
+reference, and [Set up authentication](./authentication.mdx) to replace
+`mode: anonymous` before exposing the server.
 
 ## Provide database credentials
 
-Database credentials use the pgpass file pattern. Create a Kubernetes Secret
-with a
+Keep the database password out of your values file and supply it through a
+pgpass file instead. Create a Kubernetes Secret with a
 [pgpass-formatted](https://www.postgresql.org/docs/current/libpq-pgpass.html)
 entry under the key `.pgpass`, then point the chart at it with an init container
 that prepares the file and a `PGPASSFILE` environment variable that tells libpq
 where to find it.
+
+Create the release namespace and the Secret. The pgpass format is positional, so
+the first four fields must match `config.database` in your values file exactly:
+
+```bash
+kubectl create namespace toolhive-system
+
+kubectl create secret generic registry-pgpass \
+  --namespace toolhive-system \
+  --from-literal=.pgpass='<HOST>:<PORT>:<DATABASE>:<USER>:<PASSWORD>'
+```
 
 The chart's main container runs with `readOnlyRootFilesystem: true` as the
 non-root UID `65535`, so the init container copies the Secret into an `emptyDir`
@@ -122,6 +103,8 @@ wider permissions). Leave the `pgpass-secret` volume at its default mode:
 Kubernetes mounts Secret files owned by root, so a restrictive `defaultMode`
 such as `0600` would make the file unreadable by UID `65535` and the init
 container would fail to copy it.
+
+Add the following to your values file:
 
 ```yaml title="values.yaml (excerpt)"
 extraEnv:
@@ -168,6 +151,112 @@ file is already owned by `65535` and the Registry Server can read it without a
 separate `chown` step. This matches the commented pgpass example in the chart's
 own
 [`values.yaml`](https://github.com/stacklok/toolhive-registry-server/blob/main/deploy/charts/toolhive-registry-server/values.yaml).
+
+For separate migration and application users, TLS verification, and alternatives
+to pgpass such as environment variables or AWS RDS IAM, see
+[Database configuration](./database.mdx).
+
+## Install the chart
+
+With `values.yaml` complete, install the chart from its OCI registry into the
+`toolhive-system` namespace:
+
+```bash
+helm upgrade --install registry-server \
+  oci://ghcr.io/stacklok/toolhive-registry-server \
+  -n toolhive-system \
+  -f values.yaml \
+  --wait --timeout=3m
+```
+
+Confirm that the pod is ready:
+
+```bash
+kubectl get pods -n toolhive-system \
+  -l app.kubernetes.io/instance=registry-server
+```
+
+## Expose the Registry Server
+
+The chart creates a ClusterIP Service on port 8080, named after the release and
+chart in the form `<RELEASE_NAME>-toolhive-registry-server`. For the
+`registry-server` release above, that's
+`registry-server-toolhive-registry-server`. Confirm the name:
+
+```bash
+kubectl get svc -n toolhive-system \
+  -l app.kubernetes.io/instance=registry-server
+```
+
+Set `fullnameOverride` in your values file if you want a shorter, stable name to
+reference from routing resources.
+
+The chart doesn't create an Ingress, HTTPRoute, or any other external entry
+point, so route to the Service with whatever your cluster already uses:
+
+- **Ingress controller**: create an Ingress with the Service as its backend on
+  port 8080.
+- **Gateway API**: create an HTTPRoute with the Service as its `backendRef`.
+- **Cloud load balancer**: change the Service type in your values file and add
+  your provider's annotations under `service.annotations`.
+
+```yaml title="values.yaml (excerpt)"
+service:
+  type: LoadBalancer
+  annotations: {}
+```
+
+Whichever you choose, [set up authentication](./authentication.mdx) before the
+server becomes reachable outside the cluster. The values file above sets
+`mode: anonymous`, which lets any caller read the registry.
+
+To check the API before you wire up routing, port-forward the Service. This
+command blocks, so leave it running and open a separate terminal for the
+request:
+
+```bash
+kubectl port-forward -n toolhive-system \
+  svc/registry-server-toolhive-registry-server 8080:8080
+```
+
+In the separate terminal, query one of the registries you defined in `config`:
+
+```bash
+curl -s http://localhost:8080/registry/default/v0.1/servers | jq .
+```
+
+## Share a database host across subcharts
+
+When the Registry Server chart runs as a subchart of an umbrella chart whose
+bundled services share a single PostgreSQL instance, you can set the database
+host once at the umbrella level under `global.postgres` instead of repeating it
+per subchart. This is a standard Helm `global.*` mechanism, so any umbrella
+chart can use it:
+
+```yaml title="values.yaml (umbrella excerpt)"
+global:
+  postgres:
+    host: 'postgres.example.com'
+    port: 5432
+    sslMode: 'require'
+```
+
+When `config.database.host` on the Registry Server subchart is empty, the chart
+falls back to `global.postgres.{host,port,sslMode}` (port defaults to `5432`). A
+locally set `config.database.host` always wins, so per-subchart overrides keep
+working. Only `host`, `port`, and `sslMode` are inherited. The `user`,
+`database`, and credentials still go in the subchart's own `config.database`
+block.
+
+:::enterprise
+
+If you run the full Stacklok Enterprise platform, its canonical umbrella chart
+already wires up `global.postgres`, so you set the shared database host once at
+the umbrella level rather than per subchart. See the
+[platform-wide PostgreSQL defaults](../../platform/enterprise-platform/deployment.mdx#global-postgresql-defaults)
+for the credential Secrets and the other components that read `global.postgres`.
+
+:::
 
 ## Next steps
 
