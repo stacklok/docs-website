@@ -126,6 +126,63 @@ client's credential headers (`Authorization`, `Cookie`, and
 `Proxy-Authorization`) instead of swapping them for an upstream token, so the
 backend receives an unauthenticated request.
 
+## Delegated identities and the `act` claim
+
+When a request arrives with a token that acts on behalf of a user rather than
+representing that user directly,
+[RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) records the acting
+party in an `act` claim. ToolHive reads this claim during token validation, so
+audit logs and Cedar policies can distinguish "agent X acting for Alice" from
+"Alice directly."
+
+ToolHive reads `act` from any JWT it validates, regardless of which
+authorization server minted the token. If your identity provider performs its
+own token exchange and issues tokens carrying `act`, the delegation chain is
+picked up with no extra configuration.
+
+:::note
+
+Delegation data is only available when ToolHive validates the token as a JWT
+using JWKS. If you configure opaque token introspection instead, claims outside
+the standard introspection response (including `act`) don't reach the audit and
+authorization layers.
+
+:::
+
+### Delegation chains in audit logs
+
+Delegation is recorded on every call made with a delegated token, not once when
+the token is minted. Each audited MCP request, each SSE connection, and each
+vMCP workflow step carries a `delegation` object holding the full chain, so
+every hop's activity is independently traceable.
+
+Each entry in `chain` records the acting party's issuer and subject, ordered
+with the most recent actor first. Chains deeper than 10 hops are truncated and
+flagged rather than rejected.
+
+Tokens with no `act` claim omit the `delegation` field entirely. A token that
+asserts a delegation ToolHive can't parse is recorded with a malformed flag
+instead of being silently treated as non-delegated.
+
+### Reading the `act` claim in Cedar policies
+
+The `act` claim is converted to a nested Cedar record under the standard
+`claim_` prefix, and is available as both a principal and a context attribute:
+
+```text
+permit(
+  principal,
+  action == Action::"call_tool",
+  resource
+) when {
+  principal.claim_act.sub == "agent-orchestrator"
+};
+```
+
+Claims nested deeper than 10 levels are dropped rather than converted. See
+[Principal attributes](../reference/authz-policy-reference.mdx#principal-attributes)
+for the full claim type mapping.
+
 ## Automatic token refresh
 
 Upstream access tokens expire independently of the ToolHive JWT lifespan. When
