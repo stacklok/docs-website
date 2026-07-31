@@ -205,14 +205,36 @@ thv run --isolate-network=false <SERVER>
 The container's own network namespace still isolates it from the host; only
 ToolHive's allowlist enforcement is disabled.
 
+## Choose an egress proxy backend
+
+By default, ToolHive uses Squid for egress filtering. Starting in v0.41.0,
+ToolHive also supports an Envoy backend that consolidates egress and ingress
+into a single sidecar and translates the permission profile's `AllowHost` and
+`AllowPort` rules into Envoy RBAC policies. Squid remains the default.
+
+Set the `TOOLHIVE_NETWORK_PROXY` environment variable before running `thv run`
+(or `thv serve` if you use the API server) to select the backend:
+
+```bash
+# Default: Squid backend
+export TOOLHIVE_NETWORK_PROXY=squid   # or leave unset
+
+# Opt-in: Envoy backend
+export TOOLHIVE_NETWORK_PROXY=envoy
+thv run <SERVER>
+```
+
+Any other value causes ToolHive to exit at startup with an error. Both backends
+enforce the same permission profile semantics, so you don't need to change your
+permission profile to switch backends.
+
 ## Interaction with `--network host` and `--network none`
 
 Network isolation is a bridge-network construct: the egress, DNS, and ingress
 sidecars only work when the MCP container lives on a container-runtime bridge.
 When you pass `--network host` or `--network none`, the container shares the
 host network namespace or has no network at all, so the isolation sidecars have
-no way to intercept traffic. In v0.40.0 and later, ToolHive reconciles the two
-flags automatically:
+no way to intercept traffic. ToolHive reconciles the two flags automatically:
 
 | `--network` mode           | `--isolate-network` source        | Behavior                                                                                                                                                          |
 | -------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -220,18 +242,6 @@ flags automatically:
 | `host` or custom           | default (implicit)                | Isolation is dropped with a warning in the run log, restoring outbound connectivity for host-networked workloads.                                                 |
 | `host` or custom           | explicit `--isolate-network=true` | `thv run` fails fast with an error naming both flags. Drop `--network host` to keep enforced isolation, or set `--isolate-network=false` to keep host networking. |
 | `none`                     | any                               | Isolation is silently dropped (`none` is already maximally confined; isolation would be redundant).                                                               |
-
-:::info[Changed in v0.40.0]
-
-Before v0.40.0, `thv run --network host` silently built the isolation sidecars
-against an internal-only network, breaking outbound DNS and connectivity.
-Isolation is now dropped for `host`/`none` modes so host-networked workloads
-keep working. If you rely on host networking, no change is needed. If you
-previously combined `--isolate-network` with `--network host` explicitly, pick
-one: drop `--network host` to keep enforced isolation, or set
-`--isolate-network=false` to keep host networking.
-
-:::
 
 ## Example: Enable network isolation using registry defaults
 

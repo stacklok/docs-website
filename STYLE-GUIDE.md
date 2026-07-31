@@ -12,6 +12,7 @@ aim to deliver clear, concise, and valuable information to project users.
   - [Tone and voice](#tone-and-voice)
     - [Active voice](#active-voice)
     - [Speak to the reader](#speak-to-the-reader)
+  - [Document current behavior](#document-current-behavior)
   - [Capitalization](#capitalization)
   - [Punctuation](#punctuation)
   - [Links](#links)
@@ -52,6 +53,10 @@ The project's official language is **US English**.
 Avoid slang and colloquial expressions. Use clear, straightforward language and
 avoid overly complex jargon to make content accessible to a wide audience.
 
+Translate engineering shorthand into concrete, reader-facing terms. Language
+from PR descriptions and commit messages ("consumers", "shapes", "surface area")
+rarely belongs in docs; name the actual components, fields, and values instead.
+
 ### Tone and voice
 
 Strive for a casual and conversational tone without becoming overly informal. We
@@ -76,6 +81,44 @@ logging.\
 
 Address the reader using the **second person** ("you", "your"). Avoid the first
 person ("we", "our") and third person ("the user", "a developer").
+
+### Document current behavior
+
+Docs describe how the product works today; they are not a changelog or upgrade
+guide.
+
+Don't narrate history or transitions. Avoid "Starting in vX.Y", "previously",
+"changed from X to Y", "new in this release", and version-conditional notes.
+Release notes and blog posts tell that story; guides and references state only
+the current behavior. Upgrade sequencing and migration caveats likewise belong
+in release notes, not inline in how-to guides.
+
+:white_check_mark: Yes: The JSON-RPC error code for rate limiting is `429`.\
+:x: No: The JSON-RPC error code moved from `-32029` to `429` in v0.41.0.
+
+Prefer positive statements. Say what the product does and what the reader should
+do; don't restate a positive statement in negative form. If a negation carries a
+genuinely new fact, fold that fact into the positive statement.
+
+:white_check_mark: Yes: The Cloud UI uses the registry policy's `server_api_url`
+value.\
+:x: No: The Cloud UI reads `server_api_url`, not `api_url`.
+
+**Exception for breaking changes**: a breaking change or major behavioral change
+(a changed default, behavior that silently differs for existing setups) may
+carry a clearly labeled, versioned admonition (e.g.
+`:::info[Changed in v0.30.1]`) when upgraders need an explanation or action they
+can't infer from an error message. Keep the surrounding prose standalone about
+current behavior; the admonition carries only the upgrade delta and action.
+Remove these notes after a few releases, once the upgrade audience has moved on.
+Changes that fail loudly at startup with an obvious cause don't qualify.
+
+Large migrations (API version promotions, multi-field removals) get a dedicated
+migration guide; guide pages link to it with a short pointer rather than
+carrying the details inline.
+
+Deprecation notices are current state, not changelog. Documenting that a feature
+is deprecated, still read but warned about, or scheduled for removal is fine.
 
 ### Capitalization
 
@@ -313,6 +356,8 @@ Specific guidelines for Docusaurus:
   - Don't overuse admonitions; they are best for callouts that add value beyond
     the main content. Too many admonitions can become visually overwhelming and
     interrupt the flow of documentation.
+  - An admonition must add information beyond the surrounding text. Don't use
+    one to restate or negate what the adjacent prose already says.
 - Place images in `static/img` using WebP, PNG, or SVG format.
 - Use the
   [`ThemedImage` component](https://docusaurus.io/docs/markdown-features/assets#themed-images)
