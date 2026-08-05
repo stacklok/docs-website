@@ -82,6 +82,227 @@ examples, so substitute your own namespaces as you follow them.
 
 :::
 
+## Run preflight checks
+
+Before you install, run the platform's **preflight** spec against your target
+cluster. The umbrella chart ships a `Preflight` custom resource as a labeled
+Secret, so rendering the chart and piping it to the `kubectl-preflight` plugin
+analyzes real prerequisites automatically. It catches misconfigurations before
+they surface later as failed pods or a stuck rollout: a Kubernetes version below
+the chart floor, tight node capacity, an unreachable OIDC issuer, a missing
+signing-key Secret.
+
+Running the check itself requires the same registry access and `values.yaml` you
+use to install: complete [Step 1](#1-authenticate-to-the-replicated-registry)
+and [Step 3](#3-configure-values) below first, then come back here before
+[Step 4](#4-install-the-chart).
+
+### Install the CLI plugin
+
+Install the pinned `preflight` release that Stacklok validates the spec against.
+Download it from
+[replicatedhq/troubleshoot releases](https://github.com/replicatedhq/troubleshoot/releases):
+
+```bash
+PREFLIGHT_VERSION=v0.131.1
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+if [ "$os" = "darwin" ]; then
+  asset="preflight_darwin_all.tar.gz"
+else
+  arch=$(uname -m); [ "$arch" = "x86_64" ] && arch=amd64
+  asset="preflight_${os}_${arch}.tar.gz"
+fi
+curl -fsSL -o preflight.tar.gz \
+  "https://github.com/replicatedhq/troubleshoot/releases/download/${PREFLIGHT_VERSION}/${asset}"
+tar -xzf preflight.tar.gz preflight
+sudo install -m 0755 preflight /usr/local/bin/kubectl-preflight
+```
+
+Pinning matters because the CLI and the spec move independently. Stacklok tests
+this spec against the version above, so a newer CLI can grade a check
+differently than Stacklok validated it, giving you a `pass` or `fail` that
+doesn't reflect your cluster's real state.
+
+### Alternative: install with krew
+
+[krew](https://krew.sigs.k8s.io/), the `kubectl` plugin manager, is a quicker
+one-time setup:
+
+```bash
+kubectl krew install preflight
+```
+
+The tradeoff is that krew always resolves to whatever version its index
+currently serves, and it has no version-pin flag, so a krew install can drift
+ahead of the validated version silently. If you hit unexpected preflight
+behavior on a krew-installed CLI, compare `kubectl preflight version` against
+the pinned version above before opening a support case.
+
+krew also needs index access, so use the pinned download in an air-gapped
+environment.
+
+### Run it against your real values
+
+Use the `values.yaml` you build in [Step 3](#3-configure-values), not an empty
+or minimal render. The opt-in analyzers (OIDC issuer, signing-key Secret,
+registry database) only render when their corresponding values are set, so
+preflighting against an empty file silently skips them, and a `pass` result
+verifies less than your real install actually needs.
+
+```bash
+helm template stacklok-enterprise \
+  oci://oci.stacklok.com/stacklok-enterprise/<CHANNEL>/stacklok-enterprise-platform \
+  --version <VERSION> \
+  --values values.yaml \
+  | kubectl preflight -
+```
+
+`<CHANNEL>` and `<VERSION>` are the channel slug and chart version the install
+portal at [install.stacklok.com](https://install.stacklok.com) generates for
+your release, in its **Existing cluster with Helm** instructions. Templating an
+`oci://` reference pulls the chart, so it reuses the `helm registry login`
+credentials from [Step 1](#1-authenticate-to-the-replicated-registry). There's
+no credential prompt: if that login is missing or expired, `helm template` fails
+with an authorization error. Log in again and rerun.
+
+### What it checks
+
+| Check                          | Renders when                                                                                        | Outcome                                                                                    |
+| ------------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Kubernetes version             | Always                                                                                              | `fail` below 1.28 (the chart's floor)                                                      |
+| Node capacity (CPU and memory) | Always                                                                                              | `warn` below 4 allocatable cores or 6Gi, evaluated on the smallest node                    |
+| Distribution                   | Always                                                                                              | `warn` on OpenShift OCP                                                                    |
+| Egress reachability            | `preflight.checkEgress=true`                                                                        | `warn` only; off by default, always fails in air gap                                       |
+| Registry database reachability | `registryServer.enabled` and a run-time `toolhive-registry-server.preflightDatabaseUri` is supplied | `fail` if unreachable                                                                      |
+| OIDC issuer reachability       | `enterpriseManager.enabled=true` and `enterprise-manager.idpConfig.issuer` is set                   | `fail` if unreachable or misconfigured (see the note below)                                |
+| Signing-key Secret exists      | `enterpriseManager.enabled=true`                                                                    | `fail` if the Secret named in `enterprise-manager.signingConfig.existingSecret` is missing |
+
+:::note[A cluster-internal OIDC issuer can fail from your workstation]
+
+The OIDC check probes the issuer from wherever you run `kubectl preflight`, not
+from inside the cluster. If your issuer is only reachable on the cluster
+network, the check reports `fail` from a workstation even though the Enterprise
+Manager pod would reach it fine.
+
+That's a difference in network vantage point, not a misconfiguration. Confirm it
+by running the check from inside the cluster, which is what
+[enforcement mode](#optional-enforce-preflight-checks-in-cluster) does. For a
+publicly reachable issuer, treat a `fail` as real: it usually means a typo in
+the issuer URL.
+
+:::
+
+### Check registry database reachability
+
+The registry database check needs a connection URI, which the chart doesn't
+ship. To exercise it, add these flags to the command above, alongside your real
+`--values values.yaml`:
+
+```bash
+helm template stacklok-enterprise \
+  oci://oci.stacklok.com/stacklok-enterprise/<CHANNEL>/stacklok-enterprise-platform \
+  --version <VERSION> \
+  --values values.yaml \
+  --set registryServer.enabled=true \
+  --set 'toolhive-registry-server.preflightDatabaseUri=postgres://<USER>:<PASSWORD>@<HOST>:5432/<DATABASE>?sslmode=require' \
+  | kubectl preflight -
+```
+
+The check reports `fail` if the database is unreachable. This is the only check
+that touches a credential; the rest read capability metadata such as the
+Kubernetes version, node capacity, and distribution.
+
+:::warning[Pass the URI as a one-off flag]
+
+Supply `preflightDatabaseUri` with `--set` at preflight time, never in a
+permanent or GitOps-tracked values file. The preflight spec ships as a
+Kubernetes Secret, so a persistently configured URI leaves the database password
+in-cluster indefinitely, readable with `kubectl get secret ... -o yaml`, rather
+than existing only for the duration of one preflight run.
+
+Don't commit or upload the rendered output either, since it carries the URI.
+
+:::
+
+### Preflight is advisory by default
+
+On the Helm CLI install path, `kubectl preflight` can't block `helm install`. A
+`fail` result is a signal to act on, not an automatic gate: don't
+[install the chart](#4-install-the-chart) while any check reports `fail`. Fix
+the underlying cluster condition first.
+
+### Optional: enforce preflight checks in-cluster
+
+Set `preflight.enforce: true` in your values (or pass
+`--set preflight.enforce=true`) to opt into an in-cluster pre-install and
+pre-upgrade Helm hook Job that runs the same spec and genuinely fails
+`helm install` or `helm upgrade` on a `fail` outcome. This is real blocking
+rather than advisory.
+
+This is off by default because it carries cost you should accept deliberately:
+
+- The Job needs `global.replicated.dockerconfigjson` set. It pulls a
+  license-gated `preflight-runner` image before the Replicated SDK provisions
+  the ordinary pull secret; without it, the Job's pod can't pull its image and
+  the install hangs. On this standard (non-air-gapped) install path, Replicated
+  injects this value from your license when Helm pulls the chart, so you
+  normally don't set it by hand. If enforcement fails on an image pull, get the
+  value from the install portal's **Existing cluster with Helm** instructions
+  and set it explicitly.
+- The Job runs under its own ServiceAccount with cluster-scoped read RBAC
+  (nodes, namespaces, storage classes, CRDs), plus a namespaced read on the
+  signing-key Secret when `enterpriseManager.enabled` is set.
+
+If you also set `toolhive-registry-server.preflightDatabaseUri` persistently,
+enforcement widens the credential exposure described in
+[Check registry database reachability](#check-registry-database-reachability):
+the password renders into the long-lived `stacklok-enterprise-preflight` Secret,
+not just the Job's own Secret, which is deleted when the hook finishes. Keep
+passing the URI as a one-off `--set`.
+
+Enabling this on the [air-gapped path](./airgap-install.mdx) takes extra setup,
+since the Job's image defaults to a Stacklok-hosted registry. See
+[Run preflight checks against the mirrored chart](./airgap-install.mdx#run-preflight-checks-against-the-mirrored-chart).
+
+If enforcement blocks an install, read the Job's log to see why:
+
+```bash
+kubectl logs job/stacklok-enterprise-preflight-check -n stacklok-system
+```
+
+The Job and both Secrets are named after your Helm release, so substitute your
+own release name if it isn't `stacklok-enterprise`.
+
+To bypass a known false positive for one run, re-run the same `helm` command
+with `--set preflight.enforce=false`.
+
+### What preflight can't check
+
+Two prerequisites need manual verification; troubleshoot.sh has no analyzer for
+either:
+
+- **Installer RBAC rights.** No `SelfSubjectAccessReview`-style analyzer exists.
+  Verify against the same kubeconfig context you install with:
+
+  ```bash
+  kubectl auth can-i create customresourcedefinitions.apiextensions.k8s.io
+  kubectl auth can-i create clusterroles.rbac.authorization.k8s.io
+  kubectl auth can-i create clusterrolebindings.rbac.authorization.k8s.io
+  kubectl auth can-i '*' '*' -n stacklok-system
+  ```
+
+  Each must print `yes`. If any prints `no`, `helm install` fails partway
+  through with a CRD, RBAC, or namespaced-resource creation error instead of
+  upfront.
+
+- **CRD collisions with a prior install.** No CRD analyzer ships, since
+  troubleshoot's `customResourceDefinition` analyzer can only express present as
+  pass or absent as fail, not "already present is a problem." If you're
+  reinstalling over a previous release, check
+  `kubectl get crd | grep -E 'aigateway|toolhive'` for version conflicts by
+  hand. The pattern covers the AI Gateway CRDs as well, which install separately
+  when `aiGateway.enabled` is set.
+
 ## Deploy with Helm
 
 ### 1. Authenticate to the Replicated registry
