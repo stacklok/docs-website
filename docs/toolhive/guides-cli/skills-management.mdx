@@ -239,6 +239,149 @@ thv skill uninstall my-skill --scope project --project-root /path/to/project
 This removes the skill files from all associated client directories and deletes
 the database record.
 
+## Pin and reconcile project skills
+
+Project-scoped skills can be pinned to a lock file (`toolhive.lock.yaml` at the
+project root) that records each installed skill's resolved reference and digest.
+The lock file lets you commit the exact set of skills a project depends on,
+reinstall them deterministically on another machine, and gate upgrades in CI.
+
+:::info[Experimental]
+
+The lock file, `thv skill sync`, and `thv skill upgrade` are experimental. Set
+`TOOLHIVE_SKILLS_LOCK_ENABLED=true` on the environment that runs `thv serve` (or
+the ToolHive desktop app) to enable them. With the flag unset,
+`thv skill install` behaves as before and the sync and upgrade commands return
+an error.
+
+:::
+
+Project scope is required. User-scoped skills are not tracked by the lock file.
+
+### Reconcile installs against the lock file
+
+Use `thv skill sync` to restore a project's installed skills to match the lock
+file. This is the typical entry point after cloning a project or checking out a
+branch that changed which skills are pinned:
+
+```bash
+cd /path/to/project
+thv skill sync
+```
+
+Missing or drifted skills are reinstalled at their pinned digest. Sync prompts
+for confirmation before installing because skill content is a set of
+instructions that AI agents follow; pass `--yes` to skip the prompt in
+non-interactive contexts such as CI.
+
+To report drift without changing anything (a CI freshness check):
+
+```bash
+thv skill sync --check
+```
+
+Exit code `2` indicates drift or missing entries; `3` indicates a real failure.
+
+To record lock entries for existing unmanaged installs, or to remove installs no
+longer present in the lock file:
+
+```bash
+thv skill sync --adopt
+thv skill sync --prune
+```
+
+### Upgrade project skills
+
+Use `thv skill upgrade` to re-resolve pinned entries and install newer content
+where available:
+
+```bash
+thv skill upgrade
+```
+
+Pass one or more skill names to limit the upgrade to a subset. Skills pinned to
+an immutable reference (an OCI digest or a full Git commit hash) are reported as
+not upgradable - there is nothing newer to resolve to.
+
+To see what would change without persisting anything:
+
+```bash
+thv skill upgrade --preview
+```
+
+For a CI freshness gate that fails when newer content is available but never
+installs:
+
+```bash
+thv skill upgrade --fail-on-changes
+```
+
+## Verify skill signatures
+
+When the lock file is enabled, ToolHive verifies signatures on project-scoped
+skill installs and re-verifies them on every `thv skill sync`. This gates the
+skill supply chain: a skill whose content or signer has changed since it was
+pinned will not silently replace the pinned version.
+
+Verification is transparent - `thv skill install my-skill` for a signed OCI
+artifact succeeds without extra flags and records the signer identity in the
+lock file. The following sections cover the cases where you have to make an
+explicit choice.
+
+### Install an unsigned skill
+
+By default, ToolHive rejects unsigned project-scoped installs with an error
+like:
+
+```text
+unsigned skill "my-skill" rejected; set allow_unsigned
+(--allow-unsigned) to record an exception
+```
+
+To allow the install and record the exception in the lock file:
+
+```bash
+thv skill install my-skill --scope project \
+  --project-root /path/to/project --allow-unsigned
+```
+
+Subsequent syncs of the same entry treat the recorded exception as the expected
+state; they do not re-prompt for the flag.
+
+### Upgrade to a differently signed skill
+
+`thv skill upgrade` refuses to move a pinned skill to an artifact signed by a
+different identity, or to an unsigned artifact. The status column in the output
+reports the reason as `signer-change-blocked`.
+
+To allow the upgrade and replace the recorded signer identity with the new one:
+
+```bash
+thv skill upgrade my-skill --allow-signer-change
+```
+
+Rotate trust deliberately - a signer change is the expected way a skill
+distribution transfers between publishers, but it also matches the pattern of a
+compromised release.
+
+### Verification coverage
+
+- **OCI-installed skills** carry a Sigstore bundle. ToolHive verifies the bundle
+  against the public-good Sigstore instance, requiring a signed certificate
+  timestamp, a transparency log entry, and an observer timestamp. The lock file
+  records the signer's identity, certificate issuer, and optionally the
+  repository URI and Sigstore instance URL.
+- **Git-installed skills** are verified against a `gitsign` commit signature.
+  The signing time is checked against the leaf certificate's validity window.
+  ToolHive does not yet validate the embedded Rekor transparency-log proof for
+  Git installs, so the recorded provenance for these entries carries less
+  assurance than the OCI equivalent.
+
+Verification uses embedded Fulcio and Rekor roots, so it works offline once the
+skill and its bundle are on disk. `thv skill sync` re-verifies each entry
+offline against the recorded identity, and reports a signature mismatch as
+drift.
+
 ## Create a skill
 
 Every skill requires a `SKILL.md` file at the root of its directory. At a
@@ -377,6 +520,8 @@ pointing to that digest are removed.
 - [Manage agent skills in the ToolHive UI](../guides-ui/skills.mdx) to browse,
   install, and build skills without leaving the app
 - [`thv skill` command reference](../reference/cli/thv_skill.md)
+- [`thv skill sync` command reference](../reference/cli/thv_skill_sync.md)
+- [`thv skill upgrade` command reference](../reference/cli/thv_skill_upgrade.md)
 - [`thv serve` command reference](../reference/cli/thv_serve.md)
 - [Agent Skills specification](https://agentskills.io/specification)
 
@@ -437,6 +582,25 @@ Common issues include:
 - Missing `name` or `description` in the frontmatter
 - Skill `name` doesn't match the directory name
 - Symlinks present in the skill directory (not allowed for security)
+
+</details>
+
+<details>
+<summary>Signature verification errors on install or sync</summary>
+
+Signature verification runs on project-scoped installs when
+`TOOLHIVE_SKILLS_LOCK_ENABLED=true` is set on the ToolHive server.
+
+- **`unsigned skill ... rejected`**: The artifact has no Sigstore bundle or Git
+  signature. Pass `--allow-unsigned` to record the exception in the lock file,
+  or use a signed release.
+- **`signer-change-blocked` on upgrade**: The candidate artifact is signed by a
+  different identity than the recorded one, or is unsigned. Confirm the change
+  is expected, then re-run with `--allow-signer-change` to rotate trust.
+- **Sync reports a signature mismatch as drift**: The stored bundle no longer
+  verifies against the recorded identity. Run `thv skill sync` (without
+  `--check`) to reinstall from the pinned reference, which re-runs install-time
+  verification.
 
 </details>
 

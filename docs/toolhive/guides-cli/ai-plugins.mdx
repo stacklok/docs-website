@@ -1,0 +1,341 @@
+---
+title: Manage AI-tool plugins
+sidebar_label: AI-tool plugins
+description:
+  How to install, distribute, and manage plugins for AI coding tools such as
+  Claude Code and Codex with the ToolHive CLI.
+---
+
+An **AI-tool plugin** is a bundle of commands, agents, skills, hooks, and MCP or
+LSP server declarations that extends an AI coding tool. ToolHive builds these
+plugins into portable OCI artifacts, publishes them to any OCI registry, and
+installs them into the target client's plugins directory.
+
+Plugins are for the AI tool itself, not for ToolHive. A plugin ships everything
+that lives inside the AI tool's own extension surface (commands, agents, skills,
+and so on); ToolHive is the delivery mechanism.
+
+:::note[Supported clients]
+
+The `thv ai-plugin` commands install into two clients today:
+
+- **Claude Code**: `~/.claude/plugins/<name>` for user scope,
+  `<PROJECT_ROOT>/.claude/plugins/<name>` for project scope
+- **Codex**: `~/.agents/plugins/toolhive/<name>` for user scope,
+  `<PROJECT_ROOT>/.agents/plugins/toolhive/<name>` for project scope
+
+Other supported clients may install skills, MCP servers, or both; only these two
+currently accept plugins. See the
+[client compatibility reference](../reference/client-compatibility.mdx).
+
+:::
+
+## Prerequisites
+
+- The [ToolHive API server](./api-server.mdx) must be running. Start it in a
+  separate terminal window (the command blocks while running):
+
+  ```bash
+  thv serve
+  ```
+
+  The server must remain running while you use `thv ai-plugin` commands.
+
+  :::tip[Using the ToolHive desktop app?]
+
+  If the ToolHive desktop app is already running, the API server is available
+  automatically. You can skip the `thv serve` step and use `thv ai-plugin`
+  commands directly.
+
+  :::
+
+- Claude Code or Codex installed on your machine.
+
+## Install a plugin
+
+You can install plugins by plain name (resolved through the configured
+registry), by OCI reference, by Git URL, or from a local build:
+
+```bash
+thv ai-plugin install my-plugin
+thv ai-plugin install ghcr.io/my-org/plugins/my-plugin:v1.0.0
+thv ai-plugin install git://github.com/my-org/plugins@main#packages/my-plugin
+```
+
+If the plain name matches an artifact you built locally with
+`thv ai-plugin build`, ToolHive resolves it from the local OCI store; otherwise
+it looks up the name in the configured Registry Server.
+
+### Target a specific client
+
+If both Claude Code and Codex are installed, ToolHive installs the plugin for
+the first supported client it detects. To pick explicitly, use the `--clients`
+flag:
+
+```bash
+thv ai-plugin install my-plugin --clients claude-code
+thv ai-plugin install my-plugin --clients claude-code,codex
+thv ai-plugin install my-plugin --clients all
+```
+
+Valid values are `claude-code`, `codex`, or `all`.
+
+### Choose a scope
+
+Plugins support two installation scopes, matching skills:
+
+- **User scope** (default) - installs the plugin into your home directory, so it
+  is available across all projects.
+- **Project scope** - installs the plugin into the project directory. The
+  project root must be a Git repository.
+
+```bash
+# User scope (default)
+thv ai-plugin install my-plugin
+
+# Project scope
+thv ai-plugin install my-plugin --scope project \
+  --project-root /path/to/project
+```
+
+### Overwrite or group
+
+Pass `--force` to replace an existing installation of the same plugin, or
+`--group` to add the plugin to a named group for later batch operations:
+
+```bash
+thv ai-plugin install my-plugin --force
+thv ai-plugin install my-plugin --group development
+```
+
+## List installed plugins
+
+```bash
+thv ai-plugin list
+```
+
+Filter by client, scope, or group:
+
+```bash
+thv ai-plugin list --client claude-code
+thv ai-plugin list --scope project --project-root /path/to/project
+thv ai-plugin list --group development
+```
+
+For JSON output:
+
+```bash
+thv ai-plugin list --format json
+```
+
+## Inspect a plugin
+
+To see metadata, version, source, and declared contents for an installed plugin:
+
+```bash
+thv ai-plugin info my-plugin
+```
+
+For project-scoped plugins, pass `--scope project --project-root`.
+
+## Uninstall a plugin
+
+```bash
+thv ai-plugin uninstall my-plugin
+```
+
+For a project-scoped install:
+
+```bash
+thv ai-plugin uninstall my-plugin --scope project \
+  --project-root /path/to/project
+```
+
+## Author a plugin
+
+A plugin is a directory with a manifest at `.claude-plugin/plugin.json`. At a
+minimum, the manifest needs a `name`; a `version` is recommended and becomes the
+default OCI tag at build time.
+
+```json title="my-plugin/.claude-plugin/plugin.json"
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "description": "What this plugin does and when to use it.",
+  "author": {
+    "name": "Your Team",
+    "email": "team@example.com"
+  },
+  "license": "Apache-2.0",
+  "keywords": ["review", "python"],
+  "commands": ["./commands/review.md"],
+  "agents": ["./agents/reviewer.md"],
+  "skills": ["./skills/code-review"],
+  "hooks": ["./hooks/post-tool-use.js"]
+}
+```
+
+Content-path fields (`commands`, `agents`, `skills`, `hooks`) must be relative
+paths beginning with `./`. Path traversal (`..`) is rejected, each group is
+capped at 100 entries, and the manifest itself is capped at 64 KB. The
+`keywords` field must be a JSON array of strings.
+
+MCP and LSP server declarations (`mcpServers`, `lspServers`) are recorded in the
+manifest for the AI tool to consume; ToolHive does not lifecycle-manage them
+from the plugin. `thv ai-plugin info` reports declared servers as "Declared (not
+managed by ToolHive)".
+
+### Naming conventions
+
+Use kebab-case for the plugin name - lowercase letters, numbers, and hyphens.
+The name must match the directory the plugin ships in and appears in the default
+OCI tag.
+
+### Validate
+
+Before building, check the manifest and directory structure:
+
+```bash
+thv ai-plugin validate ./my-plugin
+```
+
+For JSON output:
+
+```bash
+thv ai-plugin validate ./my-plugin --format json
+```
+
+### Build an OCI artifact
+
+Package the plugin into an OCI artifact stored in the local OCI store:
+
+```bash
+thv ai-plugin build ./my-plugin
+```
+
+The command prints the OCI reference of the built artifact to stdout. Pass
+`--tag` to override the tag (default: `<name>:<version>` from the manifest, or
+the raw digest if `version` is omitted):
+
+```bash
+thv ai-plugin build ./my-plugin --tag ghcr.io/my-org/plugins/my-plugin:v1.0.0
+```
+
+### Push to a registry
+
+After building, push to a remote OCI registry:
+
+```bash
+thv ai-plugin push ghcr.io/my-org/plugins/my-plugin:v1.0.0
+```
+
+Push uses your existing container registry credentials (for example, from
+`docker login` or `podman login`). Authenticate before pushing.
+
+## Manage local builds
+
+The `builds` subcommand exposes the local OCI store where `thv ai-plugin build`
+writes artifacts.
+
+### List locally-built artifacts
+
+```bash
+thv ai-plugin builds
+```
+
+Output shows the tag, digest, name, and version for each artifact. Add
+`--format json` for machine-readable output.
+
+### Remove a locally-built artifact
+
+```bash
+thv ai-plugin builds remove ghcr.io/my-org/plugins/my-plugin:v1.0.0
+```
+
+Blobs are retained on disk until every tag pointing to their digest is removed.
+
+## Next steps
+
+- [Configure your AI client](./client-configuration.mdx) to register clients
+  with ToolHive so plugins install to the right location automatically
+- [Manage agent skills](./skills-management.mdx) - the sibling workflow for
+  distributing skill bundles across a wider set of clients
+
+## Related information
+
+- [`thv ai-plugin` command reference](../reference/cli/thv_ai-plugin.md)
+- [Client compatibility](../reference/client-compatibility.mdx)
+- [ToolHive API reference](../reference/api.mdx) - the `/api/v1beta/plugins`
+  routes expose the same operations for scripting and integration
+
+## Troubleshooting
+
+<details>
+<summary>`thv ai-plugin install` reports "plugin not found in local store or registry"</summary>
+
+ToolHive looks up plain names first in the local OCI store (populated by
+`thv ai-plugin build`) and then in the configured Registry Server. If both miss,
+install the plugin directly by OCI reference:
+
+```bash
+thv ai-plugin install ghcr.io/<namespace>/<name>:<version>
+```
+
+Confirm the Registry Server is configured (see
+[Registry configuration](./registry.mdx)) and that the plugin has been published
+to it.
+
+</details>
+
+<details>
+<summary>Installed plugin isn't visible to the AI tool</summary>
+
+1. Verify the install landed:
+
+   ```bash
+   thv ai-plugin list
+   thv ai-plugin info <PLUGIN_NAME>
+   ```
+
+2. Confirm the plugin files exist in the expected directory:
+   - **Claude Code**: `~/.claude/plugins/<PLUGIN_NAME>/` (user) or
+     `<PROJECT_ROOT>/.claude/plugins/<PLUGIN_NAME>/` (project)
+   - **Codex**: `~/.agents/plugins/toolhive/<PLUGIN_NAME>/` (user) or
+     `<PROJECT_ROOT>/.agents/plugins/toolhive/<PLUGIN_NAME>/` (project)
+
+3. Restart the AI tool to trigger plugin discovery.
+
+</details>
+
+<details>
+<summary>Manifest validation fails</summary>
+
+Run `thv ai-plugin validate ./my-plugin` to see the specific error. Common
+issues:
+
+- Missing `.claude-plugin/plugin.json` or missing `name` field
+- `keywords` is a string instead of a JSON array
+- A content-path entry (in `commands`, `agents`, `skills`, or `hooks`) does not
+  start with `./` or contains `..`
+- More than 100 entries in one content-path group
+- The manifest file exceeds 64 KB
+
+</details>
+
+<details>
+<summary>Push to registry fails with authentication error</summary>
+
+`thv ai-plugin push` uses your existing container registry credentials. Log in
+first:
+
+```bash
+# For GitHub Container Registry
+echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+
+# For Docker Hub
+docker login
+```
+
+Then retry the push.
+
+</details>

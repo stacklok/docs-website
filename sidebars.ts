@@ -106,6 +106,7 @@ const mcpSidebar: SidebarsConfig[string] = [
       },
       'toolhive/guides-cli/client-configuration',
       'toolhive/guides-cli/skills-management',
+      'toolhive/guides-cli/ai-plugins',
       {
         type: 'category',
         label: 'Permissions and security',

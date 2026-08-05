@@ -43,6 +43,38 @@ two middleware types in order:
 If a validating webhook denies the request, ToolHive returns an error to the
 client without calling the MCP server.
 
+### Ordering with Cedar authorization and audit
+
+When Cedar authorization runs alongside a mutating webhook, Cedar evaluates the
+**post-mutation** request. Audit events, telemetry, and usage metrics report the
+same shape the MCP server actually executes.
+
+Write Cedar policies against the post-mutation shape - the tool name and
+arguments the backend receives, not the original client request. If your
+mutating webhook rewrites `params.name` or `params.arguments`, both your Cedar
+`resource == MCP::Tool::"..."` matchers and any `context.arg_*` clauses need to
+describe the rewritten values.
+
+Two error responses replace what would previously have reached the backend when
+a webhook produces a malformed body:
+
+- **400 Bad Request** if a webhook rewrites a single JSON-RPC request into a
+  batch.
+- **500 Internal Server Error** if a webhook emits a body that is not a valid
+  JSON-RPC request.
+
+:::note[Gaps to be aware of]
+
+- The tool-call filter (`--tools` flag) and the rate limiter decide against the
+  request as received, not the post-mutation shape. A mutating webhook that
+  renames a tool can therefore bypass tool filtering.
+- The `Mcp-Method` and `Mcp-Name` headers forwarded to the backend still name
+  the original tool. A conformant Modern-revision MCP backend rejects the
+  mismatch and fails closed, so mutating webhooks should not rename tools on the
+  Modern path.
+
+:::
+
 ## Create a webhook configuration file
 
 Webhook configuration is defined in a YAML or JSON file. The file has two
