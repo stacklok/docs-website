@@ -77,7 +77,8 @@ const mcpSidebar: SidebarsConfig[string] = [
   {
     type: 'category',
     label: 'ToolHive CLI',
-    description: 'How to use the ToolHive CLI for managing MCP servers',
+    description:
+      'How to use the ToolHive CLI for managing MCP servers, skills, and plugins',
     link: {
       type: 'doc',
       id: 'toolhive/guides-cli/index',
@@ -106,6 +107,7 @@ const mcpSidebar: SidebarsConfig[string] = [
       },
       'toolhive/guides-cli/client-configuration',
       'toolhive/guides-cli/skills-management',
+      'toolhive/guides-cli/ai-plugins',
       {
         type: 'category',
         label: 'Permissions and security',
