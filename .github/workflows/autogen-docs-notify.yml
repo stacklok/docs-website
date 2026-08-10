@@ -55,7 +55,12 @@ name: Autogen Docs Slack Notify
 # directly as an env var below (DOCS_SLACK_CHANNEL_ID), not as a secret.
 # ---------------------------------------------------------------------
 
-on:
+# workflow_run is used deliberately here, not as an oversight. See
+# the SECURITY MODEL comment above: it always runs the trusted
+# main-branch definition, never checks out or executes PR-supplied
+# code, and the Claude step has no Slack token or network access
+# beyond `gh`.
+on: # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows: ['Upstream Release Docs']
     types: [completed]
@@ -96,11 +101,14 @@ jobs:
       # Sets skip=true and exits cleanly when the PR is out of scope.
       - name: Resolve PR and check eligibility
         id: pr
+        env:
+          DISPATCH_PR_NUMBER: ${{ inputs.pr_number }}
+          WORKFLOW_RUN_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            PR_NUMBER="${{ inputs.pr_number }}"
+            PR_NUMBER="$DISPATCH_PR_NUMBER"
           else
-            PR_NUMBER="${{ github.event.workflow_run.pull_requests[0].number }}"
+            PR_NUMBER="$WORKFLOW_RUN_PR_NUMBER"
             if [ -z "$PR_NUMBER" ]; then
               echo "No PR associated with this workflow run; skipping."
               echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -136,6 +144,8 @@ jobs:
       - name: Checkout base branch
         if: steps.pr.outputs.skip != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # STEP 1 — Claude composes content only. Tools limited to gh + Write.
       # No Slack token in this step's env; no curl tool. So even a prompt
       # injection from PR content cannot exfiltrate the Slack token (absent)
