@@ -277,6 +277,7 @@ const mcpSidebar: SidebarsConfig[string] = [
       'toolhive/guides-registry/configuration',
       'toolhive/guides-registry/publish-servers',
       'toolhive/guides-registry/skills',
+      'toolhive/guides-registry/plugins',
       'toolhive/guides-registry/authentication',
       'toolhive/guides-registry/authorization',
       'toolhive/guides-registry/audit-logging',
