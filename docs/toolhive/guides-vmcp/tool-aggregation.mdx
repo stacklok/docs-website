@@ -137,8 +137,9 @@ To hide every tool from `tools/list` — globally or per workload — use
 through [composite tools](./composite-tools.mdx) workflows rather than raw
 backend tools.
 
-Hidden tools are removed from `tools/list` responses but remain in the internal
-routing table, so composite tools can still call them.
+Hidden tools are removed from `tools/list` responses and clients cannot invoke
+them directly through `tools/call`. They remain in the internal routing table so
+composite tools can call them from workflow steps.
 
 ### Hide all backend tools globally
 
@@ -172,6 +173,52 @@ to clients. Set `excludeAllTools: true` (or `excludeAll: true` per workload) to
 prevent clients from calling raw backend tools directly, then define
 [composite tools](./composite-tools.mdx) that orchestrate the hidden tools
 internally.
+
+## Change the default visibility
+
+By default, every backend in the group has its tools advertised even when it has
+no matching entry under `aggregation.tools`. Set
+`aggregation.defaultToolVisibility: deny` to invert this: only backends
+explicitly listed in `aggregation.tools` contribute tools to `tools/list`.
+
+```yaml title="VirtualMCPServer resource"
+spec:
+  config:
+    aggregation:
+      defaultToolVisibility: deny # unlisted backends contribute no tools
+      tools:
+        - workload: github
+          filter: ['create_issue', 'get_issue']
+        - workload: jira
+          filter: ['create_issue']
+```
+
+With this configuration, tools from `github` and `jira` are advertised according
+to their entries, and any other backend joining the group later contributes
+nothing to `tools/list` until you add an entry for it.
+
+A backend that _does_ have a `tools` entry is unaffected by
+`defaultToolVisibility`: its entry opts it in, and `excludeAll` or `filter` on
+that entry decide the rest. `defaultToolVisibility` gates tools only. Resources,
+resource templates, and prompts from unlisted backends are still advertised.
+Composite tools can still call any backend tool from workflow steps, since
+hidden tools remain in the internal routing table.
+
+**When to use:** When the set of exposed tools must be enumerated deliberately,
+rather than inherited from group membership.
+
+:::warning
+
+`defaultToolVisibility` requires the ToolHive v0.42.1 CRDs. On a cluster running
+a newer operator against older CRDs, the field is silently pruned at admission
+and aggregation falls back to `allow`. Verify the value is preserved with:
+
+```bash
+kubectl get virtualmcpserver <name> \
+  -o jsonpath='{.spec.config.aggregation.defaultToolVisibility}'
+```
+
+:::
 
 ## Tool overrides
 

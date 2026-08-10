@@ -642,6 +642,71 @@ steps[conditional_step].defaultResults[value] is required: step "conditional_ste
 may be skipped and field "value" is referenced by step use_result
 ```
 
+### Tool annotations
+
+A composite tool can carry the same MCP tool annotations (`readOnlyHint`,
+`destructiveHint`, `idempotentHint`, `openWorldHint`, `title`) that individual
+backend tools do. Clients that key off these hints, for example to prompt before
+running a destructive tool, use them to decide how to present the composite
+tool.
+
+When the workflow contains at least one tool step and you don't declare
+annotations, vMCP derives a conservative floor from the annotations of the step
+tools. This floor is fail-closed: any step whose annotations are unset or
+unknown taints the derived values pessimistically (`readOnlyHint: false`,
+`destructiveHint: true`, `openWorldHint: true`). `idempotentHint` is never
+derived. A workflow with no tool steps (for example, one containing only an
+elicitation) carries no floor.
+
+Declare annotations explicitly to override the floor:
+
+```yaml title="VirtualMCPCompositeToolDefinition resource"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: VirtualMCPCompositeToolDefinition
+metadata:
+  name: gather-pr-context
+spec:
+  name: gather_pr_context
+  description: Gather PR metadata, diff, and changed files in a single call
+  # highlight-start
+  annotations:
+    title: Gather PR context
+    readOnlyHint: true
+    idempotentHint: true
+  # highlight-end
+  parameters:
+    # ...
+  steps:
+    # ...
+```
+
+Explicit annotations are merged over the derived floor, but a safety-floor
+guardrail drops the composite tool at advertise time if an explicit hint would
+make it look safer than its steps allow. Concretely, vMCP drops the composite
+tool with a warning naming the offending step tools when:
+
+- `readOnlyHint: true` is declared, but at least one step tool is not read-only
+- `destructiveHint: false` is declared, but at least one step tool is
+  destructive
+- `openWorldHint: false` is declared, but at least one step tool touches an open
+  world
+
+The check runs at advertise time when `tools/list` is served. Neither CRD
+admission nor `thv vmcp validate` catches a contradictory annotation, so it
+surfaces only once the backend tools are aggregated.
+
+:::note
+
+Most backend tools declare no annotations today, so composite tools with a
+derived floor typically advertise `destructiveHint: true` and
+`openWorldHint: true`. This matches the MCP specification's defaults for absent
+annotations, but clients that key off explicit hints may begin prompting for
+confirmation on composite tools that previously carried none. Declare
+`annotations` explicitly to override the floor when the derived values are
+stricter than the workflow warrants.
+
+:::
+
 ### Structured output
 
 By default, a composite tool returns the raw output of the most recently
