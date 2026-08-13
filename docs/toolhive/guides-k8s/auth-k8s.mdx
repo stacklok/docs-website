@@ -145,6 +145,35 @@ kubectl get mcpservers,mcpremoteproxies,virtualmcpservers -n toolhive-system \
     | "\(.kind)/\(.metadata.name)"'
 ```
 
+For an inline config, `issuer` must be a well-formed HTTP(S) URL with a scheme
+and host. ToolHive requires HTTPS for both `issuer` and an explicit `jwksUrl`.
+For development or testing on a trusted network, set `insecureAllowHTTP: true`
+to permit HTTP for both fields. An empty `jwksUrl` remains valid and uses OIDC
+discovery.
+
+:::info[Changed in v0.42.1]
+
+The operator validates these URLs whenever it reconciles an inline
+`MCPOIDCConfig`, including resources stored before v0.42.1. A malformed URL or
+plain HTTP without `insecureAllowHTTP: true` sets the config's `Valid` condition
+to `False`. Referencing workloads then set `OIDCConfigRefValidated=False` and
+stop reconciling. Existing pods continue running, so check both conditions if a
+spec, image, or rollout change does not take effect after an upgrade.
+
+Use HTTPS in production. For development-only HTTP issuers, set the opt-in on
+the inline config:
+
+```yaml title="development-oidc-config.yaml"
+spec:
+  type: inline
+  inline:
+    issuer: 'http://keycloak:8080/realms/toolhive'
+    jwksUrl: 'http://keycloak:8080/realms/toolhive/protocol/openid-connect/certs'
+    insecureAllowHTTP: true
+```
+
+:::
+
 :::note[Upgrading from before v0.21.0?]
 
 Older releases supported an inline `spec.oidcConfig` field directly on
@@ -399,11 +428,15 @@ kubectl logs -n toolhive-system -l app.kubernetes.io/name=weather-server-k8s
 
 **OIDC configuration issues:**
 
-- For external IdP: Ensure the issuer URL is accessible from within the cluster
+- For an external IdP, ensure the issuer and JWKS URLs are valid and accessible
+  from within the cluster. Both require HTTPS unless the inline config sets
+  `insecureAllowHTTP: true` for development.
 - For Kubernetes auth: Ensure the Kubernetes API server has OIDC enabled
 - Check that the JWKS URL returns valid keys
 - Verify the MCPOIDCConfig resource is valid:
   `kubectl get mcpoidc -n toolhive-system`
+- Inspect the validation message:
+  `kubectl get mcpoidc <NAME> -n toolhive-system -o jsonpath='{.status.conditions[?(@.type=="Valid")]}'`
 
 **Network connectivity:**
 

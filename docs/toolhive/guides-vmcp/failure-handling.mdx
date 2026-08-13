@@ -27,7 +27,8 @@ gracefully:
   requests to failing backends instead of waiting for timeouts
 - **Partial failure modes**: Choose whether to fail entire requests or continue
   with available backends
-- **Automatic recovery**: Backends are automatically restored when they recover
+- **Recovery monitoring**: vMCP keeps probing failed backends so new sessions
+  can use them after they recover
 
 :::tip
 
@@ -174,6 +175,23 @@ is healthy, the `tools/list` response only includes tools from healthy backends:
 GitHub tools are omitted from the response because the circuit breaker is open.
 The client doesn't see unavailable backend tools, preventing timeout errors when
 attempting to call them.
+
+## Backend selection for new sessions
+
+Before opening a new client session, vMCP checks the health state it already has
+for each backend. It skips backends classified as `unhealthy` or
+`unauthenticated`, so one known-bad backend does not delay initialization for
+the entire vMCP server.
+
+vMCP still attempts backends classified as `degraded` because that state can
+also mean a backend has just recovered or is retrying authentication. It also
+attempts backends whose state is not known yet, including during startup before
+the first health check completes.
+
+This selection applies only when a session opens. A backend skipped at that
+point is not attached to the existing session after it recovers. Reconnect the
+client to open a new session that includes the recovered backend. Restored
+sessions keep their original backend set.
 
 ## Monitor circuit breaker status
 

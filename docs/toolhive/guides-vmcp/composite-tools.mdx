@@ -48,6 +48,66 @@ review independently.
 
 The rest of this guide uses `VirtualMCPCompositeToolDefinition`.
 
+## Describe tool behavior with annotations
+
+Set MCP tool annotations on a composite tool so clients can identify read-only,
+destructive, repeatable, or open-world behavior before calling it:
+
+```yaml title="VirtualMCPCompositeToolDefinition resource"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: VirtualMCPCompositeToolDefinition
+metadata:
+  name: gather-pr-context
+spec:
+  name: gather_pr_context
+  description: Gather pull request context without changing the repository
+  annotations:
+    title: Gather pull request context
+    # Conservative values remain valid even if the backend omits its hints.
+    readOnlyHint: false
+    destructiveHint: true
+    idempotentHint: true
+    openWorldHint: true
+  parameters:
+    type: object
+  steps:
+    - id: pr_meta
+      tool: github_pull_request_read
+      arguments:
+        method: 'get'
+```
+
+The same `annotations` field is available on inline entries under
+`spec.config.compositeTools`. Every field is optional:
+
+| Field             | Purpose                                                        |
+| ----------------- | -------------------------------------------------------------- |
+| `title`           | Human-readable display title for the composite                 |
+| `readOnlyHint`    | The composite does not modify its environment                  |
+| `destructiveHint` | The composite may perform destructive updates                  |
+| `idempotentHint`  | Repeating the composite with the same input has no new effect  |
+| `openWorldHint`   | The composite interacts with entities outside its local domain |
+
+When you omit annotations, vMCP derives a conservative safety floor from the
+step tools:
+
+- `readOnlyHint` is `true` only when every tool step declares itself read-only.
+- `destructiveHint` and `openWorldHint` are `true` when any tool step sets the
+  hint or leaves it unspecified.
+- `idempotentHint` is not derived. Set it explicitly when the complete workflow
+  is idempotent.
+
+An explicit value can be more conservative than the derived floor. If it makes
+the composite appear safer than its steps, vMCP omits the composite from the
+advertised tool list and logs a warning that identifies the conflicting steps.
+For example, `readOnlyHint: true` conflicts when a step omits `readOnlyHint` or
+sets it to `false`. Set optimistic values only when every step tool advertises
+the hints needed to support them.
+
+`thv vmcp validate` and Kubernetes reconciliation validate the annotation
+structure, but they cannot resolve backend step annotations. Check the running
+vMCP logs and `tools/list` response to verify that the composite is advertised.
+
 ## Simple example
 
 This composite tool gathers the metadata, diff, and changed file list for a
