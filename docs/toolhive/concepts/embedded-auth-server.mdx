@@ -140,64 +140,6 @@ authorization server minted the token. If your identity provider performs its
 own token exchange and issues tokens carrying `act`, the delegation chain is
 picked up with no extra configuration.
 
-### External subject-token exchange
-
-The embedded auth server's serialized RunConfig accepts `trusted_issuers` for
-RFC 8693 token exchange. This lets the token endpoint validate a subject token
-issued by a corporate OIDC provider, such as Microsoft Entra ID, Okta, or
-Keycloak, and issue a ToolHive-scoped delegated token.
-
-:::warning[No supported end-to-end workflow]
-
-The RunConfig surface is available, but ToolHive cannot currently provision the
-confidential client that the token-exchange grant requires. DCR and CIMD create
-public clients, RunConfig has no client-seeding field, and discovery metadata
-does not advertise this grant or a secret-based client authentication method.
-There is therefore no supported CLI or Kubernetes workflow for exchanging an
-external subject token end to end. Track
-[stacklok/toolhive#6082](https://github.com/stacklok/toolhive/issues/6082) for
-the missing client provisioning and discovery support.
-
-:::
-
-Trusting an issuer is not enough to authorize delegation. A valid signature and
-audience prove that the token was issued for ToolHive, but not that the calling
-ToolHive client may act for its subject. ToolHive therefore requires both an
-issuer-specific consent signal and a ToolHive client binding:
-
-- A valid `may_act` claim can name the ToolHive client that may exchange the
-  token. For external tokens, the issuer configuration still restricts which
-  ToolHive clients may use this path.
-- Without `may_act`, the claim selected by `actor_claim` must match
-  `allowed_actors`. These values identify clients in the external provider's
-  namespace.
-- `allowed_delegate_clients` is required for every trusted issuer and lists the
-  ToolHive client IDs permitted to perform the exchange. Use `"*"` only when
-  every confidential ToolHive client with the token-exchange grant should be
-  allowed.
-
-The per-issuer RunConfig fields are:
-
-| Field                      | Purpose                                                                                                      |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `issuer_url`               | Exact external token `iss` value. HTTPS is required by default.                                              |
-| `expected_audience`        | Resource or API identifier that must appear in the token's `aud` claim.                                      |
-| `jwks_url`                 | Optional JWKS endpoint. When omitted, ToolHive uses OIDC discovery.                                          |
-| `insecure_allow_http`      | Allows HTTP discovery and JWKS requests for this issuer in development.                                      |
-| `allow_private_ips`        | Allows discovery and JWKS requests to private or loopback addresses; requires an explicit `jwks_url`.        |
-| `actor_claim`              | External client claim, defaulting to `azp`; common alternatives are `appid` for Entra v1 and `cid` for Okta. |
-| `allowed_actors`           | Accepted external actor values. When empty, only tokens with `may_act` are accepted.                         |
-| `allowed_delegate_clients` | Required ToolHive client allow-list for both consent paths.                                                  |
-
-Audience and scope remain bounded by the subject token. The requested audience
-must appear in the subject token's `aud` claim and in the embedded auth server's
-allowed audiences. Every requested scope must appear in both the ToolHive
-client's registered scopes and the subject token's `scope` or `scp` claim. An
-exchange that requests no scopes produces a zero-scope delegated token. ToolHive
-qualifies the delegated subject as `<ISSUER_URL>#<EXTERNAL_SUBJECT>` and records
-the external issuer in the nested `act` chain to prevent identity collisions and
-preserve provenance.
-
 :::note
 
 Delegation data is only available when ToolHive validates the token as a JWT
