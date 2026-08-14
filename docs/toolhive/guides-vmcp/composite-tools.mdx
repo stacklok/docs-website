@@ -48,6 +48,48 @@ review independently.
 
 The rest of this guide uses `VirtualMCPCompositeToolDefinition`.
 
+## Describe tool behavior with annotations
+
+Set MCP tool annotations on a composite tool so clients can identify read-only,
+destructive, idempotent, or open-world behavior before calling it:
+
+```yaml title="VirtualMCPCompositeToolDefinition (spec)"
+spec:
+  annotations:
+    title: Gather pull request context
+    idempotentHint: true
+```
+
+The same `annotations` field is available on inline entries under
+`spec.config.compositeTools`. Every field is optional:
+
+| Field             | Purpose                                                        |
+| ----------------- | -------------------------------------------------------------- |
+| `title`           | Human-readable display title for the composite                 |
+| `readOnlyHint`    | The composite does not modify its environment                  |
+| `destructiveHint` | The composite may perform destructive updates                  |
+| `idempotentHint`  | Repeating the composite with the same input has no new effect  |
+| `openWorldHint`   | The composite interacts with entities outside its local domain |
+
+When you omit annotations, vMCP derives conservative values from the step tools:
+
+- `readOnlyHint` is `true` only when every tool step declares itself read-only.
+- `destructiveHint` and `openWorldHint` are `true` when any tool step sets the
+  hint or leaves it unspecified.
+- `idempotentHint` is not derived. Set it explicitly when the complete workflow
+  is idempotent.
+
+You can set values that are more conservative than the derived values. vMCP
+omits a composite from the advertised tool list when `readOnlyHint: true`,
+`destructiveHint: false`, or `openWorldHint: false` conflicts with a step tool.
+For example, `readOnlyHint: true` conflicts when a step omits `readOnlyHint` or
+sets it to `false`. In that case, vMCP logs a warning that identifies the
+conflicting steps.
+
+`thv vmcp validate` and Kubernetes reconciliation validate the annotation
+structure, but they cannot resolve backend step annotations. Check the running
+vMCP logs and `tools/list` response to verify that the composite is advertised.
+
 ## Simple example
 
 This composite tool gathers the metadata, diff, and changed file list for a
@@ -362,7 +404,7 @@ action with a `condition` that checks the `action` output field:
   dependsOn: [approval]
   defaultResults:
     # Required when condition may be false and output block or downstream
-    # steps reference this step — structure must mirror what downstream expects
+    # The structure must match what downstream steps expect.
     text: '{"status":"skipped"}'
 ```
 
@@ -605,11 +647,11 @@ vMCP validates `defaultResults` at configuration time:
   example:
 
   ```yaml
-  # Wrong — downstream templates use .output.text, not .output.status
+  # Wrong: downstream templates use .output.text, not .output.status
   defaultResults:
     status: 'skipped'
 
-  # Correct — mirrors the .output.text access pattern
+  # Correct: mirrors the .output.text access pattern
   defaultResults:
     text: '{"status":"skipped","id":0}'
   ```
@@ -788,13 +830,13 @@ For object properties, use `value` when the step returns data to deserialize, or
 ```yaml
 output:
   properties:
-    # Option 1a: step returns a JSON string already — reference it directly
+    # Option 1a: the step returns a JSON string, so reference it directly
     metadata:
       type: object
       description: Metadata returned by the backend as a JSON string
       value: '{{.steps.fetch.output.metadata_json}}'
 
-    # Option 1b: step returns structured data — use json to serialize it first
+    # Option 1b: the step returns structured data, so serialize it with json
     referrers:
       type: array
       description: OCI referrers attached to this image
@@ -840,7 +882,7 @@ spec:
         description: Repository path without tag, for listing tags
     required: [image_ref, repository]
   steps:
-    # All three steps run in parallel — no dependsOn between them
+    # All three steps run in parallel because they have no dependsOn fields
     - id: image_info
       tool: oci-registry_get_image_info
       arguments:
@@ -872,7 +914,7 @@ spec:
         type: integer
         description: Number of image layers
         value: '{{.steps.image_info.output.layers}}'
-      # referrers is a structured list — use json to serialize before output parses it
+      # Serialize the structured referrers list before the output parses it
       referrers:
         type: array
         description:
@@ -957,7 +999,7 @@ engine renders parsed values using Go's native format, not JSON, so the result
 is not valid JSON and type coercion fails.
 
 ```yaml
-# Wrong — Go renders the parsed array as "[map[sha:... filename:...]]"
+# Wrong: Go renders the parsed array as "[map[sha:... filename:...]]"
 changedFiles:
   type: array
   description: Changed files
@@ -1016,7 +1058,7 @@ spec:
       - pullNumber
   timeout: '5m'
   steps:
-    # All five reads run in parallel — no dependsOn between them
+    # All five reads run in parallel because they have no dependsOn fields
     - id: pr_meta
       tool: github_pull_request_read
       arguments:
@@ -1105,7 +1147,7 @@ spec:
             type: string
             description: HTML URL of the pull request
             value: '{{(fromJson .steps.pr_meta.output.text).html_url}}'
-      # GitHub returns JSON text — pass through as string rather than
+      # GitHub returns JSON text. Pass it through as a string instead of
       # using fromJson + type: array (see JSON text in the output block)
       changedFiles:
         type: string
