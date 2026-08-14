@@ -180,31 +180,12 @@ spec:
           key: ca.crt
 ```
 
-:::info[Removed in v0.42.0]
+### `referencingServers` replaced with `referencingWorkloads`
 
-The reference-tracking status fields (`status.referencingWorkloads` and, where
-present, `status.referenceCount`) were removed from every configuration CRD:
-`MCPOIDCConfig`, `MCPAuthzConfig`, `MCPExternalAuthConfig`, `MCPToolConfig`,
-`MCPWebhookConfig`, and `MCPTelemetryConfig`. The `REFERENCES` printer column
-was removed from the CRDs that carried it. `MCPWebhookConfig` and
-`MCPTelemetryConfig` only ever had `referencingWorkloads`, and
-`MCPTelemetryConfig` never had the printer column, so its `kubectl get` output
-is unchanged.
-
-Deletion protection is unchanged - each config controller still blocks deletion
-while any workload references it, exposed through the `DeletionBlocked`
-condition.
-
-To list workloads that reference a config, query them by their config-ref field:
-
-```bash
-kubectl get mcpservers,mcpremoteproxies,virtualmcpservers -n toolhive-system \
-  -o json | jq -r --arg n my-oidc '.items[]
-    | select((.spec.oidcConfigRef.name // .spec.incomingAuth.oidcConfigRef.name) == $n)
-    | "\(.kind)/\(.metadata.name)"'
-```
-
-:::
+The `status.referencingServers` field (a plain `[]string`) has been replaced
+with `status.referencingWorkloads` (an array of `{kind, name}` objects) on the
+shared configuration CRDs: MCPOIDCConfig, MCPToolConfig, MCPExternalAuthConfig,
+and MCPTelemetryConfig.
 
 ```yaml
 # Before
@@ -222,8 +203,32 @@ status:
       name: my-other-server
 ```
 
+:::info[Removed in v0.42.0]
+
+The reference-tracking status fields (`status.referencingWorkloads` and, where
+present, `status.referenceCount`) were removed from every configuration CRD:
+`MCPOIDCConfig`, `MCPAuthzConfig`, `MCPExternalAuthConfig`, `MCPToolConfig`,
+`MCPWebhookConfig`, and `MCPTelemetryConfig`. The `REFERENCES` printer column
+was removed from the CRDs that carried it. `MCPWebhookConfig` and
+`MCPTelemetryConfig` only ever had `referencingWorkloads`, and
+`MCPTelemetryConfig` never had the printer column, so its `kubectl get` output
+is unchanged.
+
+Deletion protection is unchanged - each config controller still blocks deletion
+while any workload references it, exposed through the `DeletionBlocked`
+condition.
+
 Any scripts, monitoring, or tooling that reads these fields must switch to a
-workload query as shown above.
+workload query instead:
+
+```bash
+kubectl get mcpservers,mcpremoteproxies,virtualmcpservers -n toolhive-system \
+  -o json | jq -r --arg n my-oidc '.items[]
+    | select((.spec.oidcConfigRef.name // .spec.incomingAuth.oidcConfigRef.name) == $n)
+    | "\(.kind)/\(.metadata.name)"'
+```
+
+:::
 
 ### Expanded Cedar policy enforcement
 
