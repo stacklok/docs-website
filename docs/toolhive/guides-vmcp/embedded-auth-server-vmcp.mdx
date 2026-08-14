@@ -176,25 +176,6 @@ spec:
     authorizationEndpointBaseUrl: https://auth.example.com
 ```
 
-If your MCP clients register via DCR with a narrowed `scope` value and then
-request additional scopes at `/oauth/authorize` (a pattern used by Claude Code,
-among others), set `baselineClientScopes` so the embedded auth server merges
-those scopes into every registered client's scope set. If `scopesSupported` is
-set explicitly, all baseline values must appear in it; otherwise the server
-validates against its default scope set (`openid`, `profile`, `email`,
-`offline_access`). See
-[Baseline scopes for DCR clients](../concepts/embedded-auth-server.mdx#baseline-scopes-for-dcr-clients)
-for guidance on which scopes to include.
-
-```yaml
-spec:
-  authServerConfig:
-    issuer: https://auth.example.com
-    baselineClientScopes:
-      - openid
-      - offline_access
-```
-
 Each upstream provider `name` must be a valid DNS label (lowercase alphanumeric
 and hyphens, max 63 characters). This name is what the
 [upstream token injection](#forward-a-stored-upstream-token-upstream-injection)
@@ -288,6 +269,140 @@ walkthrough at
 [Connect ToolHive to Microsoft Entra ID](../integrations/vmcp-entra-id.mdx)
 includes this setting.
 
+## Register MCP clients with ToolHive
+
+This is the incoming registration flow: the MCP client is the OAuth client, and
+ToolHive's embedded authorization server is the authorization server. It is
+separate from
+[registering ToolHive with an OAuth provider](#register-toolhive-with-an-oauth-provider).
+
+Enable CIMD to support clients that use the MCP specification's preferred
+registration mechanism. ToolHive continues to accept Dynamic Client Registration
+(DCR) requests. DCR remains available as a fallback for clients that support it
+but do not use CIMD. Client-side DCR does not require configuration.
+
+### Enable CIMD for zero-registration clients
+
+Add `cimd` under `spec.authServerConfig`:
+
+```yaml title="VirtualMCPServer: CIMD configuration"
+spec:
+  authServerConfig:
+    cimd:
+      enabled: true
+```
+
+| Field                   | Default | Description                                                         |
+| ----------------------- | ------- | ------------------------------------------------------------------- |
+| `cimd.enabled`          | `false` | Accept HTTPS URLs as `client_id` values and resolve their metadata. |
+| `cimd.cacheMaxSize`     | `256`   | Optional maximum number of CIMD documents in the LRU cache.         |
+| `cimd.cacheFallbackTtl` | `5m`    | Optional Go duration applied to every cached CIMD document.         |
+
+The cache defaults are suitable for most deployments.
+
+For an explanation of how ToolHive resolves CIMD documents and why the OAuth
+provider never sees the MCP client's CIMD URL, see
+[Client ID Metadata Document (CIMD)](../concepts/embedded-auth-server.mdx#client-id-metadata-document-cimd).
+
+### Enable baseline scopes for DCR clients
+
+If your MCP clients register via DCR with a narrowed `scope` value and then
+request additional scopes at `/oauth/authorize`, set `baselineClientScopes` so
+the embedded authorization server merges those scopes into every registered
+client's scope set:
+
+```yaml title="VirtualMCPServer: baseline client scopes"
+spec:
+  authServerConfig:
+    baselineClientScopes:
+      - openid
+      - offline_access
+```
+
+If `scopesSupported` is set explicitly, every baseline value must appear in it.
+Otherwise, the server validates against its default scope set (`openid`,
+`profile`, `email`, `offline_access`). Keep the baseline narrow because every
+DCR-registered or CIMD-resolved client can request these scopes. See
+[Baseline scopes for DCR clients](../concepts/embedded-auth-server.mdx#baseline-scopes-for-dcr-clients)
+for guidance on which scopes to include.
+
+## Register ToolHive with an OAuth provider
+
+This section configures ToolHive's OAuth connection to an external provider. It
+is separate from incoming registration between MCP clients and ToolHive. Use a
+preconfigured client ID and secret, or add `dcrConfig` to register ToolHive at
+runtime when the provider supports RFC 7591.
+
+This example uses an RFC 8414 discovery document to locate the provider's
+`registration_endpoint`:
+
+```yaml title="VirtualMCPServer: upstream DCR discovery"
+spec:
+  authServerConfig:
+    issuer: 'https://toolhive.example.com'
+    upstreamProviders:
+      - name: remote-mcp
+        type: oauth2
+        oauth2Config:
+          authorizationEndpoint: 'https://mcp.example.com/authorize'
+          tokenEndpoint: 'https://mcp.example.com/token'
+          redirectUri: 'https://toolhive.example.com/oauth/callback'
+          # highlight-start
+          dcrConfig:
+            discoveryUrl: 'https://mcp.example.com/.well-known/oauth-authorization-server'
+          # highlight-end
+```
+
+Set `authorizationEndpoint` and `tokenEndpoint` even when the discovery document
+advertises them. The CRD requires both fields on `oauth2Config`.
+
+If the provider gives you a registration URL directly, use
+`registrationEndpoint` instead of `discoveryUrl`:
+
+```yaml title="Use a direct registration endpoint"
+dcrConfig:
+  registrationEndpoint: 'https://mcp.example.com/register'
+```
+
+Set exactly one of `discoveryUrl` or `registrationEndpoint`. A direct
+registration endpoint bypasses discovery, so keep the authorization endpoint,
+token endpoint, and scopes in the parent `oauth2Config`. With `dcrConfig`,
+ToolHive obtains the client ID and secret from the DCR response.
+
+| Field                             | Description                                                                                                                                     |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dcrConfig.discoveryUrl`          | HTTPS URL of an RFC 8414 or OpenID Connect discovery document.                                                                                  |
+| `dcrConfig.registrationEndpoint`  | HTTPS URL of the RFC 7591 registration endpoint.                                                                                                |
+| `dcrConfig.initialAccessTokenRef` | Optional reference to a Secret whose value ToolHive sends as a bearer token when it calls the registration endpoint. Requires `name` and `key`. |
+
+### Authorize upstream registration with an initial access token
+
+If the upstream provider requires an initial access token, create a Secret in
+the same namespace as the VirtualMCPServer:
+
+```yaml title="dcr-initial-access-token.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dcr-initial-access-token
+  namespace: toolhive-system
+type: Opaque
+stringData:
+  token: '<YOUR_DCR_INITIAL_ACCESS_TOKEN>'
+```
+
+Then add `initialAccessTokenRef` to the provider's `oauth2Config.dcrConfig`.
+ToolHive sends the Secret value as a bearer token when it calls the registration
+endpoint:
+
+```yaml title="Add an initial access token"
+dcrConfig:
+  registrationEndpoint: 'https://mcp.example.com/register'
+  initialAccessTokenRef:
+    name: dcr-initial-access-token
+    key: token
+```
+
 ## Validate the issued JWTs
 
 When using the embedded auth server, configure `incomingAuth` to validate the
@@ -309,12 +424,13 @@ spec:
 
 ## Configure session storage
 
-By default, upstream tokens are stored in memory and lost on pod restart. For
-production, configure Redis Sentinel by adding a `storage` block to
-`authServerConfig`. The configuration is the same as for the MCPServer embedded
-auth server. See
-[Redis Sentinel session storage](../guides-k8s/redis-session-storage.mdx) for a
-complete walkthrough.
+By default, upstream tokens and client credentials obtained through upstream DCR
+are stored in memory and lost on pod restart. When you use upstream DCR, a
+restart registers a new client with the provider and leaves the previous
+registration orphaned. For production, configure Redis storage by adding a
+`storage` block to `authServerConfig`. See
+[Redis session storage](../guides-k8s/redis-session-storage.mdx) for a complete
+walkthrough.
 
 ## Forward user tokens to backends
 
@@ -792,4 +908,49 @@ automatically include your GitHub access token.
   conceptual background
 - [Embedded auth server for MCPServer](../guides-k8s/embedded-auth-server-k8s.mdx)
 - [Token exchange in Kubernetes](../guides-k8s/token-exchange-k8s.mdx)
+- [VirtualMCPServer reference](../reference/crds/virtualmcpserver.mdx)
 - [MCPExternalAuthConfig reference](../reference/crds/mcpexternalauthconfig.mdx)
+
+## Troubleshooting
+
+<details>
+<summary>CIMD-capable client uses DCR</summary>
+
+DCR is the expected fallback for clients that do not support CIMD. If a client
+supports CIMD but still uses DCR:
+
+- Verify `spec.authServerConfig.cimd.enabled: true` is set and the controller
+  has reconciled the change:
+  `kubectl describe virtualmcpserver <NAME> -n toolhive-system`.
+- Confirm the discovery document advertises CIMD support:
+  ```bash
+  curl -s https://<YOUR_ISSUER_URL>/.well-known/oauth-authorization-server | \
+    python3 -m json.tool | grep client_id_metadata_document
+  ```
+  The response should include `"client_id_metadata_document_supported": true`.
+- Confirm the controller completed the automatic deployment rollout:
+  `kubectl rollout status deployment/vmcp-<NAME> -n toolhive-system`.
+
+</details>
+<details>
+<summary>CIMD authentication fails with <code>invalid_client</code></summary>
+
+- The `client_id` field in the fetched document must exactly match the URL used
+  to fetch it.
+- The document must not declare a symmetric shared-secret
+  `token_endpoint_auth_method`, including `client_secret_post`,
+  `client_secret_basic`, or `client_secret_jwt`.
+- If declared, `grant_types` must include `authorization_code`, and
+  `response_types` must include `code`.
+- `redirect_uris` must be present and valid.
+
+</details>
+<details>
+<summary>CIMD fetch fails because of egress or timeout errors</summary>
+
+- The vMCP pod needs outbound HTTPS access to the client's metadata URL. Check
+  your cluster's egress policies.
+- Fetches time out after five seconds. Confirm that the metadata host is
+  reachable from the vMCP pod.
+
+</details>
