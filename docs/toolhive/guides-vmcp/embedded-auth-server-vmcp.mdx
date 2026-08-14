@@ -304,6 +304,65 @@ For an explanation of how ToolHive resolves CIMD documents and why the OAuth
 provider never sees the MCP client's CIMD URL, see
 [Client ID Metadata Document (CIMD)](../concepts/embedded-auth-server.mdx#client-id-metadata-document-cimd).
 
+### Allow confidential DCR clients
+
+By default, DCR only issues public clients. Set
+`allowConfidentialClientRegistration: true` to accept `client_secret_basic` and
+`client_secret_post` registrations and mint a real `client_secret` (returned
+exactly once):
+
+```yaml title="VirtualMCPServer: confidential DCR"
+spec:
+  authServerConfig:
+    allowConfidentialClientRegistration: true
+```
+
+`/oauth/register` is unauthenticated, so this lets any caller who can reach the
+endpoint mint a client credential. Combining this with `insecureAllowHTTP: true`
+is rejected at admission; combining it with a plain-HTTP loopback issuer
+requires `insecureAllowConfidentialOverLoopbackHTTP: true` to opt in.
+
+For clients that register as public (`token_endpoint_auth_method: "none"`) but
+then refuse to proceed without a `client_secret`,
+`forceConfidentialRedirectUris` issues a secret when the registration's
+`redirect_uris` contains an exact match for a listed URI. Every entry must be an
+`https` non-loopback URI:
+
+```yaml title="VirtualMCPServer: force confidential for specific redirects"
+spec:
+  authServerConfig:
+    allowConfidentialClientRegistration: true
+    forceConfidentialRedirectUris:
+      - https://client.example.com/oauth/callback
+```
+
+For the full validation rules and the background on why these flags exist, see
+[Allow confidential DCR clients](../guides-k8s/embedded-auth-server-k8s.mdx#allow-confidential-dcr-clients).
+
+### Pre-provision confidential clients for token exchange
+
+To pre-provision a confidential client that performs RFC 8693 token exchange
+against the vMCP embedded auth server (typically a backend service the operator
+controls), add a `delegateClients` entry:
+
+```yaml title="VirtualMCPServer: delegate clients"
+spec:
+  authServerConfig:
+    delegateClients:
+      - clientId: backend-exchange
+        clientSecretRef:
+          name: backend-exchange-client-secret
+          key: client-secret
+        audiences:
+          - https://backend.example.com
+        scopes:
+          - backend-api:read
+```
+
+All four fields are required. Delegate clients are independent of
+`allowConfidentialClientRegistration`. The issuer must use `https://` - delegate
+clients are rejected at admission when the issuer is plaintext HTTP.
+
 ### Enable baseline scopes for DCR clients
 
 If your MCP clients register via DCR with a narrowed `scope` value and then

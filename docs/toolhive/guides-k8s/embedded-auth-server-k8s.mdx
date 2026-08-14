@@ -454,6 +454,89 @@ For the two-layer trust model behind CIMD (why the upstream IdP never sees the
 client's CIMD URL), see
 [Client ID Metadata Document (CIMD)](../concepts/embedded-auth-server.mdx#client-id-metadata-document-cimd).
 
+### Allow confidential DCR clients
+
+By default, DCR only issues public clients: registrations must use
+`token_endpoint_auth_method: "none"`, and the response carries no
+`client_secret`. Set `allowConfidentialClientRegistration: true` to also accept
+`client_secret_basic` and `client_secret_post` registrations and mint a real
+`client_secret` (returned exactly once in the registration response):
+
+```yaml title="MCPExternalAuthConfig: confidential DCR"
+spec:
+  embeddedAuthServer:
+    allowConfidentialClientRegistration: true
+```
+
+`/oauth/register` is unauthenticated, so enabling this lets any caller who can
+reach the endpoint mint a client credential. Confidential registrations are
+restricted to `https` non-loopback redirect URIs, and (with the Redis storage
+backend) any DCR registration idle for more than 30 days is evicted and must
+re-register.
+
+The following combinations are rejected at admission:
+
+- `allowConfidentialClientRegistration: true` alongside
+  `insecureAllowHTTP: true` - client secrets would be issued in cleartext.
+- `allowConfidentialClientRegistration: true` with a plain-HTTP loopback issuer
+  (for example, `http://localhost:8080`). Set
+  `insecureAllowConfidentialOverLoopbackHTTP: true` to opt in to this
+  combination for local development, where the traffic never leaves the machine.
+
+Some MCP clients declare themselves public
+(`token_endpoint_auth_method: "none"`) at registration but then refuse to
+proceed because the response carries no `client_secret`. RFC 7591 permits the
+server to substitute client metadata; `forceConfidentialRedirectUris` takes such
+a client at its word and issues a real `client_secret` when its `redirect_uris`
+contains an exact match for a listed URI:
+
+```yaml title="MCPExternalAuthConfig: force confidential for specific redirects"
+spec:
+  embeddedAuthServer:
+    allowConfidentialClientRegistration: true
+    forceConfidentialRedirectUris:
+      - https://client.example.com/oauth/callback
+```
+
+Every entry must be an `https` non-loopback URI. Matching is exact. Remove an
+entry once the client is fixed to handle public (`"none"`) registrations
+correctly.
+
+### Pre-provision confidential clients for token exchange
+
+Confidential DCR is registration-driven and unauthenticated. For a client the
+operator controls and knows in advance - typically a backend service that
+performs RFC 8693 token exchange against the embedded auth server -
+pre-provision it with `delegateClients` instead. Each entry references a
+Kubernetes Secret for the client secret and narrows the audiences and scopes the
+client may request:
+
+```yaml title="MCPExternalAuthConfig: delegate clients"
+spec:
+  embeddedAuthServer:
+    delegateClients:
+      - clientId: backend-exchange
+        clientSecretRef:
+          name: backend-exchange-client-secret
+          key: client-secret
+        audiences:
+          - https://backend.example.com
+        scopes:
+          - backend-api:read
+```
+
+`clientId`, `clientSecretRef`, `audiences`, and `scopes` are all required.
+`audiences` and `scopes` narrow what the client can request at the token
+endpoint; leaving them empty is not permitted because a declared client must not
+receive every allowed audience or scope by default.
+
+Delegate clients are independent of `allowConfidentialClientRegistration`:
+declaring one here does not enable self-service confidential DCR, and enabling
+DCR does not seed any delegate client. The two features govern different
+endpoints. The delegate-clients validation blocks a plaintext `http://` issuer
+categorically at admission - the CEL rule cannot express the loopback exception,
+so use an `https://` issuer whenever you configure delegate clients.
+
 ### Enable baseline scopes for DCR clients
 
 Some MCP clients (for example, Claude Code) register via DCR with a narrowed
