@@ -436,15 +436,16 @@ see the [HashiCorp Vault integration tutorial](../integrations/vault.mdx).
 
 ### Mount a volume
 
-You can mount volumes into the MCP server pod to provide persistent storage or
-access to data. This is useful for MCP servers that need to read/write files or
-access large datasets.
+Mount volumes into the MCP server pod to provide persistent storage, access
+shared datasets, or add writable paths to the container. The operator sets
+`readOnlyRootFilesystem: true` on the `mcp` container by default. To retain this
+security setting, mount a writable volume at each path the image writes to.
 
-To do this, add a standard `volumes` field to the `podTemplateSpec` in the
-`MCPServer` resource and a `volumeMounts` section in the container
-specification. Here's an example that mounts a persistent volume claim (PVC) to
-the `/projects` path in the Filesystem MCP server. The PVC must already exist in
-the same namespace as the MCPServer.
+For data that must survive pod replacement, mount a persistent volume claim
+(PVC). Add a standard `volumes` field to the `podTemplateSpec` and a
+`volumeMounts` section to the container specification. The following example
+mounts an existing PVC at `/projects/my-mcp-data` in the Filesystem MCP server.
+The PVC must exist in the same namespace as the `MCPServer` resource.
 
 ```yaml {12-15,19-22} title="my-mcpserver-with-volume.yaml"
 apiVersion: toolhive.stacklok.dev/v1beta1
@@ -468,8 +469,42 @@ spec:
           volumeMounts:
             - mountPath: /projects/my-mcp-data
               name: my-mcp-data
-              readOnly: true
+              readOnly: false
 ```
+
+For ephemeral data such as temporary files and caches, use an `emptyDir` volume.
+This example provides a writable `/tmp` directory while keeping the container's
+root filesystem read-only:
+
+```yaml {4-11} title="Writable temporary directory"
+spec:
+  podTemplateSpec:
+    spec:
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: mcp
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+```
+
+If an image requires a writable root filesystem, explicitly override the default
+in `podTemplateSpec`:
+
+```yaml {6-7} title="Writable root filesystem override"
+spec:
+  podTemplateSpec:
+    spec:
+      containers:
+        - name: mcp
+          securityContext:
+            readOnlyRootFilesystem: false
+```
+
+Prefer mounting writable volumes at the required paths so the container retains
+the operator's more secure default.
 
 ### Override proxy Deployment and Service settings
 
