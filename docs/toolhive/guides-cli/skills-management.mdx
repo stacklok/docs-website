@@ -223,23 +223,70 @@ thv skill info <SKILL_NAME>
 This shows the skill's name, version, description, scope, status, source
 reference, installation date, and associated clients.
 
-## Upgrade skills
+## Reproduce and upgrade project-scoped skills
 
-Skill upgrades are experimental and require `TOOLHIVE_SKILLS_LOCK_ENABLED=true`
-on the ToolHive API server. Upgrade project-scoped skills from the project
-directory:
+Project-scoped installs record their source, resolved digest, and signer
+identity in a `toolhive.lock.yaml` file at the project root. This lets you
+reinstall the same skill content on another machine, detect drift in CI, and
+upgrade to newer content when the catalog moves forward. User-scoped installs do
+not participate in the lock file.
+
+### Restore skills from the lock file
+
+To reinstall the skills recorded in the lock file (for example, after cloning
+the project on a new machine), run `thv skill sync` from the project directory:
+
+```bash
+thv skill sync --project-root .
+```
+
+Missing or drifted skills are reinstalled at their pinned digest. Sync prompts
+for confirmation before installing; pass `--yes` in non-interactive environments
+such as CI.
+
+Use `--check` to report drift without installing or writing anything. This is
+useful as a CI gate:
+
+```bash
+thv skill sync --project-root . --check
+```
+
+If you have project-scoped skills that were installed before the lock file
+existed, `--adopt` records lock entries for them so subsequent syncs include
+them:
+
+```bash
+thv skill sync --project-root . --adopt
+```
+
+Use `--prune` to remove installs that are no longer in the lock file.
+
+See the [`thv skill sync` command reference](../reference/cli/thv_skill_sync.md)
+for all options.
+
+### Upgrade project-scoped skills
+
+Upgrade the project's skills to newer pinned content:
 
 ```bash
 thv skill upgrade --project-root .
 ```
 
 A version or tag change within the same OCI repository proceeds without
-`--allow-ref-change`, including a move to an older tag. ToolHive still pins the
+`--allow-ref-change`, including a move to an older tag. ToolHive pins the
 resolved digest and blocks signer changes. If the catalog moves the skill to a
 different repository, organization, or registry, the upgrade is blocked. Review
 the new source, then repeat the command with `--allow-ref-change` if you intend
 to permit that repository move. ToolHive prompts before installing the planned
 changes; pass `--yes` in non-interactive environments.
+
+Skills pinned to an immutable reference (an OCI digest or a full Git commit
+hash) are reported as not upgradable, because there is nothing newer to resolve
+to.
+
+Use `--preview` to see what would change without persisting anything, or
+`--fail-on-changes` as a CI freshness gate that reports pending upgrades without
+installing them.
 
 See the
 [`thv skill upgrade` command reference](../reference/cli/thv_skill_upgrade.md)
@@ -334,6 +381,24 @@ After building, push the artifact to a remote OCI registry:
 ```bash
 thv skill push ghcr.io/my-org/skills/my-skill:v1.0.0
 ```
+
+`thv skill push` signs the pushed artifact by default. Pass `--key` to use a
+cosign private key on disk, or `--no-sign` to push without signing:
+
+```bash
+# Sign with a cosign key on disk. Set COSIGN_PASSWORD in the thv serve
+# environment to decrypt an encrypted key.
+thv skill push ghcr.io/my-org/skills/my-skill:v1.0.0 \
+  --key cosign.key
+
+# Push without a signature
+thv skill push ghcr.io/my-org/skills/my-skill:v1.0.0 --no-sign
+```
+
+Signatures let consumers verify who published a skill before installing it. When
+a consumer installs an unsigned skill project-scoped, they must pass
+`--allow-unsigned` to `thv skill install`. User-scoped installs do not enforce
+signatures.
 
 :::note
 
