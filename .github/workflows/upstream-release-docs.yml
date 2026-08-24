@@ -327,6 +327,14 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: npm ci
 
+      # `npm run build` needs `thv` on PATH: mcp-metadata-plugin
+      # shells out to `thv registry info`, and docusaurus.config.ts
+      # sets its failOnError whenever CI=true. Same script Vercel's
+      # buildCommand runs. Required, not soft-failed, so a broken
+      # install fails here rather than mid-skill.
+      - name: Install ToolHive CLI (for build-time MCP metadata)
+        run: ./scripts/install-thv.sh
+
       - name: Set up Git
         run: |
           git config --global user.name "github-actions[bot]"
@@ -472,13 +480,20 @@ jobs:
             printf '%s\n' "$1" | grep -qE '(\[bot\]$|^app/|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)'
           }
 
-          # ---------- contributor candidates ----------
-          if COMPARE=$(gh api "repos/$REPO/compare/$PREV...$NEW" \
-              --jq '[.commits[].author.login? // empty] | unique | .[]' 2>/dev/null); then
+          # ---------- compare the release range ----------
+          # One fetch, two consumers: the contributor logins below and
+          # the commit list handed to the skill, which cannot run
+          # `git log` against the clone and needs it as data.
+          if COMPARE_JSON=$(gh api "repos/$REPO/compare/$PREV...$NEW" 2>/dev/null); then
             COMPARE_OK=true
           else
-            COMPARE=""
+            COMPARE_JSON=""
             COMPARE_OK=false
+          fi
+          COMPARE=""
+          if [ -n "$COMPARE_JSON" ]; then
+            COMPARE=$(printf '%s' "$COMPARE_JSON" \
+              | jq -r '[.commits[].author.login? // empty] | unique | .[]' 2>/dev/null || true)
           fi
           CANDIDATES=""
           while IFS= read -r login; do
@@ -542,6 +557,18 @@ jobs:
           # ---------- handoff file for the skill ----------
           # The skill reads .release-meta.json to learn who the owner
           # is and which contributors it must classify. Gitignored.
+          # One entry per commit in the range: short sha, subject,
+          # author login. Empty when the compare failed.
+          COMMITS_JSON='[]'
+          if [ -n "$COMPARE_JSON" ]; then
+            COMMITS_JSON=$(printf '%s' "$COMPARE_JSON" | jq -c '
+              [ .commits[]
+                | { sha: (.sha[0:8]),
+                    subject: (.commit.message | split("\n")[0]),
+                    author: (.author.login? // .commit.author.name? // null) } ]' \
+              2>/dev/null || echo '[]')
+          fi
+
           jq -n \
             --arg owner "$OWNER" \
             --arg owner_source "$OWNER_SOURCE" \
@@ -549,13 +576,15 @@ jobs:
             --arg prev "$PREV" \
             --arg new "$NEW" \
             --arg candidates "$CANDIDATES" \
+            --argjson commits "$COMMITS_JSON" \
             '{
                repo: $repo,
                prev_tag: $prev,
                new_tag: $new,
                owner: (if $owner == "" then null else $owner end),
                owner_source: (if $owner_source == "" then null else $owner_source end),
-               contributors: ($candidates | split("\n") | map(select(length > 0)))
+               contributors: ($candidates | split("\n") | map(select(length > 0))),
+               commits: $commits
              }' > .release-meta.json
 
           {
@@ -683,7 +712,13 @@ jobs:
           claude_args: |
             --model claude-opus-4-7
             --max-turns 1000
-            --allowedTools "Bash(gh:*),Bash(npm run build),Bash(npm run prettier),Bash(npm run prettier:fix),Bash(npm run eslint),Bash(npm run eslint:fix)"
+            # Prefix form, not exact: an exact entry matches only the
+            # bare command, so `npm run prettier:fix -- <files>` would
+            # be denied. Scripts come from the repo's package.json,
+            # which later steps in this job already run. The git
+            # entries are read-only; the action's defaults cover
+            # add/commit/rm/push.
+            --allowedTools "Bash(gh:*),Bash(npm run:*),Bash(npx prettier:*),Bash(npx eslint:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git tag:*),Bash(git check-ignore:*)"
           prompt: |
             You are running in GitHub Actions with no interactive user.
 
@@ -712,10 +747,24 @@ jobs:
             back to requesting a review from every contributor, which
             is the noisy behavior we are trying to fix.
 
-            Prefer reading source code from the local clone at
-            ${{ steps.clone.outputs.scratch_dir }} instead of
+            Read source from the local clone at
+            ${{ steps.clone.outputs.scratch_dir }} rather than
             `gh api contents?ref=<tag>` -- it's already at the tag and
-            doesn't consume API quota. Do not hand-edit auto-generated
+            doesn't consume API quota. Use the **Read, Grep, and Glob
+            tools** for it, not Bash: the clone sits outside this
+            session's working directory, so `ls`, `find`, and `grep`
+            run through Bash are refused there, and `git -C <path>` is
+            refused everywhere because it can execute untrusted hooks.
+            The commit list you would otherwise get from `git log` is
+            already in `.release-meta.json` under `commits`, one entry
+            per commit with its sha, subject, and author.
+
+            Do not append `2>&1` or chain commands with `&&` on Bash
+            calls. Doing so splits the command into parts that no
+            longer match the tool allowlist, and the call is denied
+            even when the underlying command is permitted.
+
+            Do not hand-edit auto-generated
             reference under static/api-specs/, docs/toolhive/reference/cli/,
             or any CRD pages dirs (${{ steps.crd_pages.outputs.dirs }}) --
             earlier workflow steps sync those from release assets.
@@ -723,13 +772,15 @@ jobs:
             Project dependencies are already installed by an earlier
             workflow step; node_modules is present in the working tree.
             Run `npm run prettier:fix` and `npm run eslint:fix`
-            directly to format and lint your edits. Do NOT run
-            `npm ci` or `npm install` -- they are unnecessary here and
-            not in the allow-list; if a lint command appears to require
-            a fresh install, it does not. Do not defer formatting to
-            CI: the lint and format CI checks do not run on commits
-            pushed by this bot account. Format your edits in this
-            session.
+            directly to format and lint your edits, with or without a
+            file list. Do NOT run `npm ci` or `npm install` -- they are
+            unnecessary here and not in the allow-list; if a lint
+            command appears to require a fresh install, it does not. Do
+            not append `2>&1` or chain with `&&`: that splits the
+            command into parts the allowlist no longer matches and the
+            call is denied. Do not defer formatting to CI, since the
+            lint and format checks do not run on commits pushed by
+            this bot account. Format your edits in this session.
 
       # Capture skill_gen's execution stats BEFORE skill_review runs
       # and overwrites the shared execution-output JSON at the
@@ -805,7 +856,13 @@ jobs:
           claude_args: |
             --model claude-opus-4-7
             --max-turns 200
-            --allowedTools "Bash(gh:*),Bash(npm run build),Bash(npm run prettier),Bash(npm run prettier:fix),Bash(npm run eslint),Bash(npm run eslint:fix)"
+            # Prefix form, not exact: an exact entry matches only the
+            # bare command, so `npm run prettier:fix -- <files>` would
+            # be denied. Scripts come from the repo's package.json,
+            # which later steps in this job already run. The git
+            # entries are read-only; the action's defaults cover
+            # add/commit/rm/push.
+            --allowedTools "Bash(gh:*),Bash(npm run:*),Bash(npx prettier:*),Bash(npx eslint:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git tag:*),Bash(git check-ignore:*)"
           prompt: |
             You are running in GitHub Actions with no interactive user. Follow
             these steps exactly and do NOT ask clarifying questions -- proceed
@@ -824,13 +881,15 @@ jobs:
             Project dependencies are already installed by an earlier
             workflow step; node_modules is present in the working tree.
             Run `npm run prettier:fix` and `npm run eslint:fix`
-            directly to format and lint your edits. Do NOT run
-            `npm ci` or `npm install` -- they are unnecessary here and
-            not in the allow-list; if a lint command appears to require
-            a fresh install, it does not. Do not defer formatting to
-            CI: the lint and format CI checks do not run on commits
-            pushed by this bot account. Format your edits in this
-            session.
+            directly to format and lint your edits, with or without a
+            file list. Do NOT run `npm ci` or `npm install` -- they are
+            unnecessary here and not in the allow-list; if a lint
+            command appears to require a fresh install, it does not. Do
+            not append `2>&1` or chain with `&&`: that splits the
+            command into parts the allowlist no longer matches and the
+            call is denied. Do not defer formatting to CI, since the
+            lint and format checks do not run on commits pushed by
+            this bot account. Format your edits in this session.
 
             If you spot a factual concern, re-verify against the
             local clone at ${{ steps.clone.outputs.scratch_dir }}

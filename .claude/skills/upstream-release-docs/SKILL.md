@@ -52,6 +52,17 @@ When Phase 2 step 4 would normally ask the user for a major feature's "why", ins
 3. Write the "why"/consumer narrative directly into the relevant page using what you learned, translated into reader-facing language rather than the PR's engineering shorthand. This is best-effort; reviewers refine it later.
 4. Defer to `GAPS.md` only when the rationale demonstrably cannot be derived from available sources: the PR points to an internal design doc you cannot access, multiple plausible consumer narratives exist and choosing one would mislead readers, or a release timeline or commitment needs product-team confirmation.
 
+### Reading the upstream clone
+
+When a caller provides a local clone of the upstream repo at the release tag, read it with the **Read, Grep, and Glob tools**. Prefer it over `gh api contents?ref=<tag>`: it is already at the tag and costs no API quota.
+
+Do not reach for Bash to explore it. An automated caller typically clones to a scratch directory outside the session's working directory, so `ls`, `find`, and `grep` run through Bash are refused there, and `git -C <path>` is refused everywhere because it can execute untrusted hooks from the target repo. Read, Grep, and Glob have no such restriction and are the right tools regardless.
+
+Two consequences worth internalizing, because working around them by retrying Bash variants wastes turns and never succeeds:
+
+- **Don't try to run `git log` on the clone.** When the caller supplies `.release-meta.json`, its `commits` array is the release range's commit list. Otherwise derive the range from the release notes and `gh api`.
+- **Don't append `2>&1` or chain with `&&`** on any Bash call. That splits the command into parts that no longer match the caller's tool allowlist, so the call is denied even when the underlying command is permitted.
+
 ### Artifacts (unattended mode only, written at repo root)
 
 These files are read by the automated caller and spliced into the PR body. The filenames and the repo-root location are a contract with the caller; do not rename or relocate them.
@@ -87,9 +98,18 @@ Read `.release-meta.json` first (the caller writes it before invoking you):
   "new_tag": "v0.43.0",
   "owner": "jerm-dro",
   "owner_source": "merged release PR stacklok/toolhive#6333",
-  "contributors": ["alice", "bob", "carol"]
+  "contributors": ["alice", "bob", "carol"],
+  "commits": [
+    {
+      "sha": "8343851e",
+      "subject": "Push skills unsigned until keyless signing lands (#6334)",
+      "author": "alice"
+    }
+  ]
 }
 ```
+
+`commits` is every commit in the release range, and it is the authoritative commit list for the run: use it instead of trying to run `git log` against the upstream clone, which is refused (see [Reading the upstream clone](#reading-the-upstream-clone)). It is also what tells you which commits belong to which contributor for the classification below.
 
 Classify **every** login in `contributors` as docs-facing or not, and write `REVIEWERS.json` at the repo root:
 
