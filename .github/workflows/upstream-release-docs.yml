@@ -333,7 +333,19 @@ jobs:
       # buildCommand runs. Required, not soft-failed, so a broken
       # install fails here rather than mid-skill.
       - name: Install ToolHive CLI (for build-time MCP metadata)
-        run: ./scripts/install-thv.sh
+        run: |
+          ./scripts/install-thv.sh
+          # The script falls back to ~/.local/bin when /usr/local/bin
+          # isn't writable, and exports PATH only in its own shell.
+          # Persist that so later steps see it, then assert, so a miss
+          # fails here instead of as a confusing build error mid-skill.
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          command -v thv >/dev/null || {
+            echo "::error::thv not on PATH after install-thv.sh"
+            exit 1
+          }
+          thv version
 
       - name: Set up Git
         run: |
@@ -560,6 +572,7 @@ jobs:
           # One entry per commit in the range: short sha, subject,
           # author login. Empty when the compare failed.
           COMMITS_JSON='[]'
+          COMMITS_TRUNCATED=false
           if [ -n "$COMPARE_JSON" ]; then
             COMMITS_JSON=$(printf '%s' "$COMPARE_JSON" | jq -c '
               [ .commits[]
@@ -567,6 +580,16 @@ jobs:
                     subject: (.commit.message | split("\n")[0]),
                     author: (.author.login? // .commit.author.name? // null) } ]' \
               2>/dev/null || echo '[]')
+            # The compare endpoint caps at 250 commits. Past that both
+            # the commit list and the contributor list are partial, and
+            # the skill treats commits as the complete range, so say so
+            # rather than handing over silently-short data.
+            TOTAL=$(printf '%s' "$COMPARE_JSON" | jq -r '.total_commits // 0' 2>/dev/null || echo 0)
+            RETURNED=$(printf '%s' "$COMPARE_JSON" | jq -r '.commits | length' 2>/dev/null || echo 0)
+            if [ "$TOTAL" -gt "$RETURNED" ]; then
+              COMMITS_TRUNCATED=true
+              echo "::warning::Compare returned $RETURNED of $TOTAL commits; commit and contributor lists are partial."
+            fi
           fi
 
           jq -n \
@@ -577,6 +600,7 @@ jobs:
             --arg new "$NEW" \
             --arg candidates "$CANDIDATES" \
             --argjson commits "$COMMITS_JSON" \
+            --argjson commits_truncated "$COMMITS_TRUNCATED" \
             '{
                repo: $repo,
                prev_tag: $prev,
@@ -584,7 +608,8 @@ jobs:
                owner: (if $owner == "" then null else $owner end),
                owner_source: (if $owner_source == "" then null else $owner_source end),
                contributors: ($candidates | split("\n") | map(select(length > 0))),
-               commits: $commits
+               commits: $commits,
+               commits_truncated: $commits_truncated
              }' > .release-meta.json
 
           {
@@ -712,13 +737,12 @@ jobs:
           claude_args: |
             --model claude-opus-4-7
             --max-turns 1000
-            # Prefix form, not exact: an exact entry matches only the
-            # bare command, so `npm run prettier:fix -- <files>` would
-            # be denied. Scripts come from the repo's package.json,
-            # which later steps in this job already run. The git
-            # entries are read-only; the action's defaults cover
-            # add/commit/rm/push.
-            --allowedTools "Bash(gh:*),Bash(npm run:*),Bash(npx prettier:*),Bash(npx eslint:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git tag:*),Bash(git check-ignore:*)"
+            # Exact entries for the npm scripts, because they already
+            # act on the whole repo (`prettier . --write`,
+            # `eslint . --fix`) and so never need a file list. The
+            # prompt says to run them bare. Git entries are read-only
+            # inspection; the action's defaults cover the write side.
+            --allowedTools "Bash(gh:*),Bash(npm run build),Bash(npm run prettier),Bash(npm run prettier:fix),Bash(npm run eslint),Bash(npm run eslint:fix),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git check-ignore:*)"
           prompt: |
             You are running in GitHub Actions with no interactive user.
 
@@ -772,15 +796,17 @@ jobs:
             Project dependencies are already installed by an earlier
             workflow step; node_modules is present in the working tree.
             Run `npm run prettier:fix` and `npm run eslint:fix`
-            directly to format and lint your edits, with or without a
-            file list. Do NOT run `npm ci` or `npm install` -- they are
-            unnecessary here and not in the allow-list; if a lint
-            command appears to require a fresh install, it does not. Do
-            not append `2>&1` or chain with `&&`: that splits the
-            command into parts the allowlist no longer matches and the
-            call is denied. Do not defer formatting to CI, since the
-            lint and format checks do not run on commits pushed by
-            this bot account. Format your edits in this session.
+            with NO arguments to format and lint your edits. Both
+            scripts already act on the whole repo, so a file list adds
+            nothing and takes the command outside the allow-list. Do
+            NOT run `npm ci` or `npm install` -- they are unnecessary
+            here; if a lint command appears to require a fresh install,
+            it does not. Do not append `2>&1` or chain with `&&`: that
+            splits the command into parts the allowlist no longer
+            matches and the call is denied. Do not defer formatting to
+            CI, since the lint and format checks do not run on commits
+            pushed by this bot account. Format your edits in this
+            session.
 
       # Capture skill_gen's execution stats BEFORE skill_review runs
       # and overwrites the shared execution-output JSON at the
@@ -856,13 +882,12 @@ jobs:
           claude_args: |
             --model claude-opus-4-7
             --max-turns 200
-            # Prefix form, not exact: an exact entry matches only the
-            # bare command, so `npm run prettier:fix -- <files>` would
-            # be denied. Scripts come from the repo's package.json,
-            # which later steps in this job already run. The git
-            # entries are read-only; the action's defaults cover
-            # add/commit/rm/push.
-            --allowedTools "Bash(gh:*),Bash(npm run:*),Bash(npx prettier:*),Bash(npx eslint:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git tag:*),Bash(git check-ignore:*)"
+            # Exact entries for the npm scripts, because they already
+            # act on the whole repo (`prettier . --write`,
+            # `eslint . --fix`) and so never need a file list. The
+            # prompt says to run them bare. Git entries are read-only
+            # inspection; the action's defaults cover the write side.
+            --allowedTools "Bash(gh:*),Bash(npm run build),Bash(npm run prettier),Bash(npm run prettier:fix),Bash(npm run eslint),Bash(npm run eslint:fix),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git check-ignore:*)"
           prompt: |
             You are running in GitHub Actions with no interactive user. Follow
             these steps exactly and do NOT ask clarifying questions -- proceed
@@ -881,15 +906,17 @@ jobs:
             Project dependencies are already installed by an earlier
             workflow step; node_modules is present in the working tree.
             Run `npm run prettier:fix` and `npm run eslint:fix`
-            directly to format and lint your edits, with or without a
-            file list. Do NOT run `npm ci` or `npm install` -- they are
-            unnecessary here and not in the allow-list; if a lint
-            command appears to require a fresh install, it does not. Do
-            not append `2>&1` or chain with `&&`: that splits the
-            command into parts the allowlist no longer matches and the
-            call is denied. Do not defer formatting to CI, since the
-            lint and format checks do not run on commits pushed by
-            this bot account. Format your edits in this session.
+            with NO arguments to format and lint your edits. Both
+            scripts already act on the whole repo, so a file list adds
+            nothing and takes the command outside the allow-list. Do
+            NOT run `npm ci` or `npm install` -- they are unnecessary
+            here; if a lint command appears to require a fresh install,
+            it does not. Do not append `2>&1` or chain with `&&`: that
+            splits the command into parts the allowlist no longer
+            matches and the call is denied. Do not defer formatting to
+            CI, since the lint and format checks do not run on commits
+            pushed by this bot account. Format your edits in this
+            session.
 
             If you spot a factual concern, re-verify against the
             local clone at ${{ steps.clone.outputs.scratch_dir }}
