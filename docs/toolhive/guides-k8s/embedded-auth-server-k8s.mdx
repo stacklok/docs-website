@@ -536,6 +536,63 @@ endpoints. The delegate-clients validation blocks a plaintext `http://` issuer
 categorically at admission. The CEL admission rule cannot express the loopback
 exception, so use an `https://` issuer whenever you configure delegate clients.
 
+### Accept subject tokens from external issuers
+
+By default, the token-exchange grant only accepts subject tokens that the
+embedded auth server itself issued. To also accept tokens minted by an external
+OIDC issuer (for example, a corporate IdP whose access tokens a client already
+holds), add a `trustedIssuers` entry. A delegate client presenting an
+externally-issued subject token can then exchange it for a ToolHive-scoped
+delegated token without a separate ToolHive login.
+
+Each trusted issuer names the external IdP and states which of its clients may
+present subject tokens, and which ToolHive delegate clients may exchange them:
+
+```yaml title="MCPExternalAuthConfig: trusted issuers"
+spec:
+  embeddedAuthServer:
+    trustedIssuers:
+      - issuerUrl: https://login.example-idp.com
+        expectedAudience: https://mcp.example.com
+        allowedActors:
+          - external-reporting-client
+        allowedDelegateClients:
+          - reporting-delegate
+```
+
+The exchange still needs a delegate client entry, because RFC 8693 requires
+authenticated access to `/oauth/token` and the delegate client is what
+authenticates. `trustedIssuers` grants the delegate client permission to accept
+a subject token from the external issuer; on its own it does not create a usable
+exchange path.
+
+The fields are:
+
+| Field                    | Required | Description                                                                                                                                                                                                                        |
+| ------------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `issuerUrl`              | Yes      | Expected `iss` claim value on the subject token (exact match).                                                                                                                                                                     |
+| `expectedAudience`       | Yes      | Resource/API identifier that must appear in the token's `aud`. Not a client ID.                                                                                                                                                    |
+| `allowedDelegateClients` | Yes      | ToolHive delegate `clientId`s permitted to exchange this issuer's tokens. Use `["*"]` to permit any confidential client with the token-exchange grant.                                                                             |
+| `allowedActors`          | No       | External client IDs whose tokens may be exchanged. Read from the claim named by `actorClaim`. Empty denies every token unless `allowMayAct` authorizes a specific delegation.                                                      |
+| `actorClaim`             | No       | Claim on the subject token identifying the caller. Defaults to `azp`. Use `appid` for Microsoft Entra v1, `cid` for Okta, or the literal value `client_id` (a sentinel, not a claim name) to read the token's `client_id` claim.   |
+| `allowMayAct`            | No       | Set to `true` to honor a `may_act` claim from this issuer (RFC 8693 §4.4). Defaults to `false`; `may_act` bypasses `allowedActors`, so external issuers must opt in explicitly. Rejected when `allowedDelegateClients` is `["*"]`. |
+| `jwksUrl`                | No       | JWKS endpoint for signature verification. When omitted, resolved via OIDC discovery at `{issuerUrl}/.well-known/openid-configuration`.                                                                                             |
+| `allowPrivateIPs`        | No       | Permit OIDC discovery and JWKS fetches for this issuer to resolve to a private or loopback address. Requires `jwksUrl` to be set explicitly.                                                                                       |
+| `insecureAllowHTTP`      | No       | Permit plain-HTTP OIDC discovery and JWKS fetches for this issuer. Development and testing only.                                                                                                                                   |
+
+`allowedDelegateClients` is what binds an external actor to a specific ToolHive
+delegate client. Without it, every confidential client holding the
+token-exchange grant would be equivalent for delegation purposes. Setting
+`allowedDelegateClients: ["*"]` explicitly declares that permissiveness; the
+wildcard cannot be combined with specific client IDs, and cannot be combined
+with `allowMayAct: true`.
+
+The delegated token's `sub` is qualified as `<issuerUrl>#<externalSub>` so that
+subjects from different issuers cannot collide. The `act` claim records
+provenance: the outer hop carries ToolHive's issuer and the authenticated client
+ID, and the nested hop carries the external issuer and the allowed actor (when
+one matched).
+
 ### Enable baseline scopes for DCR clients
 
 Some MCP clients (for example, Claude Code) register via DCR with a narrowed

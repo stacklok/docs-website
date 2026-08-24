@@ -354,6 +354,41 @@ All four fields are required. Delegate clients are independent of
 `allowConfidentialClientRegistration`. The issuer must use `https://`; delegate
 clients are rejected at admission when the issuer is plaintext HTTP.
 
+### Accept subject tokens from external issuers
+
+By default, the token-exchange grant only accepts subject tokens the embedded
+auth server itself issued. To also accept tokens minted by an external OIDC
+issuer (for example, a corporate IdP), add a `trustedIssuers` entry alongside
+your delegate client:
+
+```yaml title="VirtualMCPServer: trusted issuers"
+spec:
+  authServerConfig:
+    trustedIssuers:
+      - issuerUrl: https://login.example-idp.com
+        expectedAudience: https://mcp.example.com
+        allowedActors:
+          - external-reporting-client
+        allowedDelegateClients:
+          - backend-exchange
+```
+
+`issuerUrl`, `expectedAudience`, and `allowedDelegateClients` are required.
+`allowedDelegateClients` names the delegate clients permitted to exchange this
+issuer's tokens, or `["*"]` to permit any confidential client holding the
+token-exchange grant. The exchange still requires a matching entry under
+`delegateClients` to authenticate at `/oauth/token`.
+
+`allowMayAct: true` opts this issuer's `may_act` claim in as a delegation
+signal; it defaults to `false` because `may_act` bypasses `allowedActors`, so
+you must opt each external issuer in explicitly. Enabling it is rejected when
+`allowedDelegateClients` is `["*"]`.
+
+For the full field list (including `actorClaim`, `jwksUrl`, `allowPrivateIPs`,
+and `insecureAllowHTTP`) and the trust model behind the two consent paths, see
+[Accept subject tokens from external issuers](../guides-k8s/embedded-auth-server-k8s.mdx#accept-subject-tokens-from-external-issuers)
+in the Kubernetes guide. The configuration structure is identical.
+
 ### Enable baseline scopes for DCR clients
 
 If your MCP clients register via DCR with a narrowed `scope` value and then
