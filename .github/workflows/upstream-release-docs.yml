@@ -24,7 +24,10 @@ name: Upstream Release Docs
 #      issues for product context.
 #   6. Auto-fixes prettier/eslint on the skill-touched files,
 #      commits everything to the PR branch, augments the PR body,
-#      assigns reviewers from non-bot release contributors
+#      assigns the release owner, and requests reviews from the
+#      contributors whose changes the skill classified as docs-facing
+#      (see the "WHO GETS A REVIEW REQUEST" comment on the
+#      "Assign reviewers" step for why it isn't everyone)
 #
 # Renovate is configured with rebaseWhen: never + recreateWhen: never
 # so we can push commits without force-push races.
@@ -431,6 +434,132 @@ jobs:
             echo "refreshed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Resolves the release OWNER and the contributor candidate list,
+      # and writes both to .release-meta.json for the skill to read.
+      # Runs before the skill so the skill can classify each
+      # contributor as docs-facing or not; the "Assign reviewers" step
+      # later consumes that classification from REVIEWERS.json.
+      #
+      # OWNER RESOLUTION, in order. The owner is whoever cut the
+      # release and owns driving this PR to merge.
+      #   1. The release author, when it is a human. Applies to
+      #      projects where a person publishes the release
+      #      (toolhive-studio).
+      #   2. The merger of the upstream `Release <tag>` PR that the
+      #      tag points at. Applies to projects released by a GitHub
+      #      App, where `release.author` is the App and carries no
+      #      human (toolhive, toolhive-registry-server).
+      #   3. The tagged commit's author.
+      # Every candidate is bot-filtered, so a source that yields only
+      # a bot falls through to the next one. An empty owner is a
+      # supported outcome: the PR body and Slack message both say the
+      # owner is unresolved rather than naming someone arbitrary.
+      - name: Resolve release owner and contributors
+        id: release_meta
+        env:
+          REPO: ${{ steps.detect.outputs.repo }}
+          PREV: ${{ steps.detect.outputs.prev_tag }}
+          NEW: ${{ steps.detect.outputs.new_tag }}
+        run: |
+          # Shared bot filter. Applied to every login this step
+          # resolves, from any of the three owner sources and from the
+          # contributor compare.
+          is_bot() {
+            printf '%s\n' "$1" | grep -qE '(\[bot\]$|^app/|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)'
+          }
+
+          # ---------- contributor candidates ----------
+          if COMPARE=$(gh api "repos/$REPO/compare/$PREV...$NEW" \
+              --jq '[.commits[].author.login? // empty] | unique | .[]' 2>/dev/null); then
+            COMPARE_OK=true
+          else
+            COMPARE=""
+            COMPARE_OK=false
+          fi
+          CANDIDATES=$(echo "$COMPARE" |
+            grep -Ev '(\[bot\]$|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)' || true)
+
+          # ---------- owner ----------
+          OWNER=""
+          OWNER_SOURCE=""
+
+          # (1) Release author, if human.
+          RELEASE_AUTHOR=$(gh release view "$NEW" --repo "$REPO" \
+            --json author --jq '.author.login // ""' 2>/dev/null || true)
+          if [ -n "$RELEASE_AUTHOR" ] && ! is_bot "$RELEASE_AUTHOR"; then
+            OWNER="$RELEASE_AUTHOR"
+            OWNER_SOURCE="release author"
+          fi
+
+          # (2) Merger of the release PR the tag points at. Deref an
+          # annotated tag object to its commit first; a lightweight
+          # tag already points straight at the commit.
+          if [ -z "$OWNER" ]; then
+            REF_JSON=$(gh api "repos/$REPO/git/ref/tags/$NEW" 2>/dev/null || true)
+            OBJ_TYPE=$(printf '%s' "$REF_JSON" | jq -r '.object.type // ""' 2>/dev/null || true)
+            TAG_SHA=$(printf '%s' "$REF_JSON" | jq -r '.object.sha // ""' 2>/dev/null || true)
+            if [ "$OBJ_TYPE" = "tag" ] && [ -n "$TAG_SHA" ]; then
+              TAG_SHA=$(gh api "repos/$REPO/git/tags/$TAG_SHA" \
+                --jq '.object.sha // ""' 2>/dev/null || true)
+            fi
+            if [ -n "$TAG_SHA" ]; then
+              # The commits/<sha>/pulls list endpoint does not populate
+              # merged_by, so take the PR number from it and read
+              # mergedBy off the PR itself.
+              PR_NUM=$(gh api "repos/$REPO/commits/$TAG_SHA/pulls" \
+                --jq 'map(select(.merged_at != null)) | .[0].number // ""' 2>/dev/null || true)
+              if [ -n "$PR_NUM" ]; then
+                MERGER=$(gh pr view "$PR_NUM" --repo "$REPO" \
+                  --json mergedBy --jq '.mergedBy.login // ""' 2>/dev/null || true)
+                if [ -n "$MERGER" ] && ! is_bot "$MERGER"; then
+                  OWNER="$MERGER"
+                  OWNER_SOURCE="merged release PR $REPO#$PR_NUM"
+                fi
+              fi
+              # (3) Tagged commit author, last resort.
+              if [ -z "$OWNER" ]; then
+                COMMIT_AUTHOR=$(gh api "repos/$REPO/commits/$TAG_SHA" \
+                  --jq '.author.login // ""' 2>/dev/null || true)
+                if [ -n "$COMMIT_AUTHOR" ] && ! is_bot "$COMMIT_AUTHOR"; then
+                  OWNER="$COMMIT_AUTHOR"
+                  OWNER_SOURCE="author of the tagged commit"
+                fi
+              fi
+            fi
+          fi
+
+          # ---------- handoff file for the skill ----------
+          # The skill reads .release-meta.json to learn who the owner
+          # is and which contributors it must classify. Gitignored.
+          jq -n \
+            --arg owner "$OWNER" \
+            --arg owner_source "$OWNER_SOURCE" \
+            --arg repo "$REPO" \
+            --arg prev "$PREV" \
+            --arg new "$NEW" \
+            --arg candidates "$CANDIDATES" \
+            '{
+               repo: $repo,
+               prev_tag: $prev,
+               new_tag: $new,
+               owner: (if $owner == "" then null else $owner end),
+               owner_source: (if $owner_source == "" then null else $owner_source end),
+               contributors: ($candidates | split("\n") | map(select(length > 0)))
+             }' > .release-meta.json
+
+          {
+            echo "owner=$OWNER"
+            echo "owner_source=$OWNER_SOURCE"
+            echo "compare_ok=$COMPARE_OK"
+            echo "candidates<<CAND_EOF"
+            echo "$CANDIDATES"
+            echo "CAND_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Release owner: ${OWNER:-<unresolved>} (${OWNER_SOURCE:-no source})"
+          echo "Contributor candidates:"
+          echo "${CANDIDATES:-<none>}"
+
       # Anchor the "skill touched" set for the autofix step below.
       # HEAD at this point is either the refresh commit (if it was
       # non-empty) or the PR's pre-workflow tip. Either way, anything
@@ -559,9 +688,18 @@ jobs:
             proceed best-effort at every decision point. The skill's
             "Execution modes" section is the single source of truth for
             unattended behavior and the GAPS.md / SUMMARY.md /
-            NO_CHANGES.md artifact contracts (their format, when to
-            write each, and what to exclude). Follow it; this prompt
-            deliberately no longer duplicates those contracts.
+            NO_CHANGES.md / REVIEWERS.json artifact contracts (their
+            format, when to write each, and what to exclude). Follow
+            it; this prompt deliberately no longer duplicates those
+            contracts.
+
+            `.release-meta.json` at the repo root carries the release
+            owner and the contributor list this run must classify.
+            Writing REVIEWERS.json is REQUIRED whenever that file
+            lists contributors: a later workflow step uses it to
+            decide who gets a review request, and its absence falls
+            back to requesting a review from every contributor, which
+            is the noisy behavior we are trying to fix.
 
             Prefer reading source code from the local clone at
             ${{ steps.clone.outputs.scratch_dir }} instead of
@@ -954,28 +1092,95 @@ jobs:
       # text. Running this right before the body augmentation and
       # flip-to-ready gives reviewers a single coherent notification
       # on a PR that's actually reviewable.
+      #
+      # WHO GETS A REVIEW REQUEST
+      # -------------------------
+      #   OWNER -> assignee AND reviewer, unconditionally. They own
+      #     collecting the remaining approvals and merging, so the
+      #     request stands even when the classification marks their
+      #     own commits non-docs-facing.
+      #   DOCS-FACING contributors -> reviewer.
+      #   NON-DOCS-FACING contributors -> no request. Named on one cc
+      #     line in the PR body and one line in the Slack message,
+      #     asking them to speak up if the call was wrong.
+      #
+      # The classification comes from REVIEWERS.json, written by the
+      # skill (see its "Execution modes" section). An absent,
+      # unparseable, or empty file falls back to requesting every
+      # contributor: a noisy request costs less than a missing one, so
+      # the degraded path is the noisy one.
       - name: Assign reviewers and prepare contributor mentions
         id: reviewers
         env:
-          REPO: ${{ steps.detect.outputs.repo }}
-          PREV: ${{ steps.detect.outputs.prev_tag }}
-          NEW: ${{ steps.detect.outputs.new_tag }}
           REVIEW_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.eff.outputs.number }}
+          OWNER: ${{ steps.release_meta.outputs.owner }}
+          COMPARE_OK: ${{ steps.release_meta.outputs.compare_ok }}
+          CANDIDATES: ${{ steps.release_meta.outputs.candidates }}
         run: |
-          # Get non-bot commit authors in the release range.
-          if COMPARE=$(gh api "repos/$REPO/compare/$PREV...$NEW" \
-              --jq '[.commits[].author.login? // empty] | unique | .[]' 2>/dev/null); then
-            echo "compare_ok=true" >> "$GITHUB_OUTPUT"
+          # compare_ok is re-exported unchanged so the PR body's
+          # tri-state contributor cell keeps working: "" means this
+          # step never ran, "false" means the upstream compare failed.
+          echo "compare_ok=$COMPARE_OK" >> "$GITHUB_OUTPUT"
+
+          # ---------- read the skill's classification ----------
+          # Both lists are newline-separated logins.
+          DOCS_FACING=""
+          NON_DOCS_FACING=""
+          CLASSIFIED=false
+          if [ -f REVIEWERS.json ] && jq -e . REVIEWERS.json >/dev/null 2>&1; then
+            DOCS_FACING=$(jq -r '
+              (.contributors // [])
+              | map(select(.docs_facing == true))
+              | .[].login' REVIEWERS.json 2>/dev/null || true)
+            NON_DOCS_FACING=$(jq -r '
+              (.contributors // [])
+              | map(select(.docs_facing == false))
+              | .[].login' REVIEWERS.json 2>/dev/null || true)
+            # A file that classified nobody is a stub; fall back
+            # rather than silently requesting no reviews at all.
+            if [ -n "$DOCS_FACING$NON_DOCS_FACING" ]; then
+              CLASSIFIED=true
+            else
+              echo "::warning::REVIEWERS.json classified no contributors; falling back to requesting all."
+            fi
           else
-            COMPARE=""
-            echo "compare_ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No usable REVIEWERS.json; falling back to requesting a review from all contributors."
           fi
 
-          # Filter out bot accounts.
-          CANDIDATES=$(echo "$COMPARE" |
-            grep -Ev '(\[bot\]$|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)' || true)
+          if [ "$CLASSIFIED" != "true" ]; then
+            DOCS_FACING="$CANDIDATES"
+            NON_DOCS_FACING=""
+          fi
 
+          # The owner always gets a review request, even when their own
+          # commits were classified non-docs-facing. Fold them into the
+          # request list and out of the cc list.
+          if [ -n "$OWNER" ]; then
+            DOCS_FACING=$(printf '%s\n%s\n' "$DOCS_FACING" "$OWNER" | grep -v '^$' | sort -u || true)
+            NON_DOCS_FACING=$(printf '%s\n' "$NON_DOCS_FACING" | grep -v '^$' | grep -Fxv "$OWNER" || true)
+          fi
+
+          # ---------- assign the owner ----------
+          # Assignee, not just reviewer: it puts the PR in the owner's
+          # "Assigned to me" queue. Soft-failed, since an owner
+          # GitHub won't accept (not a repo collaborator) must not
+          # abort the run.
+          OWNER_ASSIGNED=false
+          if [ -n "$OWNER" ]; then
+            if gh pr edit "$PR_NUMBER" --add-assignee "$OWNER" 2>/dev/null; then
+              OWNER_ASSIGNED=true
+              echo "Assigned owner: $OWNER"
+            else
+              echo "::warning::Could not assign $OWNER as assignee (GitHub rejected it)."
+            fi
+          else
+            echo "::warning::No release owner resolved; PR has no assignee."
+          fi
+          echo "owner=$OWNER" >> "$GITHUB_OUTPUT"
+          echo "owner_assigned=$OWNER_ASSIGNED" >> "$GITHUB_OUTPUT"
+
+          # ---------- request reviews ----------
           # Attempt to assign each candidate as a reviewer individually,
           # rather than filtering upfront and batching. Rationale:
           #   - `gh pr edit --add-reviewer "a,b,c"` is atomic. A single
@@ -998,17 +1203,28 @@ jobs:
             [ -z "$login" ] && continue
             if gh pr edit "$PR_NUMBER" --add-reviewer "$login" 2>/dev/null; then
               ASSIGN_LIST="${ASSIGN_LIST:+$ASSIGN_LIST,}$login"
-              echo "Assigned: $login"
+              echo "Review requested: $login"
             else
               MENTION_LIST="${MENTION_LIST:+$MENTION_LIST }@$login"
               echo "Mention (assignment rejected by GitHub): $login"
             fi
-          done <<< "$CANDIDATES"
+          done <<< "$DOCS_FACING"
+
+          # ---------- cc list for non-docs-facing contributors ----------
+          # Rendered as one consolidated line downstream, not a
+          # per-person section.
+          FYI_LIST=""
+          while IFS= read -r login; do
+            [ -z "$login" ] && continue
+            FYI_LIST="${FYI_LIST:+$FYI_LIST }@$login"
+          done <<< "$NON_DOCS_FACING"
 
           # Exposed for diagnostic visibility in the PR body (e.g.,
           # "Auto-assigned: @alice @bob") and for the next workflow_
           # dispatch retry to know what was attempted.
           echo "list=$ASSIGN_LIST" >> "$GITHUB_OUTPUT"
+          echo "fyi_list=$FYI_LIST" >> "$GITHUB_OUTPUT"
+          echo "classified=$CLASSIFIED" >> "$GITHUB_OUTPUT"
           {
             echo "mention_block<<MENTION_EOF"
             if [ -n "$MENTION_LIST" ]; then
@@ -1018,8 +1234,10 @@ jobs:
             fi
             echo "MENTION_EOF"
           } >> "$GITHUB_OUTPUT"
-          echo "Auto-assigned: ${ASSIGN_LIST:-<none>}"
+          echo "Owner:         ${OWNER:-<none>}"
+          echo "Requested:     ${ASSIGN_LIST:-<none>}"
           echo "Mentioned:     ${MENTION_LIST:-<none>}"
+          echo "FYI (no req):  ${FYI_LIST:-<none>}"
 
       - name: Augment PR body (marker-delimited section)
         # Runs even if earlier steps soft-failed so the augmentation
@@ -1040,6 +1258,10 @@ jobs:
           COMPARE_OK: ${{ steps.reviewers.outputs.compare_ok }}
           MENTION_BLOCK: ${{ steps.reviewers.outputs.mention_block }}
           ASSIGN_LIST: ${{ steps.reviewers.outputs.list }}
+          FYI_LIST: ${{ steps.reviewers.outputs.fyi_list }}
+          OWNER: ${{ steps.reviewers.outputs.owner }}
+          OWNER_ASSIGNED: ${{ steps.reviewers.outputs.owner_assigned }}
+          OWNER_SOURCE: ${{ steps.release_meta.outputs.owner_source }}
           SKILL_COMMIT_COUNT: ${{ steps.skill_commits.outputs.count }}
           GEN_CONCLUSION: ${{ steps.skill_gen.conclusion }}
           REVIEW_CONCLUSION: ${{ steps.skill_review.conclusion }}
@@ -1149,13 +1371,36 @@ jobs:
           elif [ "$COMPARE_OK" != "true" ]; then
             CONTRIB_CELL="**Compare failed** — pinned \`$PREV_TAG\` missing upstream, no auto-assignment"
           elif [ "$ASSIGN_COUNT" -gt 0 ] && [ "$MENTION_COUNT" -gt 0 ]; then
-            CONTRIB_CELL="$ASSIGN_COUNT auto-assigned · $MENTION_COUNT mentioned below"
+            CONTRIB_CELL="$ASSIGN_COUNT review requested · $MENTION_COUNT mentioned below"
           elif [ "$ASSIGN_COUNT" -gt 0 ]; then
-            CONTRIB_CELL="$ASSIGN_COUNT auto-assigned (see sidebar)"
+            CONTRIB_CELL="$ASSIGN_COUNT review requested (see sidebar)"
           elif [ "$MENTION_COUNT" -gt 0 ]; then
             CONTRIB_CELL="$MENTION_COUNT mentioned below"
           else
             CONTRIB_CELL="none in release range"
+          fi
+
+          # Folded into the same cell so the table keeps one
+          # contributor row; the names go on the cc line further down.
+          if [ -n "$FYI_LIST" ]; then
+            FYI_COUNT=$(printf '%s\n' "$FYI_LIST" | grep -oE '@[A-Za-z0-9_-]+' | wc -l | tr -d ' ')
+            CONTRIB_CELL="$CONTRIB_CELL · $FYI_COUNT not requested (no docs impact)"
+          else
+            FYI_COUNT=0
+          fi
+
+          # Owner cell. An unresolved owner means nobody is on the
+          # hook for merging, so it renders bold rather than blank.
+          if [ -n "$OWNER" ]; then
+            OWNER_CELL="@$OWNER"
+            if [ "$OWNER_ASSIGNED" != "true" ]; then
+              OWNER_CELL="$OWNER_CELL (couldn't set as assignee)"
+            fi
+            if [ -n "$OWNER_SOURCE" ]; then
+              OWNER_CELL="$OWNER_CELL - identified from $OWNER_SOURCE"
+            fi
+          else
+            OWNER_CELL="**Unresolved** - no human found for this release; a docs maintainer needs to adopt this PR"
           fi
 
           {
@@ -1197,8 +1442,24 @@ jobs:
             echo "| **Hand-written changes** | $CHANGES_CELL |"
             echo "| **Reference assets** | $REFRESH_CELL |"
             echo "| **Gaps** | $GAPS_COUNT |"
+            echo "| **Owner** | $OWNER_CELL |"
             echo "| **Release contributors** | $CONTRIB_CELL |"
             echo "| **Action required** | $ACTION_REQUIRED |"
+            echo ""
+
+            # ----- OWNERSHIP -----
+            # Directly under the table and kept to three lines, so
+            # "who merges this" is answered before anything a reader
+            # might skim past.
+            echo "### Who does what"
+            echo ""
+            if [ -n "$OWNER" ]; then
+              echo "@$OWNER cut this release and owns this PR: review your own changes, chase the remaining approvals, and merge once they're in. You don't need to wait on a review from anyone listed as having no docs impact below."
+            else
+              echo "No release owner could be resolved automatically, so this PR has no assignee. A docs maintainer needs to adopt it, collect approvals, and merge."
+            fi
+            echo ""
+            echo "Everyone with a review request: the target is a review and approval within **2 business days**."
             echo ""
 
             # ----- SUMMARY OF CHANGES -----
@@ -1227,6 +1488,17 @@ jobs:
                 /^## / { sub(/^## /, "### "); print; next }
                 { print }
               ' <<<"$GAPS_BLOCK"
+              echo ""
+            fi
+
+            # ----- NO-DOCS-IMPACT CONTRIBUTORS (no review requested) -----
+            # One line, not a per-person section. These contributors
+            # are absent from the reviewer sidebar by design, so this
+            # is the only place their involvement is recorded.
+            if [ "$FYI_COUNT" -gt 0 ]; then
+              echo "### No docs impact identified"
+              echo ""
+              echo "$FYI_LIST - your changes in this release didn't appear to affect the docs, so no review is requested and you're not blocking this PR. Please skim the diff anyway and comment if something of yours was missed or misjudged."
               echo ""
             fi
 

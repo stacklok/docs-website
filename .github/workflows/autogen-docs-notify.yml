@@ -191,19 +191,32 @@ jobs:
             Run this exact command (the values below are already
             filled in -- do not substitute shell variables, and do
             not quote the numbers or the repo name):
-              gh pr view ${{ steps.pr.outputs.number }} --repo ${{ github.repository }} --json title,body,reviewRequests,files,url
+              gh pr view ${{ steps.pr.outputs.number }} --repo ${{ github.repository }} --json title,body,reviewRequests,assignees,files,url
             From the JSON, extract:
               - the PR title
               - the PR body. The body contains a marker-delimited
                 section written by the Upstream Release Docs workflow,
                 between `<!-- upstream-release-docs:start -->` and
-                `<!-- upstream-release-docs:end -->`. Inside it is an
-                "At a glance" table / summary. PREFER reusing that
-                summary's content for your bullets; do not pad beyond it.
+                `<!-- upstream-release-docs:end -->`. Inside it are an
+                "At a glance" table and a "Who does what" section.
+                PREFER reusing the summary content already there for
+                your bullets; do not pad beyond it.
+              - the OWNER: the login in the "Owner" row of the "At a
+                glance" table, which is also the PR's assignee
+                (`assignees[].login`). The owner cut the upstream
+                release and owns getting this PR merged. If the table
+                says the owner is unresolved and there is no assignee,
+                set "owner" to null.
+              - the REQUESTED REVIEWERS (`reviewRequests[].login`).
+                Exclude the owner from this list; the owner is
+                reported separately.
+              - the NO-DOCS-IMPACT contributors: the @-handles listed
+                under the body's "### No docs impact identified"
+                heading, if that section is present. These people were
+                deliberately NOT sent a review request. If the section
+                is absent, use an empty list.
               - the list of changed files (for a fallback sense of scope
                 only — do not enumerate every file).
-              - the list of REQUESTED REVIEWERS (reviewRequests[].login
-                are GitHub logins).
 
             STEP 2 — Write the message content as JSON.
             Use the **Write** tool to write a file at exactly this path:
@@ -212,27 +225,48 @@ jobs:
               {
                 "headline": "<one line naming the upstream project/version, plain text>",
                 "summary_bullets": ["...", "..."],
+                "owner": {"login": "<github login>"},
                 "reviewers": [
                   {"login": "<github login>", "note": "<what THIS reviewer should check>"}
                 ],
+                "no_docs_impact": ["<github login>", "..."],
                 "pr_url": "${{ steps.pr.outputs.url }}"
               }
+
+            This message is read on a phone, in a busy channel, by
+            people who have learned to skim it. Length is the enemy;
+            every word you add lowers the chance the owner sees that
+            they own it. Be ruthless.
+
             Rules:
               - "headline" is plain text only (NO Slack/markdown link
                 syntax, NO ids). The poster step turns it into a link.
-              - "summary_bullets" is a tight list of 2–4 strings,
-                reusing the PR's "At a glance" content. No padding, no
-                raw file lists, no internal ids.
-              - "reviewers" has one entry per REQUESTED reviewer. "login"
-                is the plain GitHub login (no "@"). "note" is the
-                specific thing that reviewer should check. When deciding
-                each note, keep this shared expectation in mind and let
-                it shape the notes: the goal is for everyone involved in
-                the release to review and approve within 2 business days;
-                a given reviewer's contribution to the release may not
-                have produced any user- or docs-facing changes, which is
-                expected and fine, and in that case their approval simply
-                confirms nothing was missed in the generated docs.
+                Name the project and version and nothing else, e.g.
+                "toolhive v0.43.0 docs".
+              - "summary_bullets": 2-3 strings, max ~12 words each,
+                reusing the PR's "At a glance" and "Summary of changes"
+                content. No padding, no raw file lists, no internal
+                ids, no restating the headline. If the PR is a
+                no-doc-changes or silent run, use ONE bullet saying so
+                and stop.
+              - "owner" is an object with the owner's plain GitHub
+                login (no "@"), or null if none was resolved. Do NOT
+                write a note for the owner; the poster step states the
+                owner's responsibilities in fixed wording, so anything
+                you add here is duplicated text.
+              - "reviewers": one entry per requested reviewer, EXCLUDING
+                the owner. "login" is the plain GitHub login (no "@").
+                "note" is a fragment, not a sentence: name the specific
+                thing to check in at most 10 words, no leading verb
+                like "Please review" and no trailing period. Good:
+                "ai-plugin timeout flag and its subcommand list". Bad:
+                "Please review the changes related to the ai-plugin
+                timeout flag to make sure they are correct." If you
+                genuinely cannot name something specific for a
+                reviewer, use an empty string rather than filler.
+              - "no_docs_impact" is a flat array of plain GitHub logins
+                (no "@", no notes). The poster step renders them on one
+                line with fixed wording.
               - "pr_url" must be copied exactly as filled in above.
             Do NOT include any Slack ids, Slack mrkdwn, `<@...>` tags, or
             `<url|text>` links — only the plain content above. Do NOT

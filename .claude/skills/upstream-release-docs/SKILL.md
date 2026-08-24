@@ -39,7 +39,7 @@ Any output that may be rendered as a GitHub comment, PR body, or Markdown file i
 
 This skill runs in one of two modes. **The caller signals the mode; absent an explicit unattended signal, assume interactive.** Never infer unattended mode from surrounding context.
 
-**Interactive (default):** a human is present. At decision points that need product context you cannot derive from source (Phase 2 step 4), ask the user. **Never write the `GAPS.md`, `SUMMARY.md`, or `NO_CHANGES.md` artifacts described below in interactive mode**; surface that information conversationally instead. Those files are machine-readable handoff artifacts for an automated caller, and writing them during a local run just litters the repo root.
+**Interactive (default):** a human is present. At decision points that need product context you cannot derive from source (Phase 2 step 4), ask the user. **Never write the `GAPS.md`, `SUMMARY.md`, `NO_CHANGES.md`, or `REVIEWERS.json` artifacts described below in interactive mode**; surface that information conversationally instead. Those files are machine-readable handoff artifacts for an automated caller, and writing them during a local run just litters the repo root.
 
 **Unattended:** no interactive user, for example a CI workflow that invokes `/upstream-release-docs ... in unattended mode`. Never ask clarifying questions; proceed best-effort at every decision point, and route anything genuinely unresolvable into the artifacts below.
 
@@ -75,6 +75,51 @@ These files are read by the automated caller and spliced into the PR body. The f
 
   > <Self-contained, paste-ready prompt referencing the file(s), PR number, and the narrow piece of info needed.>
   ```
+
+**`REVIEWERS.json`** - written whenever `.release-meta.json` exists at the repo root and lists contributors. This one is JSON, not markdown, because the workflow parses it with `jq` to decide who gets a review request.
+
+Read `.release-meta.json` first (the caller writes it before invoking you):
+
+```json
+{
+  "repo": "stacklok/toolhive",
+  "prev_tag": "v0.42.0",
+  "new_tag": "v0.43.0",
+  "owner": "jerm-dro",
+  "owner_source": "merged release PR stacklok/toolhive#6333",
+  "contributors": ["alice", "bob", "carol"]
+}
+```
+
+Classify **every** login in `contributors` as docs-facing or not, and write `REVIEWERS.json` at the repo root:
+
+```json
+{
+  "contributors": [
+    {
+      "login": "alice",
+      "docs_facing": true,
+      "note": "Confirm the ai-plugin timeout flag section matches what you shipped."
+    },
+    {
+      "login": "bob",
+      "docs_facing": false,
+      "reason": "CI workflow and test-fixture changes only"
+    }
+  ]
+}
+```
+
+- `docs_facing: true` means at least one of this person's commits in the release range changed something a reader of the docs can observe: a CLI flag or subcommand, a CRD or config field, an API route, a default, an error message, a user-visible behavior, or anything you documented or corrected in this run. When you are unsure, classify as `true`. A needless review request is a minor annoyance; a missing one means a wrong page ships.
+- `docs_facing: false` is for changes with no reader-visible surface: CI and build plumbing, dependency bumps, tests and fixtures, internal refactors, lint fixes, comment-only edits. **Base this on the actual diff you read in Phase 2, not on the commit message.** A commit titled "refactor" that changes a default value is docs-facing.
+- `note` (docs-facing only): one short sentence naming the specific thing that person should check, in their terms. Not a summary of the release, and not a restatement of their PR title. Skip the note rather than pad it.
+- `reason` (non-docs-facing only): a short phrase naming what their changes actually were. This is shown to them as the justification for not requesting their review, so it has to be specific enough that they can tell whether you got it wrong.
+- Include the owner in the list with an honest classification. The workflow requests a review from the owner either way, so classifying the owner `false` costs nothing and keeps the classification truthful.
+- Bot logins are already filtered out of `contributors`; if one appears anyway, omit it.
+
+Write this file even on a `NO_CHANGES.md` run: "no doc-relevant changes for this release" means every contributor is non-docs-facing, which is exactly the case where suppressing review requests matters most. Classify them all `false` with a reason.
+
+The consequence of skipping this file is concrete: the workflow falls back to requesting a review from every contributor, which is the noisy committee behavior this artifact exists to prevent.
 
 **`NO_CHANGES.md`** - if the Phase 3 impact map is empty (no doc-relevant changes for this release), write this at repo root with a one-line explanation and stop. Do not hand-edit any file.
 
@@ -171,6 +216,8 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
    - **Hidden/experimental features**: look for indicators like `Hidden: true` in CLI command definitions, feature flags, or internal-only annotations. Do not document these unless the user explicitly asks.
 
 10. **Inventory the new public surface.** As you read the source and the regenerated reference assets, list every new or changed user-facing symbol the release introduces: CRD/struct fields, enum values, CLI flags and subcommands, env vars, config keys, and API routes. Most are already enumerated in the auto-synced reference assets (CLI `.md`, CRD `*.schema.json`, Swagger YAML) and the diff, so this is mostly transcription, not discovery. This list is the checklist the completeness pass in Phase 5 verifies against. It is the difference between documentation that is _accurate_ and documentation that is _complete_: a release can ship five new config fields, and a section that explains one of them correctly passes every accuracy check while silently omitting the other four.
+
+11. **Classify the release contributors** (unattended mode only, when `.release-meta.json` is present). You have just read every PR's diff, which makes this the only point in the run where the classification is cheap and well-informed. For each login in `.release-meta.json`, decide whether their commits in the release range changed anything a reader can observe, and write `REVIEWERS.json` per the contract in [Artifacts](#artifacts-unattended-mode-only-written-at-repo-root). Do this from the diffs you read, not from commit messages.
 
 ## Phase 3: Audit Existing Docs
 
