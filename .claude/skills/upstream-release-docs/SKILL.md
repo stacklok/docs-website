@@ -202,6 +202,8 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 
 7. Note discrepancies between PR descriptions and actual code. Trust the code.
 
+   **A PR body describes the moment it was written, not the release.** This is a distinct failure from a PR body simply being wrong: the body was accurate when opened, then later commits, review changes, or a follow-up PR in the same release moved past it. `stacklok/docs-website#1037` documented a field as "not wired up" because an upstream PR note said so; by the time the release shipped it was wired up, and the note was months stale. A caveat, limitation, or "not yet supported" claim in a PR body is the single least trustworthy kind of statement you will read, because it is a claim about absence, and absence is exactly what a later commit silently fixes. Before writing any limitation into the docs, verify in source at the tag that the limitation still holds. If you cannot confirm it, leave it out rather than repeating it.
+
 8. **Deep-verify behavioral claims**: these are the most common source of documentation inaccuracy. For each feature, verify not just struct definitions but actual runtime behavior:
    - **API routes**: Check the actual route registration code (e.g., `r.Get`, `r.Post`, `r.Delete`), not just handler names. Docs often claim endpoints exist at paths where no handler is registered.
    - **Required fields**: Check validation code (e.g., `if field == ""` checks), not just struct definitions. A field present in a struct is not necessarily required; only fields checked in validation logic are enforced.
@@ -209,15 +211,37 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
    - **Precedence rules**: Read the actual `if/else` chain. For example, `if commit != "" { ... } else if branch != "" { ... } else if tag != "" { ... }` means commit > branch > tag, not commit > tag > branch.
    - **Delete/cleanup behavior**: Check whether the code reassigns pointers, cascades deletes, or leaves orphans. Delete behavior is frequently mis-documented.
    - **Query parameters**: Check whether parsed parameters are actually wired to the service layer and database queries. Parameters can be parsed from the URL but silently ignored if no service option or SQL filter exists for them.
+   - **Removed surface**: a release takes things away as well as adding them, and a removal is invisible in a release-notes list of features. Diff the previous tag against the new one for _deleted_ user-facing symbols (CRD fields, status subresources, flags, subcommands, routes, config keys) and grep the docs for every one you find. `stacklok/docs-website#1086` documented `status.referencingWorkloads` in the same release that removed it, because the PR that added the surrounding feature described only what it added. Treat every deletion in the diff as a docs defect until you have confirmed no page mentions it.
+   - **Command and subcommand strings**: never assemble a command from a pattern. Every command, subcommand, and flag you write into a page must be traced to its actual registration in source (`AddCommand`, flag registration, route table). `stacklok/docs-website#1095` documented `thv ai-plugin sync` and `thv ai-plugin upgrade` because sibling commands had them; neither existed. If you cannot point at the line that registers it, it does not go in the docs.
    - **Containment/authorization direction**: When documenting subset/superset checks, verify which argument is the caller and which is the resource. Getting the direction wrong produces examples that show the opposite of actual behavior.
 
 9. Identify:
    - **Auto-generated content**: files generated from upstream (OpenAPI specs, CLI reference docs, JSON schemas). Do not manually edit these; flag them for automated update instead. However, auto-generated reference docs (e.g., API endpoints from a swagger spec) do **not** replace the need for conceptual explanations, guide content, or cross-references in existing pages. A new feature with auto-generated API docs still needs: (1) a conceptual explanation of what it is and why it exists, (2) mentions and cross-references in related existing pages (intro pages, feature lists, related guides), and (3) guide content if the feature has non-trivial workflows. Only skip creating a **duplicate API reference page**: never skip the surrounding documentation.
-   - **Hidden/experimental features**: look for indicators like `Hidden: true` in CLI command definitions, feature flags, or internal-only annotations. Do not document these unless the user explicitly asks.
+   - **Hidden, flag-gated, and experimental features**: see the readiness gate in step 11 below. This is the single most common over-documentation failure in this workflow, and the release notes will not warn you about it.
 
 10. **Inventory the new public surface.** As you read the source and the regenerated reference assets, list every new or changed user-facing symbol the release introduces: CRD/struct fields, enum values, CLI flags and subcommands, env vars, config keys, and API routes. Most are already enumerated in the auto-synced reference assets (CLI `.md`, CRD `*.schema.json`, Swagger YAML) and the diff, so this is mostly transcription, not discovery. This list is the checklist the completeness pass in Phase 5 verifies against. It is the difference between documentation that is _accurate_ and documentation that is _complete_: a release can ship five new config fields, and a section that explains one of them correctly passes every accuracy check while silently omitting the other four.
 
-11. **Classify the release contributors** (unattended mode only, when `.release-meta.json` is present). You have just read every PR's diff, which makes this the only point in the run where the classification is cheap and well-informed. For each login in `.release-meta.json`, decide whether their commits in the release range changed anything a reader can observe, and write `REVIEWERS.json` per the contract in [Artifacts](#artifacts-unattended-mode-only-written-at-repo-root). Do this from the diffs you read, not from commit messages.
+11. **Apply the readiness gate before documenting anything.** A release ships code; it does not thereby declare that code ready for readers. Three separate releases leaked experimental features into published docs (skills `sync`/`upgrade` and the lockfile, Sigstore signing for skills, desktop theme customization), and each cost a reviewer round-trip to remove. The pattern is always the same: the PR is well-written and enthusiastic, the code is real and complete, and nothing in either says "not yet". Readiness lives in the code, not the narrative.
+
+    For every feature you are about to document, check the source at the tag for these signals:
+
+    - **CLI**: `Hidden: true` on the `cobra.Command`, or registration behind a build tag or an `if` on an env var / config flag. A hidden command is not user-facing no matter how complete it is.
+    - **Feature flags and gates**: a config key, env var, or CRD field that defaults to off/false and guards the code path. Search for the feature's entry point and read what has to be true for it to execute.
+    - **Naming**: `experimental`, `alpha`, `beta`, `preview`, `internal`, `unstable`, `wip`, or `x-` prefixes on packages, flags, config keys, API routes, or CRD fields.
+    - **API/CRD**: an unserved or unstored CRD version, a route registered only under an experimental prefix, or a field marked `// +optional` and absent from any example, defaulting, or validation path.
+    - **Upstream signals**: PR labels or titles carrying `experimental`/`do-not-document`, or a PR body that says the flag will be removed later.
+
+    When any signal fires, **do not document the feature**. Instead:
+
+    - Leave existing docs alone; don't add a section, a flag row, or a passing mention.
+    - Record it in `SUMMARY.md` as a one-line deferral ("Skipped `thv skill sync` - hidden command at `cmd/skill.go:NN`") so the reviewer can see you considered and rejected it rather than missed it. This is the same treatment as a conscious deferral in the Phase 5 completeness pass, and it is what keeps the completeness check from flagging it as a gap.
+    - Do not add a "coming soon" or "planned for a future release" note in its place. That is a change-log statement about an unreleased feature, and it goes stale on its own.
+
+    The exception is a flag-gated change to something already documented, where the flag's existence is itself the reader-facing fact (an opt-in for new behavior a reader must deliberately enable). Document the flag and what enabling it does; don't document unflagged internals behind it.
+
+    When a signal is ambiguous (a flag that defaults on, an `experimental` package name for a feature the release notes headline as shipped), document it and flag the call in `SUMMARY.md` so a reviewer can overrule you cheaply. Ambiguity resolves toward documenting; a fired signal does not.
+
+12. **Classify the release contributors** (unattended mode only, when `.release-meta.json` is present). You have just read every PR's diff, which makes this the only point in the run where the classification is cheap and well-informed. For each login in `.release-meta.json`, decide whether their commits in the release range changed anything a reader can observe, and write `REVIEWERS.json` per the contract in [Artifacts](#artifacts-unattended-mode-only-written-at-repo-root). Do this from the diffs you read, not from commit messages.
 
 ## Phase 3: Audit Existing Docs
 
@@ -350,17 +374,27 @@ One exception: a breaking change or major behavioral change (a changed default, 
 
    Any inventoried symbol that is neither documented nor deferred is a coverage gap: document it, or record why not. Do not let a symbol fall through silently. A section that documents a feature's happy path but omits its flags, enum values, or config knobs is incomplete even when every sentence in it is accurate. For large surfaces, spawn a coverage agent that takes the inventory and the changed/related doc files and returns, per symbol, "documented at `file:line`" or "not found."
 
-3. **Build the site**: run the project's build command to check for broken links, missing references, or build errors.
+3. **Check every new page for inbound links.** A page that exists but nothing links to is unreachable by navigation and breaks the journey the docs are organized around. `stacklok/docs-website#1086` shipped a new AI-plugins page with a sidebar entry and zero inbound links; a reviewer had to work out where it belonged in the CLI journey after the fact.
 
-4. **Run linting**: execute the project's lint/format commands.
+   For each page you created this run:
+   - Grep the docs set for its path. A sidebar entry in `sidebars.ts` is necessary but is **not** an inbound link; it satisfies navigation, not the journey.
+   - Require at least one inbound prose link from a page a reader plausibly reaches first: the section's introduction, the related how-to guide, or the concept page for the capability it extends.
+   - Add the outbound half too. The new page needs a "Next steps" section pointing 1-3 pages further along, so it isn't a dead end.
+   - Ask where in the journey phase order (install, use, secure, operate, optimize) the page sits, and link it from the phase before it. Placing a page in the sidebar without answering this is what produces an orphan with a correct-looking home.
 
-5. **Run `/docs-review`**: invoke the docs-review skill on all changed and new files to catch style, structure, and clarity issues. When the review returns, **do not stop or present the findings to the user**. Instead, immediately apply every actionable fix yourself:
+   Treat a new page with no inbound prose link as a build failure you must fix, not a nit for the reviewer.
+
+4. **Build the site**: run the project's build command to check for broken links, missing references, or build errors.
+
+5. **Run linting**: execute the project's lint/format commands.
+
+6. **Run `/docs-review`**: invoke the docs-review skill on all changed and new files to catch style, structure, and clarity issues. When the review returns, **do not stop or present the findings to the user**. Instead, immediately apply every actionable fix yourself:
    - For primary issues: edit the files to resolve them.
    - For secondary issues and inline suggestions: apply the fixes directly.
    - For items you disagree with (e.g., they conflict with verified source code): do not apply the suggestion, but briefly log each skipped item with a source-verified reason for auditability.
    - After applying fixes, re-run formatting/linting to ensure the fixes are clean.
 
-6. Fix any remaining issues found in the build or lint steps. Re-run validation until clean.
+7. Fix any remaining issues found in the build or lint steps. Re-run validation until clean.
 
 ## Phase 6: Handle Review Feedback
 
@@ -389,6 +423,11 @@ When receiving review comments (from humans or automated reviewers):
 - **Flag gaps honestly**: if consumption tooling, client support, or integration isn't ready yet, say so explicitly rather than omitting the topic
 - **Use realistic examples**: guide pages need end-to-end examples with plausible data, exact commands, and expected output, not placeholder values
 - **Call out naming conventions**: when a feature introduces naming rules (casing, allowed characters, namespacing), document them explicitly with valid/invalid examples
+- **Apply the readiness gate**: a release shipping code is not a declaration that readers should see it. Check for `Hidden: true`, default-off flags, and experimental naming in source before documenting anything; a fired signal means don't document, and record the deferral in `SUMMARY.md` so it reads as a decision rather than an omission (Phase 2 step 11)
+- **Distrust claims about absence**: "not yet supported", "not wired up", and "planned" in a PR body are the least reliable statements you will read, because a later commit in the same release silently falsifies them. Verify every limitation in source at the tag before writing it into a page (Phase 2 step 7)
+- **A release removes surface too**: deletions never appear in a feature list. Diff the tags for removed fields, flags, subcommands, and routes, and grep the docs for each one (Phase 2 step 8)
+- **Never assemble a command from a pattern**: every command, subcommand, and flag in the docs must trace to its registration in source. Sibling commands having a subcommand is not evidence this one does (Phase 2 step 8)
+- **No orphan pages**: a new page needs at least one inbound prose link from a page readers reach first. A `sidebars.ts` entry is navigation, not a journey (Phase 5 step 3)
 - **Don't document hidden features**: skip features marked as hidden, experimental, or internal unless explicitly asked
 - **Follow existing conventions**: match the project's style guide, writing voice, file structure, and naming patterns
 - **Be project-agnostic**: this workflow applies to any upstream project and any docs site. Do not assume specific frameworks, file paths, or tools.
