@@ -7,10 +7,18 @@ and writes it to a JSON file; it never holds the Slack token and has no
 curl/network access. This script is the ONLY place the Slack token
 lives, and it only ever contacts slack.com.
 
-It reads the JSON content file, resolves each reviewer's GitHub login to
-a Slack user id (falling back to the literal @handle when no confident
-match exists), builds one Slack mrkdwn message, and posts it via
+It reads the JSON content file, resolves each GitHub login to a Slack
+user id (falling back to the literal @handle when no confident match
+exists), builds one Slack mrkdwn message, and posts it via
 chat.postMessage.
+
+The message names one OWNER (the person who cut the upstream release,
+who is the PR's assignee and is responsible for merging it), then the
+other requested reviewers, then a single line for contributors whose
+changes had no docs impact and who were deliberately not sent a review
+request. The owner-duty and no-impact wording is fixed in this file
+rather than composed by the Claude step, so the process expectations
+stay identical release to release.
 
 Reviewer resolution reads the workspace's custom "GitHub handle" profile
 field reliably: it first discovers that field's id once via
@@ -323,8 +331,43 @@ def reviewer_tag(login, login_to_slack_id):
     return "@{}".format(login)
 
 
+# Fixed wording for the owner and no-docs-impact lines: these two
+# sentences carry the process expectations (who merges, who is not
+# blocking), so they live here rather than being composed per release
+# by the Claude step, which supplies names only.
+#
+# The owner duty has two variants so a release with no other reviewers
+# doesn't tell the owner to collect approvals nobody was asked for.
+OWNER_DUTY_WITH_REVIEWERS = (
+    "cut this release and owns this PR: review, collect the approvals "
+    "below, and merge. Target: 2 business days."
+)
+OWNER_DUTY_SOLO = (
+    "cut this release and owns this PR: review and merge. "
+    "Target: 2 business days."
+)
+NO_OWNER_LINE = (
+    "*No owner resolved* - nobody is assigned to merge this. "
+    "A docs maintainer needs to adopt it."
+)
+NO_IMPACT_SUFFIX = (
+    "no docs impact found in your changes, so no review is requested "
+    "and you're not blocking this. Shout if we misjudged it."
+)
+
+
 def build_message(content, pr_url, login_to_slack_id):
-    """Build the single Slack mrkdwn message string."""
+    """Build the single Slack mrkdwn message string.
+
+    Layout, in reading order: linked headline, 2-3 scope bullets, the
+    owner and their duty, one line per reviewer with what to check, and
+    a single consolidated line for contributors who were deliberately
+    not sent a review request.
+
+    The owner line comes before the reviewer list because "who merges
+    this" is the question the message exists to answer; a five-person
+    reviewer list with no named owner is what produced multi-day stalls.
+    """
     headline = str(content.get("headline") or "Documentation update")
     lines = ["<{}|{}>".format(pr_url, headline)]
 
@@ -334,22 +377,79 @@ def build_message(content, pr_url, login_to_slack_id):
             if isinstance(bullet, str) and bullet.strip():
                 lines.append("• {}".format(bullet.strip()))
 
+    # ----- owner -----
+    owner_login = ""
+    owner = content.get("owner")
+    if isinstance(owner, dict):
+        owner_login = str(owner.get("login") or "").strip()
+    elif isinstance(owner, str):
+        # Tolerate a bare login string in place of the documented
+        # object form rather than dropping the owner line entirely.
+        owner_login = owner.strip()
+
+    # ----- reviewers -----
+    # Rendered before the owner line is emitted, because the owner's
+    # duty wording depends on whether anyone else was asked to review.
+    # The owner is filtered out here as well as in the prompt, so a
+    # composer that ignores the exclusion can't list them twice.
     reviewers = content.get("reviewers")
-    if isinstance(reviewers, list) and reviewers:
-        lines.append("")
-        lines.append("*Reviewers*")
+    rendered = []
+    if isinstance(reviewers, list):
         for reviewer in reviewers:
             if not isinstance(reviewer, dict):
                 continue
-            login = reviewer.get("login")
+            login = str(reviewer.get("login") or "").strip()
             if not login:
                 continue
-            note = reviewer.get("note") or ""
+            if owner_login and normalize_handle(login) == normalize_handle(
+                owner_login
+            ):
+                continue
+            note = str(reviewer.get("note") or "").strip()
             tag = reviewer_tag(login, login_to_slack_id)
             if note:
-                lines.append("{} — {}".format(tag, note))
+                rendered.append("• {} - {}".format(tag, note))
             else:
-                lines.append("{}".format(tag))
+                rendered.append("• {}".format(tag))
+
+    lines.append("")
+    if owner_login:
+        duty = (
+            OWNER_DUTY_WITH_REVIEWERS if rendered else OWNER_DUTY_SOLO
+        )
+        lines.append(
+            "*Owner:* {} {}".format(
+                reviewer_tag(owner_login, login_to_slack_id), duty
+            )
+        )
+    else:
+        lines.append(NO_OWNER_LINE)
+
+    if rendered:
+        lines.append("*Also review:*")
+        lines.extend(rendered)
+
+    # ----- no docs impact -----
+    # One line, all handles. These contributors get no review request,
+    # so this is their only notice that the release they contributed
+    # to has a docs PR at all.
+    no_impact = content.get("no_docs_impact")
+    tags = []
+    if isinstance(no_impact, list):
+        for entry in no_impact:
+            # Accepts a plain login or a {"login": ...} object, so a
+            # composer reusing the reviewer shape still renders.
+            if isinstance(entry, dict):
+                login = str(entry.get("login") or "").strip()
+            else:
+                login = str(entry or "").strip()
+            if login:
+                tags.append(reviewer_tag(login, login_to_slack_id))
+    if tags:
+        lines.append("")
+        lines.append(
+            "*FYI* {} - {}".format(" ".join(tags), NO_IMPACT_SUFFIX)
+        )
 
     return "\n".join(lines)
 
