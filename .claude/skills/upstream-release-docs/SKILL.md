@@ -12,11 +12,16 @@ Analyze a new release of an upstream project and update the documentation site t
 
 ## Core Principle
 
-**Verify everything against source code at the release tag.** Never trust release notes, PR descriptions, PR review comments, or issue descriptions at face value. Always check actual source code using:
+**Verify everything against source code at the release tag.** Never trust release notes, PR descriptions, PR review comments, or issue descriptions at face value. Always check the actual source code.
 
-```bash
-gh api repos/<OWNER>/<REPO>/contents/<PATH>?ref=<TAG>
-```
+How you reach that source depends on what the caller gave you:
+
+- **A local clone at the tag** (an automated caller usually provides one, and names its path in the invocation): read it with the Read, Grep, and Glob tools. Prefer this; it costs no API quota. See [Reading the upstream clone](#reading-the-upstream-clone) for the constraints.
+- **No clone:** fetch individual files from the API, and decode the base64 response.
+
+  ```bash
+  gh api repos/<OWNER>/<REPO>/contents/<PATH>?ref=<TAG>
+  ```
 
 Claims from any human-written source (release notes, PR bodies, review comments) may be inaccurate, outdated, or aspirational. The source code at the tag is the single source of truth.
 
@@ -51,6 +56,17 @@ When Phase 2 step 4 would normally ask the user for a major feature's "why", ins
 2. If the PR body references linked issues ("Closes #N", "Fixes #N", "Refs #N"), fetch the likely-context-bearing ones with `gh issue view <N> --repo <OWNER>/<REPO>`.
 3. Write the "why"/consumer narrative directly into the relevant page using what you learned, translated into reader-facing language rather than the PR's engineering shorthand. This is best-effort; reviewers refine it later.
 4. Defer to `GAPS.md` only when the rationale demonstrably cannot be derived from available sources: the PR points to an internal design doc you cannot access, multiple plausible consumer narratives exist and choosing one would mislead readers, or a release timeline or commitment needs product-team confirmation.
+
+### Reading the upstream clone
+
+When a caller provides a local clone of the upstream repo at the release tag, read it with the **Read, Grep, and Glob tools**. Prefer it over `gh api contents?ref=<tag>`: it is already at the tag and costs no API quota.
+
+Do not reach for Bash to explore it. An automated caller typically clones to a scratch directory outside the session's working directory, so `ls`, `find`, and `grep` run through Bash are refused there, and `git -C <path>` is refused everywhere because it can execute untrusted hooks from the target repo. Read, Grep, and Glob have no such restriction and are the right tools regardless.
+
+Two consequences worth internalizing, because working around them by retrying Bash variants wastes turns and never succeeds:
+
+- **Don't try to run `git log` on the clone.** When the caller supplies `.release-meta.json`, its `commits` array is the release range's commit list. Otherwise derive the range from the release notes and `gh api`.
+- **Don't append `2>&1` or chain with `&&`** on any Bash call. That splits the command into parts that no longer match the caller's tool allowlist, so the call is denied even when the underlying command is permitted.
 
 ### Artifacts (unattended mode only, written at repo root)
 
@@ -87,9 +103,20 @@ Read `.release-meta.json` first (the caller writes it before invoking you):
   "new_tag": "v0.43.0",
   "owner": "jerm-dro",
   "owner_source": "merged release PR stacklok/toolhive#6333",
-  "contributors": ["alice", "bob", "carol"]
+  "contributors": ["alice", "bob", "carol"],
+  "commits": [
+    {
+      "sha": "8343851e",
+      "subject": "Push skills unsigned until keyless signing lands (#6334)",
+      "author": "alice"
+    }
+  ]
 }
 ```
+
+`commits` is the commit list for the release range: use it instead of trying to run `git log` against the upstream clone, which is refused (see [Reading the upstream clone](#reading-the-upstream-clone)). It is also what tells you which commits belong to which contributor for the classification below.
+
+When `commits_truncated` is `true`, the range exceeded what the caller could fetch in one request, so both `commits` and `contributors` are partial. Treat the release notes as the authoritative list of changes for that run, and say in `SUMMARY.md` that the commit list was truncated so a reviewer knows the classification may have missed someone.
 
 Classify **every** login in `contributors` as docs-facing or not, and write `REVIEWERS.json` at the repo root:
 
@@ -192,13 +219,11 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 
 5. **Check related repositories**: components often span multiple repos. For example, a server's CRD/operator may live in a different repo than the server itself. When a release changes config structures, API surfaces, or deployment models, check whether related repos (operators, CLIs, client libraries) have also released changes that affect the documentation. Ask the user which repos are related if unclear (in unattended mode, infer related repos from the release notes and proceed best-effort).
 
-6. **Read the actual source code at the release tag** to verify every claim made in the PR description:
+6. **Read the actual source code at the release tag** to verify every claim made in the PR description. Use the local clone when the caller provided one, per [Core Principle](#core-principle); otherwise fetch the file from the API and decode the base64 response:
 
    ```bash
    gh api repos/<OWNER>/<REPO>/contents/<PATH>?ref=<TAG>
    ```
-
-   The response is base64-encoded; decode it to read the content.
 
 7. Note discrepancies between PR descriptions and actual code. Trust the code.
 
