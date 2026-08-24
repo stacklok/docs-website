@@ -461,9 +461,13 @@ jobs:
           PREV: ${{ steps.detect.outputs.prev_tag }}
           NEW: ${{ steps.detect.outputs.new_tag }}
         run: |
-          # Shared bot filter. Applied to every login this step
-          # resolves, from any of the three owner sources and from the
-          # contributor compare.
+          # Shared bot filter, the single definition used for every
+          # login this step resolves: all three owner sources and the
+          # contributor compare. Two bot spellings are in play and both
+          # must be caught: the REST compare endpoint returns
+          # `renovate[bot]`, while `gh pr view`/`gh release view`
+          # return `app/toolhive-release-app` for the same class of
+          # identity.
           is_bot() {
             printf '%s\n' "$1" | grep -qE '(\[bot\]$|^app/|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)'
           }
@@ -476,8 +480,15 @@ jobs:
             COMPARE=""
             COMPARE_OK=false
           fi
-          CANDIDATES=$(echo "$COMPARE" |
-            grep -Ev '(\[bot\]$|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)' || true)
+          CANDIDATES=""
+          while IFS= read -r login; do
+            [ -z "$login" ] && continue
+            if is_bot "$login"; then
+              continue
+            fi
+            CANDIDATES="${CANDIDATES}${login}"$'\n'
+          done <<< "$COMPARE"
+          CANDIDATES="${CANDIDATES%$'\n'}"
 
           # ---------- owner ----------
           OWNER=""
