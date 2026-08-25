@@ -446,7 +446,6 @@ const platformSidebar: SidebarsConfig[string] = [
       'platform/enterprise-cloud-ui/intro',
       'platform/enterprise-cloud-ui/configure',
       'platform/enterprise-cloud-ui/browse-catalog',
-      'platform/enterprise-cloud-ui/ai-assistant',
       {
         type: 'category',
         label: 'Registry management',
