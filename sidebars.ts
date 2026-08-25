@@ -353,6 +353,7 @@ const mcpSidebar: SidebarsConfig[string] = [
 
 const platformSidebar: SidebarsConfig[string] = [
   'platform/index',
+  'platform/enterprise-console/index',
 
   {
     type: 'html',
@@ -375,6 +376,8 @@ const platformSidebar: SidebarsConfig[string] = [
       'platform/enterprise-platform/verify-artifacts',
       'platform/enterprise-platform/configure-registry-server',
       'platform/enterprise-platform/configure-identity',
+      'platform/enterprise-platform/configure-ai-gateway',
+      'platform/enterprise-platform/configure-mcp-gateway',
     ],
   },
 
@@ -383,6 +386,22 @@ const platformSidebar: SidebarsConfig[string] = [
     value: 'Govern the platform',
     className: 'sidebar-title',
     defaultStyle: false,
+  },
+
+  {
+    type: 'category',
+    label: 'Identity and directory',
+    link: {
+      type: 'doc',
+      id: 'platform/enterprise-directory/index',
+    },
+    items: [
+      'platform/enterprise-directory/users-and-groups',
+      'platform/enterprise-directory/scim-provisioning',
+      'platform/enterprise-directory/identity-providers',
+      'platform/enterprise-directory/managed-secrets',
+      'platform/enterprise-directory/virtual-api-keys',
+    ],
   },
 
   {
@@ -396,6 +415,23 @@ const platformSidebar: SidebarsConfig[string] = [
       'platform/enterprise-authz/intro',
       'platform/enterprise-authz/quickstart-entra',
       'platform/enterprise-authz/namespace-self-service',
+    ],
+  },
+
+  {
+    type: 'category',
+    label: 'AI Gateway policy',
+    link: {
+      type: 'doc',
+      id: 'platform/enterprise-ai-gateway/index',
+    },
+    items: [
+      'platform/enterprise-ai-gateway/providers-and-models',
+      'platform/enterprise-ai-gateway/model-routing',
+      'platform/enterprise-ai-gateway/budgets-and-pricing',
+      'platform/enterprise-ai-gateway/prompt-injection-screening',
+      'platform/enterprise-ai-gateway/pci-pii-controls',
+      'platform/enterprise-ai-gateway/forward-audit-logs',
     ],
   },
 
@@ -422,7 +458,6 @@ const platformSidebar: SidebarsConfig[string] = [
           'platform/enterprise-manager/policies/telemetry',
           'platform/enterprise-manager/policies/ca-certificate',
           'platform/enterprise-manager/policies/build-env',
-          'platform/enterprise-manager/policies/desktop-app',
         ],
       },
       'platform/enterprise-manager/degraded-mode',
@@ -437,58 +472,59 @@ const platformSidebar: SidebarsConfig[string] = [
 
   {
     type: 'html',
-    value: 'Operate platform clients',
+    value: 'Use the console',
     className: 'sidebar-title',
     defaultStyle: false,
   },
 
   {
     type: 'category',
-    label: 'Enterprise Cloud UI',
+    label: 'Administration',
     link: {
       type: 'doc',
-      id: 'platform/enterprise-cloud-ui/index',
+      id: 'platform/enterprise-console/admin/index',
     },
     items: [
-      'platform/enterprise-cloud-ui/intro',
-      'platform/enterprise-cloud-ui/configure',
-      'platform/enterprise-cloud-ui/browse-catalog',
-      {
-        type: 'category',
-        label: 'Registry management',
-        link: {
-          type: 'doc',
-          id: 'platform/enterprise-cloud-ui/administration/index',
-        },
-        items: [
-          'platform/enterprise-cloud-ui/administration/entries',
-          'platform/enterprise-cloud-ui/administration/sources',
-          'platform/enterprise-cloud-ui/administration/registries',
-        ],
-      },
+      'platform/enterprise-console/admin/organization-spend',
+      'platform/enterprise-console/admin/budgets',
+      'platform/enterprise-console/admin/connectors',
+      'platform/enterprise-console/admin/tool-usage',
     ],
   },
 
   {
     type: 'category',
-    label: 'Stacklok Desktop',
+    label: 'Your workspace',
     link: {
       type: 'doc',
-      id: 'platform/enterprise-desktop/index',
+      id: 'platform/enterprise-console/workspace/index',
     },
     items: [
-      'platform/enterprise-desktop/intro',
-      {
-        type: 'doc',
-        id: 'platform/enterprise-desktop/rollout',
-        label: 'Rollout',
-      },
-      'platform/enterprise-desktop/policy-enforcement',
-      'platform/enterprise-desktop/deep-links',
+      'platform/enterprise-console/workspace/connect-a-client',
+      'platform/enterprise-console/workspace/connectors',
+      'platform/enterprise-console/workspace/model-usage',
+      'platform/enterprise-console/workspace/tool-usage',
     ],
   },
 
+  {
+    type: 'html',
+    value: 'Operate platform clients',
+    className: 'sidebar-title',
+    defaultStyle: false,
+  },
+
   'platform/enterprise-cli/index',
+
+  {
+    type: 'html',
+    value: 'Concepts',
+    className: 'sidebar-title',
+    defaultStyle: false,
+  },
+
+  'platform/concepts/what-you-can-see',
+  'platform/concepts/two-group-models',
 ];
 
 const aiGatewaySidebar: SidebarsConfig[string] = ['ai-gateway/index'];

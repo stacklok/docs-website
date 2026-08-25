@@ -6,15 +6,15 @@ description:
 ---
 
 Stacklok Enterprise authenticates every request through your identity provider.
-When a developer signs in to the Stacklok CLI, Stacklok Desktop, or Enterprise
-Cloud UI, the identity provider issues an access token that the platform
-components validate before serving any data. This page walks through the values
-each component expects from your identity provider and shows two supported ways
-to model them, so that each component accepts the tokens your provider issues.
+When a developer signs in to the Stacklok CLI or the console, the identity
+provider issues an access token that the platform components validate before
+serving any data. This page walks through the values each component expects from
+your identity provider and shows two supported ways to model them, so that each
+component accepts the tokens your provider issues.
 
-This page covers the shared platform components: the Enterprise Manager,
-Enterprise Cloud UI, and Registry Server. Individual MCP servers validate tokens
-through their own per-server OIDC configuration, which you set up alongside each
+This page covers the shared platform components: the Enterprise Manager, the
+console, and the Registry Server. Individual MCP servers validate tokens through
+their own per-server OIDC configuration, which you set up alongside each
 server's policy in [enterprise authorization](../enterprise-authz/index.mdx).
 The same identity provider issues both, so the claims you configure here also
 feed the role bindings on your MCP servers.
@@ -35,16 +35,16 @@ at a different combination of audience, scope, and claims.
 | Component                                                   | What the component verifies                                                                                                                                                           |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Enterprise Manager](../enterprise-manager/configure.mdx)   | Issuer, an audience that matches the configured value, and the configured scope is present                                                                                            |
-| [Enterprise Cloud UI](../enterprise-cloud-ui/configure.mdx) | Issuer and an audience that matches the Cloud UI's OAuth client application                                                                                                           |
+| [The console](../enterprise-console/index.mdx)              | Issuer and an audience that matches the console's OAuth client application                                                                                                            |
 | [Registry Server](../../toolhive/guides-registry/index.mdx) | Issuer, the role claim that maps the user to a platform role, and the group claim used for bindings                                                                                   |
 | [MCP servers](../enterprise-authz/quickstart-entra.mdx)     | Issuer and an audience that matches the server's `MCPOIDCConfig`, plus the role and group claims that [enterprise authorization](../enterprise-authz/index.mdx) policies bind against |
 
-The Stacklok CLI and Stacklok Desktop obtain tokens from the identity provider
-using the Proof Key for Code Exchange (PKCE) flow and present them to each
-component. The Enterprise Cloud UI authenticates browser users through the
-authorization code flow on its server side. The components do not call the
-identity provider's introspection endpoint, so the authorization server you
-choose must issue signed JWTs rather than opaque tokens.
+The Stacklok CLI obtains tokens from the identity provider using the Proof Key
+for Code Exchange (PKCE) flow and presents them to each component. The console
+authenticates browser users through the authorization code flow on its server
+side. The components do not call the identity provider's introspection endpoint,
+so the authorization server you choose must issue signed JWTs rather than opaque
+tokens.
 
 ## Pick a setup
 
@@ -144,17 +144,16 @@ your OAuth clients to request the audiences and scope from steps 1 and 2.
 ### Step 5: Create OAuth client applications
 
 Each Stacklok Enterprise component authenticates against a different OAuth
-client. The Stacklok CLI and Stacklok Desktop share a single native (PKCE)
-application that requests tokens for the Enterprise Manager audience. The Cloud
-UI uses its own confidential (web) application because it runs an authorization
-code flow on its server.
+client. The Stacklok CLI uses a native (PKCE) application that requests tokens
+for the Enterprise Manager audience. The console uses its own confidential (web)
+application, because it runs an authorization code flow on its server.
 
-| Application                       | Type                       | Audience requested   |
-| --------------------------------- | -------------------------- | -------------------- |
-| Stacklok CLI and Stacklok Desktop | Native (PKCE, no secret)   | `enterprise-manager` |
-| Enterprise Cloud UI               | Web (confidential, secret) | `cloud-ui`           |
+| Application  | Type                       | Audience requested   |
+| ------------ | -------------------------- | -------------------- |
+| Stacklok CLI | Native (PKCE, no secret)   | `enterprise-manager` |
+| The console  | Web (confidential, secret) | `cloud-ui`           |
 
-Note the client IDs and (for the Cloud UI) the client secret for the next step.
+Note the client IDs and, for the console, the client secret for the next step.
 
 ### Step 6: Wire the values into the component charts
 
@@ -173,14 +172,23 @@ idpConfig:
 clientID: '<STACKLOK_CLI_CLIENT_ID>'
 ```
 
-For the [Enterprise Cloud UI](../enterprise-cloud-ui/configure.mdx):
+For the console and every other component that needs your corporate provider,
+set it once on the platform chart rather than per component:
 
-```yaml title="cloud-ui values.yaml"
-oidc:
-  issuerUrl: 'https://<TENANT>.okta.com/oauth2/default'
-  clientId: '<CLOUD_UI_CLIENT_ID>'
-  clientSecret: '<CLOUD_UI_CLIENT_SECRET>'
+```yaml title="values.yaml"
+global:
+  stacklok:
+    primaryIdp:
+      issuer: 'https://<TENANT>.okta.com/oauth2/default'
+      clientId: '<CONSOLE_CLIENT_ID>'
+      clientSecretRef:
+        name: '<SECRET_NAME>'
+        key: 'client-secret'
+      scopes: 'openid,profile,email'
 ```
+
+Pre-create that Secret. There is no plaintext fallback for a corporate identity
+provider credential.
 
 Replace `<TENANT>` with your Okta subdomain and the `<*_CLIENT_ID>` placeholders
 with the client IDs from step 5.
@@ -216,8 +224,8 @@ component returns `401 Unauthorized`.
 
 - [Configure the Enterprise Manager](../enterprise-manager/configure.mdx) with
   the issuer, audience, and scope from this page wired into its chart
-- [Configure the Enterprise Cloud UI](../enterprise-cloud-ui/configure.mdx) with
-  the matching OIDC values
+- [SCIM provisioning](../enterprise-directory/scim-provisioning.mdx) to populate
+  the directory from the same identity provider
 
 ## Troubleshooting
 
