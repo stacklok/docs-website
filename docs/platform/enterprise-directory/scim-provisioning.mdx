@@ -1,0 +1,109 @@
+---
+title: SCIM provisioning
+sidebar_label: SCIM provisioning
+description:
+  Provision directory users and groups automatically from Okta, Entra ID, or any
+  SCIM 2.0 identity provider.
+---
+
+SCIM lets your identity provider keep the directory current: users appear when
+they join, group membership follows your provider's groups, and deactivation
+propagates when someone leaves. The platform implements SCIM 2.0
+([RFC 7644](https://datatracker.ietf.org/doc/html/rfc7644)) as a service
+provider, so your provider pushes changes rather than the platform polling.
+
+Provisioning is the recommended way to populate the directory. Records it creates
+are marked with a SCIM source, which is how an administrator knows to make edits
+in the identity provider rather than in the console.
+
+## The endpoint
+
+Each configured issuer gets its own base URL:
+
+```text
+https://<PLATFORM_HOST>/scim/<ISSUER_ID>/v2
+```
+
+Point your identity provider's provisioning configuration at that base. The
+`/Users` and `/Groups` collections sit beneath it, along with the standard
+`/ServiceProviderConfig`, `/Schemas`, and `/ResourceTypes` discovery endpoints.
+
+Scoping the path per issuer means two identity providers can provision into the
+same directory without colliding, and a record always carries the issuer it came
+from.
+
+## What is supported
+
+| Capability                    | Supported | Notes                                       |
+| ----------------------------- | --------- | ------------------------------------------- |
+| Users and Groups              | Yes       | Create, read, replace, delete               |
+| `PATCH`                       | Yes       | Add, replace, and remove operations          |
+| Filtering                     | Yes       | Up to 200 results per request                |
+| Sorting                       | Yes       | `sortBy` and `sortOrder`                     |
+| Bulk operations               | No        | Returns not-implemented; providers fall back to individual requests |
+| ETags                         | No        |                                             |
+| Password change               | No        | Credentials stay with your identity provider |
+
+Your provider reads these from `/ServiceProviderConfig` and adapts on its own, so
+there is nothing to configure for the unsupported items. Bulk is the only one
+worth knowing about in advance: a provider that would have batched will issue
+individual requests instead, which is slower on a large initial sync but
+otherwise equivalent.
+
+## How records are matched
+
+A user is keyed on the external identifier your provider sends, scoped to the
+issuer. That is deliberately not the email address: people change names and
+addresses, and matching on a stable provider-side identifier means a rename
+updates the existing record instead of creating a second one.
+
+Group membership can reference both users and other groups, so a nested group
+structure in your provider arrives as
+[subgroups](./users-and-groups.mdx#subgroups-and-inherited-membership) here.
+
+## Set it up
+
+1. Create the SCIM application, or enable provisioning on your existing
+   single-sign-on application, in your identity provider.
+2. Set the base URL to `https://<PLATFORM_HOST>/scim/<ISSUER_ID>/v2`.
+3. Supply the bearer token the platform issued for provisioning.
+4. Enable user provisioning and deactivation, then group provisioning.
+5. Push an initial sync, then confirm in the console under **User management**
+   that users and groups appear with a SCIM source.
+
+Start with a small test group rather than your whole directory. The initial sync
+is the step most likely to surface a mapping problem, and it is much easier to
+read the result on ten records than on ten thousand.
+
+## After provisioning
+
+Group names arriving from your provider are what you will grant connector access
+to and address budgets against, so it is worth agreeing on them before wide
+rollout. Renaming a group later is safe, but every grant and budget referencing
+it needs revisiting.
+
+If you also use cluster-level authorization policy, provisioning from the same
+provider groups you name in that policy is what keeps the
+[two group models](../concepts/two-group-models.mdx) aligned. That alignment is
+a convention you maintain; the platform does not enforce it.
+
+## Troubleshooting
+
+**Users provisioned but no groups.** Group provisioning is usually a separate
+switch from user provisioning, and providers commonly require users to sync
+first.
+
+**Deactivation not taking effect.** Check that your provider is configured to
+send deactivation rather than deletion. A deactivated user resolves to nothing
+here, which is the intended end state.
+
+**Duplicate users.** Almost always a changed external identifier on the provider
+side, which the platform reads as a new person. Reconcile in the provider, then
+resync.
+
+## Next steps
+
+- [Users and groups](./users-and-groups.mdx) for what these records govern.
+- [Identity providers](./identity-providers.mdx), which is a different thing:
+  the upstream services connectors authenticate against, not the provider that
+  signs your users in.
