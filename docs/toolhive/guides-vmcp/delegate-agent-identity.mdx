@@ -69,6 +69,11 @@ path or the other; `trustedIssuers[].allowedDelegateClients` (below) is what
 authorizes either kind of `client_id` to actually perform an exchange, once it
 has one.
 
+Both entries are required. `trustedIssuers` grants a delegate client permission
+to accept a subject token from the external issuer; on its own it doesn't create
+a usable exchange path, because RFC 8693 requires authenticated access to
+`/oauth/token` and the delegate client is what authenticates.
+
 This section focuses on the `trustedIssuers` side, which is what actually
 authorizes delegation:
 
@@ -94,8 +99,8 @@ spec:
         # application's client ID, verified against a real Entra tenant.
         # Other issuers use a different claim name for the same purpose (for
         # example Okta's client_credentials tokens use "cid"); check your
-        # issuer's own token shape, or use "client_id" to read the subject
-        # token's own client_id claim if that's what it sets.
+        # issuer's own token shape, or use the literal value "client_id"
+        # (a sentinel, not a claim name) to read the token's client_id claim.
         actorClaim: appid
         allowedActors:
           - <APP1_CLIENT_ID>
@@ -108,11 +113,16 @@ provider that minted the subject token the agent will present (in this example,
 a user's Entra sign-in as a separate application, `App1`). `expectedAudience`
 must match the audience already present on that subject token. `actorClaim`
 names the claim carrying the calling application's client ID; it defaults to
-`azp` when you leave it unset. `allowedDelegateClients` scopes delegation to
-specific ToolHive clients; set it to `["*"]` to permit any confidential client
-holding the token-exchange grant type instead of naming clients individually.
-The wildcard must stand alone, and combining it with specific client IDs is
-rejected at admission.
+`azp` when you leave it unset. `allowedDelegateClients` is what binds an
+external actor to a specific ToolHive delegate client. Without it, every
+confidential client holding the token-exchange grant would be equivalent for
+delegation purposes. Set it to `["*"]` to declare that permissiveness
+explicitly; the wildcard must stand alone, and combining it with specific client
+IDs is rejected at admission.
+
+For the complete `trustedIssuers` field list, including `jwksUrl`,
+`allowPrivateIPs`, and the per-issuer `insecureAllowHTTP`, see the
+[MCPExternalAuthConfig schema reference](../reference/crds/mcpexternalauthconfig.mdx).
 
 ### Walk through an exchange
 
