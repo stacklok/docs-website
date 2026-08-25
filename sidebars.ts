@@ -235,7 +235,11 @@ const mcpSidebar: SidebarsConfig[string] = [
           type: 'doc',
           id: 'toolhive/guides-vmcp/authentication',
         },
-        items: ['toolhive/guides-vmcp/embedded-auth-server-vmcp'],
+        items: [
+          'toolhive/guides-vmcp/embedded-auth-server-vmcp',
+          'toolhive/guides-vmcp/delegate-agent-identity',
+          'toolhive/guides-vmcp/accept-workload-assertions',
+        ],
       },
       'toolhive/guides-vmcp/tool-aggregation',
       'toolhive/guides-vmcp/composite-tools',

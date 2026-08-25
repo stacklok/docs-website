@@ -1,0 +1,175 @@
+---
+title: Accept workload assertions with the JWT-bearer grant
+description:
+  Configure the RFC 7523 JWT-bearer grant so a trusted workload can get a
+  ToolHive token by presenting a signed assertion, with no client registration
+  at all.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+An AI agent isn't a person who can type a password, and it usually isn't a
+long-lived service account either. It needs to prove who it is every time it
+runs, using whatever identity its platform already issued it (a cloud IAM role,
+a Kubernetes-native workload identity, or a service identity from your IdP). The
+JWT-bearer grant lets an agent use that identity directly to call a tool through
+vMCP: it presents a signed assertion from its identity provider straight to
+ToolHive's token endpoint, and ToolHive exchanges it for a ToolHive token, with
+no ToolHive client registration, no shared secret, nothing for an admin to
+provision ahead of time beyond trusting the issuer itself.
+
+:::info
+
+The `trustedIssuers[].jwtBearerGrant` field covered here is also available on a
+plain `MCPServer` through `MCPExternalAuthConfig`'s `embeddedAuthServer` block,
+using the same shape shown below under `authServerConfig`. For the MCPServer
+field reference, see
+[Set up the embedded authorization server in Kubernetes](../guides-k8s/embedded-auth-server-k8s.mdx).
+
+:::
+
+If you're choosing between mechanisms, see the comparison table in
+[Delegate agent identity with token exchange](./delegate-agent-identity.mdx#overview).
+The JWT-bearer grant answers "how does a workload with no registered client get
+a token at all?". RFC 8693 delegation answers a different question: "who is this
+agent acting for?"
+
+## How the grant works
+
+The workload sends its assertion straight to `/oauth/token`; possession of the
+assertion is the only credential ToolHive checks:
+
+```bash title="POST /oauth/token"
+curl -s -X POST https://vmcp.example.com/oauth/token \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
+  -d "assertion=<SIGNED_ASSERTION>" \
+  -d "resource=https://vmcp.example.com/mcp-resource"
+```
+
+ToolHive mints a token for a synthetic client derived deterministically from the
+assertion's issuer and subject. There's no delegation and nothing to
+pre-register. To accept the assertion in the first place, ToolHive needs a
+`trustedIssuers[].jwtBearerGrant` entry naming the workload's subject and the
+resource it may request. What that entry looks like depends on the identity
+provider:
+
+<Tabs groupId="jwt-bearer-issuer">
+<TabItem value="okta" label="Okta" default>
+
+Okta's Custom Authorization Server lets you set its `audiences` field to an
+arbitrary caller-chosen string, so you can register it as the exact ToolHive
+token endpoint the workload's assertion will be presented to:
+
+```yaml title="VirtualMCPServer: jwtBearerGrant policy"
+spec:
+  authServerConfig:
+    issuer: https://vmcp.example.com
+    trustedIssuers:
+      - issuerUrl: 'https://<org>.okta.com/oauth2/<AUTH_SERVER_ID>'
+        jwksUrl: 'https://<org>.okta.com/oauth2/<AUTH_SERVER_ID>/v1/keys'
+        jwtBearerGrant:
+          maxAssertionAge: 5m
+          subjectBindings:
+            - subject: '<OKTA_SERVICE_APP_CLIENT_ID>'
+              allowedResources:
+                - https://vmcp.example.com/mcp-resource
+```
+
+</TabItem>
+<TabItem value="entra" label="Entra">
+
+An Entra Application ID URI is fixed when you register it and can't reference a
+per-deployment in-cluster hostname that doesn't exist yet. Register a stable
+Identifier URI on the Entra app ahead of time and widen `acceptedAudiences` to
+accept it instead of the real token endpoint:
+
+```yaml title="VirtualMCPServer: jwtBearerGrant with a fixed external audience"
+trustedIssuers:
+  - issuerUrl: 'https://sts.windows.net/<TENANT_ID>/'
+    jwksUrl: 'https://login.windows.net/common/discovery/keys'
+    jwtBearerGrant:
+      maxAssertionAge: 70m
+      # Entra's Identifier URI is fixed at registration time and can't equal
+      # this deployment's real (dynamic) token endpoint, so accept it instead.
+      acceptedAudiences:
+        - 'https://<tenant>.onmicrosoft.com/toolhive-as-jwtbearer/oauth/token'
+      subjectBindings:
+        - subject: '<APP2_OBJECT_ID>'
+          allowedResources:
+            - https://vmcp.example.com/mcp-resource
+```
+
+</TabItem>
+<TabItem value="spire" label="SPIFFE/SPIRE">
+
+A SPIRE-attested workload needs no shared secret anywhere in the flow. Its
+identity comes entirely from attestation (for example, "this pod, in this
+namespace, with this service account, in this trust domain"), and it requests
+ToolHive's real token endpoint as its JWT-SVID's audience directly, so no
+`acceptedAudiences` override is needed. The one thing that does need a
+workaround: SPIRE's OIDC discovery provider only serves its JWKS over HTTPS with
+a SPIRE-internal CA-issued certificate, and `jwksUrl` has no CA-bundle option.
+Mirror the same keys over plain HTTP instead (fine inside the cluster network;
+not how you'd expose this across a real trust boundary):
+
+```yaml title="VirtualMCPServer: jwtBearerGrant for a SPIRE trust domain"
+trustedIssuers:
+  - issuerUrl: 'https://oidc-discovery.<trust-domain>'
+    jwksUrl: 'http://spire-jwks-mirror.<namespace>.svc.cluster.local:8000/keys.json'
+    insecureAllowHTTP: true
+    allowPrivateIPs: true
+    jwtBearerGrant:
+      maxAssertionAge: 70m
+      subjectBindings:
+        - subject: 'spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>'
+          allowedResources:
+            - https://vmcp.example.com/mcp-resource
+```
+
+</TabItem>
+</Tabs>
+
+`expectedAudience`, `actorClaim`, `actorMatcher`, and `allowMayAct` on a
+`trustedIssuers` entry are all delegation-specific and unrelated to
+`jwtBearerGrant`; an issuer used only for the JWT-bearer grant needs none of
+them.
+
+## Troubleshooting
+
+Two things vary by issuer and are worth checking first if an exchange fails:
+whether the assertion carries a `jti` at all (Entra's `client_credentials`
+tokens and plain SPIRE JWT-SVIDs never include one, so ToolHive falls back to
+hashing the raw assertion for replay protection instead), and whether the
+assertion's `aud` needs an `acceptedAudiences` entry to match, per the tabs
+above.
+
+| Error                                                                                 | Likely cause                                                                                                  |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `invalid_grant`: "The JWT bearer assertion issuer is not enabled for this grant."     | The assertion's `iss` doesn't match a `trustedIssuers` entry with `jwtBearerGrant` configured.                |
+| `invalid_grant`: "The JWT bearer assertion subject is not configured for this grant." | The assertion's `sub` has no matching entry in `jwtBearerGrant.subjectBindings`.                              |
+| `invalid_target`                                                                      | The `resource` parameter isn't in the matched subject binding's `allowedResources`.                           |
+| `invalid_grant`: "The JWT bearer assertion has already been used."                    | The assertion's replay key (its `jti`, or a hash of the assertion when `jti` is absent) was already consumed. |
+
+## Next steps
+
+- [Delegate agent identity with token exchange](./delegate-agent-identity.mdx)
+  to record which user an agent is acting for
+- [Configure the vMCP embedded authorization server](./embedded-auth-server-vmcp.mdx)
+  for the rest of the `authServerConfig` surface
+
+## Related information
+
+- [Secretless delegate clients with `private_key_jwt`](./delegate-agent-identity.mdx#secretless-delegate-clients-with-private_key_jwt) -
+  a different mechanism that's easy to confuse with this one, since both come
+  from RFC 7523. That one is how an already-registered client proves its
+  identity instead of using a secret; the JWT-bearer grant covered on this page
+  has no client at all.
+- [Delegate agent identity with token exchange](./delegate-agent-identity.mdx)
+  for RFC 8693 delegation and the full comparison of authentication patterns
+- [Embedded authorization server](../concepts/embedded-auth-server.mdx) for the
+  OAuth flow, token storage, and the `act` claim
+- [Configure the vMCP embedded authorization server](./embedded-auth-server-vmcp.mdx)
+  for the full `authServerConfig` reference
+- [MCPExternalAuthConfig reference](../reference/crds/mcpexternalauthconfig.mdx)
+  for the complete field list
