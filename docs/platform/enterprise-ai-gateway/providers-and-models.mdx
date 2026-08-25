@@ -1,0 +1,247 @@
+---
+title: Connect model providers
+sidebar_label: Model providers
+description:
+  Connect OpenAI, Anthropic, AWS Bedrock, Azure OpenAI, Google Vertex AI, and
+  OpenAI-compatible providers to the AI Gateway, and rotate their credentials.
+---
+
+Every model the gateway can reach belongs to a _provider_: an upstream API, its
+network endpoint, and the credential the gateway uses to authenticate to it.
+Providers are declared in `spec.providers` on the `AIGateway` resource, and the
+credential itself always lives in a Kubernetes Secret, never in the manifest.
+
+## Supported providers
+
+| Provider          | `schema`         | `credentials.type` | Secret key             |
+| ----------------- | ---------------- | ------------------ | ---------------------- |
+| OpenAI            | `OpenAI`         | `APIKey`           | `apiKey`               |
+| Anthropic         | `Anthropic`      | `AnthropicAPIKey`  | `apiKey`               |
+| AWS Bedrock       | `AWSBedrock`     | `AWSCredentials`   | none, uses IAM         |
+| Azure OpenAI      | `AzureOpenAI`    | `AzureAPIKey`      | `apiKey`               |
+| Google Vertex AI  | `GCPVertexAI`    | `GCPCredentials`   | `service_account.json` |
+| Google AI Studio  | `GeminiAIStudio` | `APIKey`           | `apiKey`               |
+
+The credential field names are type-dependent. Pairing a `schema` with the wrong
+`credentials.type` fails validation when you apply the resource.
+
+## Add a provider
+
+1. Create the credential Secret:
+
+   ```bash
+   kubectl create secret generic openai-key \
+     -n <NAMESPACE> \
+     --from-literal=apiKey='<OPENAI_API_KEY>'
+   ```
+
+2. Declare the provider on the `AIGateway` resource:
+
+   ```yaml title="aigateway.yaml"
+   spec:
+     providers:
+       - name: openai
+         schema: OpenAI
+         endpoint:
+           hostname: api.openai.com
+           port: 443
+         credentials:
+           type: APIKey
+           secretRef:
+             name: openai-key
+             key: apiKey
+   ```
+
+3. Add at least one route that references it. A provider with no route is not
+   reachable, and validation rejects a route that names a provider you have not
+   declared:
+
+   ```yaml title="aigateway.yaml"
+   spec:
+     routes:
+       - name: gpt4o
+         match:
+           model: 'gpt-4o'
+         backendRefs:
+           - provider: openai
+   ```
+
+4. Apply the resource and confirm the operator reconciled it:
+
+   ```bash
+   kubectl apply -f aigateway.yaml
+   kubectl get aigw -n <NAMESPACE>
+   ```
+
+   The **Providers** column reports ready providers out of total. For detail,
+   read the `ProvidersReady` status condition, whose `message` names the
+   provider that failed:
+
+   ```bash
+   kubectl get aigw <NAME> -n <NAMESPACE> \
+     -o jsonpath='{.status.conditions}' | jq .
+   ```
+
+5. Send a request through the gateway to confirm the credential works
+   end to end:
+
+   ```bash
+   curl -sk https://<GATEWAY_ENDPOINT>/v1/chat/completions \
+     -H "Authorization: Bearer <TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "ping"}]}'
+   ```
+
+## Provider specifics
+
+### Anthropic
+
+```yaml
+providers:
+  - name: anthropic
+    schema: Anthropic
+    endpoint:
+      hostname: api.anthropic.com
+      port: 443
+    credentials:
+      type: AnthropicAPIKey
+      secretRef:
+        name: anthropic-key
+        key: apiKey
+```
+
+### AWS Bedrock
+
+Bedrock authenticates with IAM rather than a stored key, so there is no Secret.
+Give the gateway's proxy pods an IAM role, through IRSA or pod identity, that
+permits the Bedrock actions you intend to use.
+
+```yaml
+providers:
+  - name: bedrock
+    schema: AWSBedrock
+    endpoint:
+      hostname: bedrock-runtime.us-east-1.amazonaws.com
+      port: 443
+    credentials:
+      type: AWSCredentials
+      region: us-east-1
+```
+
+### Google Vertex AI
+
+Vertex is reached through a regional endpoint and authenticates with a Google
+service-account key. The `credentials.region` value must match the region
+prefix in the hostname.
+
+**The Secret's data key must be `service_account.json`.** That name is fixed,
+and a different key is ignored on this path rather than reported as an error.
+
+```bash
+kubectl create secret generic vertex-sa \
+  -n <NAMESPACE> \
+  --from-file=service_account.json=<PATH_TO_SERVICE_ACCOUNT_JSON>
+```
+
+```yaml
+providers:
+  - name: vertex
+    schema: GCPVertexAI
+    endpoint:
+      hostname: us-central1-aiplatform.googleapis.com
+      port: 443
+    credentials:
+      type: GCPCredentials
+      region: us-central1
+      projectName: <GCP_PROJECT_NAME>
+      secretRef:
+        name: vertex-sa
+```
+
+Service-account keys are the only supported Vertex credential. Workload
+Identity Federation is not supported.
+
+### Google AI Studio
+
+Google AI Studio has no native schema of its own. Selecting `GeminiAIStudio`
+makes the gateway speak OpenAI's request and response shape and rewrite the
+path for AI Studio's OpenAI-compatible surface, so no extra configuration is
+needed beyond the API key.
+
+### OpenAI-compatible providers
+
+Many providers expose an OpenAI-compatible API at a non-standard path.
+OpenRouter, for example, serves chat completions under `/api/v1`. Set
+`schema: OpenAI` and add `pathPrefix`; the prefix replaces the client's `/v1`
+segment, so the upstream path becomes `<PATH_PREFIX>/chat/completions`.
+
+```yaml
+spec:
+  providers:
+    - name: openrouter
+      schema: OpenAI
+      pathPrefix: /api/v1
+      endpoint:
+        hostname: openrouter.ai
+        port: 443
+      credentials:
+        type: APIKey
+        secretRef:
+          name: openrouter-key
+          key: apiKey
+```
+
+`pathPrefix` is valid only with `schema: OpenAI`. Providers that already carry
+their own prefix, such as `GeminiAIStudio`, must not set it.
+
+Onboarding an OpenAI-compatible provider needs no code change, only this
+resource edit. In the audit and journaling streams it is identified by its
+`name`, so it stays distinguishable from a native OpenAI provider.
+
+:::warning[Name an OpenRouter provider exactly `openrouter`]
+
+Rates for an OpenAI-compatible provider are looked up first by the provider's
+`name`, then by its schema family. The pricing catalog accepts a fixed set of
+provider values, so an OpenRouter provider named anything else has no rates it
+can resolve, and its OpenRouter-only model slugs are refused at admission
+rather than billed at the wrong rate. Running more than one OpenRouter account,
+or renaming the provider, is not supported for spend tracking today.
+
+:::
+
+## Rotate a credential
+
+Update the Secret in place. No resource edit and no pod restart is needed; the
+gateway picks up Secret changes on its own.
+
+```bash
+kubectl create secret generic openai-key \
+  -n <NAMESPACE> \
+  --from-literal=apiKey='<NEW_OPENAI_API_KEY>' \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Send a test request afterwards to confirm the new credential is in use.
+
+## Remove a provider
+
+Remove the routes that reference the provider first, then the provider itself,
+then apply. Validation rejects a resource whose routes name a provider that no
+longer exists, so removing them in the other order fails.
+
+```bash
+kubectl apply -f aigateway.yaml
+kubectl delete secret openai-key -n <NAMESPACE>
+```
+
+The gateway cleans up the infrastructure it created for that provider
+automatically.
+
+## Next steps
+
+- [Route models](./model-routing.mdx) to map model names onto the providers you
+  just connected, with weighting and failover.
+- [Budgets and pricing](./budgets-and-pricing.mdx) to price the models you route
+  to. A model with no price is refused, so this is not optional.
+- [AI Gateway CRD reference](../reference/crds-ai-gateway/index.mdx) for every
+  provider and credential field.

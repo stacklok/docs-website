@@ -1,0 +1,322 @@
+---
+title: Detect PCI and PII in prompts
+sidebar_label: PCI/PII controls
+description:
+  Scan prompts and responses for credit cards, national identifiers, and other
+  sensitive data, and block, redact, or log what is found.
+---
+
+The gateway can scan request and response bodies for personally identifiable
+information (PII) and payment data, then block the request, redact the match, or
+simply record it. Scanning runs in your cluster and never calls out to a cloud
+service. It is configured under `spec.processor` on the `AIGateway` resource, and
+changes are picked up without a restart.
+
+Detection itself is performed by a named-entity-recognition service. Microsoft
+Presidio is the provider wired today.
+
+:::note
+
+This is a different surface from
+[prompt injection screening](./prompt-injection-screening.mdx), which calls a
+cloud service to look for adversarial prompts. The two are configured
+independently and can be used together.
+
+:::
+
+## Choose what happens on a match
+
+```yaml title="aigateway.yaml"
+spec:
+  processor:
+    replicas: 2
+    requestAction: Block
+    responseAction: LogOnly
+    placeholder: '[REDACTED]'
+    nerProvider:
+      type: presidio
+      timeout: '5s'
+      failureAction: fail-closed
+      presidio:
+        scoreThreshold: 50
+        language: 'en'
+        entities:
+          - CREDIT_CARD
+          - US_SSN
+          - EMAIL_ADDRESS
+          - PHONE_NUMBER
+```
+
+| Action    | On the request                                       | On the response                                    |
+| --------- | ---------------------------------------------------- | -------------------------------------------------- |
+| `Block`   | Refused. The prompt never reaches the provider.      | Refused. The response is not delivered.            |
+| `Redact`  | Matches replaced with `placeholder`, then forwarded. | Matches replaced before the client sees them.      |
+| `LogOnly` | Recorded, forwarded unmodified.                      | Recorded, forwarded unmodified.                    |
+
+`responseAction` is optional and falls back to `requestAction`.
+
+## Choose which entities to look for
+
+`entities` is the authoritative list of what the scanner looks for. The default
+covers common structured identifiers plus model-derived entities such as
+`PERSON` and `LOCATION`. Tune it to your data-handling posture.
+
+| Entity                | Matches                                          |
+| --------------------- | ------------------------------------------------ |
+| `CREDIT_CARD`         | Card numbers, checksum-validated                 |
+| `US_SSN`              | US Social Security numbers                       |
+| `ABA_ROUTING_NUMBER`  | US bank routing numbers, checksum-validated      |
+| `IBAN_CODE`           | International bank account numbers               |
+| `EMAIL_ADDRESS`       | Email addresses                                  |
+| `PHONE_NUMBER`        | Phone numbers, region-aware                      |
+| `IP_ADDRESS`          | IPv4 and IPv6 addresses                          |
+| `US_ITIN`             | US taxpayer identification numbers               |
+| `IN_AADHAAR`          | Indian Aadhaar numbers                           |
+| `AU_TFN`              | Australian tax file numbers                      |
+| `UK_NHS`              | UK NHS numbers                                   |
+| `PERSON`              | Personal names, from the language model           |
+| `LOCATION`            | Place names, from the language model              |
+| `DATE_TIME`           | Dates and times, from the language model          |
+
+The full supported list is published in the
+[Presidio documentation](https://microsoft.github.io/presidio/supported_entities/).
+Custom recognizers appear under their configured entity name and can be listed
+here verbatim.
+
+## Tune the confidence threshold
+
+`scoreThreshold` is the minimum confidence, from 0 to 100, for a detection to be
+acted on. It defaults to `50`.
+
+- **50** suits high-sensitivity environments where a false negative is worse
+  than a false positive. Model-derived entities such as `PERSON` typically score
+  in this range, so this threshold catches most of them.
+- **70 to 80** is a reasonable start for coding assistants and chat, where a
+  false-positive block is disruptive.
+- **85 and above** is conservative, and in practice surfaces only
+  high-confidence structured matches such as card numbers.
+
+A common shape is to keep the threshold at 50 but narrow `entities` to the
+structured identifiers you actually care about, dropping the model-derived ones
+so they cannot drive enforcement.
+
+## Decide how failures behave
+
+Three independent dials cover the three ways scanning can fail. All three should
+stay closed in production. The open settings exist for the rollout window, or
+for incident response when the detection backend is unhealthy.
+
+```yaml
+spec:
+  processor:
+    extractionFailureAction: Block
+    mutationFailureAction: Block
+    nerProvider:
+      failureAction: fail-closed
+```
+
+| Field                       | Closed setting                            | Open setting                     |
+| --------------------------- | ----------------------------------------- | -------------------------------- |
+| `extractionFailureAction`   | Refuse if the body cannot be parsed        | Forward unmodified               |
+| `mutationFailureAction`     | Refuse if redaction fails                  | Forward unmodified               |
+| `nerProvider.failureAction` | Refuse on backend error, timeout, or open circuit | Log a warning and forward |
+
+A circuit breaker sits in front of the detection backend. While it is open,
+every request short-circuits straight to `failureAction` without a backend call:
+
+```yaml
+spec:
+  processor:
+    nerProvider:
+      circuitBreaker:
+        failureThreshold: 5
+        resetTimeout: '30s'
+```
+
+This is a different breaker from the one in
+[`spec.resilience`](./model-routing.mdx#configure-retries-health-checks-and-timeouts),
+which protects your model providers.
+
+## Size the scanner
+
+`timeout` caps each individual detection call and defaults to `5s`. That sits
+comfortably above a warm backend, and well above the large-body case that agent
+command-line tools routinely produce: their request bodies run to hundreds of
+kilobytes and push inference past a shorter window. Lowering it tightens the
+latency budget but risks tripping the breaker under load.
+
+:::warning
+
+Keep `spec.processor.messageTimeout` strictly greater than
+`nerProvider.timeout`, or the request will be abandoned before the detection
+call returns.
+
+:::
+
+`concurrency` caps how many detection calls run in parallel for one request, one
+per text node, defaulting to `8` with a range of 1 to 128. Changing it rolls the
+processor rather than hot-reloading.
+
+:::tip[Concurrency does not help a single-replica backend]
+
+The Presidio analyzer serves one request at a time per pod, so a fan-out simply
+queues server-side. Raising `concurrency` against one replica measurably does
+nothing. The lever for a saturated backend is `presidio.replicas`. To tell which
+one you are short of, divide `stacklok_ai_gateway_presidio_analyze_inflight` by
+the number of ready analyzer pods: anything above 1 means calls are queuing
+inside the backend, where more client-side concurrency cannot reach them. Use
+`concurrency` to keep a scaled-out backend busy, not to extract more from one
+replica.
+
+:::
+
+```yaml
+spec:
+  processor:
+    nerProvider:
+      concurrency: 16
+      presidio:
+        replicas: 2
+        maxReplicas: 6
+        targetCPUUtilization: 75
+        resources:
+          requests:
+            cpu: '500m'
+            memory: 1Gi
+          limits:
+            cpu: '2'
+            memory: 2Gi
+```
+
+The language model loads at pod start and is around 800 MiB resident, so size
+memory accordingly. The analyzer is CPU-bound, so replicas plus an autoscaler is
+the simplest scaling lever. At two replicas or more, the gateway also creates a
+PodDisruptionBudget for it.
+
+## Cache scan results
+
+Agent command-line tools resend the whole conversation on every turn, so the
+same text is scanned repeatedly. The result cache keys each answer by the text
+plus a fingerprint of the scanning configuration and serves repeats from the
+Redis or Valkey instance the platform already runs, skipping the detection call
+entirely.
+
+```yaml
+spec:
+  processor:
+    nerProvider:
+      resultCache:
+        enabled: true
+        ttl: '24h'
+```
+
+The cache is off by default. There is no address field: the backend comes from
+the platform chart's Redis values. Enabling it with no resolvable backend runs
+uncached rather than failing, and never changes a detection outcome. The
+`NERResultCacheReady` status condition reports whether an address resolved,
+which is not the same as whether it is reachable, so confirm a working cache
+from the hit-rate metric rather than from the condition.
+
+:::danger[Read access to the cache confirms what text passed through the gateway]
+
+Read this before enabling the cache. Keys are derived from an unsalted hash of
+the scanned text, which makes the keyspace a confirmation oracle. Anyone who can
+read the backing Redis can hash a candidate piece of text, probe for the key,
+and confirm whether that exact text was scanned by this gateway. On a hit they
+also learn the entity types found, the name of the rule that matched, and the
+byte offsets of each detection, which discloses the position and length of each
+detected value. If you ship custom recognizers, the rule name tells a reader
+which of your own detection rules fired.
+
+What the cache never stores is the text itself or any matched substring, which
+is what makes entries safe to keep alongside other counters in a shared
+instance. Keyspaces are scoped per gateway, so the oracle never crosses a
+gateway boundary, and two gateways with identical configuration deliberately do
+not warm each other's entries. Values also carry an integrity tag, so someone
+with write access cannot plant an empty result and suppress detection.
+
+Treat read access to that backend as roughly equivalent to being able to confirm
+what text passed through the gateway. If that is not acceptable in your
+environment, leave the cache off. It is a latency optimization and nothing else
+depends on it.
+
+:::
+
+### The integrity secret
+
+There is normally nothing to provision. The first time the gateway sees the
+cache enabled, it creates a Secret named `<GATEWAY_NAME>-ner-cache-mac` in the
+gateway's namespace, owned by the gateway resource, holding fresh random bytes.
+It is only created if absent, so a steady-state reconcile never replaces a live
+value.
+
+To supply your own instead, through External Secrets, sealed secrets, or
+out-of-band creation, name it on the operator chart:
+
+```yaml title="values.yaml"
+nerResultCache:
+  macSecret:
+    name: <SECRET_NAME>
+    key: mac-secret
+```
+
+Two constraints on a supplied Secret. It must live in the namespace of every
+gateway the operator serves. And its value must be at least 32 bytes of
+**printable text**, not raw bytes, because it reaches the pod as an environment
+variable and raw bytes will wedge the pod rather than degrade gracefully.
+Base64-encoding your entropy satisfies both.
+
+A missing or undersized secret costs latency, never detection: entries that
+cannot be verified are re-scanned. That failure is silent, so again, confirm
+from the hit rate rather than from a status condition.
+
+Rotation is the same either way: replace the value. Every existing entry then
+fails verification and is re-scanned, which is a cold start rather than a
+correctness event, and it is the entire incident response for a leaked secret.
+
+### Time to live and footprint
+
+`ttl` defaults to 24 hours. Entries cannot go stale, because the key covers both
+content and configuration: changing a threshold, the entity list, a recognizer,
+or the analyzer image changes the key and cold-starts the affected entries on its
+own. So the setting is a memory and disclosure-window knob, never a correctness
+one. Shorten it to narrow the oracle window described above; there is no
+correctness reason to.
+
+Retuning it rolls no pod, rebuilds nothing, and resets no circuit-breaker state.
+That matters during a backend outage: a roll would kill in-flight requests, and
+rebuilding the detection client would reopen the breaker and herd a struggling
+backend back into per-request timeouts, which refuse requests under the default
+closed failure action.
+
+For footprint, budget roughly 250 bytes per distinct conversation turn within
+the window. Entry size is independent of turn size, because a value holds entity
+types, rule names, and offsets rather than text, so a 200 KB agent payload and a
+one-line message cost the same. And the count is bounded by distinct turns
+rather than request volume, since resent turns collapse onto entries that
+already exist. At 100,000 requests a day that is on the order of 25 MB at steady
+state.
+
+That estimate is derived rather than measured. Check it against your own
+workload before relying on it.
+
+### Cache metrics
+
+| Metric                                          | What it measures                                                     |
+| ----------------------------------------------- | -------------------------------------------------------------------- |
+| `stacklok_ai_gateway_ner_cache_lookups_total`   | One per attempted read, labeled hit or miss and request or response  |
+| `stacklok_ai_gateway_ner_cache_errors_total`    | Backend or codec faults, labeled by operation and error type          |
+| `stacklok_ai_gateway_ner_cache_op_duration_seconds` | Backend round-trip per operation                                 |
+
+The hit rate is the only true measure of detection calls avoided. Every error is
+a miss that falls through to a real detection call, so a non-zero error rate
+costs latency and hit rate rather than correctness. A request that runs uncached
+because no backend resolved issues no lookup at all, and so charts no series
+rather than a zero percent hit rate.
+
+## Next steps
+
+- [Screen prompts for injection](./prompt-injection-screening.mdx) to add
+  adversarial-prompt screening alongside this.
+- [Forward audit logs](./forward-audit-logs.mdx) to get detections into your
+  security information and event management system.

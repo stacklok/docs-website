@@ -1,0 +1,292 @@
+---
+title: Forward audit logs to your SIEM
+sidebar_label: Audit logs
+description:
+  Enable structured audit events for model requests, detections, and key
+  lifecycle, then ship them to Splunk, Elastic, Kafka, or Loki.
+---
+
+The gateway emits structured JSON audit events to the standard output of each of
+its pods. Events cover data-plane and application-layer actions: request
+admission, detection decisions, virtual key lifecycle, and authentication
+outcomes.
+
+Every event carries the fields required by NIST SP 800-53 controls AU-2, AU-3,
+and AU-8: a unique audit ID, a UTC timestamp, the subject, the component, the
+outcome, an optional target, and an extra block for forensic correlation.
+
+## Enable audit events
+
+Emission is off by default and is enabled per gateway:
+
+```yaml title="aigateway.yaml"
+apiVersion: ai-gateway.stacklok.dev/v1alpha1
+kind: AIGateway
+metadata:
+  name: ai-gateway
+spec:
+  audit:
+    enabled: true
+```
+
+When enabled, every audit event fires. There are no per-component toggles and no
+sampling, on the principle that routing and volume control belong to your
+ingest layer rather than to the thing being audited.
+
+## What gets captured
+
+| Event type                          | Fires when                                                  | Outcome         |
+| ----------------------------------- | ----------------------------------------------------------- | --------------- |
+| `aigw.processor.request.blocked`    | A detection blocks a request                                 | denied          |
+| `aigw.processor.request.redacted`   | A request body was masked before forwarding                  | success         |
+| `aigw.processor.response.blocked`   | Response masking failed, so the client got a synthetic error | denied          |
+| `aigw.processor.response.redacted`  | A response body was masked before delivery                   | success         |
+| `aigw.processor.detection.logged`   | A passive detector fired, nothing mutated                    | success         |
+| `aigw.processor.body.truncated`     | A request or response body exceeded the size limit           | failure         |
+| `aigw.processor.config.reloaded`    | Configuration was reloaded                                   | success/failure |
+| `aigw.apikey.key.created`           | A virtual key was created                                    | success/error   |
+| `aigw.apikey.key.rotated`           | A virtual key was rotated                                    | success/error   |
+| `aigw.apikey.key.revoked`           | A virtual key was revoked                                    | success/error   |
+| `aigw.apikey.key.updated`           | A key was enabled, disabled, or edited                       | success/error   |
+| `aigw.apikey.authn.failed`          | Token validation failed on an API call                       | failure         |
+| `aigw.apikey.authz.denied`          | The caller lacked the required role                          | denied          |
+| `aigw.apikey.validation.failed`     | An invalid or unknown virtual key was presented              | failure         |
+| `aigw.apikey.ratelimit.exceeded`    | A per-key request rate limit was exceeded                    | denied          |
+
+Event types follow the namespace `aigw.<component>.<resource>.<verb>`, so a SIEM
+rule can match a whole component or a single verb.
+
+## Event schema
+
+```json
+{
+  "audit_id": "b3d4f7a2-8c11-4f6e-9b0a-1c2d3e4f5a6b",
+  "type": "aigw.processor.request.blocked",
+  "logged_at": "2026-04-20T14:22:31.418Z",
+  "outcome": "denied",
+  "component": "main-processor",
+  "source": { "type": "network", "value": "10.42.0.17" },
+  "subjects": { "user": "alice", "virtual_key_id": "a7Hj3kLm" },
+  "target": {
+    "type": "llm_request",
+    "model": "gpt-4o",
+    "provider": "openai",
+    "route": "chat-completions"
+  },
+  "metadata": {
+    "extra": {
+      "request_id": "c0ffee01-2a3b-4c5d-6e7f-8091a2b3c4d5",
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "client_ip": "203.0.113.42",
+      "pod": "ai-gateway-main-processor-7f6b9c-x2k4q",
+      "detection_types": ["CREDIT_CARD", "US_SSN"],
+      "action": "block",
+      "body_bytes": 1842
+    }
+  }
+}
+```
+
+**Subjects** are never taken from attacker-controllable headers. `user` comes
+from the authenticated caller's token on API events, or from a header set by a
+trusted upstream filter on request-path events. `virtual_key_id` is stamped only
+after a key has been validated.
+
+**Targets** are `{type: llm_request, model, provider, route}` on request-path
+events and `{type: virtual_api_key, key_id, prefix}` on key events. Secret key
+material is never emitted. A SIEM rule keying on `target.provider` should match
+the lowercase provider set: `openai`, `anthropic`, `awsbedrock`, `azureopenai`,
+`gcpvertexai`, `geminiaistudio`.
+
+**Common extras** are `request_id`, `trace_id` and `span_id` for OpenTelemetry
+correlation, `client_ip`, `user_agent`, `pod`, and the gateway's name and
+namespace.
+
+Detection events additionally carry `detection_types`, the entity names that
+fired, and `action`, one of `block`, `redact`, or `log-only`. Passive detections
+split their attribution into `shadow_types`, for detectors configured but not
+acting, and `log_only_types`, for detectors whose policy is deliberately
+passive. Keeping those distinct lets a compliance team tell "we saw this and
+chose not to act" apart from "policy here is passive by design".
+
+Request-path events carry `body_bytes`; response-path events carry
+`chunk_bytes`, which is per-chunk for streaming responses and must not be summed
+with `body_bytes` to estimate traffic.
+
+## Separate audit records from application logs
+
+Each event is one line of JSON on the pod's standard output. Every audit record
+carries `"logger":"audit"` and `"msg":"audit_event"`, so shippers should filter
+on that pair to separate audit records from ordinary application logs on the
+same stream.
+
+## Ship them
+
+Each example below filters on those same two keys. Adapt hostnames, credentials,
+and `<NAMESPACE>` for your environment.
+
+### Fluent Bit to Splunk
+
+```conf
+[INPUT]
+    Name              tail
+    Path              /var/log/containers/*<NAMESPACE>*.log
+    Parser            docker
+    Tag               kube.audit.*
+    Refresh_Interval  5
+
+[FILTER]
+    Name    grep
+    Match   kube.audit.*
+    Regex   log .*"logger":"audit".*"msg":"audit_event".*
+
+[FILTER]
+    Name          parser
+    Match         kube.audit.*
+    Key_Name      log
+    Parser        json
+    Reserve_Data  On
+
+[OUTPUT]
+    Name          splunk
+    Match         kube.audit.*
+    Host          <SPLUNK_HEC_HOST>
+    Port          8088
+    Splunk_Token  ${SPLUNK_HEC_TOKEN}
+    TLS           On
+    event_source  aigw-audit
+    event_index   aigw_audit
+```
+
+### Fluent Bit to Elastic
+
+Use the same input and filters, with an Elastic output:
+
+```conf
+[OUTPUT]
+    Name            es
+    Match           aigw.audit
+    Host            <ELASTICSEARCH_HOST>
+    Port            9200
+    HTTP_User       ${ES_USER}
+    HTTP_Passwd     ${ES_PASSWORD}
+    tls             On
+    Logstash_Format On
+    Logstash_Prefix aigw-audit
+    Replace_Dots    On
+```
+
+### Vector to Kafka
+
+```yaml
+sources:
+  kubernetes_logs:
+    type: kubernetes_logs
+    extra_namespace_label_selector: 'kubernetes.io/metadata.name=<NAMESPACE>'
+
+transforms:
+  parse_json:
+    type: remap
+    inputs: [kubernetes_logs]
+    source: |
+      . = parse_json!(.message)
+      if .logger != "audit" || .msg != "audit_event" { abort }
+
+sinks:
+  kafka:
+    type: kafka
+    inputs: [parse_json]
+    bootstrap_servers: '<KAFKA_BROKERS>'
+    topic: aigw-audit
+    encoding:
+      codec: json
+    compression: snappy
+```
+
+### Promtail to Loki
+
+```yaml
+scrape_configs:
+  - job_name: aigw-audit
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace]
+        regex: <NAMESPACE>
+        action: keep
+    pipeline_stages:
+      - json:
+          expressions:
+            logger: logger
+            msg: msg
+            type: type
+            outcome: outcome
+            component: component
+      - match:
+          selector: '{logger!="audit"}'
+          action: drop
+      - labels:
+          type:
+          outcome:
+          component:
+```
+
+### CloudWatch and rsyslog
+
+The CloudWatch agent cannot filter on a JSON key natively. Either ingest
+everything and apply a log-group metric filter:
+
+```text
+{ $.logger = "audit" && $.msg = "audit_event" }
+```
+
+or run Fluent Bit alongside it with the `cloudwatch_logs` output, using the
+filters above so only audit lines reach the dedicated log group.
+
+For rsyslog, match both markers before forwarding:
+
+```conf
+if $msg contains '"logger":"audit"' and $msg contains '"msg":"audit_event"' then {
+    action(type="omfwd"
+           target="<SIEM_HOST>"
+           port="514"
+           protocol="tcp"
+           template="RSYSLOG_SyslogProtocol23Format")
+    stop
+}
+```
+
+## Retention, tamper evidence, and GDPR
+
+The gateway emits events and takes no position on how long you keep them,
+whether storage is tamper-evident (NIST SP 800-53 AU-9), or which fields are in
+scope for GDPR. Those are decisions for your ingest layer. Index retention
+policies, index lifecycle management, log-group retention, and write-once
+archival with object lock all work here.
+
+Field-level redaction, for example stripping a caller's email address for EU
+data subjects, is best enforced as an ingest-time transform before the event
+reaches long-term storage. The gateway never reads back or replays events after
+emitting them.
+
+## What these events are not
+
+Two adjacent streams are out of scope.
+
+The **Kubernetes API audit log** covers control-plane activity such as `kubectl`
+calls and operator reconciles. Enable it in your API server audit policy and
+forward it separately.
+
+**Interaction journaling** captures full prompt and response content for every
+request, configured under `spec.journaling`. Audit events record *that* a
+request was admitted, denied, or masked and *why*; journaling records *what* the
+prompt and response contained. See the
+[AIGateway reference](../reference/crds-ai-gateway/aigateway.mdx) for its
+fields.
+
+## Next steps
+
+- [PCI/PII controls](./pci-pii-controls.mdx) to configure the detections these
+  events report.
+- [Screen prompts for injection](./prompt-injection-screening.mdx), whose
+  verdicts also land in this stream.

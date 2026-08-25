@@ -1,0 +1,281 @@
+---
+title: Budgets and pricing
+sidebar_label: Budgets and pricing
+description:
+  Cap LLM spend per user or group in USD, publish a pricing catalog, and
+  understand why an unpriced model is refused at the gateway.
+---
+
+A _budget_ caps what one user or one group is allowed to spend on model calls,
+denominated in USD. Every request is checked against the budget store before any
+tokens are spent, and every response is priced from the provider's reported
+usage and charged against that same store.
+
+Budgets are rows you manage through a REST API, not fields on a manifest.
+Creating, editing, or deleting one budget has no effect on any other budget's
+counters.
+
+:::danger[Enforcement is fail-closed. Load budgets before you turn it on.]
+
+A caller with no applicable budget is **denied**, not allowed through. There is
+no default limit and no implicit allow. So the order of operations into any
+environment that already has traffic is:
+
+1. Create a budget for every existing user or group in that environment.
+2. Only then point the gateway at the budget service.
+
+Doing it the other way round is a hard outage, not a degraded mode. Every
+request from every principal you have not loaded is refused until you finish
+step 1.
+
+:::
+
+## Prerequisites
+
+Budget enforcement is only injected into a gateway that has at least one
+`AIPolicy` targeting it. The policy's contents are not consulted for budgets, so
+an `AIPolicy` that exists purely to satisfy this requirement is a normal and
+supported shape. Without one, budgets are silently not enforced.
+
+Confirm enforcement is actually live before you rely on it:
+
+```bash
+kubectl get aigw <NAME> -n <NAMESPACE> \
+  -o jsonpath='{.status.webhooks}' | jq .
+```
+
+Both budget entries should report `probeSucceeded: true`. A `false` almost
+always means the audience configured on the gateway and on the budget service
+do not match exactly.
+
+## Create budgets
+
+A budget identifies its principal by scope and subject. `scope` is `user` or
+`group`; `subject_id` is the OIDC subject for a user, or the directory group's
+UUID for a group. Each budget carries a `limit_usd` as a decimal string and a
+`period` of `day`, `month`, or `year`. Periods are calendar-aligned, not rolling
+windows from the first request.
+
+### One budget at a time
+
+Prefer the per-id endpoints for anything interactive. They create or update
+exactly one budget and cannot delete another by omission:
+
+```bash
+curl -X PUT https://<GATEWAY_API>/v1/budgets/users/<SUBJECT_ID> \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"limit_usd": "5.000000000", "period": "day"}'
+
+curl -X PUT https://<GATEWAY_API>/v1/budgets/groups/<GROUP_UUID> \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"limit_usd": "500.000000000", "period": "month", "precedence": 1}'
+```
+
+Group budgets take a 1-based `precedence`. User budgets do not, because a user's
+own budget is always charged first.
+
+### The whole collection at once
+
+`PUT /v1/budgets` replaces the **entire** collection: budgets in the request are
+created or updated, and **budgets absent from the request are deleted**. Use it
+for bulk import, not for edits.
+
+```bash
+curl -X PUT https://<GATEWAY_API>/v1/budgets \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "budgets": [
+      {"scope": "user",  "subject_id": "<SUBJECT_ID>", "limit_usd": "5.000000000",   "period": "day"},
+      {"scope": "group", "subject_id": "<GROUP_UUID>", "limit_usd": "500.000000000", "period": "month"}
+    ]
+  }'
+```
+
+Spend counters survive a collection replace, because they are keyed on the
+principal rather than on the budget row, so a bulk import does not reset
+anyone's usage.
+
+`GET /v1/budgets` returns the collection with an `ETag`. Send it back as
+`If-Match` on your next write to detect a concurrent change; a `412` response
+means re-read and retry.
+
+## Which budget gets charged
+
+A user's own budget is tried first, whatever their group membership. If the user
+has no budget, or it has no headroom left, the request charges the first group
+budget in ascending `precedence` order that still has headroom. A caller with no
+applicable budget at all is the fail-closed case: refused.
+
+## Publish a pricing catalog
+
+Pricing is one organization-wide catalog, versioned by `effective_from`. A
+published version takes effect immediately for interactions after that
+timestamp, with no restart.
+
+The gateway ships a baseline catalog, regenerated weekly from public model
+pricing data, so a fresh install prices new models without any action from you.
+The baseline is dated far in the past, which means **any** version you publish
+outranks it permanently. Once you publish, the weekly baseline refresh never
+reaches your deployment again: to pick up a model the refreshed baseline added,
+add it to your own catalog.
+
+:::warning[`PUT` replaces the whole catalog]
+
+`PUT /v1/budgets/pricing` publishes a complete replacement, not a partial merge.
+Every entry you omit becomes unpriced, and unpriced models are refused. Always
+`GET` the active catalog, edit the returned matrix, then `PUT` the whole thing
+back.
+
+:::
+
+```bash
+curl https://<GATEWAY_API>/v1/budgets/pricing \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" > catalog.json
+# edit catalog.json
+curl -X PUT https://<GATEWAY_API>/v1/budgets/pricing \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d @catalog.json
+```
+
+If your active catalog omits a model the baseline prices, the service logs a
+warning at startup naming the active version and the exact provider and model
+pairs it does not cover. Read that as a standing statement that those models are
+unpriced, not as a transient condition.
+
+A binary rollback does not roll pricing back. Whatever version was active stays
+active, so recovery is a `PUT` of the rates you want.
+
+### Rate fields by provider
+
+Set the optional sub-counts when a model in your workload reports them.
+Otherwise the cost falls back to the nearest required rate, which can materially
+under-bill audio and reasoning workloads.
+
+Anthropic reports cache-creation tokens split by time to live, so declare each
+rate separately:
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "anthropic": {
+    "inputUsdPerMillion": "3",
+    "cacheCreation5mInputUsdPerMillion": "3.75",
+    "cacheCreation1hInputUsdPerMillion": "6",
+    "cachedInputUsdPerMillion": "0.3",
+    "outputUsdPerMillion": "15"
+  }
+}
+```
+
+OpenAI reasoning models report reasoning tokens, and the audio families report
+audio input and output separately:
+
+```json
+{
+  "provider": "openai",
+  "model": "gpt-4o-audio-preview",
+  "openai": {
+    "inputUsdPerMillion": "2.5",
+    "cachedInputUsdPerMillion": "1.25",
+    "outputUsdPerMillion": "10",
+    "audioInputUsdPerMillion": "40",
+    "audioOutputUsdPerMillion": "80"
+  }
+}
+```
+
+Some models charge a higher rate above a prompt-size threshold. Encode that with
+`promptSizeTiers`:
+
+```json
+{
+  "provider": "google",
+  "model": "gemini-2.5-pro",
+  "google": {
+    "inputUsdPerMillion": "1.25",
+    "cachedInputUsdPerMillion": "0.125",
+    "outputUsdPerMillion": "10",
+    "thoughtsOutputUsdPerMillion": "10",
+    "promptSizeTiers": [
+      {
+        "aboveTokens": 200000,
+        "inputUsdPerMillion": "2.5",
+        "cachedInputUsdPerMillion": "0.25",
+        "outputUsdPerMillion": "15"
+      }
+    ]
+  }
+}
+```
+
+Server-side tools that bill per thousand calls go in a `tools` block alongside
+`entries`, per provider rather than per model:
+
+```json
+{
+  "entries": ["...per-model entries..."],
+  "tools": {
+    "anthropic": { "webSearchUsdPerThousand": "10" },
+    "openai": {
+      "webSearchUsdPerThousand": "10",
+      "fileSearchUsdPerThousand": "2.5"
+    },
+    "google": { "groundingSearchUsdPerThousand": "35" }
+  }
+}
+```
+
+## An unpriced model is refused
+
+If a request names a provider and model with no entry in the active catalog, the
+gateway refuses it. The platform will not serve a request it cannot account for,
+so keep the catalog complete for every model you route to.
+
+This is deliberately the same treatment as a caller whose identity cannot be
+resolved: both are cases where the platform cannot govern the request, rather
+than cases where the caller is out of money.
+
+## Monitor spend
+
+| Endpoint                     | Returns                                                     |
+| ---------------------------- | ----------------------------------------------------------- |
+| `GET /v1/budgets/summary`    | Used, limit, and remaining per principal for the period      |
+| `GET /v1/budgets/spend`      | A spend time series, for charting                            |
+| `GET /v1/budgets/breakdown`  | Current-period spend for one budget, by user, model, or provider |
+| `GET /v1/budgets/charges`    | Recorded charges, newest first, with the exact amount charged |
+| `GET /v1/budgets/events`     | Raw usage events, including those that resolved to no charge  |
+
+`GET /v1/budgets/groups/<ID>` and `GET /v1/budgets/users/<ID>` return the same
+breakdown addressed per budget, with a `dimension` query parameter.
+
+Any authenticated caller can read their own figures at the `/v1/me/budgets/*`
+equivalents without an admin grant. The `/v1/budgets/*` routes above require the
+platform admin grant, the same one directory administration requires; there is
+no separate budgets role.
+
+The same figures are available in the console. See
+[Budgets](../enterprise-console/admin/budgets.mdx) and
+[Organization spend](../enterprise-console/admin/organization-spend.mdx).
+
+## When a budget runs out
+
+An exhausted budget refuses further requests with the same response as any other
+policy denial. The response deliberately does not reveal which condition
+matched, so to tell exhaustion apart from a missing budget, read the caller's
+budget rows and usage through the APIs above.
+
+A budget recovers on its own when the calendar period rolls over. To restore
+access immediately, raise `limit_usd` on the affected budget; it applies to the
+next request, with no restart and no counter reset.
+
+## Next steps
+
+- [Connect model providers](./providers-and-models.mdx) if a model you need to
+  price is not routed yet.
+- [Budgets in the console](../enterprise-console/admin/budgets.mdx) for the
+  same operations without the API.

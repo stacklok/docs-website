@@ -1,0 +1,86 @@
+---
+title: Configure the AI Gateway
+sidebar_label: Configure the AI Gateway
+description:
+  Enable the AI Gateway in the platform chart, satisfy its prerequisites, and
+  bring up a working gateway in the right order.
+---
+
+The AI Gateway is part of the platform chart but is **off by default**. This page
+covers turning it on and the order to bring it up in. Once it is running, see
+[AI Gateway policy](../enterprise-ai-gateway/index.mdx) for the day-to-day
+configuration.
+
+## Prerequisites
+
+- **A corporate identity provider**, configured once at
+  `global.stacklok.primaryIdp`. The gateway ties every request to an identity
+  from that provider. See [Configure identity](./configure-identity.mdx).
+- **PostgreSQL**, which the platform already requires. Budgets, pricing, and
+  recorded spend live there.
+- **Redis or Valkey**, only if you intend to enable the detection result cache.
+  It is optional and off by default. See
+  [PCI/PII controls](../enterprise-ai-gateway/pci-pii-controls.mdx).
+
+## Enable it
+
+Set the install toggle in your platform values and upgrade:
+
+```yaml title="values.yaml"
+global:
+  stacklok:
+    aiGateway:
+      enabled: true
+```
+
+That installs the AI Gateway operator and its custom resource definitions. It
+does not create a gateway: the operator is the thing that turns an `AIGateway`
+resource into running infrastructure, so nothing serves traffic until you apply
+one.
+
+## Bring it up in this order
+
+The sequence matters, because two of the gateway's controls fail closed. Doing
+these steps out of order produces refused requests rather than a permissive
+gateway.
+
+1. **Apply an `AIGateway` resource** with at least one provider and one route.
+   See [Connect model providers](../enterprise-ai-gateway/providers-and-models.mdx).
+
+2. **Create an `AIPolicy` that targets it.** Budget enforcement is only injected
+   into a gateway that has one, so without it budgets are silently not
+   enforced. The policy's contents are not consulted for budgets, so an
+   otherwise empty policy is a supported shape here.
+
+3. **Publish a pricing catalog covering every model you routed.** A model with
+   no price is refused, not billed at zero. The shipped baseline catalog covers
+   common models, so you may have nothing to do at this step, but confirm it
+   rather than assuming.
+
+4. **Create budgets for every user or group that will send traffic**, before you
+   point the gateway at the budget service. A caller with no applicable budget
+   is refused. See
+   [Budgets and pricing](../enterprise-ai-gateway/budgets-and-pricing.mdx).
+
+5. **Verify.** Confirm the gateway reports its providers ready and that budget
+   enforcement probed successfully:
+
+   ```bash
+   kubectl get aigw -n <NAMESPACE>
+   kubectl get aigw <NAME> -n <NAMESPACE> \
+     -o jsonpath='{.status.webhooks}' | jq .
+   ```
+
+## Content screening posture
+
+Detection failures refuse requests by default, which is the posture you want in
+production. A waiver exists to let scanning fail open, but it is default-off,
+governed as an experiment, and unavailable on the stable release channel. Treat
+it as a rollout or incident-response tool rather than a configuration option.
+
+## Next steps
+
+- [AI Gateway policy](../enterprise-ai-gateway/index.mdx) for providers, routing,
+  screening, and budgets.
+- [Connect a client](../enterprise-console/workspace/connect-a-client.mdx) to
+  point a developer's tools at the gateway.
