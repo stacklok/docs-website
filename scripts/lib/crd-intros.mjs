@@ -37,12 +37,33 @@
 export const groupLabels = {
   core: 'Core workloads',
   enterpriseAuthz: 'Enterprise authorization',
+  aiGateway: 'AI Gateway',
   shared: 'Shared configuration',
 };
 
-export const groupOrder = ['core', 'enterpriseAuthz', 'shared'];
+export const groupOrder = ['core', 'enterpriseAuthz', 'aiGateway', 'shared'];
 
 export const intros = {
+  // AI Gateway - the gateway resource first, then the policy that targets it.
+  AIGateway: {
+    slug: 'aigateway',
+    group: 'aiGateway',
+    summary: 'Top-level configuration for an AI Gateway deployment.',
+    description:
+      'Schema reference for AIGateway, which configures model providers, routes, authentication, content screening, and resilience for the Stacklok AI Gateway.',
+    intro:
+      '`AIGateway` is the top-level resource for the Stacklok AI Gateway. One resource configures the whole gateway: its listeners, the model providers it can reach, the routes that map logical model names onto them, authentication, content screening, audit and journaling, and its resilience and timeout behavior. Attach access lists and MCP policy with [AIPolicy](./aipolicy.mdx).',
+  },
+  AIPolicy: {
+    slug: 'aipolicy',
+    group: 'aiGateway',
+    summary: 'Access list and MCP policy for a target AI Gateway.',
+    description:
+      'Schema reference for AIPolicy, which binds principal matchers and MCP policy to a target AIGateway.',
+    intro:
+      '`AIPolicy` binds a set of principal matchers (the access list) and a forward-compatible MCP policy to a target [AIGateway](./aigateway.mdx). It is meant to be edited frequently, so its RBAC is scoped separately from `AIGateway` and the management API can change policy without touching gateway infrastructure.',
+  },
+
   // Core workloads - ordered from primary resource outward.
   MCPServer: {
     slug: 'mcpserver',

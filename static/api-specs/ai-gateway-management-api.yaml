@@ -1,0 +1,1099 @@
+components:
+  schemas:
+    AIPolicy:
+      properties:
+        apiVersion:
+          type: string
+        kind:
+          type: string
+        metadata:
+          $ref: '#/components/schemas/ObjectMeta'
+        spec:
+          $ref: '#/components/schemas/AIPolicySpec'
+        status:
+          $ref: '#/components/schemas/AIPolicyStatus'
+      required:
+      - spec
+      type: object
+    AIPolicyList:
+      properties:
+        apiVersion:
+          type: string
+        items:
+          items:
+            $ref: '#/components/schemas/AIPolicy'
+          type: array
+          uniqueItems: false
+        kind:
+          type: string
+        nextPageToken:
+          type: string
+        remainingItemCount:
+          description: |-
+            RemainingItemCount is nullable on the wire. The apiserver omits it
+            on the last page, when the count was not computed, and — per the
+            Kubernetes API spec — whenever a label or field selector is
+            applied. Generated clients should treat the absence of the key as
+            "unknown" rather than expecting a non-null integer. swag v2 RC5
+            does not emit the `nullable`/`type: [integer, "null"]` hint for
+            *int64.
+          format: int64
+          type: integer
+      required:
+      - items
+      type: object
+    AIPolicyPatch:
+      properties:
+        spec:
+          $ref: '#/components/schemas/AIPolicySpecPatch'
+      type: object
+    AIPolicySpec:
+      properties:
+        description:
+          description: Description is a free-form human-readable description of this
+            policy.
+          maxLength: 2048
+          type: string
+        gatewayRef:
+          $ref: '#/components/schemas/LocalObjectReference'
+        mcpPolicy:
+          $ref: '#/components/schemas/MCPPolicy'
+        principalMatchers:
+          description: |-
+            PrincipalMatchers identifies the principals this policy applies to.
+            Must contain 1..32 entries. Matchers combine as OR; claims within
+            a matcher combine as AND. Admission rejects violations with 422.
+          items:
+            $ref: '#/components/schemas/PrincipalMatcher'
+          type: array
+          uniqueItems: false
+      required:
+      - gatewayRef
+      - principalMatchers
+      type: object
+    AIPolicySpecPatch:
+      properties:
+        description:
+          maxLength: 2048
+          type: string
+        mcpPolicy:
+          $ref: '#/components/schemas/MCPPolicy'
+        principalMatchers:
+          description: When present, replaces the stored principalMatchers entirely.
+            1..32 entries.
+          items:
+            $ref: '#/components/schemas/PrincipalMatcher'
+          type: array
+          uniqueItems: false
+      type: object
+    AIPolicyStatus:
+      properties:
+        appliedToSecurityPolicy:
+          type: string
+        conditions:
+          items:
+            $ref: '#/components/schemas/Condition'
+          type: array
+          uniqueItems: false
+        observedGeneration:
+          type: integer
+      type: object
+    Condition:
+      properties:
+        lastTransitionTime:
+          format: date-time
+          type: string
+        message:
+          maxLength: 32768
+          type: string
+        observedGeneration:
+          format: int64
+          minimum: 0
+          type: integer
+        reason:
+          maxLength: 1024
+          type: string
+        status:
+          enum:
+          - "True"
+          - "False"
+          - Unknown
+          type: string
+        type:
+          maxLength: 316
+          type: string
+      required:
+      - lastTransitionTime
+      - message
+      - reason
+      - status
+      - type
+      type: object
+    Error:
+      properties:
+        error:
+          example: unauthenticated
+          type: string
+        requestId:
+          example: e7c61d23-0b1a-4d3e-8a0b-18d4f1d7e2c3
+          type: string
+        violations:
+          items:
+            $ref: '#/components/schemas/Violation'
+          type: array
+          uniqueItems: false
+      required:
+      - error
+      type: object
+    InfoResponse:
+      properties:
+        name:
+          example: prod-gateway
+          type: string
+        namespace:
+          example: llm-gateway
+          type: string
+      required:
+      - name
+      - namespace
+      type: object
+    LocalObjectReference:
+      description: GatewayRef names the AIGateway in the same namespace this policy
+        targets.
+      properties:
+        name:
+          example: main
+          maxLength: 253
+          type: string
+      required:
+      - name
+      type: object
+    MCPPolicy:
+      description: |-
+        MCPPolicy binds matched principals to MCP servers. Forward-compatible;
+        not enforced in Phase 8.
+      properties:
+        servers:
+          description: Servers lists MCP server names matched principals may use.
+            0..64 entries.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
+    MatchedPolicy:
+      properties:
+        description:
+          maxLength: 2048
+          type: string
+        mcpPolicy:
+          $ref: '#/components/schemas/PolicyMCP'
+        name:
+          maxLength: 253
+          type: string
+      required:
+      - name
+      type: object
+    McpServerCatalog:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/McpServerEntry'
+          type: array
+          uniqueItems: false
+      required:
+      - items
+      type: object
+    McpServerEntry:
+      properties:
+        description:
+          type: string
+        name:
+          maxLength: 253
+          type: string
+        ready:
+          type: boolean
+      required:
+      - name
+      type: object
+    MeResponse:
+      properties:
+        email:
+          example: admin@example.com
+          format: email
+          type: string
+        groups:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        matchedPolicies:
+          items:
+            $ref: '#/components/schemas/MatchedPolicy'
+          type: array
+          uniqueItems: false
+        models:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        roles:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        subject:
+          example: github|42
+          type: string
+        unrestrictedModels:
+          description: |-
+            UnrestrictedModels is true when at least one matched policy grants
+            wildcard model access (a ModelPool with model "*"). When true, Models
+            is informational only — the caller may invoke any model the gateway
+            exposes, and explicit scoped pools in the same policy set still
+            surface in Models alongside the wildcard signal. When false, Models
+            is the authoritative allow-list: an empty array means deny-all.
+          example: false
+          type: boolean
+      required:
+      - groups
+      - matchedPolicies
+      - models
+      - roles
+      - subject
+      - unrestrictedModels
+      type: object
+    ObjectMeta:
+      properties:
+        annotations:
+          additionalProperties:
+            type: string
+          type: object
+        creationTimestamp:
+          format: date-time
+          type: string
+        deletionGracePeriodSeconds:
+          format: int64
+          type: integer
+        deletionTimestamp:
+          format: date-time
+          type: string
+        generation:
+          format: int64
+          type: integer
+        labels:
+          additionalProperties:
+            type: string
+          type: object
+        name:
+          example: main-budget
+          maxLength: 253
+          type: string
+        namespace:
+          type: string
+        resourceVersion:
+          type: string
+        uid:
+          format: uuid
+          type: string
+      type: object
+    OpenAIModel:
+      properties:
+        context_window:
+          example: 200000
+          type: integer
+        created:
+          example: 1690000000
+          type: integer
+        display_name:
+          type: string
+        id:
+          example: openai/gpt-4o-mini
+          type: string
+        object:
+          example: model
+          type: string
+        owned_by:
+          example: openai
+          type: string
+      required:
+      - created
+      - id
+      - object
+      - owned_by
+      type: object
+    OpenAIModelList:
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/OpenAIModel'
+          type: array
+          uniqueItems: false
+        object:
+          example: list
+          type: string
+      required:
+      - data
+      - object
+      type: object
+    PolicyMCP:
+      properties:
+        servers:
+          description: Servers lists MCP server names matched principals may use.
+            0..64 entries.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
+    PrincipalMatcher:
+      properties:
+        claims:
+          additionalProperties:
+            type: string
+          description: |-
+            Claims maps claim name to the expected value. Must contain at least
+            one entry; all entries must match (AND) for the matcher to admit
+            a principal.
+          type: object
+      required:
+      - claims
+      type: object
+    Violation:
+      properties:
+        field:
+          example: /spec/principalMatchers/0/claims
+          type: string
+        message:
+          example: must contain at least one entry
+          type: string
+      required:
+      - field
+      - message
+      type: object
+  securitySchemes:
+    BearerAuth:
+      description: Bearer JWT validated against the AIGateway's OIDC provider.
+      in: header
+      name: Authorization
+      type: apiKey
+externalDocs:
+  description: ""
+  url: ""
+info:
+  contact:
+    name: Stacklok AI Gateway
+    url: https://docs.stacklok.com/platform
+  description: |-
+    Admin-scoped HTTP API backing the help-desk UI. The server is a thin
+    facade over the Kubernetes API: write endpoints translate to typed
+    `AIPolicy` CR create/update/delete calls via controller-runtime, and
+    introspection endpoints read from the same cache. No parallel store.
+
+    ## Scope
+
+    Each API server instance is bound to exactly one Kubernetes namespace
+    (configured via operator flag) and all `AIPolicy` CRs live in that
+    namespace. The namespace is therefore **not** in the URL path; multi-
+    namespace deployments run multiple API instances. A future major version
+    may introduce `/v1/namespaces/{ns}/...` if multi-tenant scoping is
+    required; clients should treat the current paths as namespace-local.
+
+    ## Authentication and authorization
+
+    All requests require a bearer JWT validated against the OIDC provider
+    configured on the target `AIGateway` (`spec.auth.oidc`). Role checks are
+    performed per path; role names (`admin`, `policyEditor`, `authenticated`)
+    are conventional and are themselves resolved against
+    `AIGateway.spec.auth.authz.roles`, which maps each role name to a list
+    of principal matchers.
+
+    ## Concurrency control
+
+    `GET` on a single policy returns an `ETag` header whose value is the
+    quoted `metadata.resourceVersion`. `PATCH` and `DELETE` both
+    **require** the `If-Match` header. Concurrency failures use distinct
+    status codes so the UI can branch without parsing error strings:
+
+    - **428 Precondition Required** (RFC 6585) — `If-Match` header is
+    missing. This is a client bug; UIs should surface it as a dev-tools
+    error rather than a user-facing "policy changed" dialog.
+    - **412 Precondition Failed** (RFC 7232) — `If-Match` was sent but
+    the value no longer matches the server's `resourceVersion` (another
+    admin edited concurrently). UIs should re-fetch and offer a
+    merge/overwrite flow.
+    - **409 Conflict** — reserved for `POST` with a `metadata.name` that
+    already exists. UIs should prompt for a different name.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  title: Stacklok LLM Gateway Management API
+  version: 0.1.0
+openapi: 3.1.0
+paths:
+  /v1/info:
+    get:
+      description: |-
+        Returns the AIGateway name and namespace this api-key-service
+        serves. Sourced from the operator-injected GATEWAY_NAME /
+        GATEWAY_NAMESPACE — authoritative and unambiguous.
+      operationId: getInfo
+      parameters:
+      - description: Correlation ID; echoed on responses and included in audit records.
+        in: header
+        name: X-Request-Id
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InfoResponse'
+          description: OK
+          headers:
+            X-Request-Id:
+              description: Echoed correlation ID.
+              schema:
+                type: string
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing or invalid JWT.
+        x-required-role: authenticated
+      security:
+      - BearerAuth: []
+      summary: Return the owning gateway's identity.
+      tags:
+      - Catalog
+  /v1/mcp-servers:
+    get:
+      description: |-
+        Forward-compatible; always returns an empty `items` array in
+        Phase 8. Enforcement lands in a later phase.
+      operationId: listMcpServers
+      parameters:
+      - description: Correlation ID; echoed on responses and included in audit records.
+        in: header
+        name: X-Request-Id
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpServerCatalog'
+          description: OK
+          headers:
+            X-Request-Id:
+              description: Echoed correlation ID.
+              schema:
+                type: string
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing or invalid JWT.
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Rate limit exceeded.
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Kubernetes API unavailable.
+        x-required-role: authenticated
+      security:
+      - BearerAuth: []
+      summary: List all MCP servers visible to the gateway.
+      tags:
+      - Catalog
+  /v1/me:
+    get:
+      description: |-
+        Returns subject, groups, resolved roles, the set of AIPolicies
+        whose principalMatchers the caller satisfies, and the union of
+        models granted by those policies' budgets. Matched-only — the
+        response never includes policies the caller does not match.
+      operationId: getMe
+      parameters:
+      - description: Correlation ID; echoed on responses and included in audit records.
+        in: header
+        name: X-Request-Id
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+          description: OK
+          headers:
+            X-Request-Id:
+              description: Echoed correlation ID.
+              schema:
+                type: string
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing or invalid JWT.
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Authenticated but bound to a namespace the caller cannot query.
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Rate limit exceeded.
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Kubernetes API unavailable.
+        x-required-role: authenticated
+      security:
+      - BearerAuth: []
+      summary: Return the caller's identity and resolved policy bindings.
+      tags:
+      - Introspection
+  /v1/models:
+    get:
+      description: |-
+        Derived from the owning AIGateway's `spec.routes[].match.model`.
+        Deduplicated and sorted by model id, OpenAI-shaped
+        (`object:"list"`, `data[]`) to match the data-plane
+        GET /v1/models intercept.
+      operationId: listModels
+      parameters:
+      - description: Correlation ID; echoed on responses and included in audit records.
+        in: header
+        name: X-Request-Id
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIModelList'
+          description: OK
+          headers:
+            X-Request-Id:
+              description: Echoed correlation ID.
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Multiple AIGateways found; single-gateway assumption broken.
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing or invalid JWT.
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Authenticated but bound to a namespace the caller cannot query.
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: No AIGateway configured in the namespace.
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Rate limit exceeded.
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Kubernetes API unavailable.
+        x-required-role: authenticated
+      security:
+      - BearerAuth: []
+      summary: List all models visible to the gateway in the current namespace.
+      tags:
+      - Catalog
+  /v1/policies:
+    get:
+      description: |-
+        Returns a page of AIPolicies. `limit` caps the underlying
+        apiserver page size (max 500; larger values are clamped).
+        `pageToken` resumes a prior list at the next page boundary.
+        `labelSelector` accepts the standard apimachinery selector
+        syntax (e.g., `team=eng,tier!=internal`). `gatewayRef` is a
+        post-list filter applied to the returned page; when used with
+        `limit`, the returned page may contain fewer matches than the
+        limit — callers must keep paging while `nextPageToken` is
+        non-empty to enumerate every match. When `labelSelector` is
+        set, the apiserver omits `remainingItemCount` (per the
+        Kubernetes API spec: the remaining count is unknown for
+        selector-filtered lists), so the field will be absent on the
+        response regardless of how many pages remain. A
+        present-but-empty value for `limit`, `pageToken`, or
+        `labelSelector` (e.g., `?limit=`) is equivalent to the
+        parameter being absent and uses the server default for that
+        parameter — empty is not "explicitly clear this filter".
+      operationId: listPolicies
+      parameters:
+      - description: Correlation ID; echoed on responses and included in audit records.
+        in: header
+        name: X-Request-Id
+        schema:
+          type: string
+      - description: Max items per page (1..500). Values above 500 are clamped to
+          500; 0 or omitted uses the server default (500).
+        in: query
+        name: limit
+        schema:
+          type: integer
+      - description: Opaque continue token from a previous response. An expired or
+          malformed token returns 400; restart the list from page one.
+        in: query
+        name: pageToken
+        schema:
+          type: string
+      - description: Kubernetes label selector (e.g., team=eng,tier!=internal). Malformed
+          selectors return 400.
+        in: query
+        name: labelSelector
+        schema:
+          type: string
+      - description: Restrict to policies targeting this AIGateway name. Applied as
+          a post-list filter; may reduce the returned page size below limit.
+        in: query
+        name: gatewayRef
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIPolicyList'
+          description: OK
+          headers:
+            X-Request-Id:
+              description: Echoed correlation ID.
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Malformed query parameter.
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing or invalid JWT.
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Caller lacks required role.
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Rate limit exceeded.
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Kubernetes API unavailable.
+        x-required-role: policyEditor
+      security:
+      - BearerAuth: []
+      summary: List AIPolicies in the configured namespace.
+      tags:
+      - Policies
+    post:
+      description: |-
+        Use `metadata.name` as the idempotency key. Retrying a POST
+        with the same name returns 409 Conflict; clients should treat
+        this as either a duplicate submission (succeeded previously) or
+        a deliberate collision (surface to the user).
+      operationId: createPolicy
+      parameters:
+      - description: Correlation ID; echoed on responses and included in audit records.
+        in: header
+        name: X-Request-Id
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/AIPolicy'
+                description: Full AIPolicy object. metadata.namespace is ignored;
+                  the server's configured namespace wins.
+                summary: body
+        description: Full AIPolicy object. metadata.namespace is ignored; the server's
+          configured namespace wins.
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIPolicy'
+          description: Policy created.
+          headers:
+            ETag:
+              description: Quoted resourceVersion.
+              schema:
+                type: string
+            Location:
+              description: Absolute path of the created policy.
+              schema:
+                type: string
+            X-Request-Id:
+              description: Echoed correlation ID.
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Malformed body or missing required field.
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing or invalid JWT.
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Caller lacks required role.
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: metadata.name already exists.
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: CRD/CEL admission rejection.
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Rate limit exceeded.
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Kubernetes API unavailable.
+        x-required-role: admin
+      security:
+      - BearerAuth: []
+      summary: Create a new AIPolicy.
+      tags:
+      - Policies
+  /v1/policies/{name}:
+    delete:
+      description: |-
+        If-Match is required; missing returns 428 and stale returns
+        412, so accidental wipes during a concurrent edit never
+        silently succeed.
+      operationId: deletePolicy
+      parameters:
+      - description: Policy name.
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      - description: Quoted resourceVersion from a preceding GET. Required.
+        in: header
+        name: If-Match
+        required: true
+        schema:
+          type: string
+      - description: Correlation ID; echoed on responses and included in audit records.
+        in: header
+        name: X-Request-Id
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Policy deleted; no content.
+          headers:
+            X-Request-Id:
+              description: Echoed correlation ID.
+              schema:
+                type: string
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing or invalid JWT.
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Caller lacks required role.
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Policy not found.
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: If-Match does not match the stored resourceVersion.
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: If-Match header is required.
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Rate limit exceeded.
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Kubernetes API unavailable.
+        x-required-role: admin
+      security:
+      - BearerAuth: []
+      summary: Delete an AIPolicy.
+      tags:
+      - Policies
+    get:
+      operationId: getPolicy
+      parameters:
+      - description: Policy name (DNS-1123 subdomain, max 253 chars).
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      - description: Correlation ID; echoed on responses and included in audit records.
+        in: header
+        name: X-Request-Id
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIPolicy'
+          description: Policy found.
+          headers:
+            ETag:
+              description: Quoted resourceVersion; pass back via If-Match on PATCH
+                or DELETE.
+              schema:
+                type: string
+            X-Request-Id:
+              description: Echoed correlation ID.
+              schema:
+                type: string
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing or invalid JWT.
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Caller lacks required role.
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Policy not found.
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Rate limit exceeded.
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Kubernetes API unavailable.
+        x-required-role: policyEditor
+      security:
+      - BearerAuth: []
+      summary: Get a single AIPolicy by name.
+      tags:
+      - Policies
+    patch:
+      description: |-
+        Patches are applied against `spec` only; any `status` or
+        `metadata.resourceVersion` sent in the body is ignored (use
+        `If-Match` for optimistic concurrency). `spec.gatewayRef` is
+        immutable after creation; attempting to modify it returns 422.
+      operationId: patchPolicy
+      parameters:
+      - description: Policy name.
+        in: path
+        name: name
+        required: true
+        schema:
+          type: string
+      - description: 'Quoted resourceVersion from a preceding GET. Required: missing
+          returns 428 Precondition Required; stale returns 412 Precondition Failed.'
+        in: header
+        name: If-Match
+        required: true
+        schema:
+          type: string
+      - description: Correlation ID; echoed on responses and included in audit records.
+        in: header
+        name: X-Request-Id
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AIPolicyPatch'
+              description: RFC 7396 JSON merge patch; only /spec may be patched.
+              summary: body
+          application/merge-patch+json:
+            schema:
+              type: string
+        description: RFC 7396 JSON merge patch; only /spec may be patched.
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIPolicy'
+          description: Policy updated.
+          headers:
+            ETag:
+              description: Updated quoted resourceVersion.
+              schema:
+                type: string
+            X-Request-Id:
+              description: Echoed correlation ID.
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Malformed merge-patch body or unsupported top-level key.
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing or invalid JWT.
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Caller lacks required role.
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Policy not found.
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: If-Match does not match the stored resourceVersion.
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: CRD/CEL admission rejection or attempt to modify gatewayRef.
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: If-Match header is required.
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Rate limit exceeded.
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Kubernetes API unavailable.
+        x-required-role: admin
+      security:
+      - BearerAuth: []
+      summary: Update an AIPolicy using JSON merge patch.
+      tags:
+      - Policies
+servers:
+- url: management.invalid/

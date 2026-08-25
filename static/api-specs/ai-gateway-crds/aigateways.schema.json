@@ -1,0 +1,2418 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AIGateway",
+  "description": "AIGateway is the top-level resource for the Stacklok AI Gateway.\nIt manages all underlying Envoy Gateway and AI Gateway resources.",
+  "x-kubernetes-group": "ai-gateway.stacklok.dev",
+  "x-kubernetes-kind": "AIGateway",
+  "x-kubernetes-version": "v1alpha1",
+  "x-kubernetes-plural": "aigateways",
+  "x-kubernetes-short-names": [
+    "aigw"
+  ],
+  "x-kubernetes-scope": "Namespaced",
+  "properties": {
+    "spec": {
+      "description": "AIGatewaySpec defines the desired state of the AI Gateway.",
+      "properties": {
+        "audit": {
+          "description": "Audit configures audit event emission. When nil or Enabled=false, no\naudit events are emitted.",
+          "properties": {
+            "enabled": {
+              "default": false,
+              "description": "Enabled turns audit event emission on. Off by default.",
+              "type": "boolean"
+            },
+            "webhookSampling": {
+              "description": "WebhookSampling is the fraction [0,1] of webhook invocation audit events\nto emit, written as a decimal string (\"0\", \"0.1\", \"1\", \"1.0\"). It\ndownsamples only aigw.processor.webhook.invocation; every other webhook\nevent (denied, error, drop, circuit_*) emits at full rate. A string\n(rather than a float, which Kubernetes discourages in CRDs) and a pointer\nso \"unset\" (emit all, the default applied at render time) is\ndistinguishable from an explicit \"0\" (emit none). Has no effect unless\naudit.enabled is true and spec.webhooks is configured.",
+              "pattern": "^(0(\\.[0-9]+)?|1(\\.0+)?)$",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "auth": {
+          "description": "Auth defines authentication and authorization configuration.",
+          "properties": {
+            "authz": {
+              "description": "Authz configures platform-owned role definitions consumed by AIPolicy\nenforcement and admin-surface authorization checks.",
+              "properties": {
+                "roles": {
+                  "additionalProperties": {
+                    "items": {
+                      "description": "PrincipalMatcher matches an authenticated principal by OIDC claims.\nMultiple matchers are combined as OR. Within a matcher, all claims must\nmatch (AND). Exact-value matching only; richer matching may be added later.",
+                      "properties": {
+                        "claims": {
+                          "additionalProperties": {
+                            "description": "ClaimValue is the expected value for a JWT claim. Matched byte-for-byte\nagainst the JWT claim payload (case-sensitive, no normalisation). No\nglob / regex / wildcard syntax is honoured. The literal \"*\" is rejected\nat admission — it's the one value that looks like a wildcard to admins\nfrom glob / SQL / regex backgrounds, so silently accepting it would\nproduce deny-all without a clear failure mode. Other unusual values\n(e.g. \"**\", \"?\") fail loud at request time and don't need admission\nguardrails. MaxLength is generous (1024) to accommodate base64-encoded\nsession IDs and long DN-style subjects that some IdPs emit.",
+                            "maxLength": 1024,
+                            "type": "string",
+                            "x-kubernetes-validations": [
+                              {
+                                "message": "wildcard claim value '*' is not supported; this field is exact-match. For 'any authenticated principal', match iss: <issuer-url>.",
+                                "rule": "self != '*'"
+                              }
+                            ]
+                          },
+                          "description": "Claims maps claim name to the expected value. At least one claim is required.",
+                          "maxProperties": 16,
+                          "minProperties": 1,
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "claims"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "description": "Roles maps a role name to the list of principal matchers that grant\nthat role. A principal gets the role if any matcher matches.",
+                  "minProperties": 1,
+                  "type": "object"
+                }
+              },
+              "required": [
+                "roles"
+              ],
+              "type": "object"
+            },
+            "oidc": {
+              "description": "OIDC configures OpenID Connect authentication.",
+              "properties": {
+                "audience": {
+                  "description": "Audience is the expected aud claim value in OIDC tokens.\nMust match the audience/client_id registered in your OIDC provider.\nAlso used as the audience in JWTs synthesized by the virtual API key service.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "claimToHeaders": {
+                  "description": "ClaimToHeaders maps JWT claims to request headers.",
+                  "items": {
+                    "description": "ClaimToHeader maps a single JWT claim to a request header.",
+                    "properties": {
+                      "claim": {
+                        "description": "Claim is the JWT claim name to extract.",
+                        "type": "string"
+                      },
+                      "header": {
+                        "description": "Header is the request header name to set.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "claim",
+                      "header"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "issuer": {
+                  "description": "Issuer is the OIDC issuer URL. Must start with https://.",
+                  "pattern": "^https://",
+                  "type": "string"
+                },
+                "remoteJWKS": {
+                  "description": "RemoteJWKS defines the remote JWKS endpoint for JWT validation.",
+                  "properties": {
+                    "cacheDuration": {
+                      "description": "CacheDuration is how long Envoy caches the fetched JWKS before refetch.\nMaps to Envoy Gateway SecurityPolicy remoteJWKS.cacheDuration (upstream\ndefault 300s when omitted). When unset the operator omits the key so\nexisting SecurityPolicies render byte-identical. NOTE: this is also the\nde-facto revocation latency for the issuer's signing keys — a rotated/\nrevoked key stays trusted for up to this duration. Use the GEP-2257\nduration subset (Envoy's pattern), e.g. \"300s\", \"5m\", \"1h30m\".",
+                      "pattern": "^([0-9]{1,5}(h|m|s|ms)){1,4}$",
+                      "type": "string"
+                    },
+                    "uri": {
+                      "description": "URI is the JWKS endpoint URL. Must use http or https scheme.",
+                      "minLength": 1,
+                      "pattern": "^https?://",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "uri"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "audience",
+                "issuer",
+                "remoteJWKS"
+              ],
+              "type": "object"
+            },
+            "virtualAPIKeys": {
+              "description": "VirtualAPIKeys configures the optional API key service.",
+              "properties": {
+                "defaultTTL": {
+                  "default": "2160h",
+                  "description": "DefaultTTL is the default time-to-live for newly created keys (e.g., \"2160h\" for 90 days).\n\nDeprecated: no longer consumed by the api-key-service. Virtual-key TTL\nis now the directory module's concern (key storage and lifecycle moved\ninto the directory), and the pod no longer reads a DEFAULT_TTL env var.\nRetained to avoid a breaking schema change for existing manifests; a\nfuture cleanup PR may remove it.",
+                  "type": "string"
+                },
+                "directory": {
+                  "description": "Directory configures the gRPC endpoint of the toolhive-enterprise\ndirectory module that the api-key-service validates virtual keys\nagainst. Required in practice when Enabled is true — the\napi-key-service has no other source of truth for virtual keys since\nvirtual-key storage and validation moved into the directory module.\nA nil Directory when the service is enabled surfaces at runtime as a\ndial error in the api-key-service (it has no endpoint to reach), not\nat admission.",
+                  "properties": {
+                    "endpoint": {
+                      "description": "Endpoint is the directory's gRPC address, e.g.\n\"enterprise-manager.<namespace>.svc:9091\".",
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "insecure": {
+                      "default": false,
+                      "description": "Insecure skips the per-RPC ServiceAccount-token credential the\napi-key-service otherwise presents to the directory's caller-auth\ngate. Only for local/e2e clusters running the directory with\nENTERPRISE_MANAGER_GRPC_INSECURE=true — never set true in production.",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "endpoint"
+                  ],
+                  "type": "object"
+                },
+                "enabled": {
+                  "default": false,
+                  "description": "Enabled deploys the api-key-service. The service currently hosts two\nroles: (1) it issues and validates virtual API keys (long-lived keys\nexchanged for a short-lived JWT carrying the issuing user's identity),\nand (2) it serves the management API (/v1/policies, /v1/me,\n/v1/budgets, /v1/models, /v1/mcp-servers) used by the Stacklok\nEnterprise UI. Set to true to enable either capability; operators\nwho only want the management API still need this flag, because there\nis no separate gate for it today. The management-API role is\nco-located on this service as an interim hosting model and may move\nto its own service in a future release, pending an RFC on the\nmanagement API's responsibilities; the deployment gate will be\nrevisited if and when that happens.",
+                  "type": "boolean"
+                },
+                "image": {
+                  "description": "Image is the container image for the api-key-service. When empty the\noperator falls back to its built-in default (set by the operator Helm\nchart). An explicit empty string is rejected at admission so a typo\ncombined with a chart that's missing the env doesn't surface as an\nunhelpful runtime reconcile error.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "imagePullPolicy": {
+                  "default": "IfNotPresent",
+                  "description": "ImagePullPolicy defines the pull policy for the api-key-service container image.",
+                  "enum": [
+                    "Always",
+                    "Never",
+                    "IfNotPresent"
+                  ],
+                  "type": "string"
+                },
+                "maxReplicas": {
+                  "description": "MaxReplicas is the upper bound for HPA scaling. When set, the operator\ncreates a HorizontalPodAutoscaler targeting the api-key-service Deployment.",
+                  "format": "int32",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "maxTTL": {
+                  "default": "8760h",
+                  "description": "MaxTTL is the maximum allowable TTL for any key (e.g., \"8760h\" for 365 days).\n\nDeprecated: no longer consumed by the api-key-service. Virtual-key TTL\nis now the directory module's concern (key storage and lifecycle moved\ninto the directory), and the pod no longer reads a MAX_TTL env var.\nRetained to avoid a breaking schema change for existing manifests; a\nfuture cleanup PR may remove it.",
+                  "type": "string"
+                },
+                "messageTimeout": {
+                  "default": "2s",
+                  "description": "MessageTimeout is the ext-proc message timeout for virtual key validation.",
+                  "type": "string"
+                },
+                "replicas": {
+                  "default": 2,
+                  "description": "Replicas is the number of api-key-service pods.",
+                  "format": "int32",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "resources": {
+                  "description": "Resources defines compute resource requirements for the api-key-service pods.",
+                  "properties": {
+                    "limits": {
+                      "description": "Limits defines the maximum resources allowed.",
+                      "properties": {
+                        "cpu": {
+                          "description": "CPU is the CPU resource quantity (e.g., \"500m\", \"2\").",
+                          "type": "string"
+                        },
+                        "memory": {
+                          "description": "Memory is the memory resource quantity (e.g., \"512Mi\", \"2Gi\").",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "requests": {
+                      "description": "Requests defines the minimum resources required.",
+                      "properties": {
+                        "cpu": {
+                          "description": "CPU is the CPU resource quantity (e.g., \"500m\", \"2\").",
+                          "type": "string"
+                        },
+                        "memory": {
+                          "description": "Memory is the memory resource quantity (e.g., \"512Mi\", \"2Gi\").",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                },
+                "selfService": {
+                  "default": true,
+                  "description": "SelfService allows authenticated users to create their own keys.",
+                  "type": "boolean"
+                },
+                "targetCPUUtilization": {
+                  "default": 70,
+                  "description": "TargetCPUUtilization is the CPU utilization target for HPA scaling (percentage).",
+                  "format": "int32",
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "tls": {
+                  "description": "TLS provisions HTTPS for the api-key-service management API. When set\nthe operator creates a cert-manager Certificate and the pod additionally\nserves HTTPS on port 8443 alongside HTTP on port 8080. The HTTP endpoint\non port 8080 is kept because Envoy Gateway's SecurityPolicy remoteJWKS\nfetch uses an internal cluster not governed by BackendTLSPolicy; a\nfollow-up EnvoyPatchPolicy is required to configure Envoy's internal\nJWT fetch cluster before the JWKS URI can switch to HTTPS. Requires\ncert-manager to be installed in the\ncluster.",
+                  "properties": {
+                    "issuerRef": {
+                      "description": "IssuerRef references a cert-manager Issuer or ClusterIssuer used to\nprovision the api-key-service TLS certificate.",
+                      "properties": {
+                        "kind": {
+                          "default": "ClusterIssuer",
+                          "description": "Kind is either \"Issuer\" or \"ClusterIssuer\".",
+                          "enum": [
+                            "Issuer",
+                            "ClusterIssuer"
+                          ],
+                          "type": "string"
+                        },
+                        "name": {
+                          "description": "Name of the Issuer or ClusterIssuer.",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "issuerRef"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "enabled"
+              ],
+              "type": "object"
+            },
+            "workloadIssuers": {
+              "description": "WorkloadIssuers configures additional internal JWT issuers that mint\nshort-lived tokens carrying an end-user identity on behalf of a platform\nservice (e.g. Atrium Front Door TxTokens, EdDSA-signed). Tokens validate\nagainst the same jwt_authn filter as the user IdP and resolve to the SAME\nx-user-id identity spine; they flow through the SAME claim-based AIPolicy\nauthorization. Distinct from spec.auth.oidc (the user IdP). Configuring a\nworkload issuer makes the gateway's identity headers authoritative\n(ingress-stripped) and requires spec.policies enforcement to be enabled.",
+              "items": {
+                "description": "WorkloadIssuerConfig configures one additional internal/workload JWT issuer.",
+                "properties": {
+                  "audiences": {
+                    "description": "Audiences is the set of acceptable aud values for this issuer's tokens.\nMUST be disjoint from spec.auth.oidc.audience (a shared audience would let\nan Okta token validate on this path and vice-versa). MaxItems=8 mirrors\nEnvoy Gateway and is load-bearing for the audience-distinctness CEL cost.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "minItems": 1,
+                    "type": "array",
+                    "x-kubernetes-list-type": "set"
+                  },
+                  "issuer": {
+                    "description": "Issuer is the expected iss claim. Internal issuers use non-resolvable URIs\n(e.g. https://frontdoor.atrium.internal); jwt_authn matches iss as an\nopaque string, so https:// is NOT required here (unlike spec.auth.oidc).\nMust differ from spec.auth.oidc.issuer and from every other workload\nissuer (enforced cross-field — see reconciler validation).",
+                    "maxLength": 253,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "name": {
+                    "description": "Name is the jwt_authn provider name for this issuer and the principal.jwt\n.provider in generated authorization rules. Unique across workloadIssuers\n(enforced by listMapKey). Must not collide with the reserved provider\nnames \"okta\" (user IdP) or \"api-key-service\" (virtual-key issuer), which\nare emitted by the controller and invisible to list-scoped CEL.",
+                    "maxLength": 63,
+                    "pattern": "^[a-z0-9]([a-z0-9\\-]*[a-z0-9])?$",
+                    "type": "string",
+                    "x-kubernetes-validations": [
+                      {
+                        "message": "workloadIssuer name must not be the reserved value 'okta' or 'api-key-service'",
+                        "rule": "self != 'okta' && self != 'api-key-service'"
+                      }
+                    ]
+                  },
+                  "remoteJWKS": {
+                    "description": "RemoteJWKS is the JWKS endpoint used to verify this issuer's signatures\n(EdDSA/Ed25519 or any alg the JWKS advertises — alg cannot be pinned at\nthe Envoy Gateway layer, so the JWKS MUST advertise only trusted-alg keys).",
+                    "properties": {
+                      "cacheDuration": {
+                        "description": "CacheDuration is how long Envoy caches the fetched JWKS before refetch.\nMaps to Envoy Gateway SecurityPolicy remoteJWKS.cacheDuration (upstream\ndefault 300s when omitted). When unset the operator omits the key so\nexisting SecurityPolicies render byte-identical. NOTE: this is also the\nde-facto revocation latency for the issuer's signing keys — a rotated/\nrevoked key stays trusted for up to this duration. Use the GEP-2257\nduration subset (Envoy's pattern), e.g. \"300s\", \"5m\", \"1h30m\".",
+                        "pattern": "^([0-9]{1,5}(h|m|s|ms)){1,4}$",
+                        "type": "string"
+                      },
+                      "uri": {
+                        "description": "URI is the JWKS endpoint URL. Must use http or https scheme.",
+                        "minLength": 1,
+                        "pattern": "^https?://",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "uri"
+                    ],
+                    "type": "object"
+                  },
+                  "subjectClaim": {
+                    "default": "sub",
+                    "description": "SubjectClaim names the claim carrying the end-user identity, mapped (and\nOVERWRITTEN) onto x-user-id so this issuer shares the identity spine with\nthe user IdP. The CRD default is authoritative for admitted objects; the\ncontroller's empty-string fallback to \"sub\" only covers non-admission\npaths (e.g. unit-test structs).",
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "audiences",
+                  "issuer",
+                  "name",
+                  "remoteJWKS"
+                ],
+                "type": "object"
+              },
+              "maxItems": 2,
+              "type": "array",
+              "x-kubernetes-list-map-keys": [
+                "name"
+              ],
+              "x-kubernetes-list-type": "map"
+            }
+          },
+          "type": "object"
+        },
+        "gateway": {
+          "description": "Gateway defines listener configuration for the Envoy Gateway.",
+          "properties": {
+            "bufferLimit": {
+              "default": "50Mi",
+              "description": "BufferLimit is the connection buffer limit for LLM request bodies.\nRaised from 10Mi to 50Mi to accommodate large request bodies\n(e.g. gemini-2.5-pro requests that embed large system prompts and MCP\ntool definitions) that exceed the previous default. Clusters using the\nCRD default previously received 413 Payload Too Large for such requests\nwhile clusters with an explicit 50Mi setting succeeded — this aligns\nthe two.\nMemory impact: worst case is bufferLimit × connectionLimit per proxy\npod (e.g. 50Mi × 500 = ~25 GiB); size proxy pod memory limits\naccordingly.",
+              "type": "string"
+            },
+            "connectionLimit": {
+              "default": 500,
+              "description": "ConnectionLimit is the max concurrent client connections per proxy pod.",
+              "format": "int32",
+              "type": "integer"
+            },
+            "controllerName": {
+              "default": "gateway.envoyproxy.io/gatewayclass-controller",
+              "description": "ControllerName is the controller name for the GatewayClass resource.\nThis must match the controllerName configured in the Envoy Gateway\ninstallation that should reconcile this GatewayClass. When running\nalongside an existing Envoy Gateway installation, set this to a\nunique value to avoid conflicts.\nMust be a domain-prefixed path (e.g., \"gateway.envoyproxy.io/gatewayclass-controller\").",
+              "minLength": 1,
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/.+$",
+              "type": "string"
+            },
+            "gatewayClassName": {
+              "default": "eg",
+              "description": "GatewayClassName is the name of the GatewayClass resource.",
+              "type": "string"
+            },
+            "listeners": {
+              "description": "Listeners defines the Gateway listener port and protocol. Exactly\none listener must be specified; multi-listener gateways are not\nyet supported.",
+              "items": {
+                "description": "ListenerConfig defines a single Gateway listener.",
+                "properties": {
+                  "port": {
+                    "description": "Port is the listener port number.",
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "protocol": {
+                    "default": "HTTPS",
+                    "description": "Protocol is the listener protocol.",
+                    "enum": [
+                      "HTTPS",
+                      "HTTP"
+                    ],
+                    "type": "string"
+                  },
+                  "tls": {
+                    "description": "TLS configures TLS for this listener.",
+                    "properties": {
+                      "certificateRef": {
+                        "description": "CertificateRef references a Kubernetes Secret containing the TLS cert.",
+                        "properties": {
+                          "name": {
+                            "description": "Name of the referenced resource.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "certificateRef"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "port"
+                ],
+                "type": "object"
+              },
+              "maxItems": 1,
+              "minItems": 1,
+              "type": "array"
+            },
+            "proxy": {
+              "description": "Proxy configures the Envoy proxy Deployment created by Envoy Gateway.",
+              "properties": {
+                "image": {
+                  "description": "Image is the full container image reference, including tag, for the\nEnvoy data-plane proxy pod that Envoy Gateway creates from the\nEnvoyProxy resource. When empty, Envoy Gateway's own compiled-in\ndefault applies. Setting an explicit empty string is rejected at\nadmission so a typo doesn't surface as a confusing reconcile error.\n\nA tag or digest is REQUIRED. The operator chart already hard-fails a\ndataPlaneProxy.image.repository set without a tag, because an\nuntagged reference resolves to :latest and lands the proxy in the\nImagePullBackOff this field exists to escape. Without this rule the\nCR path would be laxer than the chart path for the same setting, so\nthe guarantee could be bypassed through the very field that provides\nit. The check finds the ':' AFTER the last '/', so a registry port\n(registry.internal:5000/envoy) is not mistaken for a tag.",
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string",
+                  "x-kubernetes-validations": [
+                    {
+                      "message": "image must include a tag or digest (e.g. envoy:v1.35.3 or envoy@sha256:...): an untagged reference resolves to :latest",
+                      "rule": "self.contains('@') || self.substring(self.lastIndexOf('/') + 1).contains(':')"
+                    }
+                  ]
+                },
+                "replicas": {
+                  "default": 2,
+                  "description": "Replicas is the number of proxy pods. Passed to the EnvoyProxy resource;\nthe proxy Deployment is owned by Envoy Gateway, not this operator.",
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "resources": {
+                  "description": "Resources defines compute resource requirements for the proxy pods.",
+                  "properties": {
+                    "limits": {
+                      "description": "Limits defines the maximum resources allowed.",
+                      "properties": {
+                        "cpu": {
+                          "description": "CPU is the CPU resource quantity (e.g., \"500m\", \"2\").",
+                          "type": "string"
+                        },
+                        "memory": {
+                          "description": "Memory is the memory resource quantity (e.g., \"512Mi\", \"2Gi\").",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "requests": {
+                      "description": "Requests defines the minimum resources required.",
+                      "properties": {
+                        "cpu": {
+                          "description": "CPU is the CPU resource quantity (e.g., \"500m\", \"2\").",
+                          "type": "string"
+                        },
+                        "memory": {
+                          "description": "Memory is the memory resource quantity (e.g., \"512Mi\", \"2Gi\").",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                },
+                "servicePorts": {
+                  "description": "ServicePorts defines NodePort mappings for the proxy service.\nOnly used when ServiceType is NodePort.",
+                  "items": {
+                    "description": "ServicePort defines a port mapping for the proxy service.",
+                    "properties": {
+                      "name": {
+                        "description": "Name of the port.",
+                        "type": "string"
+                      },
+                      "nodePort": {
+                        "description": "NodePort is the static NodePort number.",
+                        "format": "int32",
+                        "type": "integer"
+                      },
+                      "port": {
+                        "description": "Port is the service port number.",
+                        "format": "int32",
+                        "type": "integer"
+                      },
+                      "protocol": {
+                        "default": "TCP",
+                        "description": "Protocol is the port protocol.",
+                        "type": "string"
+                      },
+                      "targetPort": {
+                        "description": "TargetPort is the container port.",
+                        "format": "int32",
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "port"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "serviceType": {
+                  "default": "ClusterIP",
+                  "description": "ServiceType is the Kubernetes Service type for the proxy.",
+                  "enum": [
+                    "ClusterIP",
+                    "NodePort",
+                    "LoadBalancer"
+                  ],
+                  "type": "string"
+                },
+                "shutdown": {
+                  "description": "Shutdown tunes how the Envoy proxy pod drains in-flight connections on a\nrollout. It maps to the EnvoyProxy spec.shutdown block. When unset, the\noperator DERIVES the drain timeout from the effective maxStreamDuration\nceiling plus a teardown margin, so a rolling update never severs a\nstill-running stream. Envoy Gateway in turn sizes the proxy pod's\nterminationGracePeriodSeconds to drainTimeout + 5m, so only drainTimeout\nneeds to be set.",
+                  "properties": {
+                    "drainTimeout": {
+                      "description": "DrainTimeout is how long Envoy waits for open connections to drain before\nit force-closes them on shutdown. To avoid cutting an in-flight LLM\nstream during a rollout it must cover a full stream, so when unset the\noperator derives it from the effective maxStreamDuration ceiling\n(spec.gateway.streamTimeouts.maxStreamDuration) plus a fixed teardown\nmargin; when the ceiling is unbounded (\"0s\") it falls back to a fixed\ndefault. Set an explicit value only to override that derivation.\n\nWARNING: an explicit value below maxStreamDuration re-introduces the\nmid-stream sever this derivation exists to prevent — Envoy force-closes\nthe connection before a full-length stream finishes. The operator flags\nthis via the advisory TimeoutConfigValid status condition\n(reason DrainTimeoutBelowMaxStreamDuration) but does not reject it. Keep\nany override at or above the ceiling, or leave it unset.\n\nAccepts the Envoy Gateway Duration form (e.g. \"16m\", \"960s\"); no\nfractional values or us/ns units.",
+                      "pattern": "^([0-9]{1,5}(h|m|s|ms)){1,4}$",
+                      "type": "string"
+                    },
+                    "minDrainDuration": {
+                      "description": "MinDrainDuration is the minimum drain time Envoy observes even when all\nconnections close early, allowing endpoint deprogramming to complete.\nWhen unset, Envoy Gateway's default (10s) applies. Accepts the Envoy\nGateway Duration form (e.g. \"10s\", \"30s\"); no fractional values or us/ns\nunits.",
+                      "pattern": "^([0-9]{1,5}(h|m|s|ms)){1,4}$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "streamTimeouts": {
+              "description": "StreamTimeouts bounds streaming traffic without imposing a hard total\nrequest cap. It is the recommended way to protect the data path: the\nidle timeout reaps stalled connections (and resets on every byte, so it\nnever cuts a healthy stream), while the max-stream-duration provides an\nabsolute ceiling. Applied gateway-wide (the underlying\nClientTrafficPolicy and BackendTrafficPolicy are one-per-gateway). When\nnil, the operator applies its defaults (streamIdleTimeout=5m,\nmaxStreamDuration=15m).",
+              "properties": {
+                "maxStreamDuration": {
+                  "description": "MaxStreamDuration is the absolute ceiling on a single stream's lifetime,\nenforced regardless of activity. Unlike StreamIdleTimeout it does not\nreset on activity. Accepts the Envoy Gateway Duration form (e.g. \"15m\",\n\"30m\"); no fractional values or us/ns units. When unset, the operator\napplies 15m. \"0s\" makes the stream unbounded (only the idle timeout and\nany explicit RequestTimeout then apply).",
+                  "pattern": "^([0-9]{1,5}(h|m|s|ms)){1,4}$",
+                  "type": "string"
+                },
+                "streamIdleTimeout": {
+                  "description": "StreamIdleTimeout is the maximum time a stream may go without any\nupstream or downstream activity before Envoy terminates it. It resets on\nevery byte, so it never cuts a healthy stream — it only reaps stalled\nconnections. Accepts the Envoy Gateway Duration form (e.g. \"5m\", \"90s\");\nno fractional values or us/ns units. When unset, the operator applies\n5m. \"0s\" disables idle reaping (not recommended: a hung upstream then\nleaks the connection).",
+                  "pattern": "^([0-9]{1,5}(h|m|s|ms)){1,4}$",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "stripHeaders": {
+              "description": "StripHeaders lists identity headers to strip from inbound requests\nbefore JWT processing to prevent spoofing.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "timeouts": {
+              "description": "Timeouts defines an optional total request deadline applied to all\nroutes when no per-route timeout is set. This is an opt-in absolute cap\non the entire request (including the streamed response body): once set,\nEnvoy 504s any request — healthy or not — that outlives it. It is\nDISABLED by default so long-running streaming turns (chat completions\nwith stream=true, long-context Claude requests) are never cut mid-stream.\nTo bound streaming traffic without a hard total cap, use StreamTimeouts\n(idle + max-stream-duration) instead. Only set Timeouts when you\ndeliberately want every request to fail past a fixed wall-clock budget.\nNote: the operator also applies a default maxStreamDuration ceiling\n(15m); a requestTimeout LONGER than the effective maxStreamDuration is\npre-empted by that ceiling (the stream is cut first), so to allow longer\nrequests you must raise BOTH this value and\nspec.gateway.streamTimeouts.maxStreamDuration. The operator surfaces a\nTimeoutConfigValid=False condition + Warning event when this happens.",
+              "properties": {
+                "requestTimeout": {
+                  "description": "RequestTimeout is the maximum total duration allowed for a single\nrequest, including the streamed response body. This is an absolute cap:\nthe request is terminated when it elapses even if data is still flowing.\nAccepts the Envoy Gateway Duration form (e.g. \"5m\"). \"0s\" disables the cap.",
+                  "pattern": "^([0-9]{1,5}(h|m|s|ms)){1,4}$",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tls": {
+              "description": "GatewayTLS configures the gateway-level TLS certificate (cert-manager).",
+              "properties": {
+                "certificateRef": {
+                  "description": "CertificateRef references an existing cert-manager Certificate.",
+                  "properties": {
+                    "name": {
+                      "description": "Name of the referenced resource.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "dnsNames": {
+                  "description": "DNSNames is the list of DNS names for the certificate.",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "duration": {
+                  "default": "2160h",
+                  "description": "Duration is the certificate duration (e.g., \"2160h\" for 90 days).",
+                  "type": "string"
+                },
+                "issuerRef": {
+                  "description": "IssuerRef configures the cert-manager issuer. When set, the operator\ncreates a cert-manager Certificate resource.",
+                  "properties": {
+                    "kind": {
+                      "default": "ClusterIssuer",
+                      "description": "Kind is either \"Issuer\" or \"ClusterIssuer\".",
+                      "enum": [
+                        "Issuer",
+                        "ClusterIssuer"
+                      ],
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "Name of the Issuer or ClusterIssuer.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "renewBefore": {
+                  "default": "720h",
+                  "description": "RenewBefore is how long before expiry to renew (e.g., \"720h\" for 30 days).",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "listeners"
+          ],
+          "type": "object"
+        },
+        "guardrails": {
+          "description": "Guardrails configures cloud prompt-injection screening of inbound prompts.\nEngine-discriminated and config-driven; the operator synthesizes a webhook\nfrom this block that screens prompts via a cloud provider and blocks\n(Mode=Enforce) or only records (Mode=Monitor) per policy. Sits alongside\nspec.webhooks.\n\nNOTE: distinct from the historical \"guardrails\" wording on spec.processor\n(ProcessorConfig) — that refers to the in-cluster PII/PCI ext-proc and its\n\"guardrails\" Deployment. This top-level field is the new cloud\nprompt-injection guardrail and is unrelated to PII scanning.",
+          "properties": {
+            "bedrock": {
+              "description": "Bedrock configures the AWS Bedrock Guardrails provider. Required when\nengine is BedrockGuardrails (enforced by the CEL rules above).\nThe AWS principal the adapter authenticates as (the IRSA-projected role by\ndefault, or the static credentials in credentialsSecretRef) must be granted\nthe bedrock:ApplyGuardrail action on the guardrail ARN.",
+              "properties": {
+                "credentialsSecretRef": {
+                  "description": "CredentialsSecretRef optionally references a Secret of static AWS\ncredentials for the non-IRSA fallback. When omitted, the adapter uses the\npod's IRSA-projected role. The Secret must contain a single key\n\"credentials\" whose value is an AWS credentials file in INI format with\na [default] profile (aws_access_key_id, aws_secret_access_key, optional\naws_session_token) — the same format used by the Envoy AI Gateway AWS rotator.\nName-only reference, resolved in the AIGateway namespace.",
+                  "properties": {
+                    "name": {
+                      "description": "Name of the referenced resource.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "guardrailId": {
+                  "description": "GuardrailID is the Bedrock guardrail identifier.",
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "guardrailVersion": {
+                  "description": "GuardrailVersion is the Bedrock guardrail version: either the string\n\"DRAFT\" or a positive integer string (e.g. \"1\", \"12\"). The Bedrock API\nrejects any other value; rejecting it at admission gives a cleaner error.",
+                  "maxLength": 12,
+                  "pattern": "^(DRAFT|[1-9][0-9]*)$",
+                  "type": "string"
+                },
+                "region": {
+                  "description": "Region is the AWS region hosting the guardrail.",
+                  "maxLength": 63,
+                  "pattern": "^[a-z][a-z0-9-]*[a-z0-9]$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "guardrailId",
+                "guardrailVersion",
+                "region"
+              ],
+              "type": "object"
+            },
+            "enabled": {
+              "default": false,
+              "description": "Enabled turns prompt-injection screening on. Off by default.",
+              "type": "boolean"
+            },
+            "engine": {
+              "description": "Engine selects the cloud guardrail provider. v1: BedrockGuardrails.",
+              "enum": [
+                "BedrockGuardrails"
+              ],
+              "type": "string"
+            },
+            "failurePolicy": {
+              "default": "Fail",
+              "description": "FailurePolicy decides the request outcome when the guardrail call fails.\nFail (default): deny the request (fail-closed); Ignore: let it proceed (fail-open).",
+              "enum": [
+                "Fail",
+                "Ignore"
+              ],
+              "type": "string"
+            },
+            "maxReplicas": {
+              "description": "MaxReplicas is the upper bound for HPA scaling. When set, the operator\ncreates a HorizontalPodAutoscaler targeting the guardrails-adapter Deployment.",
+              "format": "int32",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "mode": {
+              "default": "Enforce",
+              "description": "Mode decides whether a flagged request is blocked (Enforce) or only\nobserved (Monitor). Maps onto the synthesized webhook Type.",
+              "enum": [
+                "Enforce",
+                "Monitor"
+              ],
+              "type": "string"
+            },
+            "phases": {
+              "description": "Phases lists the request-lifecycle points at which screening runs. v1\nsupports only Request.",
+              "items": {
+                "description": "GuardrailPhase is the request-lifecycle point at which screening runs. v1\nscreens only the inbound Request path; Response-phase screening is deferred.",
+                "enum": [
+                  "Request"
+                ],
+                "type": "string"
+              },
+              "maxItems": 1,
+              "minItems": 1,
+              "type": "array",
+              "x-kubernetes-list-type": "set"
+            },
+            "replicas": {
+              "default": 1,
+              "description": "Replicas is the number of guardrails-adapter pods. It is also the HPA floor\n(minReplicas) when MaxReplicas is set.",
+              "format": "int32",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "resources": {
+              "description": "Resources defines compute resource requests/limits for the guardrails-adapter\ncontainer. When unset, the operator uses modest built-in defaults\n(requests: 50m/64Mi, limits: 500m/256Mi).",
+              "properties": {
+                "limits": {
+                  "description": "Limits defines the maximum resources allowed.",
+                  "properties": {
+                    "cpu": {
+                      "description": "CPU is the CPU resource quantity (e.g., \"500m\", \"2\").",
+                      "type": "string"
+                    },
+                    "memory": {
+                      "description": "Memory is the memory resource quantity (e.g., \"512Mi\", \"2Gi\").",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "requests": {
+                  "description": "Requests defines the minimum resources required.",
+                  "properties": {
+                    "cpu": {
+                      "description": "CPU is the CPU resource quantity (e.g., \"500m\", \"2\").",
+                      "type": "string"
+                    },
+                    "memory": {
+                      "description": "Memory is the memory resource quantity (e.g., \"512Mi\", \"2Gi\").",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "targetCPUUtilization": {
+              "description": "TargetCPUUtilization is the CPU utilization target for HPA scaling\n(percentage). The operator applies a runtime fallback of 75 when this\nfield is nil and MaxReplicas is set. No kubebuilder default is emitted\nbecause the paired CEL rule above (`has(targetCPUUtilization) ->\nhas(maxReplicas)`) needs `nil` to be observable as \"user did not set\nthis\", which a default-everything-to-75 would erase.",
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "timeoutSeconds": {
+              "default": 5,
+              "description": "TimeoutSeconds bounds a single guardrail screening call.",
+              "format": "int32",
+              "maximum": 120,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "unscreenableContentPolicy": {
+              "default": "Deny",
+              "description": "UnscreenableContentPolicy decides the request outcome when user content is\npresent but cannot be extracted into screenable text (e.g. an image-only or\nmultimodal message, or an unrecognized content shape). Deny (default):\nblock it (fail-closed); Admit: let it through unscreened. This is separate\nfrom FailurePolicy so that unscreenable-but-benign content can be admitted\nwhile genuine guardrail call failures still fail closed. The decision is\nrecorded in the audit trail either way.",
+              "enum": [
+                "Admit",
+                "Deny"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "engine",
+            "phases"
+          ],
+          "type": "object",
+          "x-kubernetes-validations": [
+            {
+              "message": "engine BedrockGuardrails requires the bedrock block",
+              "rule": "self.engine != 'BedrockGuardrails' || has(self.bedrock)"
+            },
+            {
+              "message": "the bedrock block may only be set when engine is BedrockGuardrails",
+              "rule": "!has(self.bedrock) || self.engine == 'BedrockGuardrails'"
+            },
+            {
+              "message": "targetCPUUtilization is inert without maxReplicas: set both, or neither, on guardrails",
+              "rule": "!has(self.targetCPUUtilization) || has(self.maxReplicas)"
+            }
+          ]
+        },
+        "journaling": {
+          "description": "Journaling configures capture of prompt and response payloads for\ncompliance and forensics. Distinct from Audit: audit records control-\nplane and policy decisions, while journaling records the request and\nresponse bodies themselves.",
+          "properties": {
+            "buffer": {
+              "description": "Buffer tunes the in-memory dispatch channel and per-record capture\ncaps. When unset, defaults are applied.",
+              "properties": {
+                "maxInFlight": {
+                  "default": 1024,
+                  "description": "MaxInFlight bounds records in the in-memory dispatch channel. When\nfull, records are dropped; each drop emits an audit event with a\nmonotonic sequence number so SIEM can detect gaps.",
+                  "format": "int32",
+                  "maximum": 100000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "maxResponseCapture": {
+                  "default": "2Mi",
+                  "description": "MaxResponseCapture caps aggregated streaming-response bytes per\nrecord. Over-cap streams are flagged truncated=true. Accepts\nKubernetes resource-quantity notation (e.g. \"2Mi\", \"512Ki\").",
+                  "pattern": "^[0-9]+(Ki|Mi|Gi|K|M|G)?$",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "enabled": {
+              "default": false,
+              "description": "Enabled turns journaling on. Off by default.",
+              "type": "boolean"
+            },
+            "includeResponses": {
+              "default": false,
+              "description": "IncludeResponses journals response bodies in addition to requests.\nOff by default — responses may include bearer tokens, session state,\nor regenerated PII and must be an explicit opt-in.",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "monitoring": {
+          "description": "Monitoring configures observability features.",
+          "properties": {
+            "grafanaDashboards": {
+              "description": "GrafanaDashboards configures Grafana dashboard ConfigMap generation.",
+              "properties": {
+                "enabled": {
+                  "default": false,
+                  "description": "Enabled toggles Grafana dashboard ConfigMap generation.",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "enabled"
+              ],
+              "type": "object"
+            },
+            "otelCollector": {
+              "description": "OTelCollector configures OpenTelemetry collector settings for guardrails.",
+              "properties": {
+                "egressCIDRs": {
+                  "description": "EgressCIDRs optionally allowlists IP ranges for the main-processor's\nNetworkPolicy egress to this collector, in addition to the always-present\nnamespaceSelector rule. A namespaceSelector cannot match an off-cluster\nendpoint or a bare hostname/IP, so a collector reachable only that way\nneeds an explicit CIDR to receive traffic under NetworkPolicy enforcement.\nEach entry must be a valid IPv4 or IPv6 CIDR (e.g. \"10.0.0.0/8\",\n\"203.0.113.5/32\"). Leave empty to rely solely on the namespaceSelector rule.\nThis regex is defense-in-depth only, not the enforcement: it rejects\nobviously malformed shapes and bounds octet/prefix ranges, but RE2 (no\nlookahead) cannot fully validate every case (e.g. IPv6 double \"::\"\ncompression rules). filterValidCIDRs (internal/controller/resources.go),\nvia netip.ParsePrefix, is the real gate before anything reaches the K8s\nAPI — see ConditionOTelCollectorEgressCIDRsInvalid.",
+                  "items": {
+                    "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/(3[0-2]|[12]?[0-9])$|^[0-9a-fA-F:]+/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$",
+                    "type": "string"
+                  },
+                  "maxItems": 8,
+                  "type": "array",
+                  "x-kubernetes-list-type": "atomic"
+                },
+                "endpoint": {
+                  "description": "Endpoint is the OTLP gRPC endpoint for traces and metrics.",
+                  "type": "string"
+                },
+                "protocol": {
+                  "default": "grpc",
+                  "description": "Protocol selects the OTLP exporter protocol the main-processor and\napi-key-service pods use to reach Endpoint. Defaults to \"grpc\" when\nunset, matching the operator's own OTLP exporter default. Set to\n\"http/protobuf\" to target an HTTP-only collector receiver.",
+                  "enum": [
+                    "grpc",
+                    "http/protobuf"
+                  ],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "tokenMetrics": {
+              "description": "TokenMetrics configures token usage metric emission from the guardrails ext-proc.",
+              "properties": {
+                "enabled": {
+                  "default": false,
+                  "description": "Enabled toggles token usage metric emission from the main processor ext-proc.",
+                  "type": "boolean"
+                },
+                "labels": {
+                  "description": "Labels maps request header names to metric attribute names.\nOnly listed headers are extracted and attached to the aigw.token.usage metric.\nUse only low-cardinality headers (model, department, team) to avoid\nmetric cardinality explosion.",
+                  "items": {
+                    "description": "TokenMetricLabel maps a request header to a metric attribute.",
+                    "properties": {
+                      "attribute": {
+                        "description": "Attribute is the metric attribute name (e.g., \"model\").",
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "header": {
+                        "description": "Header is the lowercase HTTP request header name (e.g., \"x-ai-eg-model\").",
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "attribute",
+                      "header"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 10,
+                  "type": "array"
+                },
+                "prometheusAddr": {
+                  "description": "PrometheusAddr is the address to serve Prometheus /metrics on (e.g., \":9090\").\nWhen empty, the Prometheus HTTP endpoint is disabled.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "enabled"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "networkPolicies": {
+          "description": "NetworkPolicies configures NetworkPolicy generation for all components.",
+          "properties": {
+            "enabled": {
+              "default": false,
+              "description": "Enabled toggles NetworkPolicy creation for all components.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled"
+          ],
+          "type": "object"
+        },
+        "policies": {
+          "description": "Policies enables AIPolicy CRD enforcement for group-based access control.",
+          "properties": {
+            "defaultAction": {
+              "default": "Deny",
+              "description": "DefaultAction is applied when no AIPolicy matches the request principal.\n'Deny' is the default and recommended posture: rule generation today\nemits Allow-rules exclusively, so combining 'Allow' default with the\ncurrent PR's ruleset produces an effectively open gateway. 'Allow' is\naccepted so that a later phase introducing Deny-rules (Allow +\nDeny-exceptions composition) does not require a CRD migration —\noperators opting into 'Allow' today must do so deliberately with that\nfuture ruleset in mind.",
+              "enum": [
+                "Allow",
+                "Deny"
+              ],
+              "type": "string"
+            },
+            "enabled": {
+              "default": true,
+              "description": "Enabled toggles AIPolicy enforcement. When unset, defaults to true so\nthat `spec.policies: {}` opts into enforcement rather than silently\ndisabling it. Use a pointer so an explicit `enabled: false` survives\nround-tripping without being overwritten by the default.",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "processor": {
+          "description": "Processor defines PII processor configuration.",
+          "properties": {
+            "diagnostics": {
+              "description": "Diagnostics tunes Debug-level diagnostic log emission from the\nprocessor. Every field is Debug-only: nothing here changes runtime\nbehavior outside the log stream, and nothing emits unless the\nmain-processor pod runs with LOG_LEVEL=DEBUG. Default values are\nchosen so an operator enabling DEBUG for unrelated diagnostics does\nnot inherit PII emission as a side effect. See ProcessorDiagnostics\nfor the per-field threat model.",
+              "properties": {
+                "includePIIInDebugLogs": {
+                  "default": false,
+                  "description": "IncludePIIInDebugLogs, when true, includes the matched substring\n(the raw bytes the PII detector flagged) in the \"redact match\ndiagnostic\" Debug record. Default false.\n\nSECURITY: enabling this writes raw user PII to whatever log sink\nthe main-processor pod forwards to at Debug level. Two gates\nmust both be open for the substring to land in a log: this flag\nAND LOG_LEVEL=DEBUG on the pod. The Info-level absence contract\npinned by the processor unit tests holds regardless of this flag.\nIntended for incident response only — leave false in production\nunless an active investigation requires the matched substring to\nbe diagnosable from a support bundle.\n\nNote on the wire representation: this field combines a kubebuilder\ndefault of false with a JSON omitempty modifier. On a bool that\npairing means \"absent\" and \"explicitly false\" are indistinguishable\non Get — both round-trip as the default. That is intentional and\naligned with the safety property (absent === safe default). Do not\npromote this to a *bool tri-state unless a future feature genuinely\nneeds to distinguish unset from false.",
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "extractionFailureAction": {
+              "default": "Block",
+              "description": "ExtractionFailureAction controls behaviour when extracting text from the\nrequest body fails (e.g. malformed JSON). \"Block\" (default, fail-closed)\nblocks the request with a 403; \"Continue\" (fail-open) lets it through\nunscanned. Applies to the processor's extraction stage and is\nindependent of the detection engine.",
+              "enum": [
+                "Block",
+                "Continue"
+              ],
+              "type": "string"
+            },
+            "image": {
+              "description": "Image is the container image for the main processor. When empty, the\noperator falls back to its built-in default (`MAIN_PROCESSOR_IMAGE` env\nvar, set by the operator Helm chart), so most installs should leave\nthis unset and let the chart pin the version. Setting an explicit empty\nstring is rejected at admission so a typo combined with a chart that's\nmissing the env doesn't surface as an unhelpful runtime reconcile error.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "imagePullPolicy": {
+              "default": "IfNotPresent",
+              "description": "ImagePullPolicy defines the pull policy for the guardrails container image.",
+              "enum": [
+                "Always",
+                "Never",
+                "IfNotPresent"
+              ],
+              "type": "string"
+            },
+            "maxReplicas": {
+              "description": "MaxReplicas is the upper bound for HPA scaling. When set, the operator\ncreates a HorizontalPodAutoscaler targeting the guardrails Deployment.",
+              "format": "int32",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "messageTimeout": {
+              "default": "60s",
+              "description": "MessageTimeout is the ext-proc message timeout: how long Envoy waits for\nthe main-processor to ack each request/response body chunk. The budget\nmust outlast every downstream call made while the processor holds the\nchunk — most importantly the NER /analyze RTT — so it is bounded below\nby NERProviderConfig.Timeout. The default (60s) sits comfortably above\nthe 5s NER default and covers the 200-500 KB request bodies typical of\nagent CLI traffic (Claude Code, Gemini CLI). The CEL rule on\nProcessorConfig enforces messageTimeout > nerProvider.timeout at\nadmission; an operator who lowers this value should lower\nnerProvider.timeout in lock-step.",
+              "type": "string"
+            },
+            "mutationFailureAction": {
+              "default": "Block",
+              "description": "MutationFailureAction controls behaviour when redacting (mutating) the\nbody fails. \"Block\" (default, fail-closed) blocks the request with a 403;\n\"Continue\" (fail-open) lets it through with no redaction applied. Applies\nto the processor's mutation stage and is independent of the detection\nengine.",
+              "enum": [
+                "Block",
+                "Continue"
+              ],
+              "type": "string"
+            },
+            "nerProvider": {
+              "description": "NERProvider configures the ML/external NER backend that performs PII\ndetection. The Type discriminator selects the provider implementation\nand the matching sub-block carries provider-specific settings.\nWhen nil, no detection runs and the processor passes traffic through;\nthe operator gates the EnvoyExtensionPolicy on this field, so an\nunconfigured processor receives no traffic.",
+              "properties": {
+                "circuitBreaker": {
+                  "description": "CircuitBreaker overrides the failure threshold and reset timeout for the\nprovider call path.",
+                  "properties": {
+                    "failureThreshold": {
+                      "description": "FailureThreshold is the consecutive failure count that trips the breaker.",
+                      "format": "int32",
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "resetTimeout": {
+                      "description": "ResetTimeout is how long the breaker stays open before allowing a probe\nrequest. Uses Go duration format (e.g., \"30s\", \"1m\").",
+                      "pattern": "^([0-9]+([.][0-9]+)?(ns|us|ms|s|m|h))+$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "concurrency": {
+                  "default": 8,
+                  "description": "Concurrency caps the number of Presidio /analyze calls the processor\nfans out in parallel per request (one goroutine per text node). Higher\nvalues reduce latency on multi-node payloads at the cost of more\nsimultaneous connections to the Presidio backend. Takes effect on the\nprocessor rollout triggered by this config change.",
+                  "format": "int32",
+                  "maximum": 128,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "failureAction": {
+                  "default": "fail-closed",
+                  "description": "FailureAction controls behaviour when the provider circuit breaker is\nopen or the provider returns an error. \"fail-closed\" (default) blocks\nthe request with a 403 guardrail_circuit_open response; \"fail-open\"\nlogs a warning and allows the request to proceed with no matches.",
+                  "enum": [
+                    "fail-closed",
+                    "fail-open"
+                  ],
+                  "type": "string"
+                },
+                "presidio": {
+                  "description": "Presidio carries Presidio-specific settings. Required when type=presidio.",
+                  "properties": {
+                    "allowlist": {
+                      "description": "Allowlist defines text strings that should be ignored by Presidio detection.\nUseful for reducing false positives on known company names or product names.\nHonoured server-side by Presidio's AllowListRecognizer at analysis\ntime; allowlisted strings never appear in match results and do not\nbias scoring of nearby tokens.",
+                      "items": {
+                        "maxLength": 256,
+                        "type": "string"
+                      },
+                      "maxItems": 200,
+                      "type": "array",
+                      "x-kubernetes-list-type": "atomic"
+                    },
+                    "allowlistMatch": {
+                      "default": "Exact",
+                      "description": "AllowlistMatch selects how Presidio compares Allowlist entries to\ndetected text. \"Exact\" (default) is case-insensitive equality on\nthe matched value. \"Regex\" treats each Allowlist entry as a regular\nexpression evaluated by Presidio against the matched value, so\npatterns like `acme-[a-z0-9]+` skip the per-variant enumeration\nthat exact mode forces. Inert when Allowlist is empty.",
+                      "enum": [
+                        "Exact",
+                        "Regex"
+                      ],
+                      "type": "string"
+                    },
+                    "autoscaling": {
+                      "description": "Autoscaling selects how the Presidio Deployment is scaled. When\nnil/Operator (the default), the operator creates an HPA targeting the\nDeployment when MaxReplicas is set. When `External`, the operator\nskips HPA creation and stops re-emitting `replicas` on subsequent\nreconciles so an external autoscaler (Keda, KPA, vendor) can write to\nthe Deployment without being reverted. When `None`, no HPA is created\nand `replicas` is owned by the operator (manual scaling via the CRD).",
+                      "properties": {
+                        "mode": {
+                          "default": "Operator",
+                          "description": "Mode selects who owns replicas. Operator (default) means the operator\ncreates an HPA when MaxReplicas is set and hands replica ownership to\nthat HPA; with MaxReplicas unset it re-emits `replicas` on every\nreconcile. External means the operator stays out of replicas entirely so\nan external autoscaler (e.g. Keda ScaledObject) can drive the Deployment.\nNone disables operator-managed HPA but keeps `replicas` pinned to the CRD\nvalue (manual scaling).",
+                          "enum": [
+                            "Operator",
+                            "External",
+                            "None"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "entities": {
+                      "default": [
+                        "PERSON",
+                        "LOCATION",
+                        "DATE_TIME",
+                        "CREDIT_CARD",
+                        "US_SSN",
+                        "PHONE_NUMBER",
+                        "EMAIL_ADDRESS",
+                        "ABA_ROUTING_NUMBER",
+                        "IBAN_CODE",
+                        "IP_ADDRESS",
+                        "US_ITIN",
+                        "IN_AADHAAR",
+                        "AU_TFN",
+                        "UK_NHS"
+                      ],
+                      "description": "Entities is the list of Presidio entity types to detect. The default\ncovers the common structured-PII entities (CREDIT_CARD, US_SSN,\nPHONE_NUMBER, EMAIL_ADDRESS, ABA_ROUTING_NUMBER, IBAN_CODE, IP_ADDRESS,\nUS_ITIN, IN_AADHAAR, AU_TFN, UK_NHS) alongside the NER-model entities\n(PERSON, LOCATION, DATE_TIME). Extend via manifest to add additional\nPresidio built-ins or custom recognizers. See\nhttps://microsoft.github.io/presidio/supported_entities/ for the full\nlist of supported built-in and custom entity types.",
+                      "items": {
+                        "maxLength": 256,
+                        "type": "string"
+                      },
+                      "maxItems": 200,
+                      "minItems": 1,
+                      "type": "array",
+                      "x-kubernetes-list-type": "atomic"
+                    },
+                    "entityActions": {
+                      "description": "EntityActions overrides the default action / placeholder / mode for a\nspecific Presidio entity type (e.g. \"US_SSN\", \"EMAIL_ADDRESS\",\n\"CREDIT_CARD\"). Entries are keyed by entity name and layered on top\nof processor.defaults; entities without an entry use the global\ndefault. Entity names are not constrained to a closed set so custom\nPresidio recognizers are supported. Per-entity overrides are\nPresidio-vocabulary-specific, so this list lives in the provider\nsub-block rather than at the processor level.",
+                      "items": {
+                        "description": "EntityAction overrides the default action / placeholder / mode for a single\nNER provider entity type. The Entity field accepts any name in the runtime\nentities[] union: built-in Presidio entities (e.g. \"US_SSN\", \"EMAIL_ADDRESS\"),\nentries declared on PresidioConfig.Entities, or the SupportedEntity of a\ndeclared PresidioRecognizer. Names that do not resolve to either source\nsurface as the PresidioEntityActionsDangling Warning condition.\nEmpty override fields fall through to the processor-level defaults on\nProcessorConfig.\n\nThe CEL rule below rejects entries with no override fields set and\nmode left at the default (\"enforce\"). Such an entry is a no-op that\nusually indicates a typo (e.g. \"requestActions\" with trailing s\nsilently drops to defaults). A bare {entity: X, mode: shadow} is\nstill meaningful (forces shadow telemetry for that entity) and is\naccepted by the rule.",
+                        "properties": {
+                          "entity": {
+                            "description": "Entity is the NER provider entity name to override (e.g. \"US_SSN\",\n\"EMAIL_ADDRESS\", \"PHONE_NUMBER\", \"CREDIT_CARD\", or a custom\nrecognizer's supportedEntity). Matched case-sensitively against the\nprovider's reported entity type.",
+                            "maxLength": 128,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "mode": {
+                            "default": "enforce",
+                            "description": "Mode controls enforcement for this entity. \"enforce\" (default) applies\nthe configured action; \"shadow\" detects and emits telemetry/logging\nbut never blocks or redacts.",
+                            "enum": [
+                              "enforce",
+                              "shadow"
+                            ],
+                            "type": "string"
+                          },
+                          "placeholder": {
+                            "description": "Placeholder overrides the redaction placeholder for matches of this\nentity. Empty falls back to ProcessorConfig.Placeholder.",
+                            "maxLength": 64,
+                            "type": "string"
+                          },
+                          "requestAction": {
+                            "description": "RequestAction overrides the default action on the request path.",
+                            "enum": [
+                              "Block",
+                              "Redact",
+                              "LogOnly"
+                            ],
+                            "type": "string"
+                          },
+                          "responseAction": {
+                            "description": "ResponseAction overrides the default action on the response path.",
+                            "enum": [
+                              "Block",
+                              "Redact",
+                              "LogOnly"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "entity"
+                        ],
+                        "type": "object",
+                        "x-kubernetes-validations": [
+                          {
+                            "message": "entityAction must set at least one of requestAction, responseAction, placeholder, or mode=shadow",
+                            "rule": "has(self.requestAction) || has(self.responseAction) || has(self.placeholder) || self.mode == 'shadow'"
+                          }
+                        ]
+                      },
+                      "maxItems": 100,
+                      "type": "array",
+                      "x-kubernetes-list-map-keys": [
+                        "entity"
+                      ],
+                      "x-kubernetes-list-type": "map"
+                    },
+                    "image": {
+                      "description": "Image is the container image for the Presidio Analyzer deployment.\nWhen empty, the operator uses its `PRESIDIO_DEFAULT_IMAGE` env var\n(the operator Helm chart wires this from values.yaml with a digest\npin), so most installs should leave this unset and let the chart pin\nthe version. Override for air-gapped clusters or to consume a newer\nPresidio release without bumping the operator. If both this field\nand the operator's PRESIDIO_DEFAULT_IMAGE are empty the operator\nfails the Deployment reconcile with a clear error rather than\nsilently using a mutable tag.",
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "imagePullPolicy": {
+                      "default": "IfNotPresent",
+                      "description": "ImagePullPolicy defines the pull policy for the Presidio Analyzer image.",
+                      "enum": [
+                        "Always",
+                        "Never",
+                        "IfNotPresent"
+                      ],
+                      "type": "string"
+                    },
+                    "language": {
+                      "default": "en",
+                      "description": "Language is the ISO 639-1 two-letter language code passed to Presidio's\n/analyze endpoint. Currently restricted to \"en\" because the\nvendored default_recognizers.yaml only declares\nsupported_languages: [en], so a different language stamped onto a\ncustom recognizer would either be silently dropped by Presidio's\nloader or wedge the rollout. The field is kept (rather than\nremoved) so non-en support can be enabled by widening the Enum\nonce the vendored defaults grow corresponding language coverage\nand we have e2e tests for that path.",
+                      "enum": [
+                        "en"
+                      ],
+                      "type": "string"
+                    },
+                    "maxReplicas": {
+                      "description": "MaxReplicas is the upper bound for HPA scaling of the Presidio Analyzer\ndeployment. When set, the operator creates a HorizontalPodAutoscaler\ntargeting the Presidio Deployment.",
+                      "format": "int32",
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "recognizers": {
+                      "description": "Recognizers declares user-defined Presidio Pattern recognizers that\nthe operator materializes into a recognizers YAML and mounts into\nthe Presidio Analyzer pod at startup. Each entry mirrors Presidio's\nPatternRecognizer shape (name, supportedEntity, patterns, optional\ncontextWords and denyList). The ConfigMap is rendered alongside\nthe upstream-vendored default recognizer set so built-ins continue\nto work; setting this field never disables predefined recognizers.\n\nRecognizers are Presidio-specific (numeric per-pattern scores,\nimplicit-proximity context words, deny-lists) and do not generalize\nacross DLP providers, which is why they live in the provider\nsub-block rather than at the processor level.\n\nThe operator auto-unions every supportedEntity into Entities at\nreconcile time, so an entity declared on a recognizer does not also\nneed to be added to spec.processor.nerProvider.presidio.entities.",
+                      "items": {
+                        "description": "PresidioRecognizer is a user-defined Presidio Pattern recognizer\ndeclared on the AIGateway CR. Materialized into the recognizers YAML\nthe operator mounts on the Presidio Analyzer pod alongside Presidio's\nupstream defaults; entries map directly onto Presidio's PatternRecognizer\nschema (https://microsoft.github.io/presidio/analyzer/adding_recognizers/).\n\nAt least one of Patterns or DenyList must be non-empty -- a recognizer\nwith neither has nothing to match on.",
+                        "properties": {
+                          "contextWords": {
+                            "description": "ContextWords are tokens whose presence near a match boosts the\nmatch's confidence (Presidio's implicit-proximity context-word\nenhancement). Useful for relaxing a low-score pattern that would\notherwise fall below scoreThreshold while still suppressing matches\nin unrelated text.",
+                            "items": {
+                              "maxLength": 64,
+                              "type": "string"
+                            },
+                            "maxItems": 64,
+                            "type": "array",
+                            "x-kubernetes-list-type": "atomic"
+                          },
+                          "denyList": {
+                            "description": "DenyList is a vocabulary of terms that match as the SupportedEntity\neven when no pattern fires. Each entry is regex-escaped by Presidio,\njoined into a single alternation, and evaluated under\n`re.DOTALL | re.MULTILINE | re.IGNORECASE` with word-boundary\nanchors `(?:^|(?<=\\W))(...)(?:(?=\\W)|$)`. So matches are\ncase-insensitive, word-boundary substring matches anywhere in the\ninput — NOT exact-string equality:\n\n  - `\"PROJ-1\"` fires on `\"PROJ-1\"`, `\"proj-1\"`, `\" PROJ-1.\"`.\n  - `\"PROJ-1\"` does NOT fire on `\"PROJ-12\"` (`1` is followed by\n    `2`, not `\\W`).\n\nUseful for fixed vocabularies (titles, internal product code names)\nwhere regex would be overkill.\n\nStorage warning: the rendered recognizers YAML lives in a ConfigMap\n(`{cr-name}-presidio-recognizers`). Anyone with `get configmap` in\nthe namespace, including most read-only RBAC roles, can read every\nentry verbatim. Avoid putting sensitive content in DenyList[]:\ninternal product code names, employee names, or any vocabulary\nwhose disclosure carries the same risk as disclosing the matched\ndata itself.",
+                            "items": {
+                              "maxLength": 128,
+                              "type": "string"
+                            },
+                            "maxItems": 512,
+                            "type": "array",
+                            "x-kubernetes-list-type": "atomic"
+                          },
+                          "name": {
+                            "description": "Name identifies the recognizer in Presidio's logs and metrics. Must\nbe unique within the recognizers list. The operator does not impose\nthe upstream PascalCase recognizer-name convention because Presidio\naccepts any unique string for custom recognizers. The leading\ncharacter is constrained to alphanumeric so the name remains safe\nto use as a CLI flag value, filename component, or label value\n(a leading `-` breaks flag parsing; a leading `.` fails kube\nadmission on metadata.name; a leading `_` is rejected by some\nlabel validators).",
+                            "maxLength": 128,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                            "type": "string"
+                          },
+                          "patterns": {
+                            "description": "Patterns is the list of regex patterns this recognizer matches on.\nEach pattern carries its own confidence score; matches are surfaced\nat the highest pattern score, optionally boosted by ContextWords.",
+                            "items": {
+                              "description": "PresidioPattern is one regex pattern within a PresidioRecognizer.",
+                              "properties": {
+                                "name": {
+                                  "description": "Name identifies the pattern in Presidio's logs and metrics. Must be\nunique within the parent recognizer's patterns list.",
+                                  "maxLength": 128,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "regex": {
+                                  "description": "Regex is the pattern Presidio evaluates against incoming text.\nThe operator pre-compiles each pattern with Go's RE2 engine\nbefore applying the recognizers ConfigMap, so non-compiling\npatterns fail reconcile rather than wedging the Presidio\nrollout. Presidio itself runs the third-party Python `regex`\npackage (imported as `re`), whose syntax is a superset of RE2 —\npatterns using lookaround or backreferences are accepted by the\nengine but rejected by the operator's pre-compile because the\nYAML loader can't express them anyway; use ContextWords for\nproximity matching instead.\n\nRE2 acceptance does NOT imply linear-time evaluation in Presidio:\n`regex` is a backtracking engine, so polynomial patterns like\n`(a+)+x` compile under RE2 syntax but can blow up on crafted\ninputs. The operator's actual ReDoS guard is the per-call\n`REGEX_TIMEOUT_SECONDS` env var on the Presidio container,\nwhich the operator pins to a tight default (5s) so a bad pattern\ncaps a single request rather than the worker.\n\nThe 1024-character bound matches the project's regex length\nlimit on other custom-pattern surfaces.",
+                                  "maxLength": 1024,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "score": {
+                                  "default": 50,
+                                  "description": "Score is the pattern's confidence as a percentage (0-100). The\noperator converts this to the 0.0-1.0 float Presidio expects when\nrendering the recognizers YAML. Combines with ContextWords boosting\nand PresidioConfig.ScoreThreshold filtering.",
+                                  "format": "int32",
+                                  "maximum": 100,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "name",
+                                "regex"
+                              ],
+                              "type": "object"
+                            },
+                            "maxItems": 16,
+                            "type": "array",
+                            "x-kubernetes-list-map-keys": [
+                              "name"
+                            ],
+                            "x-kubernetes-list-type": "map"
+                          },
+                          "supportedEntity": {
+                            "description": "SupportedEntity is the entity label this recognizer emits on a\nmatch (e.g. \"INTERNAL_ACCOUNT_ID\"). Convention is upper snake case\nto match Presidio's built-in entity vocabulary. The operator\nauto-unions every SupportedEntity into the Entities list at\nreconcile time, so the same name does not also need to be declared\nthere.\n\nCustom recognizers may NOT target an entity emitted by one of\nPresidio's built-in recognizers (e.g. EMAIL_ADDRESS, US_SSN). The\nupstream registry has no name-dedup or replace-by-name path —\ndeclaring a custom recognizer with a built-in supportedEntity does\nnot shadow the built-in; both fire independently. Presidio's\nanalyze-time dedup collapses identical-span same-entity hits but\nkeeps partial overlaps as separate `RecognizerResult` rows, so\nstacking on a built-in produces unpredictable results. The\nrejection list mirrors `internal/guardrails/provider/presidio`'s\nBuiltinEntities; a drift test in that package fails CI when the\ntwo views disagree. Pick a unique entity name, or wait for\nupstream to ship `replace_recognizer` semantics.",
+                            "maxLength": 128,
+                            "minLength": 1,
+                            "pattern": "^[A-Z][A-Z0-9_]*$",
+                            "type": "string",
+                            "x-kubernetes-validations": [
+                              {
+                                "message": "supportedEntity collides with a Presidio built-in entity; pick a unique name (custom recognizers do not shadow built-ins — both fire independently and produce unpredictable analyze-time merges)",
+                                "rule": "!(self in ['DATE_TIME','LOCATION','NRP','ORGANIZATION','PERSON','CREDIT_CARD','CRYPTO','EMAIL_ADDRESS','IBAN_CODE','IP_ADDRESS','MAC_ADDRESS','MEDICAL_LICENSE','PHONE_NUMBER','URL','AU_ABN','AU_ACN','AU_MEDICARE','AU_TFN','ES_NIE','ES_NIF','FI_PERSONAL_IDENTITY_CODE','IN_AADHAAR','IN_GSTIN','IN_PAN','IN_PASSPORT','IN_VEHICLE_REGISTRATION','IN_VOTER','IT_DRIVER_LICENSE','IT_FISCAL_CODE','IT_IDENTITY_CARD','IT_PASSPORT','IT_VAT_CODE','KR_BRN','KR_DRIVER_LICENSE','KR_FRN','KR_RRN','NG_NIN','NG_VEHICLE_REGISTRATION','PL_PESEL','SG_NRIC_FIN','TH_TNIN','UK_NHS','UK_NINO','UK_PASSPORT','UK_POSTCODE','UK_VEHICLE_REGISTRATION','US_BANK_NUMBER','US_DRIVER_LICENSE','US_ITIN','US_MBI','US_NPI','US_PASSPORT','US_SSN'])"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "supportedEntity"
+                        ],
+                        "type": "object",
+                        "x-kubernetes-validations": [
+                          {
+                            "message": "recognizer must declare at least one pattern or denyList entry",
+                            "rule": "size(self.patterns) > 0 || size(self.denyList) > 0"
+                          }
+                        ]
+                      },
+                      "maxItems": 64,
+                      "type": "array",
+                      "x-kubernetes-list-map-keys": [
+                        "name"
+                      ],
+                      "x-kubernetes-list-type": "map"
+                    },
+                    "replicas": {
+                      "default": 2,
+                      "description": "Replicas is the number of Presidio Analyzer pods.\n\nWhen `autoscaling.mode` is `Operator` (default) or `None`, the operator\nowns this field and writes it on every reconcile. When `autoscaling.mode`\nis `External`, the operator does not write `spec.replicas` to the\nDeployment at all — an external scaler (Keda, KPA, vendor) owns the\nfield, and this CRD value is silently ignored after the Deployment's\nfirst creation. Set this only as a manual scaling target in\n`Operator`/`None` modes.",
+                      "format": "int32",
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "resources": {
+                      "description": "Resources defines compute resource requirements for the Presidio Analyzer\npods. The operator applies a runtime fallback of 500m/2 CPU + 1Gi/2Gi\nmemory when this field is nil; the fallback accommodates the spaCy\nen_core_web_md model (~800MB resident). The defaults are not surfaced\nin the CRD schema (so kubectl explain does not show them) because they\nlive in the controller, not in admission — set this field explicitly to\npin observable values.",
+                      "properties": {
+                        "limits": {
+                          "description": "Limits defines the maximum resources allowed.",
+                          "properties": {
+                            "cpu": {
+                              "description": "CPU is the CPU resource quantity (e.g., \"500m\", \"2\").",
+                              "type": "string"
+                            },
+                            "memory": {
+                              "description": "Memory is the memory resource quantity (e.g., \"512Mi\", \"2Gi\").",
+                              "type": "string"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "requests": {
+                          "description": "Requests defines the minimum resources required.",
+                          "properties": {
+                            "cpu": {
+                              "description": "CPU is the CPU resource quantity (e.g., \"500m\", \"2\").",
+                              "type": "string"
+                            },
+                            "memory": {
+                              "description": "Memory is the memory resource quantity (e.g., \"512Mi\", \"2Gi\").",
+                              "type": "string"
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "scoreThreshold": {
+                      "default": 50,
+                      "description": "ScoreThreshold is the minimum confidence score as a percentage (0-100)\nfor a Presidio detection to be acted upon. The operator converts this\nto a 0.0-1.0 float when calling the Presidio API (e.g., 50 becomes 0.5).\nHigher values reduce false positives.",
+                      "format": "int32",
+                      "maximum": 100,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "targetCPUUtilization": {
+                      "description": "TargetCPUUtilization is the CPU utilization target for HPA scaling\n(percentage) of the Presidio Analyzer deployment. The operator applies\na runtime fallback of 75 when this field is nil and MaxReplicas is set.\nNo kubebuilder default is emitted because the paired CEL rule above\n(`has(targetCPUUtilization) -> has(maxReplicas)`) needs `nil` to be\nobservable as \"user did not set this\", which a default-everything-to-75\nwould erase.",
+                      "format": "int32",
+                      "maximum": 100,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object",
+                  "x-kubernetes-validations": [
+                    {
+                      "message": "targetCPUUtilization is inert without maxReplicas: set both, or neither, on processor.nerProvider.presidio",
+                      "rule": "!has(self.targetCPUUtilization) || has(self.maxReplicas)"
+                    },
+                    {
+                      "message": "rendered recognizers config exceeds the 800KiB admission budget; trim recognizer count, denyList entries, or pattern length",
+                      "rule": "!has(self.recognizers) || self.recognizers.map(r, size(r.name) + size(r.supportedEntity) + r.patterns.map(p, size(p.name) + size(p.regex)).sum() + (has(r.contextWords) ? r.contextWords.map(c, size(c)).sum() : 0) + (has(r.denyList) ? r.denyList.map(d, size(d)).sum() : 0)).sum() <= 800000"
+                    }
+                  ]
+                },
+                "resultCache": {
+                  "description": "ResultCache opts this gateway's NER scan results into the shared\nRedis/Valkey cache. Provider-agnostic (it caches whatever the selected\nprovider returned for a given text), which is why it sits at this level\nrather than inside the presidio sub-block.",
+                  "properties": {
+                    "enabled": {
+                      "default": false,
+                      "description": "Enabled turns the cache on. Off by default: the cache is a latency\noptimization, and an install that never opts in must keep the\nmain-processor pod template it had before this field existed (a stamped\nbackend address would otherwise force a rolling restart on upgrade).",
+                      "type": "boolean"
+                    },
+                    "ttl": {
+                      "description": "TTL is how long a cached scan result lives. Defaults to 24h when unset.\n\nEntries cannot go stale: the cache key is content- and config-addressed,\nso anything that would change the answer changes the key. This is\ntherefore purely a memory and disclosure-window knob, never a correctness\none — which is what makes a long default defensible, since agentic\nsessions routinely outlive a shorter window and a session resumed after a\nbreak should still be warm.\n\nIt rides the watched scanning ConfigMap rather than pod env, and the\noperator deliberately keeps it out of the main-processor's\nchecksum/config annotation, so retuning it hot-reloads: it rolls no pod,\nrebuilds no NER provider, and resets no circuit-breaker state. That last\npoint is the reason for the care — a retune during a Presidio outage must\nnot reopen the breaker and re-herd a down backend into 403s under the\ndefault fail-closed action.\n\nFootprint, for sizing: an entry holds entity types and byte offsets and\nnever the scanned text, so entry size is independent of how large the\nscanned turn was. Budget roughly 250 bytes per entry with Redis overhead,\ntimes the number of DISTINCT turns in the window.",
+                      "maxLength": 32,
+                      "pattern": "^([0-9]+([.][0-9]+)?(ns|us|ms|s|m|h))+$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "timeout": {
+                  "default": "5s",
+                  "description": "Timeout is the per-request timeout applied to calls into the NER provider.\nUses Go duration format (e.g., \"500ms\", \"1s\", \"5s\").\n\nThe default (5s) is sized for Microsoft Presidio's spaCy engine — the\nonly provider this CRD wires today — running on the request-body sizes\nthe gateway sees in practice: 100-500ms per /analyze on a warm replica\nwith dedicated CPU, 200-3000ms when the pod shares a CPU-bound node, and\nseveral seconds on the 200-500 KB bodies typical of agent CLI traffic\n(Claude Code, Gemini CLI). 5s sits above warm-replica p99 and the\ncontended/large-body case while staying short enough that the gateway\nfail-closes in seconds when Presidio is stuck. Operators with strict\nlatency SLOs can lower this: a tighter timeout trips the breaker\nsooner, which is the right behaviour when the SLO is the dominant\npressure. ProcessorConfig.MessageTimeout must remain strictly greater\nthan this value or Envoy aborts the ext-proc stream before NER returns;\nthe CEL rule on ProcessorConfig enforces that ordering at admission.",
+                  "pattern": "^([0-9]+([.][0-9]+)?(ns|us|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                "type": {
+                  "description": "Type selects the provider implementation. Currently only `presidio` is\nsupported; the enum is narrow on purpose so unsupported values fail at\nadmission instead of producing a silently-empty processor config.",
+                  "enum": [
+                    "presidio"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object",
+              "x-kubernetes-validations": [
+                {
+                  "message": "nerProvider.presidio must be set when type=presidio",
+                  "rule": "self.type != 'presidio' || has(self.presidio)"
+                },
+                {
+                  "message": "nerProvider.presidio may only be set when type=presidio",
+                  "rule": "!has(self.presidio) || self.type == 'presidio'"
+                }
+              ]
+            },
+            "placeholder": {
+              "description": "Placeholder is the redaction string substituted for matched bytes when\nthe active action is Redact. Empty falls back to a default derived from\nthe entity type (e.g. \"[REDACTED-EMAIL_ADDRESS]\").",
+              "type": "string"
+            },
+            "replicas": {
+              "default": 2,
+              "description": "Replicas is the number of guardrail ext-proc pods.",
+              "format": "int32",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "requestAction": {
+              "default": "Block",
+              "description": "RequestAction is the action the processor takes when the NER provider\nreports a PII match on the request path. \"Block\" (default) returns 403,\n\"Redact\" replaces the matched bytes with Placeholder, \"LogOnly\" emits\ntelemetry and lets the request through unchanged.",
+              "enum": [
+                "Block",
+                "Redact",
+                "LogOnly"
+              ],
+              "type": "string"
+            },
+            "resources": {
+              "description": "Resources defines compute resource requirements for the guardrails pods.",
+              "properties": {
+                "limits": {
+                  "description": "Limits defines the maximum resources allowed.",
+                  "properties": {
+                    "cpu": {
+                      "description": "CPU is the CPU resource quantity (e.g., \"500m\", \"2\").",
+                      "type": "string"
+                    },
+                    "memory": {
+                      "description": "Memory is the memory resource quantity (e.g., \"512Mi\", \"2Gi\").",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "requests": {
+                  "description": "Requests defines the minimum resources required.",
+                  "properties": {
+                    "cpu": {
+                      "description": "CPU is the CPU resource quantity (e.g., \"500m\", \"2\").",
+                      "type": "string"
+                    },
+                    "memory": {
+                      "description": "Memory is the memory resource quantity (e.g., \"512Mi\", \"2Gi\").",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
+            "responseAction": {
+              "description": "ResponseAction is the action the processor takes when the NER provider\nreports a PII match on the response path. Same enum as RequestAction;\nwhen empty, the processor falls back to RequestAction.",
+              "enum": [
+                "Block",
+                "Redact",
+                "LogOnly"
+              ],
+              "type": "string"
+            },
+            "targetCPUUtilization": {
+              "default": 75,
+              "description": "TargetCPUUtilization is the CPU utilization target for HPA scaling (percentage).",
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "terminationGracePeriodSeconds": {
+              "description": "TerminationGracePeriodSeconds is how long the kubelet waits after\nsending SIGTERM before it SIGKILLs a main-processor pod. On SIGTERM the\nprocessor calls grpcServer.GracefulStop(), which keeps every in-flight\next-proc stream (i.e. an in-progress streaming LLM completion) open\nuntil it finishes; the kubelet then kills the pod once this period\nelapses. The Kubernetes default (30s) is far shorter than a long\nagentic generation, so a rollout that lands mid-stream severs the\nupstream connection and the caller sees an unexpected EOF with no\nresponse.\n\nWhen unset, the operator DERIVES this from the effective\nmaxStreamDuration ceiling (spec.gateway.streamTimeouts.maxStreamDuration)\nplus a fixed teardown margin, so the grace always covers a full-length\nstream and moves in lock-step with the ceiling instead of drifting from\nit. Set an explicit value only to pin a tighter or wider known bound;\nwhen the ceiling is unbounded (\"0s\") the operator falls back to a fixed\ndefault.",
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "tls": {
+              "description": "TLS overrides the mTLS settings for the Envoy-to-main-processor hop.\nSetting it also opts this gateway into that mTLS regardless of the\noperator's default, which is how a CR asked for mTLS before the\noperator carried a chart-level switch (certManager.processorTLS.enabled).\nPrefer leaving this unset and enabling mTLS on the operator chart, so\nthe issuer is named once for the whole platform: omitting it means \"no\nper-gateway override\", NOT \"mTLS off\".\n\nDo not add +nullable here. Every field below is optional, so an author\nopting in with a fully empty object can end up submitting a JSON null\ninstead of `{}` — that is how the staging manifests broke. Marking null\nvalid stores it, and a stored null unmarshals back to a nil pointer that\nreads as \"no override\" while the author meant \"opt in\": plaintext on a hop\ncarrying full request and response bodies. Non-nullable makes a null a\nrejection on server-side apply (Flux, `kubectl apply --server-side`) and a\nprune-to-absent on a client-side create or update, so it is never stored\nas a silent off. Pinned by test-integration/processor_tls_validation_test.go.",
+              "properties": {
+                "issuerRef": {
+                  "description": "IssuerRef configures the cert-manager issuer for the main-processor and\nguardrails-adapter serving certs. When omitted, the operator falls back to\nits chart-configured default issuer (certManager.defaultIssuer on the\noperator chart). Reconciliation fails closed if neither the CR nor the\noperator default supplies an issuer name.",
+                  "properties": {
+                    "kind": {
+                      "default": "ClusterIssuer",
+                      "description": "Kind is either \"Issuer\" or \"ClusterIssuer\".",
+                      "enum": [
+                        "Issuer",
+                        "ClusterIssuer"
+                      ],
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "Name of the Issuer or ClusterIssuer.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object",
+          "x-kubernetes-validations": [
+            {
+              "message": "processor.messageTimeout must be strictly greater than processor.nerProvider.timeout",
+              "rule": "!has(self.messageTimeout) || !has(self.nerProvider) || !has(self.nerProvider.timeout) || duration(self.messageTimeout) > duration(self.nerProvider.timeout)"
+            }
+          ]
+        },
+        "providers": {
+          "description": "Providers is the list of LLM provider backends.",
+          "items": {
+            "description": "ProviderConfig defines a single LLM provider backend.",
+            "properties": {
+              "credentials": {
+                "description": "Credentials defines how to authenticate to the upstream provider.",
+                "properties": {
+                  "projectName": {
+                    "description": "ProjectName is the GCP project ID slug (the unique identifier used in\nAPI calls — e.g. \"my-prod-7a3b\" — not the human-readable display name).\nRequired when Type=GCPCredentials, otherwise unused. Together with\nRegion, this scopes Vertex requests to a project/region pair on the\nupstream BackendSecurityPolicy. The pattern matches GCP's documented\nproject ID shape (lowercase letter followed by 5-29 chars of\n[a-z0-9-], ending in [a-z0-9]).",
+                    "maxLength": 30,
+                    "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$",
+                    "type": "string"
+                  },
+                  "region": {
+                    "description": "Region is the cloud provider region (for AWSCredentials, AzureCredentials, GCPCredentials).\nThe pattern accepts lowercase canonical region tokens such as us-east-1,\nus-central1, europe-west4, eastus2 — and rejects whitespace, uppercase,\nand trailing newlines that would propagate into the upstream BackendSecurityPolicy.",
+                    "maxLength": 63,
+                    "pattern": "^[a-z][a-z0-9-]*[a-z0-9]$",
+                    "type": "string"
+                  },
+                  "secretRef": {
+                    "description": "SecretRef references the Kubernetes Secret containing the credentials.",
+                    "properties": {
+                      "key": {
+                        "default": "apiKey",
+                        "description": "Key within the Secret data.",
+                        "type": "string"
+                      },
+                      "name": {
+                        "description": "Name of the Secret.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "type": {
+                    "description": "Type is the authentication mechanism.",
+                    "enum": [
+                      "APIKey",
+                      "AnthropicAPIKey",
+                      "AWSCredentials",
+                      "AzureAPIKey",
+                      "AzureCredentials",
+                      "GCPCredentials"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object",
+                "x-kubernetes-validations": [
+                  {
+                    "message": "credentials.type=GCPCredentials requires region, projectName, and secretRef",
+                    "rule": "self.type != 'GCPCredentials' || (size(self.region) > 0 && size(self.projectName) > 0 && has(self.secretRef))"
+                  }
+                ]
+              },
+              "endpoint": {
+                "description": "Endpoint defines the upstream provider endpoint.",
+                "properties": {
+                  "hostname": {
+                    "description": "Hostname of the upstream provider API.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "port": {
+                    "default": 443,
+                    "description": "Port of the upstream provider API.",
+                    "format": "int32",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "hostname"
+                ],
+                "type": "object"
+              },
+              "name": {
+                "description": "Name is the unique identifier for this provider.",
+                "maxLength": 63,
+                "pattern": "^[a-z0-9]([a-z0-9\\-]*[a-z0-9])?$",
+                "type": "string"
+              },
+              "pathPrefix": {
+                "description": "PathPrefix customizes the upstream request path for an\nOpenAI-compatible backend; e.g. OpenRouter uses \"/api/v1\". Only valid\nwhen schema is OpenAI — the upstream prefix mechanism (AIServiceBackend\nschema.prefix) only applies to the OpenAI translator. Registry-owned\naliases (e.g. GeminiAIStudio) already carry their own prefix and must\nnot set this field.",
+                "maxLength": 128,
+                "pattern": "^/?[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$",
+                "type": "string"
+              },
+              "schema": {
+                "description": "Schema is the provider API schema. Mirrors the upstream Envoy AI\nGateway AIServiceBackend schema enum (aigateway.envoyproxy.io/v1alpha1)\nverbatim except for two operator translations:\nGeminiAIStudio → {name: OpenAI, prefix: /v1beta/openai}\nfor Google AI Studio's OpenAI-compatibility endpoint, and\nGoogleGenerativeLanguage targets the public Gemini API at\ngenerativelanguage.googleapis.com (v1beta/models/{model}:generateContent).\nGCPVertexAI talks to a regional Vertex AI aiplatform endpoint.\nAWSAnthropic serves Anthropic Claude models on AWS Bedrock via the\nInvokeModel API (native Anthropic Messages wire shape), distinct from\nAWSBedrock's Converse API: the InvokeModel path returns the\nAnthropic-native usage block the processor already prices, so Bedrock\nClaude traffic is billed under the `awsanthropic` pricing family.\n\nThe exact upstream fork version this mirrors is pinned in FORK-VERSION;\nit is deliberately not restated here so this comment does not go stale\non every fork bump.",
+                "enum": [
+                  "OpenAI",
+                  "Anthropic",
+                  "AWSBedrock",
+                  "AWSAnthropic",
+                  "AzureOpenAI",
+                  "GCPVertexAI",
+                  "GeminiAIStudio",
+                  "GoogleGenerativeLanguage"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "credentials",
+              "endpoint",
+              "name",
+              "schema"
+            ],
+            "type": "object",
+            "x-kubernetes-validations": [
+              {
+                "message": "schema GeminiAIStudio requires credentials.type=APIKey (Google AI Studio authenticates via API key on the OpenAI-compatibility endpoint)",
+                "rule": "self.schema != 'GeminiAIStudio' || self.credentials.type == 'APIKey'"
+              },
+              {
+                "message": "schema GoogleGenerativeLanguage requires credentials.type=APIKey (Google's Gemini API at generativelanguage.googleapis.com authenticates via API key)",
+                "rule": "self.schema != 'GoogleGenerativeLanguage' || self.credentials.type == 'APIKey'"
+              },
+              {
+                "message": "schema GCPVertexAI requires credentials.type=GCPCredentials with region, projectName, and secretRef (Vertex requires a project/region pair plus a service-account JSON Secret)",
+                "rule": "self.schema != 'GCPVertexAI' || (self.credentials.type == 'GCPCredentials' && size(self.credentials.region) > 0 && size(self.credentials.projectName) > 0 && has(self.credentials.secretRef))"
+              },
+              {
+                "message": "pathPrefix is only valid with schema: OpenAI (the upstream prefix mechanism only applies to the OpenAI translator); registry-owned aliases like GeminiAIStudio already carry their own prefix",
+                "rule": "!has(self.pathPrefix) || size(self.pathPrefix) == 0 || self.schema == 'OpenAI'"
+              }
+            ]
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "type": "array",
+          "x-kubernetes-list-map-keys": [
+            "name"
+          ],
+          "x-kubernetes-list-type": "map"
+        },
+        "resilience": {
+          "description": "Resilience configures retry, circuit breaker, passive health checking,\nand upstream timeouts for all routes managed by this gateway. When nil,\nupstream errors pass through to the client unchanged (no retries).",
+          "properties": {
+            "circuitBreaker": {
+              "description": "CircuitBreaker bounds connection and request concurrency to each\nupstream cluster.",
+              "properties": {
+                "maxConnections": {
+                  "description": "MaxConnections caps concurrent TCP connections to the upstream cluster.",
+                  "format": "int32",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "maxParallelRequests": {
+                  "description": "MaxParallelRequests caps in-flight requests to the upstream cluster.",
+                  "format": "int32",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "maxParallelRetries": {
+                  "description": "MaxParallelRetries caps in-flight retry attempts to the upstream\ncluster so a retry storm cannot exhaust upstream capacity.",
+                  "format": "int32",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "maxPendingRequests": {
+                  "description": "MaxPendingRequests caps requests waiting for a ready connection.",
+                  "format": "int32",
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "passiveHealthCheck": {
+              "description": "PassiveHealthCheck configures Envoy outlier detection so that hosts\nreturning consecutive errors are ejected from the load balancing set.",
+              "properties": {
+                "baseEjectionTime": {
+                  "description": "BaseEjectionTime is how long an ejected host stays out of the load\nbalancing set before rejoining. Accepts Go duration syntax.",
+                  "pattern": "^([0-9]+([.][0-9]+)?(ns|us|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                "consecutive5xxErrors": {
+                  "description": "Consecutive5xxErrors is the number of consecutive 5xx responses that\ncause a host to be ejected.",
+                  "format": "int32",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "consecutiveGatewayErrors": {
+                  "description": "ConsecutiveGatewayErrors is the number of consecutive gateway errors\n(502, 503, 504) that cause a host to be ejected.",
+                  "format": "int32",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "interval": {
+                  "description": "Interval is the scan cadence for outlier detection. Accepts Go duration\nsyntax (e.g. \"10s\", \"1m\").",
+                  "pattern": "^([0-9]+([.][0-9]+)?(ns|us|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                "maxEjectionPercent": {
+                  "description": "MaxEjectionPercent is the upper bound on the percentage of hosts that\noutlier detection may eject at once, preventing mass ejection from\ncollapsing the cluster.",
+                  "format": "int32",
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "retry": {
+              "description": "Retry configures request retries on the upstream data path.",
+              "properties": {
+                "numAttemptsPerPriority": {
+                  "description": "NumAttemptsPerPriority is the number of attempts made against hosts at\nthe same priority before failing over to the next priority group.\nDefaults to 1 (switch to the next priority on every retry).",
+                  "format": "int32",
+                  "maximum": 10,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "numRetries": {
+                  "description": "NumRetries is the maximum retry attempts per request.",
+                  "format": "int32",
+                  "maximum": 10,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "perRetryTimeout": {
+                  "description": "PerRetryTimeout bounds each individual retry attempt. To bound the whole\nrequest lifetime across all attempts use spec.gateway.timeouts.requestTimeout\nor spec.routes[].timeouts.requestTimeout.",
+                  "pattern": "^([0-9]+([.][0-9]+)?(ns|us|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                "retryOn": {
+                  "description": "RetryOn selects the upstream conditions that trigger a retry. At least\none trigger or HTTP status code must be declared whenever NumRetries is\ngreater than zero.",
+                  "properties": {
+                    "httpStatusCodes": {
+                      "description": "HTTPStatusCodes pairs with the retriable-status-codes trigger. The\ntrigger has no effect unless at least one status code is listed here.",
+                      "items": {
+                        "format": "int32",
+                        "type": "integer"
+                      },
+                      "maxItems": 20,
+                      "type": "array",
+                      "x-kubernetes-list-type": "set"
+                    },
+                    "triggers": {
+                      "description": "Triggers is the list of retry conditions. Combined with HTTPStatusCodes\nby OR; a request is retried when any trigger matches.",
+                      "items": {
+                        "description": "RetryTrigger is a curated subset of Envoy's retry_on vocabulary. The\nenum is closed so the gateway API surface stays stable across upstream\nEnvoy releases — new triggers are added by bumping the CRD, not by\noperator configuration.",
+                        "enum": [
+                          "5xx",
+                          "gateway-error",
+                          "reset",
+                          "connect-failure",
+                          "retriable-status-codes"
+                        ],
+                        "type": "string"
+                      },
+                      "maxItems": 5,
+                      "type": "array",
+                      "x-kubernetes-list-type": "set"
+                    }
+                  },
+                  "type": "object",
+                  "x-kubernetes-validations": [
+                    {
+                      "message": "httpStatusCodes entries must be in the 400-599 range",
+                      "rule": "!has(self.httpStatusCodes) || self.httpStatusCodes.all(c, c >= 400 && c <= 599)"
+                    }
+                  ]
+                }
+              },
+              "type": "object",
+              "x-kubernetes-validations": [
+                {
+                  "message": "retry.retryOn must declare at least one trigger or httpStatusCode when numRetries > 0",
+                  "rule": "!has(self.numRetries) || self.numRetries == 0 || (has(self.retryOn) && ((has(self.retryOn.triggers) && size(self.retryOn.triggers) > 0) || (has(self.retryOn.httpStatusCodes) && size(self.retryOn.httpStatusCodes) > 0)))"
+                },
+                {
+                  "message": "retriable-status-codes trigger requires httpStatusCodes to be set",
+                  "rule": "!has(self.numRetries) || self.numRetries == 0 || !has(self.retryOn) || !has(self.retryOn.triggers) || !self.retryOn.triggers.exists(t, t == 'retriable-status-codes') || (has(self.retryOn.httpStatusCodes) && size(self.retryOn.httpStatusCodes) > 0)"
+                }
+              ]
+            },
+            "upstreamConnection": {
+              "description": "UpstreamConnection tunes how Envoy recycles pooled connections to each\nupstream provider. Recycling Envoy's own connections on a shorter clock\nthan the provider's edge prevents the provider from closing a connection\nmid-response, which otherwise surfaces to clients as an abrupt socket\nclose.",
+              "properties": {
+                "connectionIdleTimeout": {
+                  "description": "ConnectionIdleTimeout is how long a pooled upstream connection may sit\nwith no active requests before Envoy closes it. Closing idle connections\nlocally avoids reusing one the provider's edge has already reaped. Maps\nto spec.timeout.http.connectionIdleTimeout on the BackendTrafficPolicy.\nAccepts the Envoy Gateway Duration form (e.g. \"55s\", \"5m\"); no fractional\nvalues or us/ns units. When unset, Envoy's 1h default applies.",
+                  "pattern": "^([0-9]{1,5}(h|m|s|ms)){1,4}$",
+                  "type": "string"
+                },
+                "maxConnectionDuration": {
+                  "description": "MaxConnectionDuration is the absolute lifetime of an upstream connection\nregardless of activity. On reaching it Envoy drains the connection\ngracefully (HTTP/2 GOAWAY: in-flight streams finish, no new streams open),\nso setting it below the provider's own max connection age prevents the\nprovider from closing a connection mid-response. Maps to\nspec.timeout.http.maxConnectionDuration on the BackendTrafficPolicy.\nAccepts the Envoy Gateway Duration form (e.g. \"10m\", \"30m\"); no fractional\nvalues or us/ns units. When unset, Envoy leaves connection lifetime\nunbounded.",
+                  "pattern": "^([0-9]{1,5}(h|m|s|ms)){1,4}$",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "routes": {
+          "description": "Routes defines model routing rules. Maximum 120 entries — the hard\nceiling of 15 collapsed rules times 8 matches per rule (see below);\nthe practical ceiling is lower and depends on how many routes share a\nbackend.\n\nThe operator collapses routes that share the same backendRefs and\ntimeout into ONE AIGatewayRoute rule with one match per model,\nchunked at 8 matches per rule — e.g. 40 model routes split across 3\nproviders of <=8 models each become 3 rules; a single backend of 20\nmodels becomes 3 rules (8+8+4). GeminiNative (path-matched) routes and\nthe no-match default route are never collapsed; each keeps its own\nrule. Gateway API caps HTTPRoute.spec.rules at 16, and the upstream AI\nGateway controller always appends a route-not-found rule (returning\n404 for unmatched traffic) as the final entry, consuming one slot —\nso the collapsed rule count must stay at or below 15, and each rule\nholds at most 8 matches, giving the 15*8=120 model ceiling. The reconciler\nenforces this at reconcile time (see the RoutesValid status\ncondition) since the grouping is not CEL-expressible; a spec with\ntoo many distinct backend/timeout combinations sets\nRoutesValid=False and the AIGatewayRoute is not updated (retains\nlast-known-good) rather than failing admission.\n\nInserting or removing a route that changes which routes share a\ngroup shifts every subsequent group's rule index (rule/i), and\ntherefore its RLS generic_key route scope — the same class of\nbudget-counter reset that already applies to reordering routes\ntoday, just now scoped to the group rather than the individual\nroute.",
+          "items": {
+            "description": "RouteConfig defines a model routing rule.",
+            "properties": {
+              "backendRefs": {
+                "description": "BackendRefs defines which providers handle matched requests.",
+                "items": {
+                  "description": "RouteBackendRef references a provider for routing.",
+                  "properties": {
+                    "priority": {
+                      "default": 0,
+                      "description": "Priority for failover. Lower values are preferred.",
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "provider": {
+                      "description": "Provider must match the name of a defined provider.",
+                      "type": "string"
+                    },
+                    "weight": {
+                      "default": 1,
+                      "description": "Weight for weighted load balancing.",
+                      "format": "int32",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "provider"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 10,
+                "minItems": 1,
+                "type": "array"
+              },
+              "displayName": {
+                "description": "DisplayName is the human-readable label surfaced to model-discovery\nclients (e.g. Claude Code's model picker) via GET /v1/models\n`display_name`. When empty, the operator falls back to the route's\nModel id.",
+                "maxLength": 253,
+                "type": "string"
+              },
+              "inputSchema": {
+                "default": "OpenAI",
+                "description": "InputSchema declares the wire-format shape this route accepts from\nclients. When omitted, the route accepts OpenAI-shaped requests at\n/v1/chat/completions, /v1/embeddings, etc. — backwards-compatible with\nevery existing AIGateway.\n\nSet to \"GeminiNative\" to accept Gemini-shaped requests at\n/v1beta/models/{model}:generateContent and :streamGenerateContent\n(e.g., from Gemini CLI in proxy mode). The gateway translates the\nrequest to the backend provider's schema; any provider schema is\npermitted as a backend.",
+                "enum": [
+                  "OpenAI",
+                  "GeminiNative"
+                ],
+                "type": "string"
+              },
+              "match": {
+                "description": "Match defines when this route applies. If omitted, this is the default route.",
+                "properties": {
+                  "model": {
+                    "description": "Model is the model name to match (matched against x-ai-eg-model header).",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "model"
+                ],
+                "type": "object"
+              },
+              "name": {
+                "description": "Name is a unique identifier for this route.",
+                "maxLength": 63,
+                "type": "string"
+              },
+              "timeouts": {
+                "description": "Timeouts overrides the gateway-level total request cap for this specific\nroute. Takes precedence over spec.gateway.timeouts. Like the\ngateway-level field, this is an opt-in absolute deadline on the entire\nrequest (including the streamed response) and is disabled by default —\nset it only when you want this route's requests to fail past a fixed\nwall-clock budget. Streaming bounds (idle + max-stream-duration) are\nconfigured gateway-wide via spec.gateway.streamTimeouts, not per route.\nNote: the operator also applies a default maxStreamDuration ceiling (15m);\na per-route requestTimeout LONGER than the effective maxStreamDuration is\npre-empted by that ceiling (the stream is cut first), so to allow longer\nrequests you must raise BOTH this value and\nspec.gateway.streamTimeouts.maxStreamDuration. The operator surfaces a\nTimeoutConfigValid=False condition + Warning event when this happens.",
+                "properties": {
+                  "requestTimeout": {
+                    "description": "RequestTimeout is the maximum total duration allowed for a single\nrequest, including the streamed response body. This is an absolute cap:\nthe request is terminated when it elapses even if data is still flowing.\nAccepts the Envoy Gateway Duration form (e.g. \"5m\"). \"0s\" disables the cap.",
+                    "pattern": "^([0-9]{1,5}(h|m|s|ms)){1,4}$",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "backendRefs",
+              "name"
+            ],
+            "type": "object"
+          },
+          "maxItems": 120,
+          "minItems": 1,
+          "type": "array",
+          "x-kubernetes-list-map-keys": [
+            "name"
+          ],
+          "x-kubernetes-list-type": "map"
+        },
+        "version": {
+          "default": "v0.5.0",
+          "description": "Version is the AI Gateway version. The operator derives the compatible\nEnvoy Gateway version from a built-in compatibility matrix.",
+          "pattern": "^v\\d+\\.\\d+\\.\\d+$",
+          "type": "string"
+        },
+        "webhooks": {
+          "description": "Webhooks registers external in-cluster receivers that validate request\ntraffic (Validating) and observe responses (Observation). Each entry\nnames a same-namespace Service destination authenticated with a\nprojected, audience-bound Kubernetes ServiceAccount token. Sits\nalongside spec.audit and spec.journaling; the operator and main\nprocessor wire these in (see docs/plan/webhooks.md).",
+          "items": {
+            "description": "WebhookConfig defines a single webhook receiver registered on the AIGateway.",
+            "properties": {
+              "auth": {
+                "description": "Auth configures how the gateway authenticates to the receiver.",
+                "properties": {
+                  "serviceAccountToken": {
+                    "description": "ServiceAccountToken configures projected, audience-bound ServiceAccount\ntoken authentication. Required when Type is ServiceAccountToken.",
+                    "properties": {
+                      "audience": {
+                        "description": "Audience the receiver expects in the projected token. Must be non-empty.",
+                        "maxLength": 253,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "expirationSeconds": {
+                        "description": "ExpirationSeconds is the requested token lifetime. The kubelet clamps to\na cluster minimum (commonly 600s); omitting it takes the kubelet default.",
+                        "format": "int64",
+                        "minimum": 600,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "audience"
+                    ],
+                    "type": "object"
+                  },
+                  "type": {
+                    "default": "ServiceAccountToken",
+                    "description": "Type selects the authentication mode.",
+                    "enum": [
+                      "ServiceAccountToken"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object",
+                "x-kubernetes-validations": [
+                  {
+                    "message": "auth.serviceAccountToken is required when auth.type is ServiceAccountToken",
+                    "rule": "self.type != 'ServiceAccountToken' || has(self.serviceAccountToken)"
+                  }
+                ]
+              },
+              "events": {
+                "description": "Events optionally filters which catalog events this webhook receives.\nWhen empty, the receiver gets the phase-default events. Receivers ignore\nevents they do not recognize.",
+                "items": {
+                  "description": "WebhookEvent is a v1 event-catalog entry. Receivers subscribe by exact name\nand ignore unknown events, so the catalog grows additively without breaking\nexisting receivers.",
+                  "enum": [
+                    "request.received",
+                    "response.completed",
+                    "webhook.ping"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 3,
+                "type": "array",
+                "x-kubernetes-list-type": "set"
+              },
+              "failurePolicy": {
+                "default": "Fail",
+                "description": "FailurePolicy decides the request outcome when the webhook call fails.",
+                "enum": [
+                  "Fail",
+                  "Ignore"
+                ],
+                "type": "string"
+              },
+              "includeRequestHeaders": {
+                "description": "IncludeRequestHeaders is a glob allowlist of request headers projected\nonto the envelope. A fixed reserved-header denylist always strips\ncredential and identity carriers (and any X-Stacklok-* header) regardless\nof this allowlist.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array",
+                "x-kubernetes-list-type": "set"
+              },
+              "includeResponseBody": {
+                "default": false,
+                "description": "IncludeResponseBody opts this response-phase webhook into receiving the\nassembled response body on the response.completed event. The body rides\nin result.body as structured JSON, always a JSON array: a streamed SSE\nresponse is the array of its data: event payloads, each kept verbatim in\nits provider-native shape (no reassembly into a logical completion); a\nnon-streamed response is its single JSON object wrapped as a one-element\narray. Any Content-Encoding is decoded before assembly. Off by default:\nresponse bodies are large and carry un-redacted model output, so capture\nis an explicit per-webhook opt-in. The aggregate byte cap is a\ndeployment-level knob (AIGW_WEBHOOK_MAX_RESPONSE_BODY_CAPTURE on the\nmain-processor, set via the operator chart), not a CRD field. Has no\neffect on request-phase webhooks.",
+                "type": "boolean"
+              },
+              "includeResponseHeaders": {
+                "description": "IncludeResponseHeaders is a glob allowlist of response headers projected\nonto response-phase envelopes. The same reserved-header denylist applies.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array",
+                "x-kubernetes-list-type": "set"
+              },
+              "includeSubjectClaims": {
+                "description": "IncludeSubjectClaims is an allowlist of the caller's validated OIDC claim\nnames projected onto subject.claims, on request- and response-phase\nenvelopes alike. Only scalar string claims are eligible (the wire type is\nan object of strings); array, object, and numeric claims are never\nprojected. Empty — the default — omits the claims block entirely.\n\nEntries are EXACT claim names, matched case-sensitively; the single\nwildcard \"*\" projects every eligible claim. Unlike the header allowlists\nabove this is not glob-matched, because JWT claim names are case-sensitive\nand may contain '/' (namespaced claims such as\n`https://example.com/roles`) — see ProjectClaims in internal/webhooks.\n\nOff by default because a claim set is caller identity: it routinely carries\nemail, name, and preferred_username, which a receiver has no business\nseeing unless it was registered to act on them. Name the specific claims a\nreceiver needs (`iss`, `sub`, whichever claim its identity lookup keys on)\nrather than reaching for \"*\".",
+                "items": {
+                  "maxLength": 253,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array",
+                "x-kubernetes-list-type": "set"
+              },
+              "name": {
+                "description": "Name uniquely identifies this webhook within the AIGateway. Uniqueness is\nenforced by the API server (listType=map keyed on name).\nKeep this literal in sync with GuardrailsWebhookName, BudgetsAdmissionWebhookName,\nBudgetsUsageWebhookName, and BudgetsCaptureWebhookName (CEL markers cannot\nreference Go identifiers).",
+                "maxLength": 63,
+                "minLength": 1,
+                "pattern": "^[a-z0-9]([a-z0-9\\-]*[a-z0-9])?$",
+                "type": "string",
+                "x-kubernetes-validations": [
+                  {
+                    "message": "webhook names 'guardrails', 'budgets-admission', 'budgets-usage', and 'budgets-capture' are reserved for operator-synthesized webhooks",
+                    "rule": "self != 'guardrails' && self != 'budgets-admission' && self != 'budgets-usage' && self != 'budgets-capture'"
+                  }
+                ]
+              },
+              "phase": {
+                "description": "Phase is the request-lifecycle point at which this webhook fires.",
+                "enum": [
+                  "Request",
+                  "Response"
+                ],
+                "type": "string"
+              },
+              "service": {
+                "description": "Service is the in-cluster receiver destination, in the same namespace as\nthe AIGateway. Modeled on admissionregistration.k8s.io/v1.ServiceReference.",
+                "properties": {
+                  "name": {
+                    "description": "Name of the receiver Service.",
+                    "maxLength": 253,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "path": {
+                    "description": "Path is the HTTP path the envelope is POSTed to.",
+                    "maxLength": 511,
+                    "type": "string"
+                  },
+                  "port": {
+                    "default": 443,
+                    "description": "Port is the Service port the receiver serves HTTPS on. Defaults to 443\nwhen omitted, matching the convention on the provider endpoint port.",
+                    "format": "int32",
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              },
+              "timeoutSeconds": {
+                "default": 5,
+                "description": "TimeoutSeconds bounds a single webhook call.",
+                "format": "int32",
+                "maximum": 120,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "type": {
+                "description": "Type is the contract this webhook participates in.",
+                "enum": [
+                  "Validating",
+                  "Observation"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "auth",
+              "name",
+              "phase",
+              "service",
+              "type"
+            ],
+            "type": "object",
+            "x-kubernetes-validations": [
+              {
+                "message": "Response-phase webhooks must be type Observation",
+                "rule": "self.phase != 'Response' || self.type == 'Observation'"
+              }
+            ]
+          },
+          "maxItems": 8,
+          "type": "array",
+          "x-kubernetes-list-map-keys": [
+            "name"
+          ],
+          "x-kubernetes-list-type": "map"
+        }
+      },
+      "required": [
+        "auth",
+        "gateway",
+        "providers",
+        "routes"
+      ],
+      "type": "object",
+      "x-kubernetes-validations": [
+        {
+          "message": "spec.audit.enabled must be true when spec.journaling.enabled is true — drop events need the audit stream",
+          "rule": "!has(self.journaling) || !self.journaling.enabled || (has(self.audit) && self.audit.enabled)"
+        }
+      ]
+    },
+    "status": {
+      "description": "AIGatewayStatus defines the observed state of the AI Gateway.",
+      "properties": {
+        "conditions": {
+          "description": "Conditions represent the latest available observations of the AIGateway's state.",
+          "items": {
+            "description": "Condition contains details for one aspect of the current state of this API Resource.",
+            "properties": {
+              "lastTransitionTime": {
+                "description": "lastTransitionTime is the last time the condition transitioned from one status to another.\nThis should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "message": {
+                "description": "message is a human readable message indicating details about the transition.\nThis may be an empty string.",
+                "maxLength": 32768,
+                "type": "string"
+              },
+              "observedGeneration": {
+                "description": "observedGeneration represents the .metadata.generation that the condition was set based upon.\nFor instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date\nwith respect to the current state of the instance.",
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "reason": {
+                "description": "reason contains a programmatic identifier indicating the reason for the condition's last transition.\nProducers of specific condition types may define expected values and meanings for this field,\nand whether the values are considered a guaranteed API.\nThe value should be a CamelCase string.\nThis field may not be empty.",
+                "maxLength": 1024,
+                "minLength": 1,
+                "pattern": "^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$",
+                "type": "string"
+              },
+              "status": {
+                "description": "status of the condition, one of True, False, Unknown.",
+                "enum": [
+                  "True",
+                  "False",
+                  "Unknown"
+                ],
+                "type": "string"
+              },
+              "type": {
+                "description": "type of condition in CamelCase or in foo.example.com/CamelCase.",
+                "maxLength": 316,
+                "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "lastTransitionTime",
+              "message",
+              "reason",
+              "status",
+              "type"
+            ],
+            "type": "object"
+          },
+          "type": "array",
+          "x-kubernetes-list-map-keys": [
+            "type"
+          ],
+          "x-kubernetes-list-type": "map"
+        },
+        "endpoint": {
+          "description": "Endpoint is the gateway's externally-reachable endpoint URL.",
+          "type": "string"
+        },
+        "observedGeneration": {
+          "description": "ObservedGeneration is the most recent generation observed by the controller.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "readyProviders": {
+          "description": "ReadyProviders is the count of providers in a ready state.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "totalProviders": {
+          "description": "TotalProviders is the total number of configured providers.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "webhooks": {
+          "description": "Webhooks reports the per-webhook provisioning-ping outcome. The operator\nfires a webhook.ping on registration and on Service-ref, audience, or token-expiration change,\nthen records the result here so an operator can see, per webhook, whether\nthe receiver accepted the audience-bound token. The dispatcher reads this\nto decide whether real traffic defers to the per-webhook failurePolicy\nwhile a probe is failing. The aggregate WebhooksReady condition summarizes\nthese for humans.",
+          "items": {
+            "description": "WebhookProbeStatus is the observed provisioning-ping state for one webhook.",
+            "properties": {
+              "lastProbeTime": {
+                "description": "LastProbeTime is when the operator last fired a ping for this webhook.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "message": {
+                "description": "Message is a human-readable explanation of the last ping outcome.",
+                "type": "string"
+              },
+              "name": {
+                "description": "Name is the webhook this status entry describes (matches spec.webhooks[].name).",
+                "type": "string"
+              },
+              "observedAudience": {
+                "description": "ObservedAudience is the auth.serviceAccountToken.audience the last ping\nwas bound to, so an audience change is visible as a status diff.",
+                "type": "string"
+              },
+              "probeSucceeded": {
+                "description": "ProbeSucceeded is true when the most recent webhook.ping returned a 2xx.\nFalse means the last ping returned non-2xx, a transport error, or a token\nthe receiver rejected; while false, real traffic defers to failurePolicy.",
+                "type": "boolean"
+              },
+              "reason": {
+                "description": "Reason is a one-word CamelCase summary (ProbeSucceeded / ProbeFailed).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "probeSucceeded"
+            ],
+            "type": "object"
+          },
+          "type": "array",
+          "x-kubernetes-list-map-keys": [
+            "name"
+          ],
+          "x-kubernetes-list-type": "map"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "spec"
+  ],
+  "type": "object",
+  "x-kubernetes-validations": [
+    {
+      "message": "at most one default OpenAI route (no match block) is allowed per gateway",
+      "rule": "self.spec.routes.filter(r, !has(r.match) && r.inputSchema == 'OpenAI').size() <= 1"
+    },
+    {
+      "message": "at most one GeminiNative route is allowed per gateway (in v1; multi-Gemini-route support will be added later)",
+      "rule": "self.spec.routes.filter(r, r.inputSchema == 'GeminiNative').size() <= 1"
+    },
+    {
+      "message": "routes with inputSchema=GeminiNative must not specify a match block (Gemini ingress matches by URL path, not by model header in v1)",
+      "rule": "self.spec.routes.all(r, r.inputSchema != 'GeminiNative' || !has(r.match))"
+    },
+    {
+      "message": "route backendRefs must reference a defined provider",
+      "rule": "self.spec.routes.all(r, r.backendRefs.all(b, self.spec.providers.exists(p, p.name == b.provider)))"
+    },
+    {
+      "message": "spec.auth.oidc.issuer must start with https://",
+      "rule": "!has(self.spec.auth.oidc) || self.spec.auth.oidc.issuer.startsWith('https://')"
+    },
+    {
+      "message": "virtualAPIKeys requires OIDC configuration for key issuance",
+      "rule": "!has(self.spec.auth.virtualAPIKeys) || !self.spec.auth.virtualAPIKeys.enabled || has(self.spec.auth.oidc)"
+    },
+    {
+      "message": "processor.replicas must not exceed processor.maxReplicas",
+      "rule": "!has(self.spec.processor) || !has(self.spec.processor.maxReplicas) || !has(self.spec.processor.replicas) || self.spec.processor.replicas <= self.spec.processor.maxReplicas"
+    },
+    {
+      "message": "virtualAPIKeys.replicas must not exceed virtualAPIKeys.maxReplicas",
+      "rule": "!has(self.spec.auth.virtualAPIKeys) || !self.spec.auth.virtualAPIKeys.enabled || !has(self.spec.auth.virtualAPIKeys.maxReplicas) || !has(self.spec.auth.virtualAPIKeys.replicas) || self.spec.auth.virtualAPIKeys.replicas <= self.spec.auth.virtualAPIKeys.maxReplicas"
+    },
+    {
+      "message": "processor.nerProvider.presidio.replicas must not exceed processor.nerProvider.presidio.maxReplicas",
+      "rule": "!has(self.spec.processor) || !has(self.spec.processor.nerProvider) || !has(self.spec.processor.nerProvider.presidio) || !has(self.spec.processor.nerProvider.presidio.maxReplicas) || !has(self.spec.processor.nerProvider.presidio.replicas) || self.spec.processor.nerProvider.presidio.replicas <= self.spec.processor.nerProvider.presidio.maxReplicas"
+    },
+    {
+      "message": "guardrails.replicas must not exceed guardrails.maxReplicas",
+      "rule": "!has(self.spec.guardrails) || !has(self.spec.guardrails.maxReplicas) || !has(self.spec.guardrails.replicas) || self.spec.guardrails.replicas <= self.spec.guardrails.maxReplicas"
+    },
+    {
+      "message": "spec.policies.enabled requires spec.auth.oidc to be configured",
+      "rule": "!has(self.spec.policies) || !self.spec.policies.enabled || has(self.spec.auth.oidc)"
+    },
+    {
+      "message": "spec.webhooks requires spec.auth.oidc to be configured (the budget webhook forwards validated JWT claims, which requires jwt_authn upstream)",
+      "rule": "!has(self.spec.webhooks) || self.spec.webhooks.size() == 0 || has(self.spec.auth.oidc)"
+    },
+    {
+      "message": "each role in spec.auth.authz.roles must define at least one principal matcher",
+      "rule": "!has(self.spec.auth.authz) || self.spec.auth.authz.roles.all(k, size(self.spec.auth.authz.roles[k]) >= 1)"
+    },
+    {
+      "message": "workloadIssuer audiences must be distinct from spec.auth.oidc.audience",
+      "rule": "!has(self.spec.auth.workloadIssuers) || !has(self.spec.auth.oidc) || self.spec.auth.workloadIssuers.all(w, !(self.spec.auth.oidc.audience in w.audiences))"
+    },
+    {
+      "message": "spec.auth.workloadIssuers requires spec.auth.oidc to be configured",
+      "rule": "!has(self.spec.auth.workloadIssuers) || self.spec.auth.workloadIssuers.size() == 0 || has(self.spec.auth.oidc)"
+    },
+    {
+      "message": "workloadIssuer issuer must differ from spec.auth.oidc.issuer",
+      "rule": "!has(self.spec.auth.workloadIssuers) || !has(self.spec.auth.oidc) || self.spec.auth.workloadIssuers.all(w, w.issuer != self.spec.auth.oidc.issuer)"
+    },
+    {
+      "message": "spec.auth.workloadIssuers requires spec.policies enforcement to be enabled (claim-based authorization gates workload traffic)",
+      "rule": "!has(self.spec.auth.workloadIssuers) || self.spec.auth.workloadIssuers.size() == 0 || (has(self.spec.policies) && (!has(self.spec.policies.enabled) || self.spec.policies.enabled))"
+    }
+  ]
+}

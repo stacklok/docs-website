@@ -1,0 +1,174 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AIPolicy",
+  "description": "AIPolicy binds a set of principal matchers (the access list) and a\nforward-compatible MCP policy on a target AIGateway. Intended to be\nedited frequently by help-desk admins through the management API; RBAC\nis scoped separately from AIGateway so the admin API need not touch\ngateway infrastructure.",
+  "x-kubernetes-group": "ai-gateway.stacklok.dev",
+  "x-kubernetes-kind": "AIPolicy",
+  "x-kubernetes-version": "v1alpha1",
+  "x-kubernetes-plural": "aipolicies",
+  "x-kubernetes-short-names": [
+    "aipol"
+  ],
+  "x-kubernetes-scope": "Namespaced",
+  "properties": {
+    "spec": {
+      "description": "AIPolicySpec defines the desired state of an AIPolicy.",
+      "properties": {
+        "description": {
+          "description": "Description is a free-form human-readable description of this policy.",
+          "maxLength": 2048,
+          "type": "string"
+        },
+        "gatewayRef": {
+          "description": "GatewayRef is the AIGateway in the same namespace this policy targets.",
+          "properties": {
+            "name": {
+              "description": "Name of the referenced resource.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "mcpPolicy": {
+          "description": "MCPPolicy binds matched principals to a set of MCP servers. Present\nfor forward compatibility; the Phase 8 operator does not enforce\nMCP access. The field is named mcpPolicy (not allowedMCPServers)\nso the schema can expand to tool- and resource-level bindings\nwithout churn when MCP enforcement lands.",
+          "properties": {
+            "servers": {
+              "description": "Servers is the list of MCP server names matched principals may use.",
+              "items": {
+                "maxLength": 253,
+                "type": "string"
+              },
+              "maxItems": 64,
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "principalMatchers": {
+          "description": "PrincipalMatchers identifies the principals this policy applies to.\nMatchers combine as OR; claims within a matcher combine as AND.",
+          "items": {
+            "description": "PrincipalMatcher matches an authenticated principal by OIDC claims.\nMultiple matchers are combined as OR. Within a matcher, all claims must\nmatch (AND). Exact-value matching only; richer matching may be added later.",
+            "properties": {
+              "claims": {
+                "additionalProperties": {
+                  "description": "ClaimValue is the expected value for a JWT claim. Matched byte-for-byte\nagainst the JWT claim payload (case-sensitive, no normalisation). No\nglob / regex / wildcard syntax is honoured. The literal \"*\" is rejected\nat admission — it's the one value that looks like a wildcard to admins\nfrom glob / SQL / regex backgrounds, so silently accepting it would\nproduce deny-all without a clear failure mode. Other unusual values\n(e.g. \"**\", \"?\") fail loud at request time and don't need admission\nguardrails. MaxLength is generous (1024) to accommodate base64-encoded\nsession IDs and long DN-style subjects that some IdPs emit.",
+                  "maxLength": 1024,
+                  "type": "string",
+                  "x-kubernetes-validations": [
+                    {
+                      "message": "wildcard claim value '*' is not supported; this field is exact-match. For 'any authenticated principal', match iss: <issuer-url>.",
+                      "rule": "self != '*'"
+                    }
+                  ]
+                },
+                "description": "Claims maps claim name to the expected value. At least one claim is required.",
+                "maxProperties": 16,
+                "minProperties": 1,
+                "type": "object"
+              }
+            },
+            "required": [
+              "claims"
+            ],
+            "type": "object"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "gatewayRef",
+        "principalMatchers"
+      ],
+      "type": "object",
+      "x-kubernetes-validations": [
+        {
+          "message": "gatewayRef.name must not be empty",
+          "rule": "size(self.gatewayRef.name) > 0"
+        }
+      ]
+    },
+    "status": {
+      "description": "AIPolicyStatus defines the observed state of an AIPolicy.",
+      "properties": {
+        "appliedToSecurityPolicy": {
+          "description": "AppliedToSecurityPolicy is the name of the SecurityPolicy into which\nthis policy's authorization rules were fanned out.",
+          "type": "string"
+        },
+        "conditions": {
+          "description": "Conditions represent the latest available observations of the AIPolicy's state.",
+          "items": {
+            "description": "Condition contains details for one aspect of the current state of this API Resource.",
+            "properties": {
+              "lastTransitionTime": {
+                "description": "lastTransitionTime is the last time the condition transitioned from one status to another.\nThis should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "message": {
+                "description": "message is a human readable message indicating details about the transition.\nThis may be an empty string.",
+                "maxLength": 32768,
+                "type": "string"
+              },
+              "observedGeneration": {
+                "description": "observedGeneration represents the .metadata.generation that the condition was set based upon.\nFor instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date\nwith respect to the current state of the instance.",
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "reason": {
+                "description": "reason contains a programmatic identifier indicating the reason for the condition's last transition.\nProducers of specific condition types may define expected values and meanings for this field,\nand whether the values are considered a guaranteed API.\nThe value should be a CamelCase string.\nThis field may not be empty.",
+                "maxLength": 1024,
+                "minLength": 1,
+                "pattern": "^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$",
+                "type": "string"
+              },
+              "status": {
+                "description": "status of the condition, one of True, False, Unknown.",
+                "enum": [
+                  "True",
+                  "False",
+                  "Unknown"
+                ],
+                "type": "string"
+              },
+              "type": {
+                "description": "type of condition in CamelCase or in foo.example.com/CamelCase.",
+                "maxLength": 316,
+                "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "lastTransitionTime",
+              "message",
+              "reason",
+              "status",
+              "type"
+            ],
+            "type": "object"
+          },
+          "type": "array",
+          "x-kubernetes-list-map-keys": [
+            "type"
+          ],
+          "x-kubernetes-list-type": "map"
+        },
+        "observedGeneration": {
+          "description": "ObservedGeneration is the most recent generation observed by the controller.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "spec"
+  ],
+  "type": "object"
+}

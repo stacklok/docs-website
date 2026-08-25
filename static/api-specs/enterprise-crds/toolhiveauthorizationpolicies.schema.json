@@ -23,8 +23,62 @@
               "from": {
                 "description": "From optionally narrows this binding to a subset of principals.\nWhen omitted, the binding applies to every principal granted this role\nvia the cluster-scoped binding CRD.",
                 "items": {
-                  "description": "PrincipalCondition identifies principals by group membership or role assignment.",
+                  "description": "PrincipalCondition identifies principals by group membership or role assignment.\n\nDo NOT add a claimConditions disjunct to the rule below: claims narrow an\nidentity-anchored permit, they never anchor one. A condition with only\nClaimConditions and empty Groups/Roles must stay rejected.",
                   "properties": {
+                    "claimConditions": {
+                      "description": "ClaimConditions optionally narrow the permit on JWT/OIDC claim predicates.\nAdditive: a condition must still anchor on groups or roles (see the\nXValidation rule above). They cannot independently grant a role.",
+                      "items": {
+                        "description": "ClaimCondition narrows an identity-anchored permit on a single JWT/OIDC claim.\nSome claims (azp, scp, aud) are request attributes rather than principal\nidentity; hosting them here is a compromise for shared plumbing.\n\nOnly simple, string-valued claims are supported. The Claim pattern\n(^[a-zA-Z0-9_]+$) covers azp, scp, idtyp, aud, and tid but deliberately\nexcludes URI-, dot-, slash-, and hyphen-namespaced claim names, because the\nname becomes a Cedar attribute identifier (claim_<Claim>). This is a\ndocumented boundary — the Pattern also blocks a claim-name injection\nvector (distinct from claim-value escaping, which is handled elsewhere in\nthe compiler).\n\nThe three XValidation rules below are phrased as per-operator exclusions\n(self.operator != 'X' || ...), so each passes vacuously for any Operator\nvalue outside the Equals;Absent;Contains enum. That gap is closed by the\nrules — so any Go-level compiler validation of ClaimCondition MUST\nindependently reject an unrecognized Operator (fail-closed default case),\nnot just reimplement these checks.",
+                        "properties": {
+                          "claim": {
+                            "description": "Claim is the JWT/OIDC claim name (without the claim_ prefix), e.g. \"azp\".",
+                            "maxLength": 253,
+                            "minLength": 1,
+                            "pattern": "^[a-zA-Z0-9_]+$",
+                            "type": "string"
+                          },
+                          "operator": {
+                            "description": "Operator selects the predicate: Equals (whole-string match), Contains\n(space-delimited element membership), or Absent.",
+                            "enum": [
+                              "Equals",
+                              "Absent",
+                              "Contains"
+                            ],
+                            "type": "string"
+                          },
+                          "values": {
+                            "description": "Values are the accepted claim values for Equals/Contains (ORed).\nForbidden for Absent.",
+                            "items": {
+                              "maxLength": 253,
+                              "type": "string"
+                            },
+                            "maxItems": 32,
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "claim",
+                          "operator"
+                        ],
+                        "type": "object",
+                        "x-kubernetes-validations": [
+                          {
+                            "message": "values is required and must be non-empty when operator is Equals",
+                            "rule": "self.operator != 'Equals' || (has(self.values) && size(self.values) > 0)"
+                          },
+                          {
+                            "message": "values is required and must be non-empty when operator is Contains",
+                            "rule": "self.operator != 'Contains' || (has(self.values) && size(self.values) > 0)"
+                          },
+                          {
+                            "message": "values must be empty when operator is Absent",
+                            "rule": "self.operator != 'Absent' || !has(self.values) || size(self.values) == 0"
+                          }
+                        ]
+                      },
+                      "maxItems": 32,
+                      "type": "array"
+                    },
                     "groups": {
                       "description": "Groups is the list of OIDC groups a principal must belong to.",
                       "items": {
@@ -203,7 +257,8 @@
               "description": "Kind is the kind of the target resource. Defaults to MCPServer.",
               "enum": [
                 "MCPServer",
-                "MCPRemoteProxy"
+                "MCPRemoteProxy",
+                "VirtualMCPServer"
               ],
               "type": "string"
             },

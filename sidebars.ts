@@ -11,6 +11,9 @@ const crdSidebar = loadCrdSidebar('toolhive-crds') as SidebarItemConfig;
 const enterpriseCrdSidebar = loadCrdSidebar(
   'enterprise-crds'
 ) as SidebarItemConfig;
+const aiGatewayCrdSidebar = loadCrdSidebar(
+  'ai-gateway-crds'
+) as SidebarItemConfig;
 
 const mcpSidebar: SidebarsConfig[string] = [
   'toolhive/index',
@@ -427,6 +430,10 @@ const platformSidebar: SidebarsConfig[string] = [
   },
 
   enterpriseCrdSidebar,
+
+  aiGatewayCrdSidebar,
+
+  'platform/reference/ai-gateway-management-api',
 
   {
     type: 'html',

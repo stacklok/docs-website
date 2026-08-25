@@ -8,6 +8,8 @@
 // schemas from disk at build time. Regenerate with extract-crds.mjs or
 // `node scripts/generate-crd-barrel.mjs`.
 
+import AIGateway from '@site/static/api-specs/ai-gateway-crds/aigateways.schema.json';
+import AIPolicy from '@site/static/api-specs/ai-gateway-crds/aipolicies.schema.json';
 import ClusterPlatformRole from '@site/static/api-specs/enterprise-crds/clusterplatformroles.schema.json';
 import ClusterPlatformRoleBinding from '@site/static/api-specs/enterprise-crds/clusterplatformrolebindings.schema.json';
 import EmbeddingServer from '@site/static/api-specs/toolhive-crds/embeddingservers.schema.json';
@@ -28,6 +30,8 @@ import VirtualMCPCompositeToolDefinition from '@site/static/api-specs/toolhive-c
 import VirtualMCPServer from '@site/static/api-specs/toolhive-crds/virtualmcpservers.schema.json';
 
 export const allSchemas = {
+  AIGateway,
+  AIPolicy,
   ClusterPlatformRole,
   ClusterPlatformRoleBinding,
   EmbeddingServer,

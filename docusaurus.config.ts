@@ -223,6 +223,11 @@ const config: Config = {
             spec: 'static/api-specs/toolhive-registry-api.yaml',
             config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
           },
+          {
+            id: 'ai-gateway-management-api',
+            spec: 'static/api-specs/ai-gateway-management-api.yaml',
+            config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
+          },
         ],
         theme: {
           primaryColor: '#2d684b',
