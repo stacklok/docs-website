@@ -569,14 +569,14 @@ jobs:
           # ---------- handoff file for the skill ----------
           # The skill reads .release-meta.json to learn who the owner
           # is and which contributors it must classify. Gitignored.
-          # One entry per commit in the range: short sha, subject,
+          # One entry per commit in the range: full SHA, subject,
           # author login. Empty when the compare failed.
           COMMITS_JSON='[]'
           COMMITS_TRUNCATED=false
           if [ -n "$COMPARE_JSON" ]; then
             COMMITS_JSON=$(printf '%s' "$COMPARE_JSON" | jq -c '
               [ .commits[]
-                | { sha: (.sha[0:8]),
+                | { sha: .sha,
                     subject: (.commit.message | split("\n")[0]),
                     author: (.author.login? // .commit.author.name? // null) } ]' \
               2>/dev/null || echo '[]')
@@ -1194,147 +1194,33 @@ jobs:
       # -------------------------
       #   OWNER -> assignee AND reviewer, unconditionally. They own
       #     collecting the remaining approvals and merging, so the
-      #     request stands even when the classification marks their
-      #     own commits non-docs-facing.
-      #   DOCS-FACING contributors -> reviewer.
-      #   NON-DOCS-FACING contributors -> no request. Named on one cc
-      #     line in the PR body and one line in the Slack message,
-      #     asking them to speak up if the call was wrong.
+      #     request stands even when their commits are non-docs-facing.
+      #   DOCS-FACING contributors -> try a direct review request.
+      #     GitHub accepts only people with repository access. When it
+      #     rejects the request, find every upstream PR containing a
+      #     docs-facing commit and request each human merger as a
+      #     stand-in. If routing still fails, make the owner resolve it.
+      #   NON-DOCS-FACING contributors -> no request or automatic
+      #     mention. They have nothing to act on, so the workflow does
+      #     not need to identify which are organization members. Count
+      #     this group in the PR body without pinging anyone.
       #
       # The classification comes from REVIEWERS.json, written by the
       # skill (see its "Execution modes" section). An absent,
       # unparseable, or empty file falls back to requesting every
       # contributor: a noisy request costs less than a missing one, so
       # the degraded path is the noisy one.
-      - name: Assign reviewers and prepare contributor mentions
+      - name: Assign reviewers and prepare review routing
         id: reviewers
         env:
           REVIEW_REPO: ${{ github.repository }}
+          RELEASE_REPO: ${{ steps.detect.outputs.repo }}
           PR_NUMBER: ${{ steps.eff.outputs.number }}
           OWNER: ${{ steps.release_meta.outputs.owner }}
           COMPARE_OK: ${{ steps.release_meta.outputs.compare_ok }}
           CANDIDATES: ${{ steps.release_meta.outputs.candidates }}
         run: |
-          # compare_ok is re-exported unchanged so the PR body's
-          # tri-state contributor cell keeps working: "" means this
-          # step never ran, "false" means the upstream compare failed.
-          echo "compare_ok=$COMPARE_OK" >> "$GITHUB_OUTPUT"
-
-          # ---------- read the skill's classification ----------
-          # Both lists are newline-separated logins.
-          DOCS_FACING=""
-          NON_DOCS_FACING=""
-          CLASSIFIED=false
-          if [ -f REVIEWERS.json ] && jq -e . REVIEWERS.json >/dev/null 2>&1; then
-            DOCS_FACING=$(jq -r '
-              (.contributors // [])
-              | map(select(.docs_facing == true))
-              | .[].login' REVIEWERS.json 2>/dev/null || true)
-            NON_DOCS_FACING=$(jq -r '
-              (.contributors // [])
-              | map(select(.docs_facing == false))
-              | .[].login' REVIEWERS.json 2>/dev/null || true)
-            # A file that classified nobody is a stub; fall back
-            # rather than silently requesting no reviews at all.
-            if [ -n "$DOCS_FACING$NON_DOCS_FACING" ]; then
-              CLASSIFIED=true
-            else
-              echo "::warning::REVIEWERS.json classified no contributors; falling back to requesting all."
-            fi
-          else
-            echo "::warning::No usable REVIEWERS.json; falling back to requesting a review from all contributors."
-          fi
-
-          if [ "$CLASSIFIED" != "true" ]; then
-            DOCS_FACING="$CANDIDATES"
-            NON_DOCS_FACING=""
-          fi
-
-          # The owner always gets a review request, even when their own
-          # commits were classified non-docs-facing. Fold them into the
-          # request list and out of the cc list.
-          if [ -n "$OWNER" ]; then
-            DOCS_FACING=$(printf '%s\n%s\n' "$DOCS_FACING" "$OWNER" | grep -v '^$' | sort -u || true)
-            NON_DOCS_FACING=$(printf '%s\n' "$NON_DOCS_FACING" | grep -v '^$' | grep -Fxv "$OWNER" || true)
-          fi
-
-          # ---------- assign the owner ----------
-          # Assignee, not just reviewer: it puts the PR in the owner's
-          # "Assigned to me" queue. Soft-failed, since an owner
-          # GitHub won't accept (not a repo collaborator) must not
-          # abort the run.
-          OWNER_ASSIGNED=false
-          if [ -n "$OWNER" ]; then
-            if gh pr edit "$PR_NUMBER" --add-assignee "$OWNER" 2>/dev/null; then
-              OWNER_ASSIGNED=true
-              echo "Assigned owner: $OWNER"
-            else
-              echo "::warning::Could not assign $OWNER as assignee (GitHub rejected it)."
-            fi
-          else
-            echo "::warning::No release owner resolved; PR has no assignee."
-          fi
-          echo "owner=$OWNER" >> "$GITHUB_OUTPUT"
-          echo "owner_assigned=$OWNER_ASSIGNED" >> "$GITHUB_OUTPUT"
-
-          # ---------- request reviews ----------
-          # Attempt to assign each candidate as a reviewer individually,
-          # rather than filtering upfront and batching. Rationale:
-          #   - `gh pr edit --add-reviewer "a,b,c"` is atomic. A single
-          #     422 on any name aborts the whole call, dropping valid
-          #     names alongside invalid ones.
-          #   - `gh api repos/X/collaborators/Y` as a pre-filter is
-          #     unreliable from a GITHUB_TOKEN in Actions: on PR #759
-          #     the check returned 404 for Stacklok employees who ARE
-          #     collaborators via the `stackers` team (push perm on
-          #     this repo), and only `rdimitrov` slipped through. We
-          #     suspect the collaborator endpoint treats team-based
-          #     access differently for GITHUB_TOKEN vs PATs with
-          #     read:org, but haven't nailed down the exact rule.
-          # Per-user attempts sidestep both issues: the authoritative
-          # answer is "does GitHub accept this as a reviewer right now"
-          # and we ask the API that question directly.
-          ASSIGN_LIST=""
-          MENTION_LIST=""
-          while IFS= read -r login; do
-            [ -z "$login" ] && continue
-            if gh pr edit "$PR_NUMBER" --add-reviewer "$login" 2>/dev/null; then
-              ASSIGN_LIST="${ASSIGN_LIST:+$ASSIGN_LIST,}$login"
-              echo "Review requested: $login"
-            else
-              MENTION_LIST="${MENTION_LIST:+$MENTION_LIST }@$login"
-              echo "Mention (assignment rejected by GitHub): $login"
-            fi
-          done <<< "$DOCS_FACING"
-
-          # ---------- cc list for non-docs-facing contributors ----------
-          # Rendered as one consolidated line downstream, not a
-          # per-person section.
-          FYI_LIST=""
-          while IFS= read -r login; do
-            [ -z "$login" ] && continue
-            FYI_LIST="${FYI_LIST:+$FYI_LIST }@$login"
-          done <<< "$NON_DOCS_FACING"
-
-          # Exposed for diagnostic visibility in the PR body (e.g.,
-          # "Auto-assigned: @alice @bob") and for the next workflow_
-          # dispatch retry to know what was attempted.
-          echo "list=$ASSIGN_LIST" >> "$GITHUB_OUTPUT"
-          echo "fyi_list=$FYI_LIST" >> "$GITHUB_OUTPUT"
-          echo "classified=$CLASSIFIED" >> "$GITHUB_OUTPUT"
-          {
-            echo "mention_block<<MENTION_EOF"
-            if [ -n "$MENTION_LIST" ]; then
-              echo "Release contributors we couldn't auto-assign as reviewers (GitHub rejected the assignment). Mentioning them so they see the PR documenting their work:"
-              echo ""
-              echo "$MENTION_LIST"
-            fi
-            echo "MENTION_EOF"
-          } >> "$GITHUB_OUTPUT"
-          echo "Owner:         ${OWNER:-<none>}"
-          echo "Requested:     ${ASSIGN_LIST:-<none>}"
-          echo "Mentioned:     ${MENTION_LIST:-<none>}"
-          echo "FYI (no req):  ${FYI_LIST:-<none>}"
+          python3 .github/scripts/assign_release_docs_reviewers.py
 
       - name: Augment PR body (marker-delimited section)
         # Runs even if earlier steps soft-failed so the augmentation
@@ -1353,9 +1239,11 @@ jobs:
           AUTOGEN_TOUCHED: ${{ steps.autogen.outputs.touched }}
           CRD_PAGES_DIRS: ${{ steps.crd_pages.outputs.dirs }}
           COMPARE_OK: ${{ steps.reviewers.outputs.compare_ok }}
-          MENTION_BLOCK: ${{ steps.reviewers.outputs.mention_block }}
+          STANDIN_BLOCK: ${{ steps.reviewers.outputs.standin_block }}
+          UNRESOLVED_BLOCK: ${{ steps.reviewers.outputs.unresolved_block }}
+          UNRESOLVED_COUNT: ${{ steps.reviewers.outputs.unresolved_count }}
           ASSIGN_LIST: ${{ steps.reviewers.outputs.list }}
-          FYI_LIST: ${{ steps.reviewers.outputs.fyi_list }}
+          FYI_COUNT: ${{ steps.reviewers.outputs.fyi_count }}
           OWNER: ${{ steps.reviewers.outputs.owner }}
           OWNER_ASSIGNED: ${{ steps.reviewers.outputs.owner_assigned }}
           OWNER_SOURCE: ${{ steps.release_meta.outputs.owner_source }}
@@ -1407,11 +1295,14 @@ jobs:
           fi
 
           # Action-required verdict drives the At-a-glance table's
-          # last row. Priority: autogen-drift > gaps > silent > content > none.
+          # last row. Priority: autogen drift > gaps > unresolved review
+          # routing > silent run > content review > none.
           if [ -n "$AUTOGEN_DRIFT" ]; then
             ACTION_REQUIRED="**Yes** — revert auto-generated-path drift (see above)"
           elif [ "$GAPS_COUNT" -gt 0 ]; then
             ACTION_REQUIRED="**Yes** — resolve $GAPS_COUNT gap(s), then spot-check prose"
+          elif [ "${UNRESOLVED_COUNT:-0}" -gt 0 ]; then
+            ACTION_REQUIRED="**Yes** — owner must route $UNRESOLVED_COUNT unresolved review(s)"
           elif [ "$SILENT_RUN" = "true" ]; then
             ACTION_REQUIRED="**None** — approve and merge if the silent-run signal is expected"
           elif [ "$SKILL_COMMIT_COUNT" != "0" ] && [ -n "$SKILL_COMMIT_COUNT" ]; then
@@ -1435,22 +1326,14 @@ jobs:
             *)     REFRESH_CELL="—" ;;
           esac
 
-          # Contributor counts. Auto-assigned folks already appear in
+          # Contributor counts. Requested reviewers already appear in
           # GitHub's reviewer sidebar, so we don't also list them in
           # the PR body -- that would duplicate info across three
           # places (sidebar, at-a-glance cell, dedicated section).
-          # Only the overflow (non-collaborator) mentions need a
-          # render target, so the dedicated section is skipped when
-          # MENTION_COUNT is zero.
           if [ -n "$ASSIGN_LIST" ]; then
             ASSIGN_COUNT=$(echo "$ASSIGN_LIST" | tr ',' '\n' | grep -c . || true)
           else
             ASSIGN_COUNT=0
-          fi
-          if [ -n "$MENTION_BLOCK" ]; then
-            MENTION_COUNT=$(printf '%s\n' "$MENTION_BLOCK" | grep -oE '@[A-Za-z0-9_-]+' | wc -l | tr -d ' ')
-          else
-            MENTION_COUNT=0
           fi
 
           # COMPARE_OK tri-state:
@@ -1467,23 +1350,22 @@ jobs:
             CONTRIB_CELL="**Not attempted** — run failed before reviewer assignment"
           elif [ "$COMPARE_OK" != "true" ]; then
             CONTRIB_CELL="**Compare failed** — pinned \`$PREV_TAG\` missing upstream, no auto-assignment"
-          elif [ "$ASSIGN_COUNT" -gt 0 ] && [ "$MENTION_COUNT" -gt 0 ]; then
-            CONTRIB_CELL="$ASSIGN_COUNT review requested · $MENTION_COUNT mentioned below"
           elif [ "$ASSIGN_COUNT" -gt 0 ]; then
             CONTRIB_CELL="$ASSIGN_COUNT review requested (see sidebar)"
-          elif [ "$MENTION_COUNT" -gt 0 ]; then
-            CONTRIB_CELL="$MENTION_COUNT mentioned below"
           else
             CONTRIB_CELL="none in release range"
           fi
 
-          # Folded into the same cell so the table keeps one
-          # contributor row; the names go on the cc line further down.
-          if [ -n "$FYI_LIST" ]; then
-            FYI_COUNT=$(printf '%s\n' "$FYI_LIST" | grep -oE '@[A-Za-z0-9_-]+' | wc -l | tr -d ' ')
+          # Fold the count into the same cell so the table keeps one
+          # contributor row. These contributors have no review action,
+          # so the workflow does not need to determine membership.
+          FYI_COUNT=${FYI_COUNT:-0}
+          if [ "$FYI_COUNT" -gt 0 ]; then
             CONTRIB_CELL="$CONTRIB_CELL · $FYI_COUNT not requested (no docs impact)"
-          else
-            FYI_COUNT=0
+          fi
+          UNRESOLVED_COUNT=${UNRESOLVED_COUNT:-0}
+          if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
+            CONTRIB_CELL="$CONTRIB_CELL · **$UNRESOLVED_COUNT review routing issue(s)**"
           fi
 
           # Owner cell. An unresolved owner means nobody is on the
@@ -1589,30 +1471,38 @@ jobs:
             fi
 
             # ----- NO-DOCS-IMPACT CONTRIBUTORS (no review requested) -----
-            # One line, not a per-person section. These contributors
-            # are absent from the reviewer sidebar by design, so this
-            # is the only place their involvement is recorded.
+            # Contributors in this group get no automatic mention. They
+            # have no review action, so membership is irrelevant.
             if [ "$FYI_COUNT" -gt 0 ]; then
               echo "### No docs impact identified"
               echo ""
-              echo "$FYI_LIST - your changes in this release didn't appear to affect the docs, so no review is requested and you're not blocking this PR. Please skim the diff anyway and comment if something of yours was missed or misjudged."
+              echo "$FYI_COUNT contributor(s) had no-docs-impact commits in this release. No review was requested, and the workflow did not auto-notify them."
               echo ""
             fi
 
-            # ----- OVERFLOW CONTRIBUTORS (not auto-assigned) -----
-            # Skipped entirely when everyone who should review got
-            # auto-assigned -- GitHub's sidebar covers that case. This
-            # section exists only to render @-mentions for contributors
-            # GitHub refused to accept as reviewers (usually because
-            # they're not collaborators on this repo).
-            if [ "$MENTION_COUNT" -gt 0 ]; then
-              echo "### Additional release contributors"
+            # ----- REVIEW ROUTING -----
+            # Explain stand-in requests and surface anything the owner
+            # must route manually. Contributors who cannot review this
+            # repository are not @-mentioned.
+            STANDIN_COUNT=0
+            if [ -n "$STANDIN_BLOCK" ]; then
+              STANDIN_COUNT=$(printf '%s\n' "$STANDIN_BLOCK" | grep -c . || true)
+            fi
+            if [ "$STANDIN_COUNT" -gt 0 ] || [ "$UNRESOLVED_COUNT" -gt 0 ]; then
+              echo "### Review routing"
               echo ""
-              echo "Couldn't be auto-assigned as reviewers on this repo, but cc'd below so they see the PR:"
-              echo ""
-              MENTIONS_ONLY=$(printf '%s\n' "$MENTION_BLOCK" | grep -oE '@[A-Za-z0-9_-]+' | paste -sd' ' -)
-              echo "$MENTIONS_ONLY"
-              echo ""
+              if [ "$STANDIN_COUNT" -gt 0 ]; then
+                echo "GitHub could not request the upstream contributor directly, so review went to the human merger of each relevant upstream PR:"
+                echo ""
+                printf '%s\n' "$STANDIN_BLOCK" | awk '{ print "- " $0 }'
+                echo ""
+              fi
+              if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
+                echo "The release owner must route these unresolved reviews:"
+                echo ""
+                printf '%s\n' "$UNRESOLVED_BLOCK" | awk '{ print "- " $0 }'
+                echo ""
+              fi
             fi
 
             # ----- RUN COST -----
