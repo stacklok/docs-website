@@ -163,8 +163,19 @@ compatibility with observability tools.
 
 ### Enable Prometheus metrics
 
-You can expose Prometheus-style metrics at `/metrics` on the main transport port
-for local scraping using the `--otel-enable-prometheus-metrics-path` flag.
+You can expose Prometheus-style metrics at `/metrics` using the
+`--otel-enable-prometheus-metrics-path` flag. Metrics are served in two places:
+
+- The **diagnostics listener** on port `9464`, which is dedicated to Prometheus
+  scraping and carries no other traffic.
+- The **transport port** (the same port MCP traffic uses), retained for
+  compatibility with existing scrape configurations.
+
+Governing scraper access by port with a firewall rule or Kubernetes
+`NetworkPolicy` is only possible on the diagnostics listener, since the
+transport port also serves MCP traffic. The diagnostics listener carries no
+authentication middleware by design; restricting who can reach the port is what
+protects it.
 
 This example runs the Fetch MCP server and enables the Prometheus metrics
 endpoint:
@@ -173,17 +184,43 @@ endpoint:
 thv run --otel-enable-prometheus-metrics-path fetch
 ```
 
-To access the metrics, you can use `curl` or any Prometheus-compatible scraper.
-The metrics are available at `http://127.0.0.1:<PORT>/metrics`, where `<PORT>`
-is the port assigned to the MCP server.
+To access the metrics on the diagnostics port:
 
 ```bash
-# Get the port number assigned to the MCP server
-thv list
-
-# Replace <PORT> with the actual port number from the output of `thv list`
-curl http://127.0.0.1:<PORT>/metrics
+curl http://127.0.0.1:9464/metrics
 ```
+
+The same metrics are available on the MCP server's transport port at
+`http://127.0.0.1:<PORT>/metrics`, where `<PORT>` is the port assigned to the
+MCP server (visible in `thv list`).
+
+#### Move metrics off the transport port
+
+To stop serving `/metrics` on the transport port and only expose it on the
+dedicated diagnostics listener, pass `--otel-metrics-on-transport-port=false`:
+
+```bash
+thv run \
+  --otel-enable-prometheus-metrics-path \
+  --otel-metrics-on-transport-port=false \
+  fetch
+```
+
+With this flag set to `false`, the transport port returns `404` for `/metrics`
+with a body explaining where the endpoint moved to. Under the transparent proxy
+(used for `sse` and `streamable-http` container workloads and for remote-URL
+runs), a backend that exposed its own `/metrics` through ToolHive is no longer
+reachable at that path when the flag is off; scrape such backends directly
+instead.
+
+:::info[Upcoming default change]
+
+`--otel-metrics-on-transport-port` currently defaults to `true` so existing
+scrape configurations keep working. The default is planned to flip to `false` in
+a future release. To inherit the new default automatically, leave the flag
+unset. To opt out of the change, set it explicitly to `true`.
+
+:::
 
 ### Dual export
 
@@ -234,6 +271,7 @@ thv run [--otel-endpoint <URL>] [--otel-service-name <NAME>] \
 | `--otel-env-vars`                       | List of environment variables to include in telemetry spans         | None           |
 | `--otel-insecure`                       | Connect using HTTP instead of HTTPS                                 | `false`        |
 | `--otel-enable-prometheus-metrics-path` | Enable `/metrics` endpoint                                          | `false`        |
+| `--otel-metrics-on-transport-port`      | Also serve `/metrics` on the MCP transport port                     | `true`         |
 | `--otel-use-legacy-attributes`          | Emit legacy attribute names alongside new OTel semantic conventions | `true`         |
 
 ### Global configuration
@@ -311,13 +349,14 @@ Prometheus configuration:
 scrape_configs:
   - job_name: 'toolhive-mcp-proxy'
     static_configs:
-      - targets: ['localhost:<MCP_SERVER_PORT>']
+      - targets: ['localhost:9464']
     scrape_interval: 15s
     metrics_path: /metrics
 ```
 
-You can add multiple MCP servers to the `targets` list. Replace
-`<MCP_SERVER_PORT>` with the port number assigned to each MCP server.
+`9464` is the dedicated diagnostics port that serves only `/metrics`. To scrape
+the transport port instead, replace `9464` with the port number assigned to each
+MCP server (from `thv list`).
 
 ### Jaeger
 
@@ -463,17 +502,19 @@ If traces aren't showing up in your backend:
 If the `/metrics` endpoint isn't reachable:
 
 1. Confirm the server was started with `--otel-enable-prometheus-metrics-path`.
-   You can verify by re-checking `thv list` and curling the URL it shows with
-   `/metrics` appended:
+   Metrics are served on the diagnostics port `9464` by default:
 
    ```bash
-   thv list
-   curl http://127.0.0.1:<PORT>/metrics
+   curl http://127.0.0.1:9464/metrics
    ```
 
-2. The `/metrics` endpoint is served on the same proxy port as the MCP server.
-   If `curl` returns connection refused, the server isn't running on that port
-   at all - check `thv list` again and look for the actual port.
+2. If you also expect `/metrics` on the transport port, confirm
+   `--otel-metrics-on-transport-port` was not set to `false`. When it is
+   `false`, the transport port returns `404` for `/metrics` with a body that
+   points at the diagnostics port.
+
+3. Look for a startup log line reporting the diagnostics address; if it did not
+   appear, the diagnostics listener never started.
 
 </details>
 

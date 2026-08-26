@@ -519,7 +519,8 @@ The field has two sub-objects:
 - `proxyDeployment` - overrides for the proxy Deployment. Supports `labels` and
   `annotations` on the Deployment itself, `podTemplateMetadataOverrides`
   (`labels` and `annotations` applied to the proxy pod template), `env`
-  (environment variables for the proxy container), and `imagePullSecrets`.
+  (environment variables for the proxy container), `imagePullSecrets`, and the
+  scheduling fields `nodeSelector`, `tolerations`, and `affinity`.
 - `proxyService` - `labels` and `annotations` for the proxy Service.
 
 ```yaml title="my-mcpserver-resource-overrides.yaml"
@@ -568,6 +569,32 @@ Common uses:
   secrets in `proxyDeployment.imagePullSecrets` are added to the proxy
   Deployment's pod spec, and to the operator-managed ServiceAccount when the
   operator creates one.
+- **Scheduling** with `proxyDeployment.nodeSelector`,
+  `proxyDeployment.tolerations`, and `proxyDeployment.affinity` lands the proxy
+  Deployment on a pre-warmed or dedicated node pool. Use these when the proxy
+  should follow specific hardware or licensing constraints:
+
+  ```yaml {6-16}
+  spec:
+    image: ghcr.io/stackloklabs/osv-mcp/server
+    transport: streamable-http
+    mcpPort: 8080
+    proxyPort: 8080
+    resourceOverrides:
+      proxyDeployment:
+        nodeSelector:
+          workload-tier: platform
+        tolerations:
+          - key: dedicated
+            operator: Equal
+            value: platform
+            effect: NoSchedule
+  ```
+
+  If `podTemplateSpec` also sets scheduling fields,
+  `podTemplateSpec.nodeSelector`/`affinity` sub-fields win on any keys they
+  specify and `podTemplateSpec.tolerations` replaces the list from
+  `resourceOverrides.proxyDeployment` outright.
 
 ## Check MCP server status
 

@@ -75,15 +75,26 @@ and triggers a rolling update of affected deployments.
 
 ### MCPTelemetryConfig fields
 
-| Field                                     | Description                             | Default  |
-| ----------------------------------------- | --------------------------------------- | -------- |
-| `spec.openTelemetry.enabled`              | Enable OpenTelemetry export             | `false`  |
-| `spec.openTelemetry.endpoint`             | OTLP collector endpoint (hostname:port) | -        |
-| `spec.openTelemetry.insecure`             | Use HTTP instead of HTTPS               | `false`  |
-| `spec.openTelemetry.tracing.enabled`      | Enable tracing                          | `false`  |
-| `spec.openTelemetry.tracing.samplingRate` | Trace sampling rate (0.0-1.0)           | `"0.05"` |
-| `spec.openTelemetry.metrics.enabled`      | Enable OTLP metrics export              | `false`  |
-| `spec.prometheus.enabled`                 | Expose `/metrics` endpoint              | `false`  |
+| Field                                     | Description                                      | Default  |
+| ----------------------------------------- | ------------------------------------------------ | -------- |
+| `spec.openTelemetry.enabled`              | Enable OpenTelemetry export                      | `false`  |
+| `spec.openTelemetry.endpoint`             | OTLP collector endpoint (hostname:port)          | -        |
+| `spec.openTelemetry.insecure`             | Use HTTP instead of HTTPS                        | `false`  |
+| `spec.openTelemetry.tracing.enabled`      | Enable tracing                                   | `false`  |
+| `spec.openTelemetry.tracing.samplingRate` | Trace sampling rate (0.0-1.0)                    | `"0.05"` |
+| `spec.openTelemetry.metrics.enabled`      | Enable OTLP metrics export                       | `false`  |
+| `spec.prometheus.enabled`                 | Expose `/metrics` endpoint                       | `false`  |
+| `spec.prometheus.metricsOnTransportPort`  | Also serve `/metrics` on the vMCP transport port | `true`   |
+
+Prometheus metrics are served on the vMCP pod's dedicated diagnostics port
+`9464`. Set `spec.prometheus.metricsOnTransportPort: false` to stop duplicating
+the endpoint on the vMCP transport port; the transport-port default is expected
+to flip in a future release.
+
+For inline `VirtualMCPServer` telemetry (`spec.config.telemetry`), the same
+`metricsOnTransportPort` field applies, and an optional
+`spec.config.telemetry.prometheusPort` overrides the diagnostics port (`9464` by
+default). The `MCPTelemetryConfig` resource does not expose a port override.
 
 ## Export to observability backends
 
@@ -141,9 +152,13 @@ spec:
 vMCP supports two methods for collecting metrics:
 
 - **Push via OpenTelemetry**: Set `spec.openTelemetry.metrics.enabled: true` to
-  push metrics to your OTel Collector via OTLP
+  push metrics to your OTel Collector via OTLP.
 - **Pull via Prometheus**: Set `spec.prometheus.enabled: true` to expose a
-  `/metrics` endpoint on the vMCP service port (4483) for Prometheus to scrape
+  `/metrics` endpoint on the dedicated diagnostics port (`9464` by default,
+  overridable via `spec.config.telemetry.prometheusPort` on the
+  `VirtualMCPServer`). By default, the endpoint is also served on the vMCP
+  transport port for compatibility; set `metricsOnTransportPort: false` to
+  disable the duplicate.
 
 ### Backend metrics
 
@@ -178,6 +193,7 @@ the Redis backend that stores the buckets. Each metric carries `namespace` and
 | ----------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `toolhive_rate_limit_decisions`     | Counter   | Bucket decisions. Additional attributes: `decision` (`allowed` or `rejected`), `scope` (`shared` or `per_user`), `operation_type` (`server` or `tool`) |
 | `toolhive_rate_limit_redis_errors`  | Counter   | Redis errors during rate limit checks. Additional attribute: `error_type` (`timeout`, `connection`, `auth`, or `other`)                                |
+| `toolhive_rate_limit_fail_open`     | Counter   | Requests allowed because the rate limit check failed open after a Redis error. Additional attribute: `error_type` (matches `redis_errors`)             |
 | `toolhive_rate_limit_check_latency` | Histogram | Duration of the atomic Redis Lua rate limit check, in seconds (each check, including failures)                                                         |
 
 For the counting semantics (allowed increments per bucket, rejected only for the
