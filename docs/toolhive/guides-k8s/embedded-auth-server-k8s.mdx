@@ -439,11 +439,13 @@ The embedded AS enforces the following rules on fetched CIMD documents:
 - The `client_id` field inside the document must exactly match the URL it was
   fetched from.
 - `redirect_uris` must be present and pass strict validation.
-- `token_endpoint_auth_method` must be `none`, omitted, or (per OpenID Connect
-  RP Metadata Choices 1.0) accompanied by a
-  `token_endpoint_auth_methods_supported` list that includes `none`. Documents
-  that declare a symmetric shared-secret method without also publishing a
-  supported-methods list containing `none` are rejected.
+- `token_endpoint_auth_method` must be `none` or omitted. When it names any
+  other value (for example, `private_key_jwt`), the document must also publish a
+  `token_endpoint_auth_methods_supported` list containing `none` (per OpenID
+  Connect RP Metadata Choices 1.0), and the server negotiates down to `none`.
+  Symmetric shared-secret methods (`client_secret_post`, `client_secret_basic`,
+  `client_secret_jwt`) are always rejected, even alongside a supported-methods
+  list.
 - `grant_types` must include `authorization_code`. Unsupported entries in
   `grant_types` and `response_types` are filtered out rather than rejected; the
   document is only rejected when the filtered intersection lacks the
@@ -666,10 +668,10 @@ For OAuth 2.0 servers that return identity in the token response itself, see
 If the upstream identity provider serves its endpoints with a certificate signed
 by an internal CA (for example, an in-cluster Keycloak or a corporate ADFS
 behind private PKI), the embedded authorization server can't complete discovery,
-token, user-info, or Dynamic Client Registration requests to it until it trusts
-that CA. Set `caBundleRef` on the upstream's `oidcConfig` or `oauth2Config` to
-point at a ConfigMap containing the PEM-encoded CA bundle. The operator projects
-it read-only into the proxy pod and the auth server adds it to the system trust
+token, user-info, or DCR requests to it until it trusts that CA. Set
+`caBundleRef` on the upstream's `oidcConfig` or `oauth2Config` to point at a
+ConfigMap containing the PEM-encoded CA bundle. The operator projects it
+read-only into the proxy pod and the auth server adds it to the system trust
 roots for connections to this upstream only. The bundle augments the system
 roots; it doesn't restrict trust to this CA or disable public roots.
 
@@ -711,7 +713,7 @@ restart. When the bundle content is invalid PEM, the operator surfaces a
 terminal condition on the `MCPExternalAuthConfig` rather than retrying
 reconciliation.
 
-`caBundleRef` on the upstream provider is independent from `caBundleRef` on the
+`caBundleRef` on the upstream provider is independent of `caBundleRef` on the
 `MCPOIDCConfig` that validates incoming JWTs (see
 [Use a custom CA certificate for the OIDC issuer](./auth-k8s.mdx#use-a-custom-ca-certificate-for-the-oidc-issuer)):
 the two references configure trust for different network hops.
@@ -1135,11 +1137,12 @@ consumer's mirrored condition clears on the next reconcile.
 
 - The `client_id` field inside the fetched document must exactly match the URL
   used to fetch it.
-- `token_endpoint_auth_method` must be `none`, omitted, or paired with a
-  `token_endpoint_auth_methods_supported` list that contains `none`. A document
-  that declares a symmetric shared-secret method (`client_secret_post`,
-  `client_secret_basic`, `client_secret_jwt`) without a supported-methods list
-  containing `none` is rejected with `invalid_client`.
+- `token_endpoint_auth_method` must be `none` or omitted. When it names any
+  other value (for example, `private_key_jwt`), the document must also publish a
+  `token_endpoint_auth_methods_supported` list containing `none` so the server
+  can negotiate down to `none`. Symmetric shared-secret methods
+  (`client_secret_post`, `client_secret_basic`, `client_secret_jwt`) are always
+  rejected with `invalid_client`.
 - After unsupported entries are filtered out, `grant_types` must still include
   `authorization_code` and `response_types` must still include `code`.
 - `redirect_uris` must be present and valid.
