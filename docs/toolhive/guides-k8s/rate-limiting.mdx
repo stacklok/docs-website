@@ -255,6 +255,7 @@ latency histogram is exported with the `_seconds` unit suffix and the standard
 | ----------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------- |
 | `toolhive_rate_limit_decisions`     | Counter   | `decision` (`allowed` or `rejected`), `scope` (`shared` or `per_user`), `operation_type` (`server` or `tool`) |
 | `toolhive_rate_limit_redis_errors`  | Counter   | `error_type` (`timeout`, `connection`, `auth`, or `other`)                                                    |
+| `toolhive_rate_limit_fail_open`     | Counter   | `error_type` (matches the `redis_errors` classification)                                                      |
 | `toolhive_rate_limit_check_latency` | Histogram | (none)                                                                                                        |
 
 Counting semantics for `toolhive_rate_limit_decisions`:
@@ -272,9 +273,11 @@ Counting semantics for `toolhive_rate_limit_decisions`:
 
 The `toolhive_rate_limit_check_latency` histogram records the duration of each
 Redis Lua call, whether the call succeeds or fails. Rate limit enforcement
-[fails open](#how-rate-limiting-works) when Redis is unreachable, so watch
-`toolhive_rate_limit_redis_errors` alongside decisions to detect fail-open
-periods.
+[fails open](#how-rate-limiting-works) when Redis is unreachable.
+`toolhive_rate_limit_fail_open` increments each time enforcement chose to allow
+a request after a Redis error, so alerting on it directly measures the
+security-visible impact rather than every Redis blip. Traces for those requests
+carry a `rate_limit.fail_open` span attribute set to `true`.
 
 Example PromQL queries against a Prometheus scrape of the server's `/metrics`
 endpoint:

@@ -244,6 +244,19 @@ Missing or drifted skills are reinstalled at their pinned digest. Sync prompts
 for confirmation before installing; pass `--yes` in non-interactive environments
 such as CI.
 
+By default, `thv skill sync` targets **every** skill-supporting client installed
+on the machine, so a lock entry is only current when the skill is present in
+each client's directory. Pass `--clients` to constrain sync to a specific set:
+
+```bash
+thv skill sync --project-root . --clients claude-code,cursor
+```
+
+This is also the safest option in CI, where an unexpected client (for example, a
+newly supported IDE that appears in a `thv` upgrade) would otherwise be treated
+as drift and materialize the skill into a directory the project doesn't check
+in.
+
 Use `--check` to report drift without installing or writing anything. This is
 useful as a CI gate:
 
@@ -382,18 +395,45 @@ After building, push the artifact to a remote OCI registry:
 thv skill push ghcr.io/my-org/skills/my-skill:v1.0.0
 ```
 
-`thv skill push` signs the pushed artifact by default. Pass `--key` to use a
-cosign private key on disk, or `--no-sign` to push without signing:
+`thv skill push` signs the pushed artifact. Pick one of three signing modes:
+
+- **Keyless (default when no flag is set)**: ToolHive acquires a short-lived
+  Sigstore identity token and records the signature in the public transparency
+  log. In GitHub Actions with `id-token: write` permission, the ambient OIDC
+  token is used automatically; on an interactive terminal, ToolHive prompts for
+  browser sign-in; in any other environment, the push fails with an actionable
+  error before publishing anything.
+- **Key-pair with `--key`**: sign with a cosign private key on disk. Set
+  `COSIGN_PASSWORD` in the `thv serve` environment to decrypt an encrypted key.
+- **Explicitly unsigned with `--no-sign`**: publish without any signature.
+
+The three signing inputs are mutually exclusive. Combining `--key`,
+`--identity-token`, and `--no-sign` returns a `400` from the API.
 
 ```bash
-# Sign with a cosign key on disk. Set COSIGN_PASSWORD in the thv serve
-# environment to decrypt an encrypted key.
+# Keyless (recommended in CI with id-token: write)
+thv skill push ghcr.io/my-org/skills/my-skill:v1.0.0
+
+# Sign with a cosign key on disk.
 thv skill push ghcr.io/my-org/skills/my-skill:v1.0.0 \
   --key cosign.key
 
-# Push without a signature
+# Supply a pre-acquired OIDC identity token (advanced).
+thv skill push ghcr.io/my-org/skills/my-skill:v1.0.0 \
+  --identity-token "$IDENTITY_TOKEN"
+
+# Push without a signature.
 thv skill push ghcr.io/my-org/skills/my-skill:v1.0.0 --no-sign
 ```
+
+:::tip[In CI, pass a signing flag explicitly]
+
+A bare `thv skill push` in CI without `id-token: write` fails before the push
+completes. Pass one of `--key`, `--identity-token`, or `--no-sign` explicitly,
+or ensure the workflow grants `id-token: write` at the job level so keyless
+signing succeeds.
+
+:::
 
 Signatures let consumers verify who published a skill before installing it. When
 a consumer installs an unsigned skill project-scoped, they must pass

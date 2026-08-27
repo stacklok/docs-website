@@ -136,10 +136,48 @@ requests traced, as a quoted string between `'0'` and `'1.0'`. The default is
 `'0.05'` (5%).
 
 To expose a Prometheus-compatible `/metrics` endpoint for pull-based scraping,
-enable `spec.prometheus.enabled`. Access the metrics at
-`http://<HOST>:<PORT>/metrics`, where `<HOST>` is the resolvable address of the
-ToolHive ProxyRunner fronting your MCP server pod and `<PORT>` is the port the
-ProxyRunner service exposes for traffic.
+enable `spec.prometheus.enabled`. Prometheus metrics are served on a dedicated
+diagnostics listener on port `9464`. The ProxyRunner pod also serves `/metrics`
+on the transport port by default for compatibility with existing scrapers.
+
+To scrape the diagnostics port, target the pod directly using
+`kubernetes_sd_configs` with `role: pod` and relabel the address to `:9464`. The
+port has no Service or `containerPort` declaration, so `ServiceMonitor` and
+named-port `PodMonitor` discovery cannot find it.
+
+To stop serving `/metrics` on the transport port, set
+`spec.prometheus.metricsOnTransportPort: false` on the `MCPTelemetryConfig`. The
+transport-port default is expected to flip to `false` in a future release;
+leaving the field unset inherits the release default so the change reaches
+existing workloads automatically.
+
+The diagnostics listener has no built-in authentication. Restrict access with a
+Kubernetes `NetworkPolicy` that allows only your Prometheus scraper to reach
+port `9464` on ToolHive pods.
+
+```yaml title="scrape-network-policy.yaml"
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: toolhive-system
+spec:
+  podSelector:
+    matchLabels:
+      toolhive: 'true'
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9464
+```
 
 #### Authentication headers
 
@@ -296,10 +334,10 @@ spec:
 
 ### Prometheus
 
-This example scrapes the `/metrics` endpoint exposed by each MCP server
-directly. To aggregate metrics through an OpenTelemetry Collector instead
-(ToolHive pushes to the collector, Prometheus scrapes the collector), see the
-[OpenTelemetry Collector](#opentelemetry-collector-recommended) section.
+This example scrapes the `/metrics` endpoint exposed by each MCP server directly
+on the diagnostics port. To aggregate metrics through an OpenTelemetry Collector
+instead (ToolHive pushes to the collector, Prometheus scrapes the collector),
+see the [OpenTelemetry Collector](#opentelemetry-collector-recommended) section.
 
 To enable scraping, [enable Prometheus](#configuration-details) in your
 telemetry configuration and add the following to your Prometheus configuration:
@@ -307,15 +345,25 @@ telemetry configuration and add the following to your Prometheus configuration:
 ```yaml title="prometheus.yml"
 scrape_configs:
   - job_name: 'toolhive-mcp-proxy'
-    static_configs:
-      - targets: ['<MCP_SERVER_PROXY_SVC_URL>:<MCP_SERVER_PORT>']
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [toolhive-system]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_toolhive]
+        action: keep
+        regex: 'true'
+      - source_labels: [__meta_kubernetes_pod_ip]
+        target_label: __address__
+        replacement: '$1:9464'
     scrape_interval: 15s
     metrics_path: /metrics
 ```
 
-Add multiple MCP servers to the `targets` list. Replace
-`<MCP_SERVER_PROXY_SVC_URL>` with the ProxyRunner SVC name and
-`<MCP_SERVER_PORT>` with the port number exposed by the SVC.
+The diagnostics port `9464` is not declared as a `containerPort` or Service
+port, so `ServiceMonitor` and named-port `PodMonitor` discovery cannot find it.
+Use pod-based service discovery as shown, or scrape the transport port directly
+while `metricsOnTransportPort` is enabled.
 
 ### Jaeger
 

@@ -132,6 +132,11 @@
               "description": "AllowConfidentialClientRegistration permits RFC 7591 Dynamic Client\nRegistration of confidential clients: when true, /oauth/register\naccepts token_endpoint_auth_method values client_secret_basic and\nclient_secret_post in addition to \"none\" (still the default on\nomission) and mints a client_secret returned exactly once.\nConfidential registrations are restricted to https non-loopback\nredirect URIs, and on the Redis storage backend all DCR-issued\nregistrations are evicted after 30 days of inactivity and must\nre-register. This gates registration only: disabling it does not\nrevoke or reject already-minted secrets at the token endpoint.\n\nSecurity: registration is unauthenticated, so enabling this lets any\ncaller who can reach the endpoint obtain a client credential.\nCombining it with insecureAllowHTTP is rejected at validation.",
               "type": "boolean"
             },
+            "allowPrivateKeyJWTRegistration": {
+              "default": false,
+              "description": "AllowPrivateKeyJWTRegistration permits Dynamic Client Registration of\nclients using private_key_jwt authentication. Registration behavior is\nintentionally configured separately from confidential-client registration.\n\nSecurity: registration is unauthenticated, so enabling this lets any\ncaller who can reach the endpoint register a private_key_jwt client.\nUnlike allowConfidentialClientRegistration, this is NOT rejected when\ncombined with insecureAllowHTTP: registration never returns a secret\nfor a private_key_jwt client, so there is nothing for cleartext HTTP\nto expose.",
+              "type": "boolean"
+            },
             "authorizationEndpointBaseUrl": {
               "description": "AuthorizationEndpointBaseURL overrides the base URL used for the authorization_endpoint\nin the OAuth discovery document. When set, the discovery document will advertise\n`{authorizationEndpointBaseUrl}/oauth/authorize` instead of `{issuer}/oauth/authorize`.\nAll other endpoints (token, registration, JWKS) remain derived from the issuer.\nThis is useful when the browser-facing authorization endpoint needs to be on a\ndifferent host than the issuer used for backend-to-backend calls.\nMust be a valid HTTPS URL (or HTTP for localhost, or HTTP for trusted in-cluster hosts\nwhen insecureAllowHTTP is true) without query, fragment, or trailing slash.",
               "pattern": "^https?://[^\\s?#]+[^/\\s?#]$",
@@ -284,7 +289,7 @@
             },
             "insecureAllowConfidentialOverLoopbackHTTP": {
               "default": false,
-              "description": "InsecureAllowConfidentialOverLoopbackHTTP opts in to\nallowConfidentialClientRegistration when issuer is a plain-HTTP loopback\nURL (e.g. \"http://localhost:8080\"). Without this flag, that combination\nis rejected at reconcile time: a loopback http:// issuer is normally\nfine for local development since the traffic never leaves the machine,\nbut combined with confidential registration it means /oauth/register —\nwhich is unauthenticated — mints client secrets over cleartext. Forcing\nTLS onto every loopback deployment instead would just push operators\ntoward insecureAllowHTTP, which is worse: that also disables the\nnon-loopback host check. Has no effect when\nallowConfidentialClientRegistration is false or issuer is https.",
+              "description": "InsecureAllowConfidentialOverLoopbackHTTP opts in to confidential\nDynamic Client Registration (DCR) and delegate clients when issuer is a\nplain-HTTP loopback URL (e.g. \"http://localhost:8080\"). Without this\nflag, that combination is rejected at reconcile time: a loopback http://\nissuer is normally fine for local development since the traffic never\nleaves the machine, but confidential clients send secrets over cleartext.\nForcing TLS onto every loopback deployment instead would just push\noperators toward insecureAllowHTTP, which is worse: that also disables\nthe non-loopback host check. Has no effect when there are no confidential\nclients or issuer is https.\n\nprivate_key_jwt registration has no equivalent flag or transport\nrestriction: unlike confidential registration, it never returns a\nclient_secret (or any other secret) in the DCR response, so there is\nnothing here for cleartext HTTP to expose.",
               "type": "boolean"
             },
             "insecureAllowHTTP": {
@@ -563,16 +568,21 @@
             "trustedIssuers": {
               "description": "TrustedIssuers configures external OIDC issuers whose tokens are\naccepted as RFC 8693 subject tokens during token exchange, in addition\nto self-issued subject tokens. Empty (the default) means only\nself-issued subject tokens are accepted. See\ndocs/arch/17-token-exchange-delegation.md for the trust model.",
               "items": {
-                "description": "TrustedIssuerConfig configures an external OIDC issuer whose tokens are\naccepted as RFC 8693 subject tokens during token exchange. It mirrors\ntokenexchange.TrustedIssuer (pkg/authserver/server/tokenexchange), the\nruntime type the operator converts this into directly — no secret is\nreferenced by this type, so no SecretKeyRef indirection is needed, unlike\nDelegateClientConfig.",
+                "description": "TrustedIssuerConfig configures an external OIDC issuer whose tokens are\naccepted as RFC 8693 subject tokens or RFC 7523 JWT-bearer assertions during\ntoken exchange. It mirrors tokenexchange.TrustedIssuer\n(pkg/authserver/server/tokenexchange), the runtime type the operator converts\nthis into directly — no secret is referenced by this type, so no SecretKeyRef\nindirection is needed, unlike DelegateClientConfig.\n\nexpectedAudience is exempted only for a grant-only issuer: jwtBearerGrant\npresent and none of actorClaim, actorMatcher, allowMayAct, or allowedActors\nset. Any RFC 8693 delegation field (actorClaim, actorMatcher, allowMayAct,\nallowedActors) still requires expectedAudience, even when combined with\njwtBearerGrant.\n\nThe allowedDelegateClients rule below mirrors validateDelegationPolicy\n(pkg/authserver/server/tokenexchange/multi_issuer_validator.go): it is\nkeyed on whether ANY delegation field is set (expectedAudience,\nactorClaim, actorMatcher, allowMayAct), not merely on whether\njwtBearerGrant is absent — an issuer can combine jwtBearerGrant with\nexpectedAudience for RFC 8693 delegation on the same issuer, and that\ncombination still requires allowedDelegateClients at the Go level.",
                 "properties": {
                   "actorClaim": {
                     "description": "ActorClaim names the claim identifying the client that requested the\nsubject token from this external issuer (used by allowedActors below).\nDefaults to \"azp\" when empty; use \"appid\" for Microsoft Entra v1, \"cid\"\nfor Okta. The special value \"client_id\" reads the subject token's\nclient_id claim instead.",
                     "maxLength": 64,
                     "type": "string"
                   },
+                  "actorMatcher": {
+                    "description": "ActorMatcher is an admin-authored CEL expression evaluated against the\nsubject token's complete signature-verified claims map (bound as\n\"claims\") to authorize a class of external actors, in addition to (not\ninstead of) allowedActors — either signal is sufficient. Must evaluate\nto a boolean; a non-boolean result denies the token at evaluation time,\nnot at reconcile time. A syntactically invalid expression fails\nreconciliation (surfaced via the AuthServerConfigValidated condition),\nnot admission — there is no validating webhook for this field.",
+                    "maxLength": 4096,
+                    "type": "string"
+                  },
                   "allowMayAct": {
                     "default": false,
-                    "description": "AllowMayAct permits this external issuer's may_act claim to authorize\ndelegation. Defaults to false; external issuers must be opted in\nexplicitly because may_act bypasses allowedActors. Does not affect\nself-issued subject tokens. The wildcard is never permitted alongside\nspecific allowedDelegateClients, regardless of this setting.",
+                    "description": "AllowMayAct permits this external issuer's may_act claim to authorize\ndelegation. Defaults to false; external issuers must be opted in\nexplicitly because may_act bypasses allowedActors and actorMatcher.\nDoes not affect self-issued subject tokens. The wildcard is never\npermitted alongside specific allowedDelegateClients, regardless of\nthis setting.",
                     "type": "boolean"
                   },
                   "allowPrivateIPs": {
@@ -580,7 +590,7 @@
                     "type": "boolean"
                   },
                   "allowedActors": {
-                    "description": "AllowedActors is the allowlist of actorClaim values authorized to\nexchange a subject token from this issuer when it carries no\n\"may_act\" claim. Empty denies every token unless allowMayAct is true\nand the token carries a permitted may_act claim.",
+                    "description": "AllowedActors is the allowlist of actorClaim values authorized to\nexchange a subject token from this issuer when it carries no\n\"may_act\" claim, in addition to (not instead of) actorMatcher below —\neither signal is sufficient. Empty denies every token unless\nactorMatcher is set, or allowMayAct is true and the token carries a\npermitted may_act claim.",
                     "items": {
                       "maxLength": 256,
                       "minLength": 1,
@@ -591,7 +601,7 @@
                     "x-kubernetes-list-type": "atomic"
                   },
                   "allowedDelegateClients": {
-                    "description": "AllowedDelegateClients restricts which ToolHive client IDs may\nexchange a subject token from this issuer. Required; set it to [\"*\"]\nto permit any confidential client holding the token-exchange grant. The\nwildcard must be the only entry; otherwise list specific client IDs to\nbind delegation to them.",
+                    "description": "AllowedDelegateClients restricts which ToolHive client IDs may exchange\nan RFC 8693 subject token from this issuer. Required unless only\njwtBearerGrant is configured; set it to [\"*\"] to permit any confidential\nclient holding the token-exchange grant, or list specific client IDs to\nbind delegation to them.",
                     "items": {
                       "maxLength": 256,
                       "minLength": 1,
@@ -603,7 +613,7 @@
                     "x-kubernetes-list-type": "atomic"
                   },
                   "expectedAudience": {
-                    "description": "ExpectedAudience is the expected \"aud\" claim value that must appear in\nthe token's audience list. This should be a resource/API identifier\n(e.g. a URI), not a client ID.",
+                    "description": "ExpectedAudience is the expected \"aud\" claim value that must appear in\nan RFC 8693 subject token's audience list. It is not used by an RFC 7523\nJWT-bearer assertion, whose audience is the token endpoint.",
                     "maxLength": 2048,
                     "minLength": 1,
                     "type": "string"
@@ -622,18 +632,89 @@
                     "description": "JWKSURL is the URL to fetch the issuer's JSON Web Key Set from. If\nempty, it is resolved via OIDC discovery at\n{issuerUrl}/.well-known/openid-configuration.",
                     "maxLength": 2048,
                     "type": "string"
+                  },
+                  "jwtBearerGrant": {
+                    "description": "JWTBearerGrant enables the plain RFC 7523 JWT-bearer grant for this\nissuer. It is independent of RFC 8693 delegation policy.",
+                    "properties": {
+                      "acceptedAudiences": {
+                        "description": "AcceptedAudiences identifies this authorization server's accepted\nassertion audiences. When omitted, runtime validation defaults to the\ntoken endpoint.",
+                        "items": {
+                          "maxLength": 2048,
+                          "minLength": 1,
+                          "pattern": "^https?://[^[:space:]]+$",
+                          "type": "string"
+                        },
+                        "maxItems": 50,
+                        "type": "array",
+                        "x-kubernetes-list-type": "atomic"
+                      },
+                      "maxAssertionAge": {
+                        "description": "MaxAssertionAge caps the exp-iat interval independently of exp.",
+                        "type": "string"
+                      },
+                      "subjectBindings": {
+                        "description": "SubjectBindings maps an exact external subject to allowed RFC 8707\nresources.",
+                        "items": {
+                          "description": "JWTBearerSubjectBinding configures the exact subject and allowed resources\nfor one RFC 7523 JWT-bearer assertion identity.",
+                          "properties": {
+                            "allowedResources": {
+                              "description": "AllowedResources is the exact set of RFC 8707 resources this subject may\nrequest.",
+                              "items": {
+                                "maxLength": 2048,
+                                "minLength": 1,
+                                "pattern": "^https?://[^[:space:]]+$",
+                                "type": "string"
+                              },
+                              "maxItems": 50,
+                              "minItems": 1,
+                              "type": "array",
+                              "x-kubernetes-list-type": "atomic"
+                            },
+                            "subject": {
+                              "description": "Subject is an exact assertion sub value. Wildcards are not supported.",
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[^*]+$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "allowedResources",
+                            "subject"
+                          ],
+                          "type": "object"
+                        },
+                        "maxItems": 50,
+                        "minItems": 1,
+                        "type": "array",
+                        "x-kubernetes-list-type": "atomic"
+                      }
+                    },
+                    "required": [
+                      "maxAssertionAge",
+                      "subjectBindings"
+                    ],
+                    "type": "object",
+                    "x-kubernetes-validations": [
+                      {
+                        "message": "maxAssertionAge must be greater than zero",
+                        "rule": "duration(self.maxAssertionAge) > duration('0s')"
+                      },
+                      {
+                        "message": "subjectBindings must not contain duplicate subjects",
+                        "rule": "self.subjectBindings.all(binding, self.subjectBindings.filter(other, other.subject == binding.subject).size() == 1)"
+                      }
+                    ]
                   }
                 },
                 "required": [
-                  "allowedDelegateClients",
-                  "expectedAudience",
                   "issuerUrl"
                 ],
                 "type": "object",
                 "x-kubernetes-validations": [
                   {
                     "message": "allowedDelegateClients must not combine the wildcard \"*\" with specific client IDs",
-                    "rule": "!('*' in self.allowedDelegateClients) || size(self.allowedDelegateClients) == 1"
+                    "rule": "!has(self.allowedDelegateClients) || !('*' in self.allowedDelegateClients) || size(self.allowedDelegateClients) == 1"
                   },
                   {
                     "message": "allowMayAct must not be enabled when allowedDelegateClients contains the wildcard \"*\"",
@@ -646,6 +727,14 @@
                   {
                     "message": "allowPrivateIPs requires jwksUrl to be set explicitly",
                     "rule": "!(has(self.allowPrivateIPs) && self.allowPrivateIPs) || (has(self.jwksUrl) && self.jwksUrl != \"\")"
+                  },
+                  {
+                    "message": "expectedAudience is required unless jwtBearerGrant is configured without actorClaim, actorMatcher, allowMayAct, or allowedActors",
+                    "rule": "(has(self.jwtBearerGrant) && !((has(self.actorClaim) && size(self.actorClaim) > 0) || (has(self.actorMatcher) && size(self.actorMatcher) > 0) || (has(self.allowMayAct) && self.allowMayAct) || (has(self.allowedActors) && size(self.allowedActors) > 0))) || (has(self.expectedAudience) && size(self.expectedAudience) > 0)"
+                  },
+                  {
+                    "message": "allowedDelegateClients is required when expectedAudience, actorClaim, actorMatcher, or allowMayAct is set",
+                    "rule": "!((has(self.expectedAudience) && size(self.expectedAudience) > 0) || (has(self.actorClaim) && size(self.actorClaim) > 0) || (has(self.actorMatcher) && size(self.actorMatcher) > 0) || (has(self.allowMayAct) && self.allowMayAct)) || (has(self.allowedDelegateClients) && size(self.allowedDelegateClients) > 0)"
                   }
                 ]
               },
@@ -1071,12 +1160,12 @@
               "rule": "!(has(self.allowConfidentialClientRegistration) && self.allowConfidentialClientRegistration && has(self.insecureAllowHTTP) && self.insecureAllowHTTP)"
             },
             {
-              "message": "delegateClients require an https:// issuer; delegate client secrets must not be sent over plaintext HTTP",
-              "rule": "!has(self.delegateClients) || size(self.delegateClients) == 0 || !self.issuer.startsWith('http://')"
-            },
-            {
               "message": "forceConfidentialRedirectUris requires allowConfidentialClientRegistration to be true",
               "rule": "(!has(self.forceConfidentialRedirectUris) || size(self.forceConfidentialRedirectUris) == 0) || (has(self.allowConfidentialClientRegistration) && self.allowConfidentialClientRegistration)"
+            },
+            {
+              "message": "delegateClients with an HTTP issuer require insecureAllowConfidentialOverLoopbackHTTP to be explicitly enabled; the issuer must still be loopback",
+              "rule": "!has(self.delegateClients) || size(self.delegateClients) == 0 || !self.issuer.startsWith('http://') || (has(self.insecureAllowConfidentialOverLoopbackHTTP) && self.insecureAllowConfidentialOverLoopbackHTTP)"
             }
           ]
         },

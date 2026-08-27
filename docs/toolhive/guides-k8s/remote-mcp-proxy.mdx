@@ -455,17 +455,74 @@ via `AssumeRoleWithWebIdentity` and signs requests with SigV4. See the
 
 :::
 
+### Allow in-cluster backends
+
+By default, the operator rejects `remoteUrl` values that resolve to private
+network ranges, IPv6 unique-local addresses, or `*.cluster.local` hostnames to
+prevent Server-Side Request Forgery (SSRF) against internal services. To proxy a
+co-located backend inside the cluster, set `spec.allowPrivateEndpoint: true`:
+
+```yaml {6}
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPRemoteProxy
+metadata:
+  name: internal-mcp-proxy
+  namespace: toolhive-system
+spec:
+  allowPrivateEndpoint: true
+  remoteUrl: https://analytics-mcp.analytics.svc.cluster.local/mcp
+  proxyPort: 8080
+  transport: streamable-http
+```
+
+Loopback, link-local, cloud-metadata, and `kubernetes.default*` targets remain
+blocked regardless of `allowPrivateEndpoint`.
+
 ### Customize the remote proxy pod
 
-Use `podTemplateSpec` to set pod-level options that aren't exposed as
-first-class fields on `MCPRemoteProxy`, such as security contexts, node
-selectors, tolerations, and affinity rules. The field follows the standard
-Kubernetes
+You have two ways to influence how the proxy pod is scheduled and configured:
+
+- **`resourceOverrides.proxyDeployment`** for first-class scheduling fields
+  (`nodeSelector`, `tolerations`, `affinity`) and Deployment metadata.
+- **`podTemplateSpec`** for anything else the Deployment's pod template needs
+  (security contexts, sidecar containers, volumes).
+
+If both are set, the `podTemplateSpec` `nodeSelector` and `affinity` sub-fields
+win on any keys they specify, and `podTemplateSpec.tolerations` replaces the
+list from `resourceOverrides.proxyDeployment.tolerations` outright.
+
+To pin the proxy Deployment to a specific node pool without writing a full
+`podTemplateSpec`:
+
+```yaml {6-19} title="analytics-proxy-scheduling.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPRemoteProxy
+metadata:
+  name: analytics-proxy
+  namespace: toolhive-system
+spec:
+  resourceOverrides:
+    proxyDeployment:
+      nodeSelector:
+        workload-tier: platform
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: platform
+          effect: NoSchedule
+  remoteUrl: https://mcp.analytics.example.com
+  proxyPort: 8080
+  transport: streamable-http
+```
+
+Use `podTemplateSpec` for pod-level options that aren't exposed as first-class
+fields on `MCPRemoteProxy`, such as security contexts. The field follows the
+standard Kubernetes
 [`PodTemplateSpec`](https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/pod-template-v1/#PodTemplateSpec)
 format, and you only need to specify the fields you want to add or override.
 
 This example sets resource limits on the proxy container and adds a node
-selector:
+selector via `podTemplateSpec`:
 
 ```yaml {15-27} title="analytics-proxy-custom-pod.yaml"
 apiVersion: toolhive.stacklok.dev/v1beta1
