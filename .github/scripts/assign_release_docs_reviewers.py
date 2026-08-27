@@ -327,6 +327,7 @@ def assign_reviewers(
                         "a stand-in. The release owner must route this review."
                     )
                     continue
+                review_already_requested = merger in requested
                 if not request_once(merger):
                     result.unresolved_notes.append(
                         f"Upstream merger `{merger}` could not be requested for "
@@ -334,7 +335,12 @@ def assign_reviewers(
                     )
                     continue
                 result.standin_notes.append(f"@{merger} (merged {upstream_pr})")
-                print(f"Stand-in review requested: {merger} for {upstream_pr}")
+                if review_already_requested:
+                    print(
+                        f"Stand-in review already active: {merger} for {upstream_pr}"
+                    )
+                else:
+                    print(f"Stand-in review requested: {merger} for {upstream_pr}")
 
     result.assigned = unique(result.assigned)
     result.standin_notes = unique(result.standin_notes)

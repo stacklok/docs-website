@@ -1,4 +1,6 @@
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from assign_release_docs_reviewers import (
@@ -138,6 +140,37 @@ class ReviewerSelectionTests(unittest.TestCase):
                 "@alice (merged stacklok/toolhive#10)",
                 "@bob (merged stacklok/toolhive#11)",
             ],
+        )
+
+    def test_existing_reviewer_is_recorded_as_an_active_standin(self):
+        reviewers = {
+            "contributors": [
+                {
+                    "login": "external",
+                    "docs_facing": True,
+                    "docs_facing_shas": [SHA_A],
+                }
+            ]
+        }
+        meta = release_meta([{"author": "external", "sha": SHA_A}])
+        selection = select_contributors(["external"], reviewers, meta)
+        github = FakeGitHub()
+        github.review_results = {"external": False}
+        github.prs_by_sha = {SHA_A: [77]}
+        github.mergers = {77: "owner"}
+        output = StringIO()
+
+        with redirect_stdout(output):
+            result = assign_reviewers(
+                config(owner="owner", candidates=["external"]), selection, github
+            )
+
+        self.assertEqual(github.review_calls, ["owner", "external"])
+        self.assertEqual(result.assigned, ["owner"])
+        self.assertEqual(result.standin_notes, ["@owner (merged stacklok/toolhive#77)"])
+        self.assertIn(
+            "Stand-in review already active: owner for stacklok/toolhive#77",
+            output.getvalue(),
         )
 
     def test_non_docs_facing_contributors_are_counted_without_requests(self):
