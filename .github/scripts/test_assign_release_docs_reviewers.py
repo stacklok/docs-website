@@ -1,12 +1,20 @@
+import subprocess
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from assign_release_docs_reviewers import (
     Config,
+    GitHub,
+    ReviewRequestError,
+    ReviewRequestOutcome,
+    Selection,
     assign_reviewers,
     select_contributors,
+    write_outputs,
 )
 
 
@@ -30,7 +38,7 @@ class FakeGitHub:
 
     def request_review(self, login):
         self.review_calls.append(login)
-        return self.review_results.get(login, True)
+        return self.review_results.get(login, ReviewRequestOutcome.REQUESTED)
 
     def merged_prs_for_commit(self, sha):
         return self.prs_by_sha.get(sha, [])
@@ -94,7 +102,9 @@ class ReviewerSelectionTests(unittest.TestCase):
         )
         selection = select_contributors(["alice", "external"], None, meta)
         github = FakeGitHub()
-        github.review_results = {"external": False}
+        github.review_results = {
+            "external": ReviewRequestOutcome.ACCESS_REJECTED
+        }
         github.prs_by_sha = {SHA_B: [77]}
         github.mergers = {77: "merger"}
 
@@ -126,7 +136,9 @@ class ReviewerSelectionTests(unittest.TestCase):
         )
         selection = select_contributors(["external"], reviewers, meta)
         github = FakeGitHub()
-        github.review_results = {"external": False}
+        github.review_results = {
+            "external": ReviewRequestOutcome.ACCESS_REJECTED
+        }
         github.prs_by_sha = {SHA_A: [10], SHA_B: [10], SHA_C: [11]}
         github.mergers = {10: "alice", 11: "bob"}
 
@@ -155,7 +167,9 @@ class ReviewerSelectionTests(unittest.TestCase):
         meta = release_meta([{"author": "external", "sha": SHA_A}])
         selection = select_contributors(["external"], reviewers, meta)
         github = FakeGitHub()
-        github.review_results = {"external": False}
+        github.review_results = {
+            "external": ReviewRequestOutcome.ACCESS_REJECTED
+        }
         github.prs_by_sha = {SHA_A: [77]}
         github.mergers = {77: "owner"}
         output = StringIO()
@@ -209,11 +223,15 @@ class ReviewerSelectionTests(unittest.TestCase):
         meta = release_meta([{"author": "external", "sha": SHA_A}])
         selection = select_contributors(["external"], reviewers, meta)
         github = FakeGitHub()
-        github.review_results = {"external": False}
+        github.review_results = {
+            "external": ReviewRequestOutcome.ACCESS_REJECTED
+        }
 
-        result = assign_reviewers(config(candidates=["external"]), selection, github)
+        result = assign_reviewers(
+            config(owner="owner", candidates=["external"]), selection, github
+        )
 
-        self.assertEqual(result.assigned, [])
+        self.assertEqual(result.assigned, ["owner"])
         self.assertEqual(len(result.unresolved_notes), 1)
         self.assertNotIn("@external", result.unresolved_notes[0])
 
@@ -236,6 +254,103 @@ class ReviewerSelectionTests(unittest.TestCase):
         self.assertFalse(selection.classified)
         self.assertEqual(selection.docs_facing, {"alice": [SHA_A], "bob": [SHA_B]})
         self.assertEqual(selection.non_docs_facing, [])
+
+    def test_duplicate_contributor_records_trigger_noisy_fallback(self):
+        reviewers = {
+            "contributors": [
+                {
+                    "login": "alice",
+                    "docs_facing": True,
+                    "docs_facing_shas": [SHA_A],
+                },
+                {"login": "alice", "docs_facing": False},
+            ]
+        }
+        meta = release_meta([{"author": "alice", "sha": SHA_A}])
+
+        selection = select_contributors(["alice"], reviewers, meta)
+
+        self.assertFalse(selection.classified)
+        self.assertEqual(selection.docs_facing, {"alice": [SHA_A]})
+        self.assertEqual(selection.non_docs_facing, [])
+
+    def test_rejected_docs_facing_owner_falls_back_to_merger(self):
+        reviewers = {
+            "contributors": [
+                {
+                    "login": "owner",
+                    "docs_facing": True,
+                    "docs_facing_shas": [SHA_A],
+                }
+            ]
+        }
+        meta = release_meta([{"author": "owner", "sha": SHA_A}])
+        selection = select_contributors(["owner"], reviewers, meta)
+        github = FakeGitHub()
+        github.review_results = {"owner": ReviewRequestOutcome.ACCESS_REJECTED}
+        github.prs_by_sha = {SHA_A: [77]}
+        github.mergers = {77: "merger"}
+
+        result = assign_reviewers(config(owner="owner"), selection, github)
+
+        self.assertEqual(github.review_calls, ["owner", "merger"])
+        self.assertEqual(result.assigned, ["merger"])
+        self.assertEqual(result.standin_notes, ["@merger (merged stacklok/toolhive#77)"])
+        self.assertEqual(result.unresolved_notes, [])
+
+    def test_missing_owner_is_an_unresolved_routing_outcome(self):
+        selection = Selection(docs_facing={}, non_docs_facing=[], classified=True)
+
+        result = assign_reviewers(config(), selection, FakeGitHub())
+
+        self.assertEqual(len(result.unresolved_notes), 1)
+        self.assertIn("No release owner could be resolved", result.unresolved_notes[0])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "github-output"
+            test_config = Config(
+                review_repo="stacklok/docs-website",
+                release_repo="stacklok/toolhive",
+                pr_number="123",
+                owner="",
+                compare_ok="true",
+                candidates=[],
+                github_output=output_path,
+            )
+            write_outputs(test_config, selection, result)
+            self.assertIn("unresolved_count=1", output_path.read_text())
+
+
+class GitHubReviewRequestTests(unittest.TestCase):
+    def test_access_rejection_is_the_only_expected_failure(self):
+        response = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout=(
+                "HTTP/2.0 422 Unprocessable Entity\r\n\r\n"
+                '{"message":"Reviews may only be requested from collaborators."}'
+            ),
+            stderr="gh: Reviews may only be requested from collaborators. (HTTP 422)",
+        )
+
+        with patch.object(GitHub, "_run", return_value=response):
+            outcome = GitHub(config()).request_review("external")
+
+        self.assertIs(outcome, ReviewRequestOutcome.ACCESS_REJECTED)
+
+    def test_transient_api_failure_stops_routing(self):
+        response = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout=(
+                "HTTP/2.0 503 Service Unavailable\r\n\r\n"
+                '{"message":"Service unavailable"}'
+            ),
+            stderr="gh: Service unavailable (HTTP 503)",
+        )
+
+        with patch.object(GitHub, "_run", return_value=response):
+            with self.assertRaisesRegex(ReviewRequestError, "HTTP status 503"):
+                GitHub(config()).request_review("alice")
 
 
 if __name__ == "__main__":

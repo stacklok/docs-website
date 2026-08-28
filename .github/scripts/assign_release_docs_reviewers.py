@@ -3,9 +3,10 @@
 
 GitHub itself is the reviewer-access authority: request the upstream
 contributor directly, then fall back to the human who merged each relevant
-upstream pull request when GitHub rejects that request. This deliberately
-avoids organization-membership and collaborator lookups, which require
-broader credentials or behave inconsistently for team-derived access.
+upstream pull request when GitHub rejects that request because the contributor
+lacks access. Other API failures stop the routing step. This deliberately avoids
+organization-membership and collaborator lookups, which require broader
+credentials or behave inconsistently for team-derived access.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 
@@ -23,6 +25,8 @@ BOT_LOGIN = re.compile(
     r"(\[bot\]$|^app/|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)",
     re.IGNORECASE,
 )
+HTTP_STATUS = re.compile(r"^HTTP/\S+ (\d{3})\b", re.MULTILINE)
+REVIEW_ACCESS_REJECTION = "Reviews may only be requested from collaborators"
 
 
 def warning(message: str) -> None:
@@ -75,6 +79,15 @@ class AssignmentResult:
     unresolved_notes: list[str] = field(default_factory=list)
 
 
+class ReviewRequestOutcome(Enum):
+    REQUESTED = "requested"
+    ACCESS_REJECTED = "access_rejected"
+
+
+class ReviewRequestError(RuntimeError):
+    """Raised when GitHub cannot provide a trustworthy routing decision."""
+
+
 class GitHub:
     def __init__(self, config: Config):
         self.config = config
@@ -100,9 +113,10 @@ class GitHub:
         )
         return result.returncode == 0
 
-    def request_review(self, login: str) -> bool:
+    def request_review(self, login: str) -> ReviewRequestOutcome:
         result = self._run(
             "api",
+            "--include",
             "--method",
             "POST",
             (
@@ -112,7 +126,21 @@ class GitHub:
             "-f",
             f"reviewers[]={login}",
         )
-        return result.returncode == 0
+        if result.returncode == 0:
+            return ReviewRequestOutcome.REQUESTED
+
+        statuses = HTTP_STATUS.findall(result.stdout)
+        status = int(statuses[-1]) if statuses else None
+        response = f"{result.stdout}\n{result.stderr}"
+        if status == 422 and REVIEW_ACCESS_REJECTION in response:
+            return ReviewRequestOutcome.ACCESS_REJECTED
+
+        detail = result.stderr.strip() or "no error detail from gh"
+        status_label = str(status) if status is not None else "unavailable"
+        raise ReviewRequestError(
+            f"Review request for {login} failed without an access decision "
+            f"(HTTP status {status_label}): {detail}"
+        )
 
     def merged_prs_for_commit(self, sha: str) -> list[int]:
         result = self._run(
@@ -201,13 +229,25 @@ def select_contributors(
         )
 
     by_login: dict[str, dict] = {}
+    duplicate_candidates: list[str] = []
+    candidate_set = set(candidates)
     for entry in entries:
         if not isinstance(entry, dict):
             continue
         login = entry.get("login")
         docs_facing = entry.get("docs_facing")
         if isinstance(login, str) and isinstance(docs_facing, bool):
+            if login in by_login and login in candidate_set:
+                duplicate_candidates.append(login)
             by_login[login] = entry
+
+    if duplicate_candidates:
+        return fallback_selection(
+            candidates,
+            commits,
+            "REVIEWERS.json repeated release contributors: "
+            + ", ".join(unique(duplicate_candidates)),
+        )
 
     missing = [login for login in candidates if login not in by_login]
     if missing:
@@ -256,18 +296,19 @@ def assign_reviewers(
     config: Config, selection: Selection, github: GitHub
 ) -> AssignmentResult:
     result = AssignmentResult()
-    requested: set[str] = set()
+    request_outcomes: dict[str, ReviewRequestOutcome] = {}
 
-    def request_once(login: str) -> bool:
-        if login in requested:
-            return True
-        if github.request_review(login):
-            requested.add(login)
+    def request_once(login: str) -> ReviewRequestOutcome:
+        if login in request_outcomes:
+            return request_outcomes[login]
+        outcome = github.request_review(login)
+        request_outcomes[login] = outcome
+        if outcome is ReviewRequestOutcome.REQUESTED:
             result.assigned.append(login)
             print(f"Review requested: {login}")
-            return True
-        return False
+        return outcome
 
+    owner_review_outcome: ReviewRequestOutcome | None = None
     if config.owner:
         result.owner_assigned = github.assign_owner(config.owner)
         if result.owner_assigned:
@@ -275,23 +316,22 @@ def assign_reviewers(
         else:
             warning(f"Could not assign owner {config.owner} as assignee.")
 
-        if not request_once(config.owner):
+        owner_review_outcome = request_once(config.owner)
+        if owner_review_outcome is ReviewRequestOutcome.ACCESS_REJECTED:
             warning(f"Could not request a review from owner {config.owner}.")
-            result.unresolved_notes.append(
-                f"Release owner `{config.owner}` could not be requested as a reviewer. "
-                "A docs maintainer must route this review."
-            )
     else:
         warning("No release owner resolved; PR has no assignee or owner review.")
+        result.unresolved_notes.append(
+            "No release owner could be resolved. A docs maintainer must adopt this "
+            "PR and route its reviews."
+        )
 
     result.fyi_count = len(
         [login for login in selection.non_docs_facing if login != config.owner]
     )
 
     for contributor, shas in selection.docs_facing.items():
-        if contributor == config.owner:
-            continue
-        if request_once(contributor):
+        if request_once(contributor) is ReviewRequestOutcome.REQUESTED:
             continue
 
         print(
@@ -299,10 +339,15 @@ def assign_reviewers(
             "resolving upstream merger stand-ins."
         )
         seen_prs: set[int] = set()
+        routing_actor = (
+            "A docs maintainer"
+            if contributor == config.owner
+            else "The release owner"
+        )
         if not shas:
             result.unresolved_notes.append(
                 f"Docs-facing contributor `{contributor}` has no commit available for "
-                "stand-in resolution. The release owner must route this review."
+                f"stand-in resolution. {routing_actor} must route this review."
             )
             continue
 
@@ -311,7 +356,7 @@ def assign_reviewers(
             if not pull_numbers:
                 result.unresolved_notes.append(
                     f"Docs-facing commit `{sha[:12]}` could not be mapped to a merged "
-                    "upstream PR. The release owner must route this review."
+                    f"upstream PR. {routing_actor} must route this review."
                 )
                 continue
 
@@ -324,14 +369,19 @@ def assign_reviewers(
                 if not is_human_standin(merger, contributor):
                     result.unresolved_notes.append(
                         f"Upstream PR `{upstream_pr}` has no human merger available as "
-                        "a stand-in. The release owner must route this review."
+                        f"a stand-in. {routing_actor} must route this review."
                     )
                     continue
-                review_already_requested = merger in requested
-                if not request_once(merger):
+                review_already_requested = (
+                    request_outcomes.get(merger) is ReviewRequestOutcome.REQUESTED
+                )
+                if (
+                    request_once(merger)
+                    is not ReviewRequestOutcome.REQUESTED
+                ):
                     result.unresolved_notes.append(
                         f"Upstream merger `{merger}` could not be requested for "
-                        f"`{upstream_pr}`. The release owner must route this review."
+                        f"`{upstream_pr}`. {routing_actor} must route this review."
                     )
                     continue
                 result.standin_notes.append(f"@{merger} (merged {upstream_pr})")
@@ -341,6 +391,15 @@ def assign_reviewers(
                     )
                 else:
                     print(f"Stand-in review requested: {merger} for {upstream_pr}")
+
+    if (
+        owner_review_outcome is ReviewRequestOutcome.ACCESS_REJECTED
+        and config.owner not in selection.docs_facing
+    ):
+        result.unresolved_notes.append(
+            f"Release owner `{config.owner}` could not be requested as a reviewer. "
+            "A docs maintainer must route this review."
+        )
 
     result.assigned = unique(result.assigned)
     result.standin_notes = unique(result.standin_notes)
@@ -376,7 +435,11 @@ def main() -> int:
     reviewers = read_json(Path("REVIEWERS.json"))
     release_meta = read_json(Path(".release-meta.json"))
     selection = select_contributors(config.candidates, reviewers, release_meta)
-    result = assign_reviewers(config, selection, GitHub(config))
+    try:
+        result = assign_reviewers(config, selection, GitHub(config))
+    except ReviewRequestError as exc:
+        print(f"::error::{exc}")
+        return 1
     write_outputs(config, selection, result)
     print(f"Owner:          {config.owner or '<none>'}")
     print(f"Requested:      {','.join(result.assigned) or '<none>'}")
