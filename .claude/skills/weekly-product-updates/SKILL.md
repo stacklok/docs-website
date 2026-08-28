@@ -40,7 +40,6 @@ Follow the word list in the project's AGENTS.md ("Word list" section); it is the
 | `stacklok/toolhive-registry-server` | Registry Server (discovery, sync, API) |
 | `stacklok/toolhive` | CLI, Kubernetes Operator, Virtual MCP Server (vMCP) |
 | `stacklok/toolhive-studio` | ToolHive UI (desktop app) |
-| `stacklok/toolhive-cloud-ui` | Cloud UI |
 
 Note: The `toolhive` repo contains both Runtimes and vMCP components -- distinguish updates by subdirectories or PR labels.
 
@@ -75,11 +74,6 @@ gh api repos/stacklok/toolhive/releases \
 
 ```bash
 gh api repos/stacklok/toolhive-studio/releases \
-  --jq "[.[] | select(.published_at >= \"${START_DATE}T00:00:00Z\" and .published_at <= \"${END_DATE}T23:59:59Z\")] | .[] | {tag: .tag_name, date: .published_at, body: .body}"
-```
-
-```bash
-gh api repos/stacklok/toolhive-cloud-ui/releases \
   --jq "[.[] | select(.published_at >= \"${START_DATE}T00:00:00Z\" and .published_at <= \"${END_DATE}T23:59:59Z\")] | .[] | {tag: .tag_name, date: .published_at, body: .body}"
 ```
 
@@ -189,7 +183,6 @@ For detailed release notes, check the project repositories:
 
 - [ToolHive Runtimes](https://github.com/stacklok/toolhive/releases) (CLI and Kubernetes Operator)
 - [ToolHive UI](https://github.com/stacklok/toolhive-studio/releases)
-- [ToolHive Cloud UI](https://github.com/stacklok/toolhive-cloud-ui/releases)
 - [ToolHive Registry Server](https://github.com/stacklok/toolhive-registry-server/releases)
 
 You can find all ToolHive documentation on the [Stacklok documentation site](https://docs.stacklok.com/toolhive).
@@ -227,7 +220,6 @@ For detailed release notes, check the project repositories:
 
 - [ToolHive Runtimes](https://github.com/stacklok/toolhive/releases) (CLI and Kubernetes Operator)
 - [ToolHive UI](https://github.com/stacklok/toolhive-studio/releases)
-- [ToolHive Cloud UI](https://github.com/stacklok/toolhive-cloud/releases)
 - [ToolHive Registry Server](https://github.com/stacklok/toolhive-registry-server/releases)
 
 You can find all ToolHive documentation on the [Stacklok documentation site](/toolhive).
