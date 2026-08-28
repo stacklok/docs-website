@@ -439,10 +439,17 @@ The embedded AS enforces the following rules on fetched CIMD documents:
 - The `client_id` field inside the document must exactly match the URL it was
   fetched from.
 - `redirect_uris` must be present and pass strict validation.
-- Symmetric shared-secret `token_endpoint_auth_method` values are forbidden.
-- `grant_types` must include `authorization_code` and be a subset of
-  `[authorization_code, refresh_token]`.
-- `response_types` must be a subset of `[code]`.
+- `token_endpoint_auth_method` must be `none` or omitted. When it names any
+  other value (for example, `private_key_jwt`), the document must also publish a
+  `token_endpoint_auth_methods_supported` list containing `none` (per OpenID
+  Connect RP Metadata Choices 1.0), and the server negotiates down to `none`.
+  Symmetric shared-secret methods (`client_secret_post`, `client_secret_basic`,
+  `client_secret_jwt`) are always rejected, even alongside a supported-methods
+  list.
+- `grant_types` must include `authorization_code`. Unsupported entries in
+  `grant_types` and `response_types` are filtered out rather than rejected; the
+  document is only rejected when the filtered intersection lacks the
+  `authorization_code` grant or the `code` response type.
 - Declared scopes must be a subset of the AS's configured `scopes_supported`
   list (when set).
 
@@ -655,6 +662,62 @@ For OAuth 2.0 servers that return identity in the token response itself, see
 [Extract identity from the token response](#extract-identity-from-the-token-response).
 
 :::
+
+### Trust a private CA for the upstream provider
+
+If the upstream identity provider serves its endpoints with a certificate signed
+by an internal CA (for example, an in-cluster Keycloak or a corporate ADFS
+behind private PKI), the embedded authorization server can't complete discovery,
+token, user-info, or DCR requests to it until it trusts that CA. Set
+`caBundleRef` on the upstream's `oidcConfig` or `oauth2Config` to point at a
+ConfigMap containing the PEM-encoded CA bundle. The operator projects it
+read-only into the proxy pod and the auth server adds it to the system trust
+roots for connections to this upstream only. The bundle augments the system
+roots; it doesn't restrict trust to this CA or disable public roots.
+
+First, create a ConfigMap with the CA certificate. The ConfigMap must live in
+the same namespace as the `MCPExternalAuthConfig`:
+
+```bash
+kubectl create configmap upstream-private-ca \
+  --from-file=ca.crt=/path/to/upstream-ca.crt \
+  -n toolhive-system
+```
+
+Then reference it from the upstream provider's `oidcConfig`:
+
+```yaml title="MCPExternalAuthConfig: OIDC upstream with a private CA"
+spec:
+  type: embeddedAuthServer
+  embeddedAuthServer:
+    issuer: 'https://mcp.example.com'
+    upstreamProviders:
+      - name: corporate-idp
+        type: oidc
+        oidcConfig:
+          issuerUrl: 'https://idp.internal.example.com'
+          clientId: 'toolhive-client'
+          # highlight-start
+          caBundleRef:
+            configMapRef:
+              name: upstream-private-ca
+              key: ca.crt
+          # highlight-end
+```
+
+Use the same pattern under `oauth2Config` when the upstream is a pure OAuth 2.0
+provider. Set `key` to the ConfigMap key holding the bundle, commonly `ca.crt`.
+The operator watches the ConfigMap and rolls the proxy pod when the bundle
+changes or the reference is removed, so rotating the CA doesn't require a manual
+restart. When the bundle content is invalid PEM, the operator surfaces a
+terminal condition on the resource that references this `MCPExternalAuthConfig`
+(for example, the `MCPServer` or `VirtualMCPServer`) rather than retrying
+reconciliation.
+
+`caBundleRef` on the upstream provider is independent of `caBundleRef` on the
+`MCPOIDCConfig` that validates incoming JWTs (see
+[Use a custom CA certificate for the OIDC issuer](./auth-k8s.mdx#use-a-custom-ca-certificate-for-the-oidc-issuer)):
+the two references configure trust for different network hops.
 
 ### Use dynamic client registration with an upstream provider
 
@@ -1075,11 +1138,14 @@ consumer's mirrored condition clears on the next reconcile.
 
 - The `client_id` field inside the fetched document must exactly match the URL
   used to fetch it.
-- Documents must not declare `token_endpoint_auth_method` values that use a
-  symmetric shared secret (`client_secret_post`, `client_secret_basic`,
-  `client_secret_jwt`).
-- `grant_types` must include `authorization_code`. `response_types` must only
-  contain `code`.
+- `token_endpoint_auth_method` must be `none` or omitted. When it names any
+  other value (for example, `private_key_jwt`), the document must also publish a
+  `token_endpoint_auth_methods_supported` list containing `none` so the server
+  can negotiate down to `none`. Symmetric shared-secret methods
+  (`client_secret_post`, `client_secret_basic`, `client_secret_jwt`) are always
+  rejected with `invalid_client`.
+- After unsupported entries are filtered out, `grant_types` must still include
+  `authorization_code` and `response_types` must still include `code`.
 - `redirect_uris` must be present and valid.
 
 </details>
