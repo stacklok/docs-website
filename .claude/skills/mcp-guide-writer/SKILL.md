@@ -42,6 +42,8 @@ All configuration examples must be valid and tested. Reference the existing Tool
 
 ## Documentation standards
 
+Before drafting, read the tech-writer skill's how-to reference and anti-patterns list (`.claude/skills/tech-writer/references/how-to-guides.md` and `.claude/skills/tech-writer/references/anti-patterns.md`); usage guides are how-to guides and follow that mode's discipline.
+
 Adhere to the project's writing style guide (`STYLE-GUIDE.md`) including:
 
 - Use US English with casual, conversational tone

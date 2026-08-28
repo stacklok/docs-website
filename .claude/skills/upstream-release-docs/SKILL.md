@@ -288,7 +288,7 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 
 3. **Heed the additive-only smell.** If your planned edit to an existing page only _appends_ a new section and revises no existing sentence (a `+N / -0` diff on a prose page), treat that as a signal, not a success. A newly added capability almost always falsifies an existing "only / default / planned" statement nearby. Reconcile the page you are editing with the section you just added to it, then check sibling pages that cover the same concept.
 
-4. Check the project style guide (CLAUDE.md, STYLE-GUIDE.md, or similar) for conventions.
+4. Check the project style guide (CLAUDE.md, STYLE-GUIDE.md, or similar) for conventions. In this repo, also read the tech-writer skill (`.claude/skills/tech-writer/SKILL.md`) before drafting: classify each planned page or section by Diataxis mode, read the matching mode reference, and apply `.claude/skills/tech-writer/references/anti-patterns.md` while writing (release-diff drafting is especially prone to changelog framing).
 
 5. Build an **impact map**, a table with these columns:
 

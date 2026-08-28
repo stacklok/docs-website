@@ -56,10 +56,11 @@ Perform critical editorial reviews as a tech writer / copyeditor, focusing on cl
 
 ### LLM-Generated Content Patterns
 
-Watch for these telltale signs of AI-generated docs that need human intervention:
+Watch for these telltale signs of AI-generated docs that need human intervention. The tech-writer skill maintains the write-time version of this catalog (`.claude/skills/tech-writer/references/anti-patterns.md`); when you add a pattern here, add it there too.
 
 | Pattern | Problem | Fix |
 | --- | --- | --- |
+| Flat option coverage | Every option/flag gets equal billing; the common workflow drowns in the long tail | Weight coverage by real-world use: worked example for the common path, a sentence + reference link for situational options, reference only for esoteric knobs |
 | Excessive lists | Hard to scan, staccato reading | Convert to prose or tables |
 | Mirror-image sections | "When to use X" / "When to use Y" as inverted duplicates | Consolidate into comparison table |
 | Buried ledes | Key info (e.g., "it's automatic") comes after lengthy preamble | Lead with the most important point |
