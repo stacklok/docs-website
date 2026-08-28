@@ -289,21 +289,7 @@ const mcpSidebar: SidebarsConfig[string] = [
     ],
   },
 
-  {
-    type: 'category',
-    label: 'Cloud UI',
-    description:
-      'How to deploy and use the ToolHive Cloud UI to browse and connect MCP servers',
-    link: {
-      type: 'doc',
-      id: 'toolhive/guides-cloud-ui/index',
-    },
-    items: [
-      'toolhive/guides-cloud-ui/intro',
-      'toolhive/guides-cloud-ui/deployment',
-      'toolhive/guides-cloud-ui/configuration',
-    ],
-  },
+  'toolhive/guides-cloud-ui/index',
 
   {
     type: 'category',
