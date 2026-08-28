@@ -55,6 +55,9 @@ To start using the playground:
      `http://localhost:1234`)
    - **OpenRouter**: Add OpenRouter API key for access to multiple model
      providers
+   - **Stacklok Gateway**: Route GPT, Claude, and Gemini requests through an
+     OIDC-protected LLM gateway instead of using a per-provider API key. See
+     [Use the Stacklok Gateway](#use-the-stacklok-gateway) for the setup flow.
 
 3. **Start a thread**: Click **New chat** in the sidebar. The first time you use
    the playground, new threads open with the **ToolHive Assistant** agent. After
@@ -72,6 +75,42 @@ To start using the playground:
 
 6. **Start chatting**: Send a message. The agent uses its system prompt together
    with the tools and skills you enabled for this thread.
+
+## Use the Stacklok Gateway
+
+The Stacklok Gateway option in **Provider Settings** lets you chat with GPT,
+Claude, and Gemini models through an OIDC-protected LLM gateway rather than
+configuring an API key per provider. ToolHive routes requests to a loopback
+proxy that injects a fresh JWT on each call, so no API key is stored in Studio.
+Under the hood, ToolHive uses the same connection settings as
+[`thv llm setup`](../reference/cli/thv_llm_setup.md) and manages the local proxy
+started by [`thv llm proxy start`](../reference/cli/thv_llm_proxy_start.md).
+
+To enable the gateway:
+
+1. Open **Provider Settings** and expand **Stacklok Gateway**.
+2. Fill in the connection settings:
+   - **Gateway URL** - the base URL of your LLM gateway (for example,
+     `https://llm-gateway.stacklok.dev`).
+   - **Issuer** - the OIDC issuer URL for the identity provider that fronts the
+     gateway.
+   - **Audience** (optional) - the OIDC audience claim, if your provider
+     requires one (for example, `api://llm-gateway`).
+   - **Client ID** - the OIDC client ID registered with your identity provider.
+   - **Callback port** and **Local proxy port** - override the defaults (`8080`
+     and `14000`) if either port is in use.
+3. Click **Save connection settings**. ToolHive starts a local `thv llm proxy`
+   on the configured port, discovers the models the gateway exposes, and adds
+   the Stacklok Gateway entry to the model picker.
+4. If the panel shows **Sign-in required**, click **Sign in** to complete the
+   OIDC flow in your browser. When it returns **Signed in**, the gateway is
+   ready to use.
+5. Pick a Stacklok Gateway model in the chat toolbar and start a thread.
+
+To disable the gateway, open **Provider Settings**, expand **Stacklok Gateway**,
+and click the trash icon, then **Save**. Studio stops the proxy it started and
+removes the gateway models from the picker. The `thv llm config` on disk stays
+intact so CLI clients that use the same gateway continue to work.
 
 ## Choose an agent for a thread
 
@@ -296,6 +335,9 @@ details on skill formats and how to install or build your own.
 - Consider using API keys with restricted permissions for testing purposes.
 - When using local providers like Ollama or LM Studio, ensure the server URLs
   are only accessible on your local network to prevent unauthorized access.
+- When using the Stacklok Gateway, keep the local proxy port bound to loopback
+  (the default) and let the OIDC session expire when you finish; ToolHive
+  fetches a fresh JWT for each request instead of storing a long-lived key.
 
 ### Agents, servers, and tools
 
@@ -355,6 +397,16 @@ If a provider isn't working:
    - For LM Studio, confirm you started the server from the **Developer**
      section.
    - Check that no firewall or VPN is blocking localhost traffic.
+
+3. **For the Stacklok Gateway**:
+   - Check the status badges in the **Stacklok Gateway** panel. **Proxy
+     stopped** means ToolHive hasn't started the local proxy yet - click **Start
+     proxy** to launch it.
+   - **Sign-in required** means the OIDC session has expired - click **Sign in**
+     to reauthenticate in your browser.
+   - If the proxy fails to start, confirm the local proxy port isn't in use and
+     that the gateway URL, issuer, and client ID match the values your identity
+     provider expects.
 
 </details>
 
