@@ -121,8 +121,28 @@ explicitly; the wildcard must stand alone, and combining it with specific client
 IDs is rejected at admission.
 
 For the complete `trustedIssuers` field list, including `jwksUrl`,
-`allowPrivateIPs`, and the per-issuer `insecureAllowHTTP`, see the
-[MCPExternalAuthConfig schema reference](../reference/crds/mcpexternalauthconfig.mdx).
+`caBundleRef`, `allowPrivateIPs`, and the per-issuer `insecureAllowHTTP`, see
+[the `MCPExternalAuthConfig` schema reference](../reference/crds/mcpexternalauthconfig.mdx).
+
+### Trust a private issuer CA
+
+When the external issuer uses a private CA for its discovery or JWKS endpoint,
+store its PEM certificate in a ConfigMap and reference it from the issuer:
+
+```yaml title="VirtualMCPServer: trusted issuer private CA"
+spec:
+  authServerConfig:
+    trustedIssuers:
+      - issuerUrl: 'https://<ISSUER_HOST>'
+        caBundleRef:
+          configMapRef:
+            name: external-issuer-ca
+            key: ca.crt
+```
+
+ToolHive uses the additional certificate only for this issuer's discovery and
+JWKS requests. Restrict write access to this ConfigMap because it defines the
+trust anchor used to validate subject tokens.
 
 ### Walk through an exchange
 
@@ -188,13 +208,6 @@ authorizes the ToolHive-side client.
 
 ## Secretless delegate clients with `private_key_jwt`
 
-:::info
-
-`private_key_jwt` client registration and authentication is not yet part of a
-released ToolHive version.
-
-:::
-
 A `delegateClients` entry requires ToolHive to hold a shared secret for the
 agent. Setting `allowPrivateKeyJWTRegistration: true` on `authServerConfig`
 instead lets an agent register itself via Dynamic Client Registration (DCR)
@@ -211,8 +224,6 @@ spec:
 
 Registration is unauthenticated, the same as ordinary DCR, so enabling this lets
 any caller who can reach `/oauth/register` register a `private_key_jwt` client.
-It cannot be combined with `insecureAllowHTTP: true`, since `private_key_jwt`
-registration would then occur over cleartext HTTP.
 
 If you're comparing ways to avoid provisioning a client secret at all, see also
 [Client ID Metadata Document (CIMD)](../concepts/embedded-auth-server.mdx#client-id-metadata-document-cimd),
@@ -265,15 +276,15 @@ one.
 
 ## Troubleshooting
 
-| Error                                                                                                                                                                                                                            | Likely cause                                                                                                                                                                                                                                                                                                    |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invalid_client` (exact hint varies by cause: wrong secret, wrong `token_endpoint_auth_method`, or a public client attempting a confidential-only grant)                                                                         | The delegate client must be confidential. Verify `delegateClients[].clientSecretRef` is set and the client authenticated with the matching secret and method.                                                                                                                                                   |
-| `invalid_grant`: "The subject token does not authorize this client to act on behalf of the subject."                                                                                                                             | The subject token's `may_act.sub` doesn't match the actor ToolHive resolved for this request.                                                                                                                                                                                                                   |
-| `invalid_grant`: "This client is not authorized to exchange subject tokens from the external actor's issuer."                                                                                                                    | The authenticated client isn't in `trustedIssuers[].allowedDelegateClients` for the issuer that minted the subject token.                                                                                                                                                                                       |
-| `invalid_grant`: "The subject token was issued to a different client."                                                                                                                                                           | The subject token's own `client_id` claim doesn't match the authenticated delegate client, and the client isn't in `allowedDelegateClients`.                                                                                                                                                                    |
-| `invalid_request`: "The subject token is invalid or could not be verified."                                                                                                                                                      | The subject token failed signature, issuer, or audience validation against every configured `trustedIssuers` entry.                                                                                                                                                                                             |
-| CRD rejected: "allowedDelegateClients is required when expectedAudience, actorClaim, actorMatcher, or allowMayAct is set"                                                                                                        | A `trustedIssuers` entry configures delegation fields without also setting `allowedDelegateClients`. Add it, or remove the delegation fields if only `jwtBearerGrant` is needed.                                                                                                                                |
-| CRD rejected: "allowConfidentialClientRegistration cannot be combined with insecureAllowHTTP; client secrets would be issued in cleartext over an unauthenticated endpoint" (or the `allowPrivateKeyJWTRegistration` equivalent) | `authServerConfig.issuer` uses `http://` while confidential DCR or `private_key_jwt` registration is enabled. The CEL admission rule can't express the loopback exception, so use an `https://` issuer. For a plain-HTTP loopback issuer in local development, set `insecureAllowConfidentialOverLoopbackHTTP`. |
+| Error                                                                                                                                                    | Likely cause                                                                                                                                                                     |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_client` (exact hint varies by cause: wrong secret, wrong `token_endpoint_auth_method`, or a public client attempting a confidential-only grant) | The delegate client must be confidential. Verify `delegateClients[].clientSecretRef` is set and the client authenticated with the matching secret and method.                    |
+| `invalid_grant`: "The subject token does not authorize this client to act on behalf of the subject."                                                     | The subject token's `may_act.sub` doesn't match the actor ToolHive resolved for this request.                                                                                    |
+| `invalid_grant`: "This client is not authorized to exchange subject tokens from the external actor's issuer."                                            | The authenticated client isn't in `trustedIssuers[].allowedDelegateClients` for the issuer that minted the subject token.                                                        |
+| `invalid_grant`: "The subject token was issued to a different client."                                                                                   | The subject token's own `client_id` claim doesn't match the authenticated delegate client, and the client isn't in `allowedDelegateClients`.                                     |
+| `invalid_request`: "The subject token is invalid or could not be verified."                                                                              | The subject token failed signature, issuer, or audience validation against every configured `trustedIssuers` entry.                                                              |
+| CRD rejected: "allowedDelegateClients is required when expectedAudience, actorClaim, actorMatcher, or allowMayAct is set"                                | A `trustedIssuers` entry configures delegation fields without also setting `allowedDelegateClients`. Add it, or remove the delegation fields if only `jwtBearerGrant` is needed. |
+| CRD rejected: "delegateClients with an HTTP issuer require insecureAllowConfidentialOverLoopbackHTTP to be explicitly enabled"                           | A delegate client uses a plain-HTTP issuer. Use an `https://` issuer, or for local development set `insecureAllowConfidentialOverLoopbackHTTP: true` with a loopback issuer.     |
 
 ## Next steps
 

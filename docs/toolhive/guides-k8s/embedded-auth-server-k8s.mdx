@@ -481,6 +481,20 @@ restricted to `https` non-loopback redirect URIs, and (with the Redis storage
 backend) any DCR registration idle for more than 30 days is evicted and must
 re-register.
 
+To let an agent register a keypair for RFC 8693 token exchange instead of
+receiving a shared secret, set `allowPrivateKeyJWTRegistration: true`:
+
+```yaml title="MCPExternalAuthConfig: private_key_jwt DCR"
+spec:
+  embeddedAuthServer:
+    allowPrivateKeyJWTRegistration: true
+```
+
+The agent registers its public JWKS and uses a signed client assertion at the
+token endpoint. See
+[Secretless delegate clients with `private_key_jwt`](../guides-vmcp/delegate-agent-identity.mdx#secretless-delegate-clients-with-private_key_jwt)
+for the registration and exchange requests.
+
 The following combinations are rejected at admission:
 
 - `allowConfidentialClientRegistration: true` alongside
@@ -539,15 +553,82 @@ receive every allowed audience or scope by default.
 Delegate clients are independent of `allowConfidentialClientRegistration`:
 declaring one here does not enable self-service confidential DCR, and enabling
 DCR does not seed any delegate client. The two features govern different
-endpoints. The delegate-clients validation blocks a plaintext `http://` issuer
-categorically at admission. The CEL admission rule cannot express the loopback
-exception, so use an `https://` issuer whenever you configure delegate clients.
+endpoints. An `https://` issuer protects the delegate client's secret. For local
+development, you can use a plain-HTTP loopback issuer with
+`insecureAllowConfidentialOverLoopbackHTTP: true`. ToolHive rejects a plain-HTTP
+non-loopback issuer.
 
 To accept subject tokens minted by an external OIDC issuer, pair this with a
-`trustedIssuers` entry. For why delegation exists, the consent policy options,
-and a worked exchange, see
+`trustedIssuers` entry. The example below configures a delegate client named
+`coding-agent` to exchange user tokens from Microsoft Entra ID. It uses
+`disableUpstreamTokenInjection` because the backend is public: ToolHive
+validates the delegated token, then forwards the request without a credential.
+
+```yaml title="MCPExternalAuthConfig: external-user delegation"
+spec:
+  embeddedAuthServer:
+    issuer: 'https://<MCP_SERVER_PROXY_HOST>:<PROXY_PORT>'
+    disableUpstreamTokenInjection: true
+    delegateClients:
+      - clientId: coding-agent
+        clientSecretRef:
+          name: coding-agent-secret
+          key: client-secret
+        audiences:
+          - 'https://<RESOURCE_IDENTIFIER>'
+        scopes:
+          - openid
+    trustedIssuers:
+      - issuerUrl: 'https://sts.windows.net/<TENANT_ID>/'
+        expectedAudience: 'https://<RESOURCE_IDENTIFIER>'
+        jwksUrl: 'https://login.windows.net/<TENANT_ID>/discovery/v2.0/keys'
+        actorClaim: appid
+        allowedActors:
+          - '<EXTERNAL_CLIENT_ID>'
+        allowedDelegateClients:
+          - coding-agent
+```
+
+The `issuer` must be the `MCPServer` proxy URL. Set the same URL on the
+`MCPOIDCConfig` that validates its tokens, and set `authServerRef` on the
+`MCPServer` to this `MCPExternalAuthConfig`, as shown in Step 5. The
+`expectedAudience` and delegate client's `audiences` must match the resource
+identifier in the external user's access token.
+
+Because this configuration only exchanges tokens, it does not need an
+`upstreamProviders` entry. Add an upstream provider only when clients must also
+sign in through the embedded authorization server.
+
+### Trust an external issuer using a private CA
+
+If the external issuer's discovery or JWKS endpoint uses a private certificate
+authority (CA), place its PEM certificate in a ConfigMap:
+
+```bash title="Create a ConfigMap with the external issuer CA"
+kubectl create configmap external-issuer-ca \
+  --from-file=ca.crt=<PATH_TO_CA_CERTIFICATE>
+```
+
+Reference that ConfigMap from the corresponding trusted issuer:
+
+```yaml title="MCPExternalAuthConfig: trusted issuer private CA"
+spec:
+  embeddedAuthServer:
+    trustedIssuers:
+      - issuerUrl: 'https://<ISSUER_HOST>'
+        caBundleRef:
+          configMapRef:
+            name: external-issuer-ca
+            key: ca.crt
+```
+
+ToolHive adds this certificate to the system trust store only for this issuer's
+discovery and JWKS requests. Restrict write access to the ConfigMap: changing
+its contents changes the trust anchor used to validate subject tokens.
+
+For why delegation exists, the consent policy options, and a worked exchange,
+see
 [Delegate agent identity with token exchange](../guides-vmcp/delegate-agent-identity.mdx).
-The same fields are available here through `MCPExternalAuthConfig`.
 
 ### Enable baseline scopes for DCR clients
 
