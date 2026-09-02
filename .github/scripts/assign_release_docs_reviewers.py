@@ -1,0 +1,453 @@
+#!/usr/bin/env python3
+"""Assign reviewers for an upstream-release documentation pull request.
+
+GitHub itself is the reviewer-access authority: request the upstream
+contributor directly, then fall back to the human who merged each relevant
+upstream pull request when GitHub rejects that request because the contributor
+lacks access. Other API failures stop the routing step. This deliberately avoids
+organization-membership and collaborator lookups, which require broader
+credentials or behave inconsistently for team-derived access.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+
+
+BOT_LOGIN = re.compile(
+    r"(\[bot\]$|^app/|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)",
+    re.IGNORECASE,
+)
+HTTP_STATUS = re.compile(r"^HTTP/\S+ (\d{3})\b", re.MULTILINE)
+REVIEW_ACCESS_REJECTION = "Reviews may only be requested from collaborators"
+
+
+def warning(message: str) -> None:
+    print(f"::warning::{message}")
+
+
+def unique(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(value for value in values if value))
+
+
+@dataclass(frozen=True)
+class Config:
+    review_repo: str
+    release_repo: str
+    pr_number: str
+    owner: str
+    compare_ok: str
+    candidates: list[str]
+    github_output: Path
+
+    @classmethod
+    def from_env(cls) -> "Config":
+        output = os.environ.get("GITHUB_OUTPUT")
+        if not output:
+            raise RuntimeError("GITHUB_OUTPUT is required")
+        return cls(
+            review_repo=os.environ["REVIEW_REPO"],
+            release_repo=os.environ["RELEASE_REPO"],
+            pr_number=os.environ["PR_NUMBER"],
+            owner=os.environ.get("OWNER", ""),
+            compare_ok=os.environ.get("COMPARE_OK", ""),
+            candidates=unique(os.environ.get("CANDIDATES", "").splitlines()),
+            github_output=Path(output),
+        )
+
+
+@dataclass
+class Selection:
+    docs_facing: dict[str, list[str]]
+    non_docs_facing: list[str]
+    classified: bool
+
+
+@dataclass
+class AssignmentResult:
+    owner_assigned: bool = False
+    assigned: list[str] = field(default_factory=list)
+    fyi_count: int = 0
+    standin_notes: list[str] = field(default_factory=list)
+    unresolved_notes: list[str] = field(default_factory=list)
+
+
+class ReviewRequestOutcome(Enum):
+    REQUESTED = "requested"
+    ACCESS_REJECTED = "access_rejected"
+
+
+class ReviewRequestError(RuntimeError):
+    """Raised when GitHub cannot provide a trustworthy routing decision."""
+
+
+class GitHub:
+    def __init__(self, config: Config):
+        self.config = config
+
+    @staticmethod
+    def _run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["gh", *args],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def assign_owner(self, login: str) -> bool:
+        result = self._run(
+            "pr",
+            "edit",
+            self.config.pr_number,
+            "--repo",
+            self.config.review_repo,
+            "--add-assignee",
+            login,
+        )
+        return result.returncode == 0
+
+    def request_review(self, login: str) -> ReviewRequestOutcome:
+        result = self._run(
+            "api",
+            "--include",
+            "--method",
+            "POST",
+            (
+                f"repos/{self.config.review_repo}/pulls/"
+                f"{self.config.pr_number}/requested_reviewers"
+            ),
+            "-f",
+            f"reviewers[]={login}",
+        )
+        if result.returncode == 0:
+            return ReviewRequestOutcome.REQUESTED
+
+        statuses = HTTP_STATUS.findall(result.stdout)
+        status = int(statuses[-1]) if statuses else None
+        response = f"{result.stdout}\n{result.stderr}"
+        if status == 422 and REVIEW_ACCESS_REJECTION in response:
+            return ReviewRequestOutcome.ACCESS_REJECTED
+
+        detail = result.stderr.strip() or "no error detail from gh"
+        status_label = str(status) if status is not None else "unavailable"
+        raise ReviewRequestError(
+            f"Review request for {login} failed without an access decision "
+            f"(HTTP status {status_label}): {detail}"
+        )
+
+    def merged_prs_for_commit(self, sha: str) -> list[int]:
+        result = self._run(
+            "api",
+            f"repos/{self.config.release_repo}/commits/{sha}/pulls",
+        )
+        if result.returncode != 0:
+            return []
+        try:
+            pulls = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return []
+        return unique_ints(
+            [
+                pull.get("number")
+                for pull in pulls
+                if pull.get("merged_at") and isinstance(pull.get("number"), int)
+            ]
+        )
+
+    def merger_for_pr(self, pr_number: int) -> str:
+        result = self._run(
+            "pr",
+            "view",
+            str(pr_number),
+            "--repo",
+            self.config.release_repo,
+            "--json",
+            "mergedBy",
+        )
+        if result.returncode != 0:
+            return ""
+        try:
+            merged_by = json.loads(result.stdout).get("mergedBy") or {}
+        except json.JSONDecodeError:
+            return ""
+        return merged_by.get("login") or ""
+
+
+def unique_ints(values: list[int | None]) -> list[int]:
+    return list(dict.fromkeys(value for value in values if value is not None))
+
+
+def read_json(path: Path) -> dict | None:
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def commits_by_author(release_meta: dict | None) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for commit in (release_meta or {}).get("commits", []):
+        if not isinstance(commit, dict):
+            continue
+        login = commit.get("author")
+        sha = commit.get("sha")
+        if isinstance(login, str) and isinstance(sha, str):
+            result.setdefault(login, []).append(sha)
+    return {login: unique(shas) for login, shas in result.items()}
+
+
+def fallback_selection(
+    candidates: list[str], commits: dict[str, list[str]], reason: str
+) -> Selection:
+    warning(f"{reason}; falling back to requesting all contributors.")
+    return Selection(
+        docs_facing={login: commits.get(login, []) for login in candidates},
+        non_docs_facing=[],
+        classified=False,
+    )
+
+
+def select_contributors(
+    candidates: list[str], reviewers: dict | None, release_meta: dict | None
+) -> Selection:
+    commits = commits_by_author(release_meta)
+    if reviewers is None:
+        return fallback_selection(candidates, commits, "No usable REVIEWERS.json")
+
+    entries = reviewers.get("contributors")
+    if not isinstance(entries, list) or not entries:
+        return fallback_selection(
+            candidates, commits, "REVIEWERS.json classified no contributors"
+        )
+
+    by_login: dict[str, dict] = {}
+    duplicate_candidates: list[str] = []
+    candidate_set = set(candidates)
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        login = entry.get("login")
+        docs_facing = entry.get("docs_facing")
+        if isinstance(login, str) and isinstance(docs_facing, bool):
+            if login in by_login and login in candidate_set:
+                duplicate_candidates.append(login)
+            by_login[login] = entry
+
+    if duplicate_candidates:
+        return fallback_selection(
+            candidates,
+            commits,
+            "REVIEWERS.json repeated release contributors: "
+            + ", ".join(unique(duplicate_candidates)),
+        )
+
+    missing = [login for login in candidates if login not in by_login]
+    if missing:
+        return fallback_selection(
+            candidates,
+            commits,
+            "REVIEWERS.json omitted release contributors: " + ", ".join(missing),
+        )
+
+    docs_facing: dict[str, list[str]] = {}
+    non_docs_facing: list[str] = []
+    for login in candidates:
+        entry = by_login[login]
+        if not entry["docs_facing"]:
+            non_docs_facing.append(login)
+            continue
+
+        shas = entry.get("docs_facing_shas")
+        if not isinstance(shas, list) or not shas or not all(
+            isinstance(sha, str) for sha in shas
+        ):
+            return fallback_selection(
+                candidates,
+                commits,
+                f"REVIEWERS.json omitted docs_facing_shas for {login}",
+            )
+
+        authored_shas = set(commits.get(login, []))
+        unknown = [sha for sha in shas if sha not in authored_shas]
+        if unknown:
+            return fallback_selection(
+                candidates,
+                commits,
+                f"REVIEWERS.json listed unknown commit SHAs for {login}",
+            )
+        docs_facing[login] = unique(shas)
+
+    return Selection(docs_facing, non_docs_facing, True)
+
+
+def is_human_standin(login: str, contributor: str) -> bool:
+    return bool(login) and login != contributor and not BOT_LOGIN.search(login)
+
+
+def assign_reviewers(
+    config: Config, selection: Selection, github: GitHub
+) -> AssignmentResult:
+    result = AssignmentResult()
+    request_outcomes: dict[str, ReviewRequestOutcome] = {}
+
+    def request_once(login: str) -> ReviewRequestOutcome:
+        if login in request_outcomes:
+            return request_outcomes[login]
+        outcome = github.request_review(login)
+        request_outcomes[login] = outcome
+        if outcome is ReviewRequestOutcome.REQUESTED:
+            result.assigned.append(login)
+            print(f"Review requested: {login}")
+        return outcome
+
+    owner_review_outcome: ReviewRequestOutcome | None = None
+    if config.owner:
+        result.owner_assigned = github.assign_owner(config.owner)
+        if result.owner_assigned:
+            print(f"Assigned owner: {config.owner}")
+        else:
+            warning(f"Could not assign owner {config.owner} as assignee.")
+
+        owner_review_outcome = request_once(config.owner)
+        if owner_review_outcome is ReviewRequestOutcome.ACCESS_REJECTED:
+            warning(f"Could not request a review from owner {config.owner}.")
+    else:
+        warning("No release owner resolved; PR has no assignee or owner review.")
+        result.unresolved_notes.append(
+            "No release owner could be resolved. A docs maintainer must adopt this "
+            "PR and route its reviews."
+        )
+
+    result.fyi_count = len(
+        [login for login in selection.non_docs_facing if login != config.owner]
+    )
+
+    for contributor, shas in selection.docs_facing.items():
+        if request_once(contributor) is ReviewRequestOutcome.REQUESTED:
+            continue
+
+        print(
+            f"Direct review request rejected for {contributor}; "
+            "resolving upstream merger stand-ins."
+        )
+        seen_prs: set[int] = set()
+        routing_actor = (
+            "A docs maintainer"
+            if contributor == config.owner
+            else "The release owner"
+        )
+        if not shas:
+            result.unresolved_notes.append(
+                f"Docs-facing contributor `{contributor}` has no commit available for "
+                f"stand-in resolution. {routing_actor} must route this review."
+            )
+            continue
+
+        for sha in shas:
+            pull_numbers = github.merged_prs_for_commit(sha)
+            if not pull_numbers:
+                result.unresolved_notes.append(
+                    f"Docs-facing commit `{sha[:12]}` could not be mapped to a merged "
+                    f"upstream PR. {routing_actor} must route this review."
+                )
+                continue
+
+            for pull_number in pull_numbers:
+                if pull_number in seen_prs:
+                    continue
+                seen_prs.add(pull_number)
+                merger = github.merger_for_pr(pull_number)
+                upstream_pr = f"{config.release_repo}#{pull_number}"
+                if not is_human_standin(merger, contributor):
+                    result.unresolved_notes.append(
+                        f"Upstream PR `{upstream_pr}` has no human merger available as "
+                        f"a stand-in. {routing_actor} must route this review."
+                    )
+                    continue
+                review_already_requested = (
+                    request_outcomes.get(merger) is ReviewRequestOutcome.REQUESTED
+                )
+                if (
+                    request_once(merger)
+                    is not ReviewRequestOutcome.REQUESTED
+                ):
+                    result.unresolved_notes.append(
+                        f"Upstream merger `{merger}` could not be requested for "
+                        f"`{upstream_pr}`. {routing_actor} must route this review."
+                    )
+                    continue
+                result.standin_notes.append(f"@{merger} (merged {upstream_pr})")
+                if review_already_requested:
+                    print(
+                        f"Stand-in review already active: {merger} for {upstream_pr}"
+                    )
+                else:
+                    print(f"Stand-in review requested: {merger} for {upstream_pr}")
+
+    if (
+        owner_review_outcome is ReviewRequestOutcome.ACCESS_REJECTED
+        and config.owner not in selection.docs_facing
+    ):
+        result.unresolved_notes.append(
+            f"Release owner `{config.owner}` could not be requested as a reviewer. "
+            "A docs maintainer must route this review."
+        )
+
+    result.assigned = unique(result.assigned)
+    result.standin_notes = unique(result.standin_notes)
+    result.unresolved_notes = unique(result.unresolved_notes)
+    return result
+
+
+def write_multiline(output, name: str, lines: list[str]) -> None:
+    marker = f"{name.upper()}_EOF"
+    output.write(f"{name}<<{marker}\n")
+    if lines:
+        output.write("\n".join(lines) + "\n")
+    output.write(f"{marker}\n")
+
+
+def write_outputs(
+    config: Config, selection: Selection, result: AssignmentResult
+) -> None:
+    with config.github_output.open("a") as output:
+        output.write(f"compare_ok={config.compare_ok}\n")
+        output.write(f"owner={config.owner}\n")
+        output.write(f"owner_assigned={str(result.owner_assigned).lower()}\n")
+        output.write(f"list={','.join(result.assigned)}\n")
+        output.write(f"fyi_count={result.fyi_count}\n")
+        output.write(f"classified={str(selection.classified).lower()}\n")
+        output.write(f"unresolved_count={len(result.unresolved_notes)}\n")
+        write_multiline(output, "standin_block", result.standin_notes)
+        write_multiline(output, "unresolved_block", result.unresolved_notes)
+
+
+def main() -> int:
+    config = Config.from_env()
+    reviewers = read_json(Path("REVIEWERS.json"))
+    release_meta = read_json(Path(".release-meta.json"))
+    selection = select_contributors(config.candidates, reviewers, release_meta)
+    try:
+        result = assign_reviewers(config, selection, GitHub(config))
+    except ReviewRequestError as exc:
+        print(f"::error::{exc}")
+        return 1
+    write_outputs(config, selection, result)
+    print(f"Owner:          {config.owner or '<none>'}")
+    print(f"Requested:      {','.join(result.assigned) or '<none>'}")
+    print(f"Stand-ins:      {len(result.standin_notes)}")
+    print(f"Unresolved:     {len(result.unresolved_notes)}")
+    print(f"No-docs impact: {result.fyi_count} (not auto-notified)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

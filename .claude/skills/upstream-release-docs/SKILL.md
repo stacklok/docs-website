@@ -106,7 +106,7 @@ Read `.release-meta.json` first (the caller writes it before invoking you):
   "contributors": ["alice", "bob", "carol"],
   "commits": [
     {
-      "sha": "8343851e",
+      "sha": "8343851e9f06c0d67e315eb6aa4e9371d6ef76cf",
       "subject": "Push skills unsigned until keyless signing lands (#6334)",
       "author": "alice"
     }
@@ -126,6 +126,7 @@ Classify **every** login in `contributors` as docs-facing or not, and write `REV
     {
       "login": "alice",
       "docs_facing": true,
+      "docs_facing_shas": ["8343851e9f06c0d67e315eb6aa4e9371d6ef76cf"],
       "note": "Confirm the ai-plugin timeout flag section matches what you shipped."
     },
     {
@@ -138,9 +139,10 @@ Classify **every** login in `contributors` as docs-facing or not, and write `REV
 ```
 
 - `docs_facing: true` means at least one of this person's commits in the release range changed something a reader of the docs can observe: a CLI flag or subcommand, a CRD or config field, an API route, a default, an error message, a user-visible behavior, or anything you documented or corrected in this run. When you are unsure, classify as `true`. A needless review request is a minor annoyance; a missing one means a wrong page ships.
+- `docs_facing_shas` (docs-facing only): every full commit SHA from `commits` that made the contributor docs-facing. If GitHub cannot request the contributor as a reviewer, the workflow uses all of these SHAs to find the human mergers of the relevant upstream PRs. Include only commits you verified as reader-visible; do not list an unrelated commit merely because the same contributor authored it.
 - `docs_facing: false` is for changes with no reader-visible surface: CI and build plumbing, dependency bumps, tests and fixtures, internal refactors, lint fixes, comment-only edits. **Base this on the actual diff you read in Phase 2, not on the commit message.** A commit titled "refactor" that changes a default value is docs-facing.
 - `note` (docs-facing only): one short sentence naming the specific thing that person should check, in their terms. Not a summary of the release, and not a restatement of their PR title. Skip the note rather than pad it.
-- `reason` (non-docs-facing only): a short phrase naming what their changes actually were. This is shown to them as the justification for not requesting their review, so it has to be specific enough that they can tell whether you got it wrong.
+- `reason` (non-docs-facing only): a short phrase naming what their changes actually were. This keeps the classification auditable when the run artifact is inspected; the workflow counts these contributors without rendering their names or reasons in the PR body.
 - Include the owner in the list with an honest classification. The workflow requests a review from the owner either way, so classifying the owner `false` costs nothing and keeps the classification truthful.
 - Bot logins are already filtered out of `contributors`; if one appears anyway, omit it.
 
