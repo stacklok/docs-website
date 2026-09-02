@@ -1,0 +1,298 @@
+---
+title: Delegate agent identity with token exchange
+description:
+  Configure RFC 8693 token-exchange delegation so a pre-provisioned agent can
+  act on behalf of a user, including consent policy and secretless
+  private_key_jwt registration.
+---
+
+When an AI agent acts on a user's behalf (reading their calendar, filing a
+ticket, calling a tool through vMCP), you usually want ToolHive to record both
+facts: who the human is, and which agent actually made the call, so audit logs
+and authorization policies can tell "Alice, directly" apart from "an agent,
+acting for Alice." RFC 8693 token-exchange delegation is how ToolHive does this:
+a pre-provisioned client exchanges a user's token for one that names both the
+user and the agent acting for them.
+
+:::info
+
+The fields covered here (`trustedIssuers` and `delegateClients`) are also
+available on a plain `MCPServer` through `MCPExternalAuthConfig`'s
+`embeddedAuthServer` block, using the same shape shown below under
+`authServerConfig`. This page focuses on VirtualMCPServer because delegation is
+primarily useful when an agent orchestrates calls across multiple backends on a
+user's behalf. For the MCPServer field reference, see
+[Set up the embedded authorization server in Kubernetes](../guides-k8s/embedded-auth-server-k8s.mdx).
+
+:::
+
+## Overview
+
+The embedded authorization server supports four ways a caller can get a
+ToolHive-issued token, each suited to a different trust relationship:
+
+| Pattern                                                                            | Who authenticates                                        | Result                                                                       |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [Confidential DCR](./embedded-auth-server-vmcp.mdx#allow-confidential-dcr-clients) | A client self-registers and gets a `client_secret`       | The client acts as itself; no delegation                                     |
+| [Backend token exchange](../concepts/backend-auth.mdx#token-exchange)              | A client presents its own token to a backend IdP         | The client's own identity, re-scoped to a backend audience                   |
+| RFC 8693 delegate-client exchange (this page)                                      | A pre-provisioned client presents a user's subject token | A token naming the user, with the agent recorded as the acting party (`act`) |
+| [RFC 7523 JWT-bearer grant](./accept-workload-assertions.mdx)                      | No client at all; the assertion itself is the credential | A token naming the workload; no delegation, no pre-registered client         |
+
+Delegation answers "who is this agent acting for?" A related but separate
+mechanism, the RFC 7523 JWT-bearer grant, answers "how does a workload with no
+registered client get a token at all?" See
+[Accept workload assertions with the JWT-bearer grant](./accept-workload-assertions.mdx)
+for that mechanism.
+
+This page covers how ToolHive **mints** a delegated token. If you're looking for
+how ToolHive **reads** an `act` claim on an incoming token, for example because
+your own IdP already performs RFC 8693 delegation upstream of ToolHive, see
+[Delegated identities and the `act` claim](../concepts/embedded-auth-server.mdx#delegated-identities-and-the-act-claim).
+
+## RFC 8693 delegation with a pre-provisioned delegate client
+
+Delegation requires two pieces of configuration on `authServerConfig`: a
+`delegateClients` entry for the agent that will perform the exchange, and a
+`trustedIssuers` entry that tells ToolHive which external issuer's tokens it
+will accept as a subject token, and which actors are allowed to act on behalf of
+the tokens it issues.
+
+For how to create the `delegateClients` entry itself (the client ID, secret,
+audiences, and scopes), see
+[Pre-provision confidential clients for token exchange](./embedded-auth-server-vmcp.mdx#pre-provision-confidential-clients-for-token-exchange).
+`delegateClients` is orthogonal to Dynamic Client Registration (plain,
+confidential, or
+[`private_key_jwt`](#secretless-delegate-clients-with-private_key_jwt)). A
+`delegateClients` entry has a `clientId` and secret you choose and create
+yourself, never one a client obtains by registering itself. A client uses one
+path or the other; `trustedIssuers[].allowedDelegateClients` (below) is what
+authorizes either kind of `client_id` to actually perform an exchange, once it
+has one.
+
+Both entries are required. `trustedIssuers` grants a delegate client permission
+to accept a subject token from the external issuer; on its own it doesn't create
+a usable exchange path, because RFC 8693 requires authenticated access to
+`/oauth/token` and the delegate client is what authenticates.
+
+This section focuses on the `trustedIssuers` side, which is what actually
+authorizes delegation:
+
+```yaml title="VirtualMCPServer: delegation configuration"
+spec:
+  authServerConfig:
+    issuer: https://vmcp.example.com
+    # ...
+    delegateClients:
+      - clientId: coding-agent
+        clientSecretRef:
+          name: coding-agent-secret
+          key: client-secret
+        scopes:
+          - openid
+        audiences:
+          - https://vmcp.example.com/mcp-resource
+    trustedIssuers:
+      - issuerUrl: 'https://sts.windows.net/<TENANT_ID>/'
+        expectedAudience: 'https://vmcp.example.com/mcp-resource'
+        jwksUrl: 'https://login.windows.net/<TENANT_ID>/discovery/v2.0/keys'
+        # "appid" is where Microsoft Entra v1 tokens carry the calling
+        # application's client ID, verified against a real Entra tenant.
+        # Other issuers use a different claim name for the same purpose (for
+        # example Okta's client_credentials tokens use "cid"); check your
+        # issuer's own token shape, or use the literal value "client_id"
+        # (a sentinel, not a claim name) to read the token's client_id claim.
+        actorClaim: appid
+        allowedActors:
+          - <APP1_CLIENT_ID>
+        allowedDelegateClients:
+          - coding-agent
+```
+
+`trustedIssuers[].issuerUrl` and `jwksUrl` identify the external identity
+provider that minted the subject token the agent will present (in this example,
+a user's Entra sign-in as a separate application, `App1`). `expectedAudience`
+must match the audience already present on that subject token. `actorClaim`
+names the claim carrying the calling application's client ID; it defaults to
+`azp` when you leave it unset. `allowedDelegateClients` is what binds an
+external actor to a specific ToolHive delegate client. Without it, every
+confidential client holding the token-exchange grant would be equivalent for
+delegation purposes. Set it to `["*"]` to declare that permissiveness
+explicitly; the wildcard must stand alone, and combining it with specific client
+IDs is rejected at admission.
+
+For the complete `trustedIssuers` field list, including `jwksUrl`,
+`allowPrivateIPs`, and the per-issuer `insecureAllowHTTP`, see the
+[MCPExternalAuthConfig schema reference](../reference/crds/mcpexternalauthconfig.mdx).
+
+### Walk through an exchange
+
+Once configured, the agent (`coding-agent`) presents a user's subject token to
+ToolHive's `/oauth/token` endpoint using its own client credentials:
+
+```bash
+curl -s -X POST https://vmcp.example.com/oauth/token \
+  -u "coding-agent:<CLIENT_SECRET>" \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+  -d "subject_token=<SUBJECT_TOKEN>" \
+  -d "subject_token_type=urn:ietf:params:oauth:token-type:jwt" \
+  -d "audience=https://vmcp.example.com/mcp-resource"
+```
+
+`SUBJECT_TOKEN` is the user's own token from the external issuer. In this
+example, an Entra access token issued to `App1` with `aud` set to the backend
+resource and `appid` set to `App1`'s client ID. ToolHive validates that token
+against the matching `trustedIssuers` entry, confirms `App1` is an allowed
+actor, and confirms `coding-agent` is an allowed delegate client, then issues a
+delegated access token. Decoding it shows the delegation:
+
+```json
+{
+  "sub": "https://sts.windows.net/<TENANT_ID>/#<user-object-id>",
+  "act": {
+    "iss": "https://vmcp.example.com",
+    "sub": "coding-agent",
+    "act": {
+      "iss": "https://sts.windows.net/<TENANT_ID>/",
+      "sub": "<APP1_CLIENT_ID>"
+    }
+  }
+}
+```
+
+`sub` identifies the user (qualified with the issuer to avoid collisions across
+identity providers). The outer `act` names the authenticated ToolHive client
+that performed the exchange, in `act.sub`, with `act.iss` set to the ToolHive
+issuer that minted the token. The nested `act.act` is the external actor
+asserted by the subject token itself, the application the user actually signed
+in through. This nested shape is how ToolHive represents a two-hop delegation
+chain: an external application acting for a user, and a ToolHive client acting
+on top of that.
+
+## Choosing a consent policy
+
+`trustedIssuers` entries support three independent ways to authorize delegation
+from an external issuer. Any one of them being satisfied is sufficient; they
+aren't layered as an all-must-pass chain:
+
+| Field           | How it authorizes                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allowedActors` | A static allowlist of `actorClaim` values. Use this for a fixed, known set of external applications (like `App1` above).                                                                                                                                                                                                                                                                                          |
+| `actorMatcher`  | An admin-authored CEL expression evaluated against the subject token's complete, signature-verified claims map (bound as `claims`). Use this when the authorization rule can't be expressed as a flat allowlist, for example matching on a claim pattern or a combination of claims. Must evaluate to a boolean; a non-boolean result denies the token at evaluation time.                                        |
+| `allowMayAct`   | Trusts a `may_act` claim the external issuer itself already asserts on the subject token, bypassing `allowedActors` and `actorMatcher` entirely. Defaults to `false`; external issuers must be opted in explicitly, since `may_act` shifts the consent decision to the external IdP. Doesn't apply to self-issued subject tokens. Enabling it alongside `allowedDelegateClients: ["*"]` is rejected at admission. |
+
+`allowedDelegateClients` is a separate, always-required control: it restricts
+_which ToolHive clients_ may perform the exchange, independent of which external
+actor the subject token names. `allowedActors`, `actorMatcher`, and
+`allowMayAct` all authorize the external actor; `allowedDelegateClients`
+authorizes the ToolHive-side client.
+
+## Secretless delegate clients with `private_key_jwt`
+
+:::info
+
+`private_key_jwt` client registration and authentication is not yet part of a
+released ToolHive version.
+
+:::
+
+A `delegateClients` entry requires ToolHive to hold a shared secret for the
+agent. Setting `allowPrivateKeyJWTRegistration: true` on `authServerConfig`
+instead lets an agent register itself via Dynamic Client Registration (DCR)
+using only a keypair it generates locally. ToolHive never issues, stores, or
+transmits a secret for that client.
+
+```yaml title="VirtualMCPServer: allow private_key_jwt registration"
+spec:
+  authServerConfig:
+    issuer: https://vmcp.example.com
+    # highlight-next-line
+    allowPrivateKeyJWTRegistration: true
+```
+
+Registration is unauthenticated, the same as ordinary DCR, so enabling this lets
+any caller who can reach `/oauth/register` register a `private_key_jwt` client.
+It cannot be combined with `insecureAllowHTTP: true`, since `private_key_jwt`
+registration would then occur over cleartext HTTP.
+
+If you're comparing ways to avoid provisioning a client secret at all, see also
+[Client ID Metadata Document (CIMD)](../concepts/embedded-auth-server.mdx#client-id-metadata-document-cimd),
+which lets a client authenticate from a hosted metadata document instead of
+either a shared secret or a keypair registered through DCR. CIMD doesn't involve
+delegation, so it's unrelated to the exchange described on this page.
+
+### Register and authenticate with a keypair
+
+The agent generates an RSA (or EC) keypair and declares only the public half at
+registration:
+
+```bash title="POST /oauth/register"
+curl -s -X POST https://vmcp.example.com/oauth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "redirect_uris": ["http://localhost:19999/callback"],
+    "token_endpoint_auth_method": "private_key_jwt",
+    "token_endpoint_auth_signing_alg": "RS256",
+    "grant_types": ["urn:ietf:params:oauth:grant-type:token-exchange"],
+    "jwks": {"keys": [{"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "agent-key", "n": "<MODULUS>", "e": "AQAB"}]}
+  }'
+```
+
+The response carries a `client_id` and **no `client_secret`**. The keypair
+itself is the credential. To authenticate at the token endpoint, the agent signs
+a `client_assertion` JWT with its private key (`iss` and `sub` set to its own
+`client_id`, `aud` set to ToolHive's token endpoint, with a unique `jti`), then
+presents it alongside the subject token:
+
+```bash title="POST /oauth/token"
+curl -s -X POST https://vmcp.example.com/oauth/token \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+  -d "subject_token=<SUBJECT_TOKEN>" \
+  -d "subject_token_type=urn:ietf:params:oauth:token-type:jwt" \
+  -d "audience=https://vmcp.example.com/mcp-resource" \
+  -d "client_id=<DCR_CLIENT_ID>" \
+  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
+  -d "client_assertion=<SIGNED_ASSERTION>"
+```
+
+No `client_secret` parameter appears anywhere in this request. ToolHive
+validates the `client_assertion`'s signature against the JWKS declared at
+registration and rejects a replayed `client_assertion` (the same `jti` presented
+twice) on the second attempt. Everything else about the exchange. Subject-token
+validation against `trustedIssuers`, actor resolution, and the resulting `act`
+claim, works exactly as in the pre-provisioned case above; the issued token's
+`act.sub` is the DCR-assigned `client_id` instead of a statically configured
+one.
+
+## Troubleshooting
+
+| Error                                                                                                                                                                                                                            | Likely cause                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_client` (exact hint varies by cause: wrong secret, wrong `token_endpoint_auth_method`, or a public client attempting a confidential-only grant)                                                                         | The delegate client must be confidential. Verify `delegateClients[].clientSecretRef` is set and the client authenticated with the matching secret and method.                                                                                                                                                   |
+| `invalid_grant`: "The subject token does not authorize this client to act on behalf of the subject."                                                                                                                             | The subject token's `may_act.sub` doesn't match the actor ToolHive resolved for this request.                                                                                                                                                                                                                   |
+| `invalid_grant`: "This client is not authorized to exchange subject tokens from the external actor's issuer."                                                                                                                    | The authenticated client isn't in `trustedIssuers[].allowedDelegateClients` for the issuer that minted the subject token.                                                                                                                                                                                       |
+| `invalid_grant`: "The subject token was issued to a different client."                                                                                                                                                           | The subject token's own `client_id` claim doesn't match the authenticated delegate client, and the client isn't in `allowedDelegateClients`.                                                                                                                                                                    |
+| `invalid_request`: "The subject token is invalid or could not be verified."                                                                                                                                                      | The subject token failed signature, issuer, or audience validation against every configured `trustedIssuers` entry.                                                                                                                                                                                             |
+| CRD rejected: "allowedDelegateClients is required when expectedAudience, actorClaim, actorMatcher, or allowMayAct is set"                                                                                                        | A `trustedIssuers` entry configures delegation fields without also setting `allowedDelegateClients`. Add it, or remove the delegation fields if only `jwtBearerGrant` is needed.                                                                                                                                |
+| CRD rejected: "allowConfidentialClientRegistration cannot be combined with insecureAllowHTTP; client secrets would be issued in cleartext over an unauthenticated endpoint" (or the `allowPrivateKeyJWTRegistration` equivalent) | `authServerConfig.issuer` uses `http://` while confidential DCR or `private_key_jwt` registration is enabled. The CEL admission rule can't express the loopback exception, so use an `https://` issuer. For a plain-HTTP loopback issuer in local development, set `insecureAllowConfidentialOverLoopbackHTTP`. |
+
+## Next steps
+
+- [Accept workload assertions with the JWT-bearer grant](./accept-workload-assertions.mdx)
+  to let a workload authenticate with no registered client at all
+- [Read the `act` claim in Cedar policies](../concepts/embedded-auth-server.mdx#reading-the-act-claim-in-cedar-policies)
+  to authorize on the delegation chain you just configured
+- [Configure the vMCP embedded authorization server](./embedded-auth-server-vmcp.mdx)
+  for the rest of the `authServerConfig` surface
+
+## Related information
+
+- [Embedded authorization server](../concepts/embedded-auth-server.mdx) for the
+  OAuth flow, token storage, and the `act` claim on the reading side
+- [Configure the vMCP embedded authorization server](./embedded-auth-server-vmcp.mdx)
+  for the full `authServerConfig` reference, including `delegateClients` setup
+- [Accept workload assertions with the JWT-bearer grant](./accept-workload-assertions.mdx)
+  for clientless workload authentication under RFC 7523 §2.1
+- [Backend authentication](../concepts/backend-auth.mdx) for the other backend
+  authentication patterns
+- [MCPExternalAuthConfig reference](../reference/crds/mcpexternalauthconfig.mdx)
+  for the complete field list
