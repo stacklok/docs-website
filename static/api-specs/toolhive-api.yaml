@@ -273,6 +273,51 @@ components:
             Required when IdentityFromToken is set.
           type: string
       type: object
+    authserver.InboundGrantsRunConfig:
+      description: |-
+        InboundGrants declares canonical inbound grant configuration, including
+        SPIFFE client authentication, delegate clients, and issuer policy. A
+        non-nil value explicitly controls grant-family enablement.
+      properties:
+        jwt_bearer:
+          $ref: '#/components/schemas/authserver.JWTBearerInboundGrantRunConfig'
+        spiffe_client_auth:
+          description: |-
+            SPIFFEClientAuth associates SPIFFE principal patterns with explicit OAuth
+            client identities and permissions. See SPIFFEClientAuthRunConfig.
+          items:
+            $ref: '#/components/schemas/authserver.SPIFFEClientAuthRunConfig'
+          type: array
+          uniqueItems: false
+        token_exchange:
+          $ref: '#/components/schemas/authserver.TokenExchangeInboundGrantRunConfig'
+      type: object
+    authserver.JWTBearerInboundGrantRunConfig:
+      description: JWTBearer configures RFC 7523 issuer policies.
+      properties:
+        issuer_policies:
+          items:
+            $ref: '#/components/schemas/authserver.JWTBearerIssuerPolicyRunConfig'
+          type: array
+          uniqueItems: false
+      type: object
+    authserver.JWTBearerIssuerPolicyRunConfig:
+      properties:
+        accepted_audiences:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        issuer_ref:
+          type: string
+        max_assertion_age:
+          type: string
+        subject_bindings:
+          items:
+            $ref: '#/components/schemas/github_com_stacklok_toolhive_pkg_authserver_server_tokenexchange.JWTBearerSubjectBinding'
+          type: array
+          uniqueItems: false
+      type: object
     authserver.OAuth2UpstreamRunConfig:
       description: |-
         OAuth2Config contains OAuth 2.0-specific configuration.
@@ -486,7 +531,8 @@ components:
             BaselineClientScopes is a baseline set of OAuth 2.0 scopes unioned into every
             DCR registration. All values must appear in ScopesSupported; the auth server
             rejects this RunConfig at startup otherwise. Empty means current behavior is
-            preserved (registered scope = client-requested, or DefaultScopes if empty).
+            preserved (registered scope = client-requested, or the intersection of
+            DefaultScopes with ScopesSupported if the client requested none).
             When ScopesSupported is empty, the subset check uses registration.DefaultScopes
             (the same set applyDefaults would substitute at startup) — so
             BaselineClientScopes containing standard OIDC scopes works without enumerating
@@ -502,6 +548,8 @@ components:
             DelegateClients declares confidential OAuth clients to register at
             authorization-server startup, including clients intended for RFC 8693
             token exchange.
+
+            This legacy field is deprecated; use InboundGrants.TokenExchange.DelegateClients.
 
             Independent of AllowConfidentialClientRegistration: declaring a client
             here does not require or enable self-service confidential DCR, and
@@ -574,6 +622,8 @@ components:
             type: string
           type: array
           uniqueItems: false
+        inbound_grants:
+          $ref: '#/components/schemas/authserver.InboundGrantsRunConfig'
         insecure_allow_confidential_over_loopback_http:
           description: |-
             InsecureAllowConfidentialOverLoopbackHTTP opts in to confidential clients
@@ -618,17 +668,25 @@ components:
           uniqueItems: false
         signing_key_config:
           $ref: '#/components/schemas/authserver.SigningKeyRunConfig'
+        spiffe_trust_domains:
+          description: |-
+            SPIFFETrustDomains declares SPIFFE trust roots. Each declaration must be
+            referenced by an InboundGrants.SPIFFEClientAuth entry.
+          items:
+            $ref: '#/components/schemas/authserver.SPIFFETrustDomainRunConfig'
+          type: array
+          uniqueItems: false
         storage:
           $ref: '#/components/schemas/storage.RunConfig'
         token_lifespans:
           $ref: '#/components/schemas/authserver.TokenLifespanRunConfig'
         trusted_issuers:
           description: |-
-            TrustedIssuers lists external OIDC issuers whose tokens are accepted as
-            RFC 8693 subject tokens or RFC 7523 JWT-bearer assertions. Issuers with
-            jwtBearerGrant enabled may be used for the JWT-bearer grant without an
-            RFC 8693 delegation policy. Empty (the default) means only self-issued
-            subject tokens are accepted.
+            TrustedIssuers lists external OIDC trust declarations.
+
+            This legacy field is deprecated; RFC 8693 and JWT-bearer policies embedded in these entries
+            remain supported for compatibility. New configurations should put policy
+            under InboundGrants and reference a named trusted issuer.
 
             See tokenexchange.TrustedIssuer for the per-issuer field reference, and
             docs/arch/17-token-exchange-delegation.md for the trust model, consent
@@ -641,13 +699,124 @@ components:
           uniqueItems: false
         upstreams:
           description: |-
-            Upstreams configures connections to upstream Identity Providers.
-            At least one upstream is required - the server delegates authentication to these providers.
+            Upstreams configures connections to upstream Identity Providers for
+            interactive authorization. It may be empty only when DelegateClients or a
+            TrustedIssuer with JWTBearerGrant enables token-only operation.
             Multiple upstreams are supported for sequential authorization chains.
           items:
             $ref: '#/components/schemas/authserver.UpstreamRunConfig'
           type: array
           uniqueItems: false
+      type: object
+    authserver.SPIFFEBundleEndpointSourceRunConfig:
+      properties:
+        profile:
+          description: |-
+            Profile selects how the endpoint's TLS connection is authenticated:
+            SPIFFEBundleEndpointProfileHTTPSWeb (Web PKI) or
+            SPIFFEBundleEndpointProfileHTTPSSPIFFE (a separately distributed
+            X.509-SVID root). Required, since the future bundle loader cannot
+            otherwise know which trust anchor to use for the initial connection.
+          type: string
+        url:
+          type: string
+      type: object
+    authserver.SPIFFEBundleSourceRunConfig:
+      description: |-
+        BundleSource declares exactly one future trust-bundle source. It is
+        validated for shape only; fetching or loading a bundle from it is a
+        later step.
+      properties:
+        endpoint:
+          $ref: '#/components/schemas/authserver.SPIFFEBundleEndpointSourceRunConfig'
+        type:
+          type: string
+        workload_api:
+          $ref: '#/components/schemas/authserver.SPIFFEWorkloadAPIBundleSourceRunConfig'
+      type: object
+    authserver.SPIFFEClientAuthRunConfig:
+      properties:
+        audiences:
+          description: |-
+            Audiences are RFC 8693 token audiences this association may request.
+            This is an independent request dimension from Resources: it is not
+            bounded by allowed_audiences (which is an RFC 8707 resource-URI list)
+            and may contain non-URI logical audience identifiers.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        client_id:
+          description: |-
+            ClientID is the explicit OAuth client_id. It is never derived from a
+            SPIFFE ID.
+          type: string
+        grant_types:
+          description: |-
+            GrantTypes are the OAuth grant types this association may use. Client
+            authentication does not by itself confer any grant.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        methods:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        principal_pattern:
+          description: |-
+            PrincipalPattern is a concrete SPIFFE ID or a terminal /* pattern within
+            the declared trust domain.
+          type: string
+        resources:
+          description: |-
+            Resources are RFC 8707 resource indicators this association may
+            request. Must be a subset of the server's allowed_audiences allowlist
+            (RunConfig.AllowedAudiences) — the same RFC 8707 resource-URI list
+            DelegateClientRunConfig.Audiences is validated against. Distinct from
+            Audiences: a resource permission does not imply the same value is also
+            a permitted token audience, or vice versa.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        scopes:
+          description: |-
+            Scopes are OAuth scopes granted to this association. They must be a
+            subset of the server's effective supported scopes.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        trust_domain_ref:
+          description: |-
+            TrustDomainRef identifies the SPIFFE trust-domain declaration governing
+            this association policy.
+          type: string
+      type: object
+    authserver.SPIFFETrustDomainRunConfig:
+      properties:
+        bundle_source:
+          $ref: '#/components/schemas/authserver.SPIFFEBundleSourceRunConfig'
+        methods:
+          description: |-
+            Methods explicitly enables the supported credential types for this trust
+            domain. No authentication method is enabled when the list is empty.
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        name:
+          description: |-
+            Name uniquely identifies this declaration and is referenced by
+            InboundGrants.SPIFFEClientAuth entries.
+          type: string
+        trust_domain:
+          description: TrustDomain is the SPIFFE trust domain accepted by this declaration.
+          type: string
+      type: object
+    authserver.SPIFFEWorkloadAPIBundleSourceRunConfig:
       type: object
     authserver.SigningKeyRunConfig:
       description: |-
@@ -673,6 +842,43 @@ components:
           description: |-
             SigningKeyFile is the filename of the primary signing key (relative to KeyDir).
             This key is used for signing new tokens.
+          type: string
+      type: object
+    authserver.TokenExchangeInboundGrantRunConfig:
+      description: TokenExchange configures RFC 8693 inbound clients and issuer policies.
+      properties:
+        delegate_clients:
+          items:
+            $ref: '#/components/schemas/authserver.DelegateClientRunConfig'
+          type: array
+          uniqueItems: false
+        issuer_policies:
+          items:
+            $ref: '#/components/schemas/authserver.TokenExchangeIssuerPolicyRunConfig'
+          type: array
+          uniqueItems: false
+      type: object
+    authserver.TokenExchangeIssuerPolicyRunConfig:
+      properties:
+        actor_claim:
+          type: string
+        actor_matcher:
+          type: string
+        allow_may_act:
+          type: boolean
+        allowed_actors:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        allowed_delegate_clients:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        expected_audience:
+          type: string
+        issuer_ref:
           type: string
       type: object
     authserver.TokenLifespanRunConfig:
@@ -961,6 +1167,16 @@ components:
           description: |-
             ProviderName identifies which upstream provider's tokens to retrieve for injection.
             This is required and must match a configured upstream provider name.
+          type: string
+      type: object
+    github_com_stacklok_toolhive_pkg_authserver_server_tokenexchange.JWTBearerSubjectBinding:
+      properties:
+        allowed_resources:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        subject:
           type: string
       type: object
     github_com_stacklok_toolhive_pkg_authz.Config:
@@ -1259,6 +1475,18 @@ components:
             type: string
           type: array
           uniqueItems: false
+        provenance:
+          $ref: '#/components/schemas/github_com_stacklok_toolhive_pkg_plugins.ProvenanceInfo'
+        trust_unrecorded:
+          description: |-
+            TrustUnrecorded reports that the project's lock file has an entry for
+            this plugin which records neither a signer identity nor an unsigned
+            exception — an entry written before verification existed, or
+            hand-edited. It exists to keep that state distinguishable from having no
+            lock entry at all, which leaves Provenance and Unsigned equally empty:
+            sync reports this one as drift and can repair it, so Info must not
+            render it as if nothing were pinning the plugin.
+          type: boolean
         unmaterialized_components:
           additionalProperties:
             items:
@@ -1270,6 +1498,11 @@ components:
             by Info by diffing InstalledPlugin.Components against each installed
             client adapter's SupportedComponents.
           type: object
+        unsigned:
+          description: |-
+            Unsigned reports that the lock file records an explicit unsigned
+            exception for this plugin.
+          type: boolean
       type: object
     github_com_stacklok_toolhive_pkg_plugins.PluginMetadata:
       description: Metadata contains the plugin's metadata.
@@ -1294,6 +1527,51 @@ components:
           type: string
         version:
           description: Version is the semantic version of the plugin.
+          type: string
+      type: object
+    github_com_stacklok_toolhive_pkg_plugins.ProvenanceInfo:
+      description: |-
+        Provenance is the signer identity the project's lock file records
+        for this skill, when project-scoped and lock-managed.
+      properties:
+        cert_issuer:
+          description: CertIssuer is the OIDC issuer that authenticated the signer.
+          type: string
+        provisional:
+          description: |-
+            Provisional marks provenance with a documented verification gap
+            (git signatures until transparency-log validation lands).
+          type: boolean
+        public_key:
+          description: |-
+            PublicKey is the base64-encoded DER SPKI cosign public key a
+            key-pair-signed entry is pinned to. Set only when SignerIdentity and
+            CertIssuer are empty: the two anchors are mutually exclusive.
+          type: string
+        repository_ref:
+          description: |-
+            RepositoryRef is the git ref the signing workflow ran on, from Fulcio
+            certificate extension 1.3.6.1.4.1.57264.1.14. Empty means
+            unconstrained, matching lock files written before the field existed.
+          type: string
+        repository_uri:
+          description: |-
+            RepositoryURI is the source repository from the certificate
+            extensions, when present.
+          type: string
+        runner_environment:
+          description: |-
+            RunnerEnvironment is the runner class the signing workflow executed in
+            (e.g. "github-hosted"), from Fulcio certificate extension
+            1.3.6.1.4.1.57264.1.11. Empty means unconstrained.
+          type: string
+        signer_identity:
+          description: |-
+            SignerIdentity is the certificate subject identity (workflow path for
+            GitHub Actions certificates, SAN verbatim otherwise).
+          type: string
+        sigstore_url:
+          description: SigstoreURL is the Sigstore instance the signature chains to.
           type: string
       type: object
     github_com_stacklok_toolhive_pkg_plugins.Scope:
@@ -1560,6 +1838,12 @@ components:
             K8sPodTemplatePatch is a JSON string to patch the Kubernetes pod template
             Only applicable when using Kubernetes runtime
           type: string
+        max_request_body_size:
+          description: |-
+            MaxRequestBodySize is the maximum inbound MCP proxy request body size in bytes.
+            Zero uses the default limit of 8 MiB. Negative values are rejected
+            when the RunConfig is built or used at runtime.
+          type: integer
         mcpserver_generation:
           description: |-
             MCPServerGeneration is the K8s .metadata.generation of the MCPServer CR that rendered
@@ -1808,6 +2092,7 @@ components:
       - signature-invalid
       - signer-mismatch
       - provenance-field-mismatch
+      - key-signed-unverifiable
       - unsigned-rejected
       - unknown
       type: string
@@ -1819,6 +2104,7 @@ components:
       - FailureReasonSignatureInvalid
       - FailureReasonSignerMismatch
       - FailureReasonProvenanceFieldMismatch
+      - FailureReasonKeySigned
       - FailureReasonUnsignedRejected
       - FailureReasonUnknown
     github_com_stacklok_toolhive_pkg_skills.InstallStatus:
@@ -1912,6 +2198,12 @@ components:
             Provisional marks provenance with a documented verification gap
             (git signatures until transparency-log validation lands).
           type: boolean
+        public_key:
+          description: |-
+            PublicKey is the base64-encoded DER SPKI cosign public key a
+            key-pair-signed entry is pinned to. Set only when SignerIdentity and
+            CertIssuer are empty: the two anchors are mutually exclusive.
+          type: string
         repository_ref:
           description: |-
             RepositoryRef is the git ref the signing workflow ran on, from Fulcio
@@ -2834,6 +3126,10 @@ components:
         image:
           description: Docker image to use
           type: string
+        max_request_body_size:
+          description: Maximum inbound MCP proxy request body size in bytes. Zero
+            uses the default limit of 8 MiB.
+          type: integer
         name:
           description: Name of the workload
           type: string
@@ -3056,6 +3352,13 @@ components:
         project_root:
           description: ProjectRoot is the project root path for project-scoped installs
           type: string
+        public_key:
+          description: |-
+            PublicKey is the base64-encoded DER SPKI cosign public key the artifact
+            must verify against, for artifacts signed with a cosign key pair rather
+            than keylessly. Required the first time such an artifact is installed
+            project-scoped, and pinned in the lock file from then on.
+          type: string
         scope:
           $ref: '#/components/schemas/github_com_stacklok_toolhive_pkg_plugins.Scope'
         version:
@@ -3067,6 +3370,11 @@ components:
       properties:
         plugin:
           $ref: '#/components/schemas/github_com_stacklok_toolhive_pkg_plugins.InstalledPlugin'
+        provenance:
+          $ref: '#/components/schemas/github_com_stacklok_toolhive_pkg_plugins.ProvenanceInfo'
+        unsigned:
+          description: Whether the install was recorded as an explicit unsigned exception.
+          type: boolean
       type: object
     pkg_api_v1.installSkillRequest:
       description: Request to install a skill
@@ -3097,6 +3405,13 @@ components:
           type: string
         project_root:
           description: ProjectRoot is the project root path for project-scoped installs
+          type: string
+        public_key:
+          description: |-
+            PublicKey is the base64-encoded DER SPKI cosign public key the artifact
+            must verify against, for artifacts signed with a cosign key pair rather
+            than keylessly. Required the first time such an artifact is installed
+            project-scoped, and pinned in the lock file from then on.
           type: string
         scope:
           $ref: '#/components/schemas/github_com_stacklok_toolhive_pkg_skills.Scope'
@@ -3234,11 +3549,24 @@ components:
           type: boolean
       type: object
     pkg_api_v1.pushPluginRequest:
-      description: Request to push a built plugin artifact
+      description: Request to push a built plugin artifact. Exactly one of identity_token
+        or no_sign is required.
       properties:
+        identity_token:
+          description: |-
+            IdentityToken is a short-lived OIDC identity token used for keyless
+            signing. Plugin signing is keyless-only: there is deliberately no key
+            field, because ToolHive cannot verify key-signed artifacts at install
+            time and would publish an uninstallable plugin (#6442)
+          type: string
+        no_sign:
+          description: NoSign pushes without signing
+          type: boolean
         reference:
           description: OCI reference to push
           type: string
+      required:
+      - reference
       type: object
     pkg_api_v1.pushSkillRequest:
       description: Request to push a built skill artifact
@@ -3438,8 +3766,11 @@ components:
           type: boolean
         allow_unsigned:
           description: |-
-            AllowUnsigned permits adopting plugins whose signature state cannot be
-            established, recording them as unsigned
+            AllowUnsigned permits recording a plugin as unsigned in the lock file,
+            in two cases: adopting an install whose signature state cannot be
+            established (see Adopt), and repairing an entry that records no trust
+            decision at all, whose reinstall otherwise fails closed on unsigned
+            content.
           type: boolean
         check:
           description: Check verifies on-disk content against the lock file without
@@ -3546,6 +3877,10 @@ components:
         image:
           description: Docker image to use
           type: string
+        max_request_body_size:
+          description: Maximum inbound MCP proxy request body size in bytes. Zero
+            uses the default limit of 8 MiB.
+          type: integer
         network_isolation:
           description: |-
             Whether network isolation is turned on. This applies the rules in the permission profile.
@@ -4840,6 +5175,9 @@ components:
         It accepts assertions from this issuer without client authentication and
         limits their maximum age, subjects, and RFC 8707 resources. It is
         independent from RFC 8693 delegation policy.
+
+        This legacy field is deprecated; configure RFC 7523 policy under
+        inbound_grants.jwt_bearer.issuer_policies.
       properties:
         accepted_audiences:
           description: |-
@@ -4938,6 +5276,13 @@ components:
             type: string
           type: array
           uniqueItems: false
+        ca_file_path:
+          description: |-
+            CAFilePath is the path to a PEM CA bundle added to the system roots when
+            fetching this issuer's OIDC discovery document and JWKS. Trust is additive
+            and scoped to this issuer: the public roots still apply, and no other
+            issuer's client is affected.
+          type: string
         expected_audience:
           description: |-
             ExpectedAudience is the expected "aud" claim value that must appear
@@ -4945,6 +5290,9 @@ components:
             not a client ID — required for delegation unless JWTBearerGrant is
             configured; see looksLikeResourceIdentifier). RFC 7523 assertions use
             the token endpoint as their audience instead.
+
+            This legacy field is deprecated; configure RFC 8693 policy under
+            inbound_grants.token_exchange.issuer_policies.
             See docs/arch/17-token-exchange-delegation.md ("ID/access-token
             discrimination") for why and its limits.
           type: string
@@ -4969,6 +5317,10 @@ components:
           type: string
         jwt_bearer_grant:
           $ref: '#/components/schemas/tokenexchange.JWTBearerGrantPolicy'
+        name:
+          description: Name optionally identifies this trust declaration for canonical
+            issuer_ref references.
+          type: string
       type: object
     types.MiddlewareConfig:
       properties:
@@ -5502,6 +5854,12 @@ paths:
               schema:
                 type: string
           description: Unauthorized (registry refused credentials)
+        "403":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: Forbidden (signature verification or trust check failed)
         "404":
           content:
             application/json:

@@ -178,7 +178,7 @@
               "type": "object"
             },
             "delegateClients": {
-              "description": "DelegateClients configures pre-provisioned confidential clients for RFC 8693\ntoken exchange. Each secret is referenced from a Kubernetes Secret; no\nplaintext secret, redirect URI, or grant selection is accepted here. The\noperator always supplies the token-exchange grant when it converts this\nconfiguration to the runtime contract.\n\nThis is independent of allowConfidentialClientRegistration: it neither\nenables nor requires unauthenticated confidential dynamic client\nregistration.",
+              "description": "DelegateClients configures pre-provisioned confidential clients for RFC 8693\ntoken exchange. Each secret is referenced from a Kubernetes Secret; no\nplaintext secret, redirect URI, or grant selection is accepted here. The\noperator always supplies the token-exchange grant when it converts this\nconfiguration to the runtime contract.\n\nThis is independent of allowConfidentialClientRegistration: it neither\nenables nor requires unauthenticated confidential dynamic client\nregistration.\nThis legacy field is deprecated; use inboundGrants.tokenExchange.delegateClients.",
               "items": {
                 "description": "DelegateClientConfig configures a pre-provisioned confidential OAuth client\nfor RFC 8693 token exchange. Its secret is referenced from a Kubernetes\nSecret and is never represented inline.",
                 "properties": {
@@ -251,7 +251,7 @@
             },
             "disableUpstreamTokenInjection": {
               "default": false,
-              "description": "DisableUpstreamTokenInjection prevents the embedded auth server from injecting\nupstream IdP tokens into requests forwarded to the backend MCP server.\nWhen true, the embedded auth server still handles OAuth flows for clients,\nbut instead of swapping ToolHive JWTs for upstream tokens the proxy STRIPS\nthe client's credential headers (Authorization, Cookie, Proxy-Authorization)\nafter validating the JWT — the backend receives an unauthenticated request.\nUse headerForward to attach static credentials (e.g. an API key) if the\nbackend needs them. Cannot be combined with token exchange or AWS STS,\nwhich would re-add credentials after the strip.\nThis is useful when the backend MCP server does not require authentication\n(e.g., public documentation servers) but you still want client authentication.",
+              "description": "DisableUpstreamTokenInjection prevents the embedded auth server from injecting\nupstream IdP tokens into requests forwarded to the backend MCP server.\nWhen true, the embedded auth server still handles OAuth flows for clients,\nbut instead of swapping ToolHive JWTs for upstream tokens the proxy STRIPS\nthe client's credential headers (Authorization, Cookie, Proxy-Authorization)\nafter validating the JWT — the backend receives an unauthenticated request.\nUse headerForward to attach static credentials (e.g. an API key) if the\nbackend needs them. Cannot be combined with token exchange, AWS STS, or OBO\nmiddleware, which would re-add credentials after the strip.\nThis is useful when the backend MCP server does not require authentication\n(e.g., public documentation servers) but you still want client authentication.",
               "type": "boolean"
             },
             "forceConfidentialRedirectUris": {
@@ -287,6 +287,353 @@
               "type": "array",
               "x-kubernetes-list-type": "atomic"
             },
+            "inboundGrants": {
+              "description": "InboundGrants configures canonical inbound OAuth grant families.",
+              "properties": {
+                "jwtBearer": {
+                  "description": "JWTBearer configures RFC 7523 issuer policies.",
+                  "properties": {
+                    "issuerPolicies": {
+                      "description": "IssuerPolicies binds RFC 7523 policy to named trusted issuers.",
+                      "items": {
+                        "description": "JWTBearerIssuerPolicyConfig binds RFC 7523 policy to a named trusted issuer.",
+                        "properties": {
+                          "acceptedAudiences": {
+                            "description": "AcceptedAudiences identifies this authorization server's accepted\nassertion audiences. When omitted, runtime validation defaults to the\ntoken endpoint.",
+                            "items": {
+                              "maxLength": 2048,
+                              "minLength": 1,
+                              "pattern": "^https?://[^[:space:]]+$",
+                              "type": "string"
+                            },
+                            "maxItems": 50,
+                            "type": "array",
+                            "x-kubernetes-list-type": "atomic"
+                          },
+                          "issuerRef": {
+                            "description": "IssuerRef references trustedIssuers[].name.",
+                            "maxLength": 253,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "maxAssertionAge": {
+                            "description": "MaxAssertionAge caps the exp-iat interval independently of exp.",
+                            "type": "string"
+                          },
+                          "subjectBindings": {
+                            "description": "SubjectBindings maps an exact external subject to allowed RFC 8707\nresources.",
+                            "items": {
+                              "description": "JWTBearerSubjectBinding configures the exact subject and allowed resources\nfor one RFC 7523 JWT-bearer assertion identity.",
+                              "properties": {
+                                "allowedResources": {
+                                  "description": "AllowedResources is the exact set of RFC 8707 resources this subject may\nrequest.",
+                                  "items": {
+                                    "maxLength": 2048,
+                                    "minLength": 1,
+                                    "pattern": "^https?://[^[:space:]]+$",
+                                    "type": "string"
+                                  },
+                                  "maxItems": 50,
+                                  "minItems": 1,
+                                  "type": "array",
+                                  "x-kubernetes-list-type": "atomic"
+                                },
+                                "subject": {
+                                  "description": "Subject is an exact assertion sub value. Wildcards are not supported.",
+                                  "maxLength": 256,
+                                  "minLength": 1,
+                                  "pattern": "^[^*]+$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "allowedResources",
+                                "subject"
+                              ],
+                              "type": "object"
+                            },
+                            "maxItems": 50,
+                            "minItems": 1,
+                            "type": "array",
+                            "x-kubernetes-list-type": "atomic"
+                          }
+                        },
+                        "required": [
+                          "issuerRef",
+                          "maxAssertionAge",
+                          "subjectBindings"
+                        ],
+                        "type": "object",
+                        "x-kubernetes-validations": [
+                          {
+                            "message": "maxAssertionAge must be greater than zero",
+                            "rule": "duration(self.maxAssertionAge) > duration('0s')"
+                          },
+                          {
+                            "message": "subjectBindings must not contain duplicate subjects",
+                            "rule": "self.subjectBindings.all(binding, self.subjectBindings.filter(other, other.subject == binding.subject).size() == 1)"
+                          }
+                        ]
+                      },
+                      "maxItems": 20,
+                      "type": "array",
+                      "x-kubernetes-list-type": "atomic"
+                    }
+                  },
+                  "type": "object"
+                },
+                "spiffeClientAuth": {
+                  "description": "SPIFFEClientAuth associates SPIFFE principal patterns with explicit\nOAuth client identities and permissions. A sibling of TokenExchange and\nJWTBearer below, not nested under either: client authentication does\nnot by itself confer a grant. See SPIFFEClientConfig.",
+                  "items": {
+                    "description": "SPIFFEClientConfig associates one SPIFFE principal pattern from a declared\ntrust domain with an explicit OAuth client identity and permissions.\nConfiguration is not authentication: configured SPIFFE clients remain\nnon-public OAuth clients without a secret until live SPIFFE credential\nvalidation is implemented (see SPIFFETrustDomainConfig's doc comment).\n\nGrantTypes is deliberately not exposed here: the runtime only accepts\nexactly the RFC 8693 token-exchange grant for a SPIFFE client\n(validateSPIFFEGrants in pkg/authserver/spiffe_trust.go), so the converter\nalways supplies it instead of letting it be configured.",
+                    "properties": {
+                      "audiences": {
+                        "description": "Audiences are RFC 8693 token audiences this association may request.",
+                        "items": {
+                          "maxLength": 2048,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "maxItems": 50,
+                        "minItems": 1,
+                        "type": "array",
+                        "x-kubernetes-list-type": "set"
+                      },
+                      "clientId": {
+                        "description": "ClientID is the explicit OAuth client_id. It is never derived from a\nSPIFFE ID.",
+                        "maxLength": 253,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "methods": {
+                        "description": "Methods are the credential types this association may authenticate\nwith. Must be a subset of the referenced trust domain's methods.",
+                        "items": {
+                          "description": "SPIFFEAuthenticationMethod identifies the credential type permitted for a\nSPIFFE workload. Mirrors authserver.SPIFFEAuthenticationMethod field-for-field;\nruntime parsing remains authoritative.",
+                          "enum": [
+                            "spiffe_x509",
+                            "spiffe_jwt"
+                          ],
+                          "type": "string"
+                        },
+                        "maxItems": 2,
+                        "minItems": 1,
+                        "type": "array",
+                        "x-kubernetes-list-type": "set"
+                      },
+                      "principalPattern": {
+                        "description": "PrincipalPattern is a concrete SPIFFE ID or a terminal /* pattern within\nthe declared trust domain. This pattern is a best-effort CRD-level\napproximation; runtime parsing via spiffeid.FromString remains\nauthoritative.",
+                        "maxLength": 2048,
+                        "pattern": "^spiffe://[a-z0-9._-]+((/[a-zA-Z0-9._-]+)+(/\\*)?|/\\*)$",
+                        "type": "string"
+                      },
+                      "resources": {
+                        "description": "Resources are RFC 8707 resource indicators this association may\nrequest. Must be a subset of the server's allowed_audiences allowlist,\nwhich is derived at reconcile time and not available on this CRD, so\nallowlist membership is validated at reconcile time, not admission.\nShape (a well-formed absolute HTTP(S) URI) is independent of that\nderived allowlist and is validated here. Distinct from Audiences: a\nresource permission does not imply the same value is also a permitted\ntoken audience, or vice versa.",
+                        "items": {
+                          "maxLength": 2048,
+                          "minLength": 1,
+                          "pattern": "^https?://[^@#[:space:]]+$",
+                          "type": "string"
+                        },
+                        "maxItems": 50,
+                        "type": "array",
+                        "x-kubernetes-list-type": "set"
+                      },
+                      "scopes": {
+                        "description": "Scopes are OAuth scopes granted to this association. Must be a subset\nof the server's effective supported scopes.",
+                        "items": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "maxItems": 50,
+                        "minItems": 1,
+                        "type": "array",
+                        "x-kubernetes-list-type": "set"
+                      },
+                      "trustDomainRef": {
+                        "description": "TrustDomainRef references spiffeTrustDomains[].name.",
+                        "maxLength": 253,
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "audiences",
+                      "clientId",
+                      "methods",
+                      "principalPattern",
+                      "scopes",
+                      "trustDomainRef"
+                    ],
+                    "type": "object",
+                    "x-kubernetes-validations": [
+                      {
+                        "message": "principalPattern path must not contain . or .. segments",
+                        "rule": "self.principalPattern.split('/').all(segment, segment != '.' && segment != '..')"
+                      }
+                    ]
+                  },
+                  "maxItems": 100,
+                  "type": "array",
+                  "x-kubernetes-list-type": "atomic"
+                },
+                "tokenExchange": {
+                  "description": "TokenExchange configures RFC 8693 clients and issuer policies.",
+                  "properties": {
+                    "delegateClients": {
+                      "description": "DelegateClients configures pre-provisioned confidential clients.",
+                      "items": {
+                        "description": "DelegateClientConfig configures a pre-provisioned confidential OAuth client\nfor RFC 8693 token exchange. Its secret is referenced from a Kubernetes\nSecret and is never represented inline.",
+                        "properties": {
+                          "audiences": {
+                            "description": "Audiences is the narrowed set of RFC 8707 resources this client may request.",
+                            "items": {
+                              "maxLength": 2048,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "maxItems": 10,
+                            "minItems": 1,
+                            "type": "array",
+                            "x-kubernetes-list-type": "atomic"
+                          },
+                          "clientId": {
+                            "description": "ClientID is the OAuth client_id presented at the token endpoint.",
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "clientSecretRef": {
+                            "description": "ClientSecretRef references the Kubernetes Secret key containing the client secret.",
+                            "properties": {
+                              "key": {
+                                "description": "Key is the key within the secret",
+                                "type": "string"
+                              },
+                              "name": {
+                                "description": "Name is the name of the secret",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "name"
+                            ],
+                            "type": "object"
+                          },
+                          "scopes": {
+                            "description": "Scopes is the narrowed set of OAuth scopes this client may request.",
+                            "items": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "maxItems": 10,
+                            "minItems": 1,
+                            "type": "array",
+                            "x-kubernetes-list-type": "atomic"
+                          }
+                        },
+                        "required": [
+                          "audiences",
+                          "clientId",
+                          "clientSecretRef",
+                          "scopes"
+                        ],
+                        "type": "object",
+                        "x-kubernetes-validations": [
+                          {
+                            "message": "clientSecretRef.name and clientSecretRef.key are required and must be non-empty",
+                            "rule": "has(self.clientSecretRef) && size(self.clientSecretRef.name) > 0 && size(self.clientSecretRef.key) > 0"
+                          }
+                        ]
+                      },
+                      "maxItems": 10,
+                      "type": "array",
+                      "x-kubernetes-list-type": "atomic"
+                    },
+                    "issuerPolicies": {
+                      "description": "IssuerPolicies binds RFC 8693 policy to named trusted issuers.",
+                      "items": {
+                        "description": "TokenExchangeIssuerPolicyConfig binds RFC 8693 policy to a named trusted issuer.",
+                        "properties": {
+                          "actorClaim": {
+                            "description": "ActorClaim names the claim containing the external actor identity.",
+                            "maxLength": 64,
+                            "type": "string"
+                          },
+                          "actorMatcher": {
+                            "maxLength": 4096,
+                            "type": "string"
+                          },
+                          "allowMayAct": {
+                            "type": "boolean"
+                          },
+                          "allowedActors": {
+                            "items": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "maxItems": 50,
+                            "type": "array",
+                            "x-kubernetes-list-type": "atomic"
+                          },
+                          "allowedDelegateClients": {
+                            "items": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "maxItems": 50,
+                            "minItems": 1,
+                            "type": "array",
+                            "x-kubernetes-list-type": "atomic"
+                          },
+                          "expectedAudience": {
+                            "description": "ExpectedAudience is the required RFC 8693 subject-token audience.",
+                            "maxLength": 2048,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "issuerRef": {
+                            "description": "IssuerRef references trustedIssuers[].name.",
+                            "maxLength": 253,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "allowedDelegateClients",
+                          "expectedAudience",
+                          "issuerRef"
+                        ],
+                        "type": "object",
+                        "x-kubernetes-validations": [
+                          {
+                            "message": "allowedDelegateClients must not combine the wildcard \"*\" with specific client IDs",
+                            "rule": "!('*' in self.allowedDelegateClients) || size(self.allowedDelegateClients) == 1"
+                          },
+                          {
+                            "message": "allowMayAct must not be enabled when allowedDelegateClients contains the wildcard \"*\"",
+                            "rule": "!(self.allowMayAct && '*' in self.allowedDelegateClients)"
+                          },
+                          {
+                            "message": "actorClaim must name a readable claim; use client_id or a non-reserved claim such as azp, appid, or cid",
+                            "rule": "!has(self.actorClaim) || !(self.actorClaim in ['sub', 'iss', 'aud', 'exp', 'iat', 'nbf', 'jti', 'name', 'email', 'scope', 'scp', 'may_act'])"
+                          }
+                        ]
+                      },
+                      "maxItems": 20,
+                      "type": "array",
+                      "x-kubernetes-list-type": "atomic"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            },
             "insecureAllowConfidentialOverLoopbackHTTP": {
               "default": false,
               "description": "InsecureAllowConfidentialOverLoopbackHTTP opts in to confidential\nDynamic Client Registration (DCR) and delegate clients when issuer is a\nplain-HTTP loopback URL (e.g. \"http://localhost:8080\"). Without this\nflag, that combination is rejected at reconcile time: a loopback http://\nissuer is normally fine for local development since the traffic never\nleaves the machine, but confidential clients send secrets over cleartext.\nForcing TLS onto every loopback deployment instead would just push\noperators toward insecureAllowHTTP, which is worse: that also disables\nthe non-loopback host check. Has no effect when there are no confidential\nclients or issuer is https.\n\nprivate_key_jwt registration has no equivalent flag or transport\nrestriction: unlike confidential registration, it never returns a\nclient_secret (or any other secret) in the DCR response, so there is\nnothing here for cleartext HTTP to expose.",
@@ -294,7 +641,7 @@
             },
             "insecureAllowHTTP": {
               "default": false,
-              "description": "InsecureAllowHTTP permits an http:// issuer URL for non-localhost hosts.\nOnly set this for in-cluster Kubernetes deployments where traffic between\npods traverses a trusted network (e.g. the in-cluster service mesh).\nProduction deployments reachable outside the cluster MUST use https://.\n\nOn VirtualMCPServer: when false (the default), http:// issuers for non-localhost\nhosts are rejected at reconcile time with an AuthServerConfigValidated=False condition.\n\nOn MCPServer and MCPRemoteProxy (via MCPExternalAuthConfig): this field is\nstructurally present but enforcement is deferred to pod startup via Config.Validate();\na misconfigured issuer will cause the pod to crash at startup rather than surface\nas an operator condition.\n\nOne combination is rejected at admission on all three CRDs regardless of the\nabove: setting this field alongside allowConfidentialClientRegistration, which\nwould issue client secrets in cleartext over an unauthenticated registration\nendpoint (see the XValidation rule on EmbeddedAuthServerConfig).",
+              "description": "InsecureAllowHTTP permits an http:// issuer URL for non-localhost hosts.\nOnly set this for in-cluster Kubernetes deployments where traffic between\npods traverses a trusted network (e.g. the in-cluster service mesh).\nProduction deployments reachable outside the cluster MUST use https://.\n\nOn VirtualMCPServer: when false (the default), http:// issuers for non-localhost\nhosts are rejected at reconcile time with an AuthServerConfigValidated=False condition.\n\nOn MCPServer and MCPRemoteProxy (via MCPExternalAuthConfig): this field is\nstructurally present but enforcement is deferred to pod startup via Config.Validate();\na misconfigured issuer will cause the pod to crash at startup rather than surface\nas an operator condition.\n\nOne combination is rejected at admission on all three CRDs regardless of the\nabove: setting this field alongside confidential client registration or\ndelegate clients, which would issue or use client secrets in cleartext over\nan unauthenticated endpoint (see the XValidation rule on\nEmbeddedAuthServerConfig).",
               "type": "boolean"
             },
             "issuer": {
@@ -330,6 +677,108 @@
                 "type": "object"
               },
               "maxItems": 5,
+              "type": "array",
+              "x-kubernetes-list-type": "atomic"
+            },
+            "spiffeTrustDomains": {
+              "description": "SPIFFETrustDomains declares SPIFFE trust domains for\ninboundGrants.spiffeClientAuth associations. See SPIFFETrustDomainConfig's\ndoc comment for why declaring a domain does not by itself enable\nauthentication in this build.",
+              "items": {
+                "description": "SPIFFETrustDomainConfig declares one SPIFFE trust domain accepted by the\nembedded authorization server. Configuration is not authentication: no\nlive X.509-SVID or JWT-SVID validation exists yet, so a declared trust\ndomain does not by itself let any workload authenticate — RunConfig.Validate\n(pkg/authserver/config.go) currently hard-rejects any non-empty\nspiffeTrustDomains at authserver startup via validateSPIFFENotYetEnforced,\na deliberate placeholder until real SVID verification lands.",
+                "properties": {
+                  "bundleSource": {
+                    "description": "BundleSource declares exactly one future trust-bundle source. It is\nvalidated for shape only; fetching or loading a bundle from it is a\nlater step.",
+                    "properties": {
+                      "endpoint": {
+                        "description": "Endpoint declares a HTTPS SPIFFE Bundle Endpoint. Required when Type is\n\"bundle_endpoint\".",
+                        "properties": {
+                          "profile": {
+                            "description": "Profile selects how the endpoint's TLS connection is authenticated:\nSPIFFEBundleEndpointProfileHTTPSWeb (Web PKI) or\nSPIFFEBundleEndpointProfileHTTPSSPIFFE (a separately distributed\nX.509-SVID root).",
+                            "enum": [
+                              "https_web",
+                              "https_spiffe"
+                            ],
+                            "type": "string"
+                          },
+                          "url": {
+                            "description": "URL is the HTTPS SPIFFE Bundle Endpoint URL.",
+                            "maxLength": 2048,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "profile",
+                          "url"
+                        ],
+                        "type": "object"
+                      },
+                      "type": {
+                        "description": "Type selects the trust-bundle source.",
+                        "enum": [
+                          "bundle_endpoint",
+                          "workload_api"
+                        ],
+                        "type": "string"
+                      },
+                      "workloadAPI": {
+                        "description": "WorkloadAPI selects the local SPIFFE Workload API. Required when Type\nis \"workload_api\".",
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "type": "object",
+                    "x-kubernetes-validations": [
+                      {
+                        "message": "endpoint configuration must be set if and only if type is 'bundle_endpoint'",
+                        "rule": "self.type == 'bundle_endpoint' ? has(self.endpoint) : !has(self.endpoint)"
+                      },
+                      {
+                        "message": "workloadAPI configuration must be set if and only if type is 'workload_api'",
+                        "rule": "self.type == 'workload_api' ? has(self.workloadAPI) : !has(self.workloadAPI)"
+                      }
+                    ]
+                  },
+                  "methods": {
+                    "description": "Methods explicitly enables the supported credential types for this\ntrust domain.",
+                    "items": {
+                      "description": "SPIFFEAuthenticationMethod identifies the credential type permitted for a\nSPIFFE workload. Mirrors authserver.SPIFFEAuthenticationMethod field-for-field;\nruntime parsing remains authoritative.",
+                      "enum": [
+                        "spiffe_x509",
+                        "spiffe_jwt"
+                      ],
+                      "type": "string"
+                    },
+                    "maxItems": 2,
+                    "minItems": 1,
+                    "type": "array",
+                    "x-kubernetes-list-type": "set"
+                  },
+                  "name": {
+                    "description": "Name uniquely identifies this declaration and is referenced by\ninboundGrants.spiffeClientAuth[].trustDomainRef.",
+                    "maxLength": 253,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "trustDomain": {
+                    "description": "TrustDomain is the SPIFFE trust domain accepted by this declaration.\nThis pattern is a best-effort CRD-level approximation of the SPIFFE\ntrust-domain grammar; runtime parsing via\nspiffeid.TrustDomainFromString remains authoritative.",
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "pattern": "^([a-z0-9_]|[a-z0-9_]([a-z0-9_-]|\\.[a-z0-9_-])*[a-z0-9_])$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "bundleSource",
+                  "methods",
+                  "name",
+                  "trustDomain"
+                ],
+                "type": "object"
+              },
+              "maxItems": 50,
+              "minItems": 1,
               "type": "array",
               "x-kubernetes-list-type": "atomic"
             },
@@ -568,29 +1017,29 @@
             "trustedIssuers": {
               "description": "TrustedIssuers configures external OIDC issuers whose tokens are\naccepted as RFC 8693 subject tokens during token exchange, in addition\nto self-issued subject tokens. Empty (the default) means only\nself-issued subject tokens are accepted. See\ndocs/arch/17-token-exchange-delegation.md for the trust model.",
               "items": {
-                "description": "TrustedIssuerConfig configures an external OIDC issuer whose tokens are\naccepted as RFC 8693 subject tokens or RFC 7523 JWT-bearer assertions during\ntoken exchange. It mirrors tokenexchange.TrustedIssuer\n(pkg/authserver/server/tokenexchange), the runtime type the operator converts\nthis into directly — no secret is referenced by this type, so no SecretKeyRef\nindirection is needed, unlike DelegateClientConfig.\n\nexpectedAudience is exempted only for a grant-only issuer: jwtBearerGrant\npresent and none of actorClaim, actorMatcher, allowMayAct, or allowedActors\nset. Any RFC 8693 delegation field (actorClaim, actorMatcher, allowMayAct,\nallowedActors) still requires expectedAudience, even when combined with\njwtBearerGrant.\n\nThe allowedDelegateClients rule below mirrors validateDelegationPolicy\n(pkg/authserver/server/tokenexchange/multi_issuer_validator.go): it is\nkeyed on whether ANY delegation field is set (expectedAudience,\nactorClaim, actorMatcher, allowMayAct), not merely on whether\njwtBearerGrant is absent — an issuer can combine jwtBearerGrant with\nexpectedAudience for RFC 8693 delegation on the same issuer, and that\ncombination still requires allowedDelegateClients at the Go level.",
+                "description": "TrustedIssuerConfig configures an external OIDC issuer whose tokens are\naccepted as RFC 8693 subject tokens or RFC 7523 JWT-bearer assertions. Trust\nfields remain top-level; canonical grant policy references this declaration by\nName. The embedded grant-policy fields are retained for released CRD compatibility.",
                 "properties": {
                   "actorClaim": {
-                    "description": "ActorClaim names the claim identifying the client that requested the\nsubject token from this external issuer (used by allowedActors below).\nDefaults to \"azp\" when empty; use \"appid\" for Microsoft Entra v1, \"cid\"\nfor Okta. The special value \"client_id\" reads the subject token's\nclient_id claim instead.",
+                    "description": "ActorClaim names the claim identifying the client that requested the\nsubject token from this external issuer (used by allowedActors below).\nDefaults to \"azp\" when empty; use \"appid\" for Microsoft Entra v1, \"cid\"\nfor Okta. The special value \"client_id\" reads the subject token's\nclient_id claim instead.\nThis legacy field is deprecated; configure RFC 8693 policy under\ninboundGrants.tokenExchange.issuerPolicies.",
                     "maxLength": 64,
                     "type": "string"
                   },
                   "actorMatcher": {
-                    "description": "ActorMatcher is an admin-authored CEL expression evaluated against the\nsubject token's complete signature-verified claims map (bound as\n\"claims\") to authorize a class of external actors, in addition to (not\ninstead of) allowedActors — either signal is sufficient. Must evaluate\nto a boolean; a non-boolean result denies the token at evaluation time,\nnot at reconcile time. A syntactically invalid expression fails\nreconciliation (surfaced via the AuthServerConfigValidated condition),\nnot admission — there is no validating webhook for this field.",
+                    "description": "ActorMatcher is an admin-authored CEL expression evaluated against the\nsubject token's complete signature-verified claims map (bound as\n\"claims\") to authorize a class of external actors, in addition to (not\ninstead of) allowedActors — either signal is sufficient. Must evaluate\nto a boolean; a non-boolean result denies the token at evaluation time,\nnot at reconcile time. A syntactically invalid expression fails\nreconciliation (surfaced via the AuthServerConfigValidated condition),\nnot admission — there is no validating webhook for this field.\nThis legacy field is deprecated; configure RFC 8693 policy under\ninboundGrants.tokenExchange.issuerPolicies.",
                     "maxLength": 4096,
                     "type": "string"
                   },
                   "allowMayAct": {
                     "default": false,
-                    "description": "AllowMayAct permits this external issuer's may_act claim to authorize\ndelegation. Defaults to false; external issuers must be opted in\nexplicitly because may_act bypasses allowedActors and actorMatcher.\nDoes not affect self-issued subject tokens. The wildcard is never\npermitted alongside specific allowedDelegateClients, regardless of\nthis setting.",
+                    "description": "AllowMayAct permits this external issuer's may_act claim to authorize\ndelegation. Defaults to false; external issuers must be opted in\nexplicitly because may_act bypasses allowedActors and actorMatcher.\nDoes not affect self-issued subject tokens. The wildcard is never\npermitted alongside specific allowedDelegateClients, regardless of\nthis setting.\nThis legacy field is deprecated; configure RFC 8693 policy under\ninboundGrants.tokenExchange.issuerPolicies.",
                     "type": "boolean"
                   },
                   "allowPrivateIPs": {
-                    "description": "AllowPrivateIPs permits OIDC discovery and JWKS fetches for THIS issuer\nto resolve to a private or loopback address. Use only when the issuer\nis hosted inside the same cluster and has no public endpoint. Requires\njwksUrl to be set explicitly (enforced at reconcile time), since\notherwise OIDC discovery — fetched from the external issuer itself —\nwould choose the private dial target.",
+                    "description": "AllowPrivateIPs permits OIDC discovery and JWKS fetches for THIS issuer\nto resolve to a private or loopback address. Use only when the issuer\nis hosted inside the same cluster and has no public endpoint. Requires\njwksUrl to be set explicitly (enforced at admission and by shared\nvalidation), since otherwise OIDC discovery — fetched from the external\nissuer itself — would choose the private dial target.",
                     "type": "boolean"
                   },
                   "allowedActors": {
-                    "description": "AllowedActors is the allowlist of actorClaim values authorized to\nexchange a subject token from this issuer when it carries no\n\"may_act\" claim, in addition to (not instead of) actorMatcher below —\neither signal is sufficient. Empty denies every token unless\nactorMatcher is set, or allowMayAct is true and the token carries a\npermitted may_act claim.",
+                    "description": "AllowedActors is the allowlist of actorClaim values authorized to\nexchange a subject token from this issuer when it carries no\n\"may_act\" claim, in addition to (not instead of) actorMatcher below —\neither signal is sufficient. Empty denies every token unless\nactorMatcher is set, or allowMayAct is true and the token carries a\npermitted may_act claim.\nThis legacy field is deprecated; configure RFC 8693 policy under\ninboundGrants.tokenExchange.issuerPolicies.",
                     "items": {
                       "maxLength": 256,
                       "minLength": 1,
@@ -601,7 +1050,7 @@
                     "x-kubernetes-list-type": "atomic"
                   },
                   "allowedDelegateClients": {
-                    "description": "AllowedDelegateClients restricts which ToolHive client IDs may exchange\nan RFC 8693 subject token from this issuer. Required unless only\njwtBearerGrant is configured; set it to [\"*\"] to permit any confidential\nclient holding the token-exchange grant, or list specific client IDs to\nbind delegation to them.",
+                    "description": "AllowedDelegateClients restricts which ToolHive client IDs may exchange\nan RFC 8693 subject token from this issuer. Required unless only\njwtBearerGrant is configured; set it to [\"*\"] to permit any confidential\nclient holding the token-exchange grant, or list specific client IDs to\nbind delegation to them.\nThis legacy field is deprecated; configure RFC 8693 policy under\ninboundGrants.tokenExchange.issuerPolicies.",
                     "items": {
                       "maxLength": 256,
                       "minLength": 1,
@@ -612,8 +1061,43 @@
                     "type": "array",
                     "x-kubernetes-list-type": "atomic"
                   },
+                  "caBundleRef": {
+                    "description": "CABundleRef references a ConfigMap containing PEM CA certificates used when\nfetching this issuer's OIDC discovery document and JWKS. The bundle is added\nto the system roots for this issuer's client only; public roots still apply\nand other issuers are unaffected. Write access to the referenced ConfigMap is\nequivalent to controlling this issuer's trust anchor for subject-token\nvalidation — restrict it with the same care as a signing-key Secret.",
+                    "properties": {
+                      "configMapRef": {
+                        "description": "ConfigMapRef references a ConfigMap containing the CA certificate bundle.\nThe ConfigMap key is required by the API. If omitted in a stored object, it\ndefaults to \"ca.crt\" for backwards compatibility.",
+                        "properties": {
+                          "key": {
+                            "description": "The key to select.",
+                            "type": "string"
+                          },
+                          "name": {
+                            "default": "",
+                            "description": "Name of the referent.\nThis field is effectively required, but due to backwards compatibility is\nallowed to be empty. Instances of this type with an empty value here are\nalmost certainly wrong.\nMore info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names",
+                            "type": "string"
+                          },
+                          "optional": {
+                            "description": "Specify whether the ConfigMap or its key must be defined",
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "key"
+                        ],
+                        "type": "object",
+                        "x-kubernetes-map-type": "atomic"
+                      }
+                    },
+                    "type": "object",
+                    "x-kubernetes-validations": [
+                      {
+                        "message": "configMapRef.name is required and must be non-empty",
+                        "rule": "has(self.configMapRef) && size(self.configMapRef.name) > 0"
+                      }
+                    ]
+                  },
                   "expectedAudience": {
-                    "description": "ExpectedAudience is the expected \"aud\" claim value that must appear in\nan RFC 8693 subject token's audience list. It is not used by an RFC 7523\nJWT-bearer assertion, whose audience is the token endpoint.",
+                    "description": "ExpectedAudience is the expected \"aud\" claim value that must appear in\nan RFC 8693 subject token's audience list. It is not used by an RFC 7523\nJWT-bearer assertion, whose audience is the token endpoint.\nThis legacy field is deprecated; configure RFC 8693 policy under\ninboundGrants.tokenExchange.issuerPolicies.",
                     "maxLength": 2048,
                     "minLength": 1,
                     "type": "string"
@@ -634,7 +1118,7 @@
                     "type": "string"
                   },
                   "jwtBearerGrant": {
-                    "description": "JWTBearerGrant enables the plain RFC 7523 JWT-bearer grant for this\nissuer. It is independent of RFC 8693 delegation policy.",
+                    "description": "JWTBearerGrant enables the plain RFC 7523 JWT-bearer grant for this\nissuer. It is independent of RFC 8693 delegation policy.\nThis legacy field is deprecated; configure RFC 7523 policy under\ninboundGrants.jwtBearer.issuerPolicies.",
                     "properties": {
                       "acceptedAudiences": {
                         "description": "AcceptedAudiences identifies this authorization server's accepted\nassertion audiences. When omitted, runtime validation defaults to the\ntoken endpoint.",
@@ -705,6 +1189,12 @@
                         "rule": "self.subjectBindings.all(binding, self.subjectBindings.filter(other, other.subject == binding.subject).size() == 1)"
                       }
                     ]
+                  },
+                  "name": {
+                    "description": "Name optionally identifies this trust declaration for canonical issuerRef references.\nNames must be unique within trustedIssuers when set.",
+                    "maxLength": 253,
+                    "minLength": 1,
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -729,12 +1219,12 @@
                     "rule": "!(has(self.allowPrivateIPs) && self.allowPrivateIPs) || (has(self.jwksUrl) && self.jwksUrl != \"\")"
                   },
                   {
-                    "message": "expectedAudience is required unless jwtBearerGrant is configured without actorClaim, actorMatcher, allowMayAct, or allowedActors",
-                    "rule": "(has(self.jwtBearerGrant) && !((has(self.actorClaim) && size(self.actorClaim) > 0) || (has(self.actorMatcher) && size(self.actorMatcher) > 0) || (has(self.allowMayAct) && self.allowMayAct) || (has(self.allowedActors) && size(self.allowedActors) > 0))) || (has(self.expectedAudience) && size(self.expectedAudience) > 0)"
+                    "message": "expectedAudience is required when legacy RFC 8693 policy is configured",
+                    "rule": "!((has(self.actorClaim) && size(self.actorClaim) > 0) || (has(self.actorMatcher) && size(self.actorMatcher) > 0) || (has(self.allowMayAct) && self.allowMayAct) || (has(self.allowedActors) && size(self.allowedActors) > 0) || (has(self.allowedDelegateClients) && size(self.allowedDelegateClients) > 0)) || (has(self.expectedAudience) && size(self.expectedAudience) > 0)"
                   },
                   {
-                    "message": "allowedDelegateClients is required when expectedAudience, actorClaim, actorMatcher, or allowMayAct is set",
-                    "rule": "!((has(self.expectedAudience) && size(self.expectedAudience) > 0) || (has(self.actorClaim) && size(self.actorClaim) > 0) || (has(self.actorMatcher) && size(self.actorMatcher) > 0) || (has(self.allowMayAct) && self.allowMayAct)) || (has(self.allowedDelegateClients) && size(self.allowedDelegateClients) > 0)"
+                    "message": "allowedDelegateClients is required when legacy RFC 8693 policy is configured",
+                    "rule": "!((has(self.expectedAudience) && size(self.expectedAudience) > 0) || (has(self.actorClaim) && size(self.actorClaim) > 0) || (has(self.actorMatcher) && size(self.actorMatcher) > 0) || (has(self.allowMayAct) && self.allowMayAct) || (has(self.allowedActors) && size(self.allowedActors) > 0)) || (has(self.allowedDelegateClients) && size(self.allowedDelegateClients) > 0)"
                   }
                 ]
               },
@@ -743,7 +1233,7 @@
               "x-kubernetes-list-type": "atomic"
             },
             "upstreamProviders": {
-              "description": "UpstreamProviders configures connections to upstream Identity Providers.\nThe embedded auth server delegates authentication to these providers.\nMCPServer and MCPRemoteProxy support a single upstream; VirtualMCPServer supports multiple.",
+              "description": "UpstreamProviders configures connections to upstream Identity Providers.\nWhen configured, the embedded auth server delegates interactive authentication\nto these providers. It may be omitted only when delegateClients or a trusted\nissuer with jwtBearerGrant enables token-only operation.\nMCPServer and MCPRemoteProxy support a single upstream; VirtualMCPServer supports multiple.",
               "items": {
                 "description": "UpstreamProviderConfig defines configuration for an upstream Identity Provider.\n\nExactly one of OIDCConfig or OAuth2Config must be set and must match the\ndeclared Type: oidc-typed providers set OIDCConfig, oauth2-typed providers\nset OAuth2Config. The CEL rule below enforces the pairing at admission; the\nmatching Go-level check in validateUpstreamProvider provides defense-in-depth\nfor stored objects.\n\nThe rule is structured as a chain of equality checks ending in an explicit\n`false`, so adding a new UpstreamProviderType value without extending this\nrule fails admission instead of silently demanding the OAuth2 shape. When\nadding a new type, extend both this rule and validateUpstreamProvider.",
                 "properties": {
@@ -801,7 +1291,13 @@
                             "x-kubernetes-map-type": "atomic"
                           }
                         },
-                        "type": "object"
+                        "type": "object",
+                        "x-kubernetes-validations": [
+                          {
+                            "message": "configMapRef.name is required and must be non-empty",
+                            "rule": "has(self.configMapRef) && size(self.configMapRef.name) > 0"
+                          }
+                        ]
                       },
                       "clientId": {
                         "description": "ClientID is the OAuth 2.0 client identifier registered with the upstream IDP.\nMutually exclusive with DCRConfig: when DCRConfig is set, ClientID is obtained\nat runtime via RFC 7591 Dynamic Client Registration and must be left empty.",
@@ -1069,7 +1565,13 @@
                             "x-kubernetes-map-type": "atomic"
                           }
                         },
-                        "type": "object"
+                        "type": "object",
+                        "x-kubernetes-validations": [
+                          {
+                            "message": "configMapRef.name is required and must be non-empty",
+                            "rule": "has(self.configMapRef) && size(self.configMapRef.name) > 0"
+                          }
+                        ]
                       },
                       "clientId": {
                         "description": "ClientID is the OAuth 2.0 client identifier registered with the upstream IdP.",
@@ -1203,7 +1705,6 @@
                   }
                 ]
               },
-              "minItems": 1,
               "type": "array",
               "x-kubernetes-list-map-keys": [
                 "name"
@@ -1212,22 +1713,97 @@
             }
           },
           "required": [
-            "issuer",
-            "upstreamProviders"
+            "issuer"
           ],
           "type": "object",
           "x-kubernetes-validations": [
             {
-              "message": "allowConfidentialClientRegistration cannot be combined with insecureAllowHTTP; client secrets would be issued in cleartext over an unauthenticated endpoint",
-              "rule": "!(has(self.allowConfidentialClientRegistration) && self.allowConfidentialClientRegistration && has(self.insecureAllowHTTP) && self.insecureAllowHTTP)"
+              "message": "at least one upstream provider or inbound grant family is required",
+              "rule": "(has(self.upstreamProviders) && size(self.upstreamProviders) > 0) || (has(self.delegateClients) && size(self.delegateClients) > 0) || (has(self.trustedIssuers) && self.trustedIssuers.exists(issuer, has(issuer.jwtBearerGrant))) || (has(self.inboundGrants) && (has(self.inboundGrants.tokenExchange) || has(self.inboundGrants.jwtBearer) || (has(self.inboundGrants.spiffeClientAuth) && size(self.inboundGrants.spiffeClientAuth) > 0)))"
+            },
+            {
+              "message": "spiffeTrustDomains and inboundGrants.spiffeClientAuth must be configured together",
+              "rule": "((has(self.spiffeTrustDomains) && size(self.spiffeTrustDomains) > 0) == (has(self.inboundGrants) && has(self.inboundGrants.spiffeClientAuth) && size(self.inboundGrants.spiffeClientAuth) > 0))"
+            },
+            {
+              "message": "spiffeTrustDomains must not contain duplicate names",
+              "rule": "!has(self.spiffeTrustDomains) || self.spiffeTrustDomains.all(domain, self.spiffeTrustDomains.filter(other, other.name == domain.name).size() == 1)"
+            },
+            {
+              "message": "spiffeTrustDomains must not contain duplicate trust domains",
+              "rule": "!has(self.spiffeTrustDomains) || self.spiffeTrustDomains.all(domain, self.spiffeTrustDomains.filter(other, other.trustDomain == domain.trustDomain).size() == 1)"
+            },
+            {
+              "message": "every SPIFFE trust domain must be referenced by a SPIFFE client",
+              "rule": "!has(self.spiffeTrustDomains) || self.spiffeTrustDomains.all(domain, has(self.inboundGrants) && has(self.inboundGrants.spiffeClientAuth) && self.inboundGrants.spiffeClientAuth.exists(client, client.trustDomainRef == domain.name))"
+            },
+            {
+              "message": "every SPIFFE client trustDomainRef must reference a declared trust domain",
+              "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.spiffeClientAuth) || self.inboundGrants.spiffeClientAuth.all(client, has(self.spiffeTrustDomains) && self.spiffeTrustDomains.exists(domain, domain.name == client.trustDomainRef))"
+            },
+            {
+              "message": "spiffeClientAuth methods must be enabled by the referenced trust domain",
+              "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.spiffeClientAuth) || self.inboundGrants.spiffeClientAuth.all(client, !has(self.spiffeTrustDomains) || !self.spiffeTrustDomains.exists(domain, domain.name == client.trustDomainRef) || self.spiffeTrustDomains.exists(domain, domain.name == client.trustDomainRef && client.methods.all(method, method in domain.methods)))"
+            },
+            {
+              "message": "spiffeClientAuth principalPattern trust domain must match the referenced trust domain",
+              "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.spiffeClientAuth) || self.inboundGrants.spiffeClientAuth.all(client, !has(self.spiffeTrustDomains) || !self.spiffeTrustDomains.exists(domain, domain.name == client.trustDomainRef) || self.spiffeTrustDomains.exists(domain, domain.name == client.trustDomainRef && client.principalPattern.startsWith('spiffe://' + domain.trustDomain + '/')))"
+            },
+            {
+              "message": "spiffeClientAuth must not contain duplicate client IDs",
+              "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.spiffeClientAuth) || self.inboundGrants.spiffeClientAuth.all(client, self.inboundGrants.spiffeClientAuth.filter(other, other.clientId == client.clientId).size() == 1)"
+            },
+            {
+              "message": "spiffeClientAuth must not contain duplicate principal patterns",
+              "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.spiffeClientAuth) || self.inboundGrants.spiffeClientAuth.all(client, self.inboundGrants.spiffeClientAuth.filter(other, other.principalPattern == client.principalPattern).size() == 1)"
+            },
+            {
+              "message": "spiffeClientAuth clientId must not use the reserved synthetic: prefix",
+              "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.spiffeClientAuth) || self.inboundGrants.spiffeClientAuth.all(client, !client.clientId.startsWith('synthetic:'))"
+            },
+            {
+              "message": "spiffeClientAuth clientId must not be an absolute URL",
+              "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.spiffeClientAuth) || self.inboundGrants.spiffeClientAuth.all(client, !client.clientId.matches('^[A-Za-z][A-Za-z0-9+.-]*://.+'))"
+            },
+            {
+              "message": "insecureAllowHTTP cannot be combined with confidential client registration or delegateClients; client secrets would be issued or used in cleartext over an unauthenticated endpoint",
+              "rule": "!(has(self.insecureAllowHTTP) && self.insecureAllowHTTP && ((has(self.allowConfidentialClientRegistration) && self.allowConfidentialClientRegistration) || (has(self.delegateClients) && size(self.delegateClients) > 0) || (has(self.inboundGrants) && has(self.inboundGrants.tokenExchange) && has(self.inboundGrants.tokenExchange.delegateClients) && size(self.inboundGrants.tokenExchange.delegateClients) > 0)))"
             },
             {
               "message": "forceConfidentialRedirectUris requires allowConfidentialClientRegistration to be true",
               "rule": "(!has(self.forceConfidentialRedirectUris) || size(self.forceConfidentialRedirectUris) == 0) || (has(self.allowConfidentialClientRegistration) && self.allowConfidentialClientRegistration)"
             },
             {
-              "message": "delegateClients with an HTTP issuer require insecureAllowConfidentialOverLoopbackHTTP to be explicitly enabled; the issuer must still be loopback",
-              "rule": "!has(self.delegateClients) || size(self.delegateClients) == 0 || !self.issuer.startsWith('http://') || (has(self.insecureAllowConfidentialOverLoopbackHTTP) && self.insecureAllowConfidentialOverLoopbackHTTP)"
+              "message": "confidential client registration or delegateClients with an HTTP issuer require insecureAllowConfidentialOverLoopbackHTTP to be explicitly enabled; the issuer must still be loopback",
+              "rule": "!self.issuer.startsWith('http://') || (has(self.insecureAllowConfidentialOverLoopbackHTTP) && self.insecureAllowConfidentialOverLoopbackHTTP) || ((!has(self.allowConfidentialClientRegistration) || !self.allowConfidentialClientRegistration) && (!has(self.delegateClients) || size(self.delegateClients) == 0) && (!has(self.inboundGrants) || !has(self.inboundGrants.tokenExchange) || !has(self.inboundGrants.tokenExchange.delegateClients) || size(self.inboundGrants.tokenExchange.delegateClients) == 0))"
+            },
+            {
+              "message": "canonical tokenExchange conflicts with legacy delegateClients or RFC 8693 trusted issuer policy",
+              "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.tokenExchange) || ((!has(self.delegateClients) || size(self.delegateClients) == 0) && (!has(self.trustedIssuers) || !self.trustedIssuers.exists(issuer, has(issuer.expectedAudience) || has(issuer.actorClaim) || has(issuer.allowedActors) || has(issuer.actorMatcher) || has(issuer.allowedDelegateClients) || (has(issuer.allowMayAct) && issuer.allowMayAct))))"
+            },
+            {
+              "message": "canonical jwtBearer conflicts with legacy jwtBearerGrant",
+              "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.jwtBearer) || !has(self.trustedIssuers) || !self.trustedIssuers.exists(issuer, has(issuer.jwtBearerGrant))"
+            },
+            {
+              "message": "trustedIssuers must not contain duplicate names",
+              "rule": "!has(self.trustedIssuers) || self.trustedIssuers.all(issuer, !has(issuer.name) || self.trustedIssuers.filter(other, has(other.name) && other.name == issuer.name).size() == 1)"
+            },
+            {
+              "message": "every tokenExchange issuerRef must reference a named trusted issuer",
+              "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.tokenExchange) || !has(self.inboundGrants.tokenExchange.issuerPolicies) || self.inboundGrants.tokenExchange.issuerPolicies.all(policy, has(self.trustedIssuers) && self.trustedIssuers.exists(issuer, has(issuer.name) && issuer.name == policy.issuerRef))"
+            },
+            {
+              "message": "tokenExchange issuerPolicies must not contain duplicate issuerRef values",
+              "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.tokenExchange) || !has(self.inboundGrants.tokenExchange.issuerPolicies) || self.inboundGrants.tokenExchange.issuerPolicies.all(policy, self.inboundGrants.tokenExchange.issuerPolicies.filter(other, other.issuerRef == policy.issuerRef).size() == 1)"
+            },
+            {
+              "message": "every jwtBearer issuerRef must reference a named trusted issuer",
+              "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.jwtBearer) || !has(self.inboundGrants.jwtBearer.issuerPolicies) || self.inboundGrants.jwtBearer.issuerPolicies.all(policy, has(self.trustedIssuers) && self.trustedIssuers.exists(issuer, has(issuer.name) && issuer.name == policy.issuerRef))"
+            },
+            {
+              "message": "jwtBearer issuerPolicies must not contain duplicate issuerRef values",
+              "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.jwtBearer) || !has(self.inboundGrants.jwtBearer.issuerPolicies) || self.inboundGrants.jwtBearer.issuerPolicies.all(policy, self.inboundGrants.jwtBearer.issuerPolicies.filter(other, other.issuerRef == policy.issuerRef).size() == 1)"
             }
           ]
         },
