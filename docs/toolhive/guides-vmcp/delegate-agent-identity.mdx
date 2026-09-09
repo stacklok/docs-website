@@ -125,10 +125,10 @@ client ID; it defaults to `azp` when you leave it unset.
 delegate client. Without it, every confidential client holding the
 token-exchange grant would be equivalent for delegation purposes. Set it to
 `["*"]` to declare that permissiveness explicitly; the wildcard must stand
-alone, and combining it with specific client IDs is rejected at admission — and
-if you also enable `allowMayAct`, set it explicitly to `false` rather than
-omitting it, since an omitted `allowMayAct` combined with the wildcard is
-rejected by a validation rule that can't yet distinguish "not set" from "false"
+alone, and combining it with specific client IDs is rejected at admission. If
+you also enable `allowMayAct`, set it explicitly to `false` rather than omitting
+it, since an omitted `allowMayAct` combined with the wildcard is rejected by a
+validation rule that can't yet distinguish "not set" from "false"
 ([tracked upstream](https://github.com/stacklok/toolhive/issues/6531)).
 
 For the complete field list, including `jwksUrl`, `caBundleRef`,
@@ -279,23 +279,11 @@ curl -s -X POST https://vmcp.example.com/oauth/token \
 No `client_secret` parameter appears anywhere in this request. ToolHive
 validates the `client_assertion`'s signature against the JWKS declared at
 registration and rejects a replayed `client_assertion` (the same `jti` presented
-twice) on the second attempt. Everything else about the exchange. Subject-token
+twice) on the second attempt. Everything else about the exchange, subject-token
 validation against `trustedIssuers`, actor resolution, and the resulting `act`
 claim, works exactly as in the pre-provisioned case above; the issued token's
 `act.sub` is the DCR-assigned `client_id` instead of a statically configured
 one.
-
-## Troubleshooting
-
-| Error                                                                                                                                                    | Likely cause                                                                                                                                                                              |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invalid_client` (exact hint varies by cause: wrong secret, wrong `token_endpoint_auth_method`, or a public client attempting a confidential-only grant) | The delegate client must be confidential. Verify `inboundGrants.tokenExchange.delegateClients[].clientSecretRef` is set and the client authenticated with the matching secret and method. |
-| `invalid_grant`: "The subject token does not authorize this client to act on behalf of the subject."                                                     | The subject token's `may_act.sub` doesn't match the actor ToolHive resolved for this request.                                                                                             |
-| `invalid_grant`: "This client is not authorized to exchange subject tokens from the external actor's issuer."                                            | The authenticated client isn't in `issuerPolicies[].allowedDelegateClients` for the issuer that minted the subject token.                                                                 |
-| `invalid_grant`: "The subject token was issued to a different client."                                                                                   | The subject token's own `client_id` claim doesn't match the authenticated delegate client, and the client isn't in `allowedDelegateClients`.                                              |
-| `invalid_request`: "The subject token is invalid or could not be verified."                                                                              | The subject token failed signature, issuer, or audience validation against every configured `trustedIssuers` entry.                                                                       |
-| CRD rejected: `issuerPolicies[]: allowedDelegateClients: Required value`                                                                                 | An `inboundGrants.tokenExchange.issuerPolicies` entry is missing `allowedDelegateClients`. Add it.                                                                                        |
-| CRD rejected: "delegateClients with an HTTP issuer require insecureAllowConfidentialOverLoopbackHTTP to be explicitly enabled"                           | A delegate client uses a plain-HTTP issuer. Use an `https://` issuer, or for local development set `insecureAllowConfidentialOverLoopbackHTTP: true` with a loopback issuer.              |
 
 ## Next steps
 
@@ -318,3 +306,15 @@ one.
   authentication patterns
 - [MCPExternalAuthConfig reference](../reference/crds/mcpexternalauthconfig.mdx)
   for the complete field list
+
+## Troubleshooting
+
+| Error                                                                                                                                                    | Likely cause                                                                                                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_client` (exact hint varies by cause: wrong secret, wrong `token_endpoint_auth_method`, or a public client attempting a confidential-only grant) | The delegate client must be confidential. Verify `inboundGrants.tokenExchange.delegateClients[].clientSecretRef` is set and the client authenticated with the matching secret and method. |
+| `invalid_grant`: "The subject token does not authorize this client to act on behalf of the subject."                                                     | The subject token's `may_act.sub` doesn't match the actor ToolHive resolved for this request.                                                                                             |
+| `invalid_grant`: "This client is not authorized to exchange subject tokens from the external actor's issuer."                                            | The authenticated client isn't in `issuerPolicies[].allowedDelegateClients` for the issuer that minted the subject token.                                                                 |
+| `invalid_grant`: "The subject token was issued to a different client."                                                                                   | The subject token's own `client_id` claim doesn't match the authenticated delegate client, and the client isn't in `allowedDelegateClients`.                                              |
+| `invalid_request`: "The subject token is invalid or could not be verified."                                                                              | The subject token failed signature, issuer, or audience validation against every configured `trustedIssuers` entry.                                                                       |
+| CRD rejected: `issuerPolicies[]: allowedDelegateClients: Required value`                                                                                 | An `inboundGrants.tokenExchange.issuerPolicies` entry is missing `allowedDelegateClients`. Add it.                                                                                        |
+| CRD rejected: "delegateClients with an HTTP issuer require insecureAllowConfidentialOverLoopbackHTTP to be explicitly enabled"                           | A delegate client uses a plain-HTTP issuer. Use an `https://` issuer, or for local development set `insecureAllowConfidentialOverLoopbackHTTP: true` with a loopback issuer.              |
