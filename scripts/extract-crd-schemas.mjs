@@ -179,6 +179,37 @@ function buildRequiredExample(schema, picks = {}) {
   return out;
 }
 
+// `exampleForceFields` in crd-intros.mjs adds an optional sibling field the
+// schema's `required` list and discriminator-CEL detection can't capture -
+// typically an "at least one of A/B/C" composite rule, where the field is
+// technically optional but the example is incomplete/inadmissible without it.
+// Dot-separated path, resolved against `spec` (e.g.
+// 'embeddedAuthServer.upstreamProviders').
+function applyForceFields(specSchema, specExample, forceFields = []) {
+  for (const dotPath of forceFields) {
+    const parts = dotPath.split('.');
+    let schema = specSchema;
+    let example = specExample;
+    for (let i = 0; i < parts.length - 1; i++) {
+      schema = schema?.properties?.[parts[i]];
+      if (!schema) break;
+      if (!(parts[i] in example)) example[parts[i]] = {};
+      example = example[parts[i]];
+    }
+    if (!schema) continue;
+    const leafKey = parts[parts.length - 1];
+    const leafSchema = schema.properties?.[leafKey];
+    if (!leafSchema || leafKey in example) continue;
+    if (leafSchema.type === 'array') {
+      example[leafKey] = arrayExample({ ...leafSchema, minItems: 1 });
+    } else if (leafSchema.type === 'object' && leafSchema.properties) {
+      example[leafKey] = buildRequiredExample(leafSchema);
+    } else {
+      example[leafKey] = placeholder(leafSchema);
+    }
+  }
+}
+
 function buildYamlSkeleton({ group, version, kind, scope, schema }) {
   const example = {
     apiVersion: `${group}/${version}`,
@@ -193,6 +224,11 @@ function buildYamlSkeleton({ group, version, kind, scope, schema }) {
     const picks = preferredType ? { type: preferredType } : {};
     example.spec = buildRequiredExample(schema.properties.spec, picks);
     if (example.spec === undefined) example.spec = {};
+    applyForceFields(
+      schema.properties.spec,
+      example.spec,
+      intros[kind]?.exampleForceFields
+    );
   }
   return yaml.stringify(example, { indent: 2, lineWidth: 0 });
 }

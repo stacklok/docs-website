@@ -234,8 +234,117 @@ After building, push to a remote OCI registry:
 thv ai-plugin push ghcr.io/my-org/plugins/my-plugin:v1.0.0
 ```
 
+`thv ai-plugin push` signs the pushed artifact by default using Sigstore keyless
+signing. ToolHive acquires a short-lived OIDC identity token and records the
+signature in the public transparency log. In GitHub Actions with
+`id-token: write` permission, the ambient OIDC token is used automatically; on
+an interactive terminal, ToolHive prompts for browser sign-in; in any other
+environment the push fails with an actionable error before publishing anything.
+
+To supply a pre-acquired identity token, pass `--identity-token`:
+
+```bash
+thv ai-plugin push ghcr.io/my-org/plugins/my-plugin:v1.0.0 \
+  --identity-token "$IDENTITY_TOKEN"
+```
+
+To publish without a signature, pass `--no-sign`:
+
+```bash
+thv ai-plugin push ghcr.io/my-org/plugins/my-plugin:v1.0.0 --no-sign
+```
+
+To install an unsigned plugin project-scoped, pass `--allow-unsigned` to
+`thv ai-plugin install`.
+
+:::note
+
+Plugin push is keyless-only. If you need to sign with a cosign key pair, publish
+a [skill](./skills-management.mdx) instead, which supports both keyless and
+key-pair signing via `--key`.
+
+:::
+
 Push uses your existing container registry credentials (for example, from
 `docker login` or `podman login`). Authenticate before pushing.
+
+## Reproduce and upgrade project-scoped plugins
+
+Project-scoped installs record their source, resolved digest, and signer
+identity in a `toolhive.lock.yaml` file at the project root. This lets you
+reinstall the same plugin content on another machine, detect drift in CI, and
+upgrade to newer content when the catalog moves forward. User-scoped installs
+don't participate in the lock file.
+
+### Restore plugins from the lock file
+
+To reinstall the plugins recorded in the lock file (for example, after cloning
+the project on a new machine), run `thv ai-plugin sync` from the project
+directory:
+
+```bash
+thv ai-plugin sync --project-root .
+```
+
+Missing or drifted plugins are reinstalled at their pinned digest. Sync prompts
+for confirmation before installing; pass `--yes` in non-interactive environments
+such as CI.
+
+By default, `thv ai-plugin sync` targets every plugin-supporting client
+installed on the machine. Pass `--clients` to constrain sync to a specific set:
+
+```bash
+thv ai-plugin sync --project-root . --clients claude-code
+```
+
+Use `--check` to report drift without installing or writing anything. This is
+useful as a CI gate:
+
+```bash
+thv ai-plugin sync --project-root . --check
+```
+
+If you have project-scoped plugins that were installed before the lock file
+existed, `--adopt` records lock entries for them so subsequent syncs include
+them:
+
+```bash
+thv ai-plugin sync --project-root . --adopt
+```
+
+Use `--prune` to remove installs that are no longer in the lock file.
+
+See the
+[`thv ai-plugin sync` command reference](../reference/cli/thv_ai-plugin_sync.md)
+for all options.
+
+### Upgrade project-scoped plugins
+
+Upgrade the project's plugins to newer pinned content:
+
+```bash
+thv ai-plugin upgrade --project-root .
+```
+
+A version or tag change within the same OCI repository proceeds without
+`--allow-ref-change`, including a move to an older tag. ToolHive pins the
+resolved digest and blocks signer changes. If the catalog moves the plugin to a
+different repository, organization, or registry, the upgrade is blocked. Review
+the new source, then repeat the command with `--allow-ref-change` if you intend
+to permit that repository move. ToolHive prompts before installing the planned
+changes; pass `--yes` in non-interactive environments.
+
+Plugins pinned to an immutable reference (an OCI digest or a full Git commit
+hash) are reported as not upgradable, because there is nothing newer to resolve
+to.
+
+Use `--preview` to see what would change without persisting anything, or
+`--fail-on-changes` as a CI freshness gate that reports pending upgrades without
+installing them.
+
+See the
+[`thv ai-plugin upgrade` command reference](../reference/cli/thv_ai-plugin_upgrade.md)
+for all options.
 
 ## Manage local builds
 

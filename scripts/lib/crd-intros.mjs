@@ -159,6 +159,12 @@ export const intros = {
     intro:
       '`MCPExternalAuthConfig` configures how an MCP server or proxy authenticates to external services via token exchange or an embedded authorization server. It is referenced by [MCPServer](./mcpserver.mdx), [MCPRemoteProxy](./mcpremoteproxy.mdx), [MCPServerEntry](./mcpserverentry.mdx), and [VirtualMCPServer](./virtualmcpserver.mdx).',
     preferredType: 'embeddedAuthServer',
+    // `embeddedAuthServer` requires at least one of `upstreamProviders`,
+    // `delegateClients`, or a `trustedIssuers` entry with `jwtBearerGrant` (a
+    // CEL cross-field rule the generator's required-list walk can't see), so
+    // an `issuer`-only example fails admission. Force the most representative
+    // shape back in.
+    exampleForceFields: ['embeddedAuthServer.upstreamProviders'],
   },
   MCPTelemetryConfig: {
     slug: 'mcptelemetryconfig',
