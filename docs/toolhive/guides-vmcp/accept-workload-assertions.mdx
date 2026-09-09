@@ -2,57 +2,40 @@
 title: Accept workload assertions with the JWT-bearer grant
 description:
   Configure the RFC 7523 JWT-bearer grant so a trusted workload can get a
-  ToolHive token by presenting a signed assertion, with no client registration
-  at all.
+  ToolHive token by presenting a signed assertion, with no client registration.
 ---
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-An AI agent isn't a person who can type a password, and it usually isn't a
-long-lived service account either. It needs to prove who it is every time it
-runs, using whatever identity its platform already issued it (a cloud IAM role,
-a Kubernetes-native workload identity, or a service identity from your IdP). The
-JWT-bearer grant lets an agent use that identity directly to call a tool through
-vMCP: it presents a signed assertion from its identity provider straight to
-ToolHive's token endpoint, and ToolHive exchanges it for a ToolHive token, with
-no ToolHive client registration, no shared secret, nothing for an admin to
-provision ahead of time beyond trusting the issuer itself.
+Use the RFC 7523 JWT-bearer grant to let a trusted workload exchange a signed
+assertion for a ToolHive token through a Virtual MCP Server (vMCP). The workload
+does not need a ToolHive client registration or shared secret; it proves who it
+is with whatever identity its platform already issued it (a cloud IAM role, a
+Kubernetes-native workload identity, or a service identity from your IdP).
 
 :::info
 
 The `inboundGrants.jwtBearer.issuerPolicies` field covered here is also
 available on a plain `MCPServer` through `MCPExternalAuthConfig`'s
-`embeddedAuthServer` block, using the same shape shown below under
-`authServerConfig`. For the MCPServer field reference, see
+`embeddedAuthServer` block, using the same configuration structure shown below
+under `authServerConfig`. For the MCPServer field reference, see
 [Set up the embedded authorization server in Kubernetes](../guides-k8s/embedded-auth-server-k8s.mdx).
 
 :::
 
 If you're choosing between mechanisms, see the comparison table in
-[Delegate agent identity with token exchange](./delegate-agent-identity.mdx#overview).
+[Choose a way to get a token](./embedded-auth-server-vmcp.mdx#choose-a-way-to-get-a-token).
 The JWT-bearer grant answers "how does a workload with no registered client get
 a token at all?". RFC 8693 delegation answers a different question: "who is this
 agent acting for?"
 
-## How the grant works
+## Configure a trusted issuer
 
-The workload sends its assertion straight to `/oauth/token`; possession of the
-assertion is the only credential ToolHive checks:
-
-```bash title="POST /oauth/token"
-curl -s -X POST https://vmcp.example.com/oauth/token \
-  -d "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
-  -d "assertion=<SIGNED_ASSERTION>" \
-  -d "resource=https://vmcp.example.com/mcp-resource"
-```
-
-ToolHive mints a token for a synthetic client derived deterministically from the
-assertion's issuer and subject. There's no delegation and nothing to
-pre-register. To accept the assertion in the first place, ToolHive needs an
+To accept an assertion, ToolHive needs an
 `inboundGrants.jwtBearer.issuerPolicies` entry naming the workload's subject and
-the resource it may request. What that entry looks like depends on the identity
-provider:
+the resource it may request. These fragments nest under `spec.authServerConfig`.
+What the entry looks like depends on the identity provider:
 
 <Tabs groupId="jwt-bearer-issuer">
 <TabItem value="okta" label="Okta" default>
@@ -62,22 +45,19 @@ arbitrary caller-chosen string, so you can register it as the exact ToolHive
 token endpoint the workload's assertion will be presented to:
 
 ```yaml title="VirtualMCPServer: jwtBearer issuer policy"
-spec:
-  authServerConfig:
-    issuer: https://vmcp.example.com
-    trustedIssuers:
-      - name: okta-issuer
-        issuerUrl: 'https://<org>.okta.com/oauth2/<AUTH_SERVER_ID>'
-        jwksUrl: 'https://<org>.okta.com/oauth2/<AUTH_SERVER_ID>/v1/keys'
-    inboundGrants:
-      jwtBearer:
-        issuerPolicies:
-          - issuerRef: okta-issuer
-            maxAssertionAge: 5m
-            subjectBindings:
-              - subject: '<OKTA_SERVICE_APP_CLIENT_ID>'
-                allowedResources:
-                  - https://vmcp.example.com/mcp-resource
+trustedIssuers:
+  - name: okta-issuer
+    issuerUrl: 'https://<org>.okta.com/oauth2/<AUTH_SERVER_ID>'
+    jwksUrl: 'https://<org>.okta.com/oauth2/<AUTH_SERVER_ID>/v1/keys'
+inboundGrants:
+  jwtBearer:
+    issuerPolicies:
+      - issuerRef: okta-issuer
+        maxAssertionAge: 5m
+        subjectBindings:
+          - subject: '<OKTA_SERVICE_APP_CLIENT_ID>'
+            allowedResources:
+              - https://vmcp.example.com/mcp-resource
 ```
 
 </TabItem>
@@ -154,8 +134,9 @@ trusted issuer with a JWT-bearer grant is configured, but the operator's
 reconcile-time validation doesn't yet recognize `inboundGrants.jwtBearer`-only
 configuration as satisfying that requirement (it only checks the legacy
 per-issuer `jwtBearerGrant` field). Until that's fixed, a JWT-bearer-only
-`VirtualMCPServer` needs a placeholder `upstreamProviders` entry pointing at any
-reachable OAuth2 endpoint, with credentials that are never actually used:
+`VirtualMCPServer` needs a placeholder `upstreamProviders` entry. ToolHive never
+contacts this endpoint or uses its credentials, so any syntactically valid
+OAuth2 endpoint works:
 
 ```yaml title="Placeholder upstream (workaround)"
 upstreamProviders:
@@ -179,6 +160,23 @@ Remove the placeholder once the validator is updated to normalize
 
 :::
 
+## Request a token
+
+Once a trusted issuer is configured, the workload sends its assertion straight
+to `/oauth/token`; possession of the assertion is the only credential ToolHive
+checks:
+
+```bash title="POST /oauth/token"
+curl -s -X POST https://vmcp.example.com/oauth/token \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
+  -d "assertion=<SIGNED_ASSERTION>" \
+  -d "resource=https://vmcp.example.com/mcp-resource"
+```
+
+ToolHive mints a token for a synthetic client derived deterministically from the
+assertion's issuer and subject. There's no delegation and nothing to
+pre-register.
+
 ## Next steps
 
 - [Delegate agent identity with token exchange](./delegate-agent-identity.mdx)
@@ -193,12 +191,8 @@ Remove the placeholder once the validator is updated to normalize
   from RFC 7523. That one is how an already-registered client proves its
   identity instead of using a secret; the JWT-bearer grant covered on this page
   has no client at all.
-- [Delegate agent identity with token exchange](./delegate-agent-identity.mdx)
-  for RFC 8693 delegation and the full comparison of authentication patterns
 - [Embedded authorization server](../concepts/embedded-auth-server.mdx) for the
   OAuth flow, token storage, and the `act` claim
-- [Configure the vMCP embedded authorization server](./embedded-auth-server-vmcp.mdx)
-  for the full `authServerConfig` reference
 - [MCPExternalAuthConfig reference](../reference/crds/mcpexternalauthconfig.mdx)
   for the complete field list
 

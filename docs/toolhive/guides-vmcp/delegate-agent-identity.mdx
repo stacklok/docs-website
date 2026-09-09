@@ -2,47 +2,34 @@
 title: Delegate agent identity with token exchange
 description:
   Configure RFC 8693 token-exchange delegation so a pre-provisioned agent can
-  act on behalf of a user, including consent policy and secretless
-  private_key_jwt registration.
+  act on behalf of a user.
 ---
 
 When an AI agent acts on a user's behalf (reading their calendar, filing a
-ticket, calling a tool through vMCP), you usually want ToolHive to record both
-facts: who the human is, and which agent actually made the call, so audit logs
-and authorization policies can tell "Alice, directly" apart from "an agent,
-acting for Alice." RFC 8693 token-exchange delegation is how ToolHive does this:
-a pre-provisioned client exchanges a user's token for one that names both the
-user and the agent acting for them.
+ticket, calling a tool through a Virtual MCP Server (vMCP)), you usually want
+ToolHive to record both facts: who the human is, and which agent actually made
+the call, so audit logs and authorization policies can tell "Alice, directly"
+apart from "an agent, acting for Alice." RFC 8693 token-exchange delegation is
+how ToolHive does this: a pre-provisioned client exchanges a user's token for
+one that names both the user and the agent acting for them.
 
 :::info
 
 The fields covered here (`trustedIssuers` and `inboundGrants.tokenExchange`) are
 also available on a plain `MCPServer` through `MCPExternalAuthConfig`'s
-`embeddedAuthServer` block, using the same shape shown below under
-`authServerConfig`. This page focuses on VirtualMCPServer because delegation is
-primarily useful when an agent orchestrates calls across multiple backends on a
-user's behalf. For the MCPServer field reference, see
+`embeddedAuthServer` block, using the same configuration structure shown below
+under `authServerConfig`. This page focuses on VirtualMCPServer because
+delegation is primarily useful when an agent orchestrates calls across multiple
+backends on a user's behalf. For the MCPServer field reference, see
 [Set up the embedded authorization server in Kubernetes](../guides-k8s/embedded-auth-server-k8s.mdx).
 
 :::
 
 ## Overview
 
-The embedded authorization server supports four ways a caller can get a
-ToolHive-issued token, each suited to a different trust relationship:
-
-| Pattern                                                                            | Who authenticates                                        | Result                                                                       |
-| ---------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| [Confidential DCR](./embedded-auth-server-vmcp.mdx#allow-confidential-dcr-clients) | A client self-registers and gets a `client_secret`       | The client acts as itself; no delegation                                     |
-| [Backend token exchange](../concepts/backend-auth.mdx#token-exchange)              | A client presents its own token to a backend IdP         | The client's own identity, re-scoped to a backend audience                   |
-| RFC 8693 delegate-client exchange (this page)                                      | A pre-provisioned client presents a user's subject token | A token naming the user, with the agent recorded as the acting party (`act`) |
-| [RFC 7523 JWT-bearer grant](./accept-workload-assertions.mdx)                      | No client at all; the assertion itself is the credential | A token naming the workload; no delegation, no pre-registered client         |
-
-Delegation answers "who is this agent acting for?" A related but separate
-mechanism, the RFC 7523 JWT-bearer grant, answers "how does a workload with no
-registered client get a token at all?" See
-[Accept workload assertions with the JWT-bearer grant](./accept-workload-assertions.mdx)
-for that mechanism.
+If you're deciding which of ToolHive's ways to get a token fits your case, see
+the comparison in
+[Choose a way to get a token](./embedded-auth-server-vmcp.mdx#choose-a-way-to-get-a-token).
 
 This page covers how ToolHive **mints** a delegated token. If you're looking for
 how ToolHive **reads** an `act` claim on an incoming token, for example because
@@ -60,7 +47,7 @@ token, and which actors are allowed to act on behalf of the tokens it issues.
 For how to create the `delegateClients` entry itself (the client ID, secret,
 audiences, and scopes), see
 [Pre-provision confidential clients for token exchange](./embedded-auth-server-vmcp.mdx#pre-provision-confidential-clients-for-token-exchange).
-`delegateClients` is orthogonal to Dynamic Client Registration (plain,
+`delegateClients` is separate from Dynamic Client Registration (plain,
 confidential, or
 [`private_key_jwt`](#secretless-delegate-clients-with-private_key_jwt)). A
 `delegateClients` entry has a `clientId` and secret you choose and create
@@ -74,8 +61,7 @@ to accept a subject token from the external issuer; on its own it doesn't create
 a usable exchange path, because RFC 8693 requires authenticated access to
 `/oauth/token` and the delegate client is what authenticates.
 
-This section focuses on the issuer-policy side, which is what actually
-authorizes delegation:
+This section focuses on the issuer-policy side, which authorizes delegation:
 
 ```yaml title="VirtualMCPServer: delegation configuration"
 spec:
@@ -104,7 +90,7 @@ spec:
             # application's client ID, verified against a real Entra tenant.
             # Other issuers use a different claim name for the same purpose
             # (for example Okta's client_credentials tokens use "cid"); check
-            # your issuer's own token shape, or use the literal value
+            # your issuer's own token claims, or use the literal value
             # "client_id" (a sentinel, not a claim name) to read the token's
             # client_id claim.
             actorClaim: appid
@@ -298,10 +284,6 @@ one.
 
 - [Embedded authorization server](../concepts/embedded-auth-server.mdx) for the
   OAuth flow, token storage, and the `act` claim on the reading side
-- [Configure the vMCP embedded authorization server](./embedded-auth-server-vmcp.mdx)
-  for the full `authServerConfig` reference, including `delegateClients` setup
-- [Accept workload assertions with the JWT-bearer grant](./accept-workload-assertions.mdx)
-  for clientless workload authentication under RFC 7523 §2.1
 - [Backend authentication](../concepts/backend-auth.mdx) for the other backend
   authentication patterns
 - [MCPExternalAuthConfig reference](../reference/crds/mcpexternalauthconfig.mdx)
