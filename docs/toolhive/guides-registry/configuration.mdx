@@ -475,17 +475,63 @@ spec:
   # ... MCP server spec
 ```
 
-| Annotation                                   | Required | Description                                                                       |
-| -------------------------------------------- | -------- | --------------------------------------------------------------------------------- |
-| `toolhive.stacklok.dev/registry-export`      | Yes      | Must be `"true"` to include in registry                                           |
-| `toolhive.stacklok.dev/registry-url`         | Yes      | The external endpoint URL for this server                                         |
-| `toolhive.stacklok.dev/registry-description` | Yes      | Description text displayed in registry listings                                   |
-| `toolhive.stacklok.dev/registry-title`       | No       | Human-friendly display name for the registry entry (overrides the generated name) |
-| `toolhive.stacklok.dev/registry-icon`        | No       | Icon URL displayed alongside the entry in registry listings                       |
-| `toolhive.stacklok.dev/registry-category`    | No       | Category label used to group and filter this entry (added as a ToolHive tag)      |
-| `toolhive.stacklok.dev/tools`                | No       | JSON array of tool name strings (e.g., `["get_weather","get_forecast"]`)          |
-| `toolhive.stacklok.dev/tool-definitions`     | No       | JSON array of tool definitions with MCP tool metadata (name, description, schema) |
-| `toolhive.stacklok.dev/authz-claims`         | No       | JSON object of authorization claims for per-entry visibility control              |
+| Annotation                                   | Required | Description                                                                               |
+| -------------------------------------------- | -------- | ----------------------------------------------------------------------------------------- |
+| `toolhive.stacklok.dev/registry-export`      | Yes      | Must be `"true"` to include in registry                                                   |
+| `toolhive.stacklok.dev/registry-url`         | Yes      | The external endpoint URL for this server                                                 |
+| `toolhive.stacklok.dev/registry-description` | Yes      | Description text displayed in registry listings                                           |
+| `toolhive.stacklok.dev/registry-title`       | No       | Human-friendly display name for the registry entry (overrides the generated name)         |
+| `toolhive.stacklok.dev/registry-icon`        | No       | Icon URL displayed alongside the entry in registry listings                               |
+| `toolhive.stacklok.dev/registry-category`    | No       | Category label used to group and filter this entry (added as a ToolHive tag)              |
+| `toolhive.stacklok.dev/tools`                | No       | JSON array of tool name strings (e.g., `["get_weather","get_forecast"]`)                  |
+| `toolhive.stacklok.dev/tool-definitions`     | No       | JSON array of tool definitions with MCP tool metadata (name, description, schema)         |
+| `toolhive.stacklok.dev/authz-claims`         | No       | JSON object of authorization claims for per-entry visibility control                      |
+| `toolhive.stacklok.dev/registry-version`     | No       | Semantic version string used as the entry's version (see [Entry version](#entry-version)) |
+
+#### Entry version
+
+Each registry entry has a version that appears in its identifier and in
+`GET .../versions/{version}` URLs. For entries discovered from Kubernetes
+resources, the version is resolved with this precedence:
+
+1. The `toolhive.stacklok.dev/registry-version` annotation, when set to a value
+   the server accepts as publishable.
+2. The container image tag for resources that run an image. When the reference
+   pins both a tag and a digest (for example, `db:1.4.2@sha256:...`), the tag is
+   used and the digest is ignored for version selection.
+3. `1.0.0` as the fallback.
+
+`VirtualMCPServer` and `MCPRemoteProxy` resources run no image, so the
+annotation is the only route to a non-default version.
+
+A publishable value is a three-part semantic version (`major.minor.patch`),
+optionally `v`-prefixed and optionally carrying a prerelease (for example,
+`v2.1.0-rc.1`). Build metadata (`+build`) is rejected because semver comparison
+ignores it, so two versions differing only in metadata would sort equal but be
+stored as distinct entries. The value must be 255 characters or fewer.
+
+Values the server can't publish (reserved strings like `latest`, ranges like
+`1.x`, whitespace, or oversized values) are ignored, and the server falls back
+to the image tag (when publishable) or `1.0.0`. An ignored annotation is logged
+as a warning naming the server and namespace so operators can correct it. An
+unpublishable image tag (`latest`, channel names, bare digests, or fewer than
+three parts like `3.12`) also falls through without a warning, since untagged
+and `latest` images are routine.
+
+The `v` prefix is preserved as written: `v2.1.0` stays `v2.1.0` in the entry's
+identifier and URLs.
+
+:::info[Changed in v1.5.2]
+
+Entries discovered from Kubernetes resources previously always published as
+`1.0.0`. After upgrading, entries whose images carry a semver-compatible tag
+move to that tag on the next reconcile, and the previous `1.0.0` entry is
+removed. `GET .../versions/1.0.0` starts returning 404 for those entries, and
+any cached version ID breaks. Set the `toolhive.stacklok.dev/registry-version`
+annotation to override this per resource. Entries with `latest`, channel-name,
+untagged, or digest-only images are unaffected.
+
+:::
 
 #### Tool definitions format
 
