@@ -16,8 +16,8 @@ user and the agent acting for them.
 
 :::info
 
-The fields covered here (`trustedIssuers` and `delegateClients`) are also
-available on a plain `MCPServer` through `MCPExternalAuthConfig`'s
+The fields covered here (`trustedIssuers` and `inboundGrants.tokenExchange`) are
+also available on a plain `MCPServer` through `MCPExternalAuthConfig`'s
 `embeddedAuthServer` block, using the same shape shown below under
 `authServerConfig`. This page focuses on VirtualMCPServer because delegation is
 primarily useful when an agent orchestrates calls across multiple backends on a
@@ -51,11 +51,11 @@ your own IdP already performs RFC 8693 delegation upstream of ToolHive, see
 
 ## RFC 8693 delegation with a pre-provisioned delegate client
 
-Delegation requires two pieces of configuration on `authServerConfig`: a
-`delegateClients` entry for the agent that will perform the exchange, and a
-`trustedIssuers` entry that tells ToolHive which external issuer's tokens it
-will accept as a subject token, and which actors are allowed to act on behalf of
-the tokens it issues.
+Delegation requires two pieces of configuration on `authServerConfig`: an
+`inboundGrants.tokenExchange.delegateClients` entry for the agent that will
+perform the exchange, and an `inboundGrants.tokenExchange.issuerPolicies` entry
+that tells ToolHive which external issuer's tokens it will accept as a subject
+token, and which actors are allowed to act on behalf of the tokens it issues.
 
 For how to create the `delegateClients` entry itself (the client ID, secret,
 audiences, and scopes), see
@@ -65,16 +65,16 @@ confidential, or
 [`private_key_jwt`](#secretless-delegate-clients-with-private_key_jwt)). A
 `delegateClients` entry has a `clientId` and secret you choose and create
 yourself, never one a client obtains by registering itself. A client uses one
-path or the other; `trustedIssuers[].allowedDelegateClients` (below) is what
+path or the other; `issuerPolicies[].allowedDelegateClients` (below) is what
 authorizes either kind of `client_id` to actually perform an exchange, once it
 has one.
 
-Both entries are required. `trustedIssuers` grants a delegate client permission
+Both entries are required. The issuer policy grants a delegate client permission
 to accept a subject token from the external issuer; on its own it doesn't create
 a usable exchange path, because RFC 8693 requires authenticated access to
 `/oauth/token` and the delegate client is what authenticates.
 
-This section focuses on the `trustedIssuers` side, which is what actually
+This section focuses on the issuer-policy side, which is what actually
 authorizes delegation:
 
 ```yaml title="VirtualMCPServer: delegation configuration"
@@ -82,46 +82,57 @@ spec:
   authServerConfig:
     issuer: https://vmcp.example.com
     # ...
-    delegateClients:
-      - clientId: coding-agent
-        clientSecretRef:
-          name: coding-agent-secret
-          key: client-secret
-        scopes:
-          - openid
-        audiences:
-          - https://vmcp.example.com/mcp-resource
     trustedIssuers:
-      - issuerUrl: 'https://sts.windows.net/<TENANT_ID>/'
-        expectedAudience: 'https://vmcp.example.com/mcp-resource'
+      - name: entra-issuer
+        issuerUrl: 'https://sts.windows.net/<TENANT_ID>/'
         jwksUrl: 'https://login.windows.net/<TENANT_ID>/discovery/v2.0/keys'
-        # "appid" is where Microsoft Entra v1 tokens carry the calling
-        # application's client ID, verified against a real Entra tenant.
-        # Other issuers use a different claim name for the same purpose (for
-        # example Okta's client_credentials tokens use "cid"); check your
-        # issuer's own token shape, or use the literal value "client_id"
-        # (a sentinel, not a claim name) to read the token's client_id claim.
-        actorClaim: appid
-        allowedActors:
-          - <APP1_CLIENT_ID>
-        allowedDelegateClients:
-          - coding-agent
+    inboundGrants:
+      tokenExchange:
+        delegateClients:
+          - clientId: coding-agent
+            clientSecretRef:
+              name: coding-agent-secret
+              key: client-secret
+            scopes:
+              - openid
+            audiences:
+              - https://vmcp.example.com/mcp-resource
+        issuerPolicies:
+          - issuerRef: entra-issuer
+            expectedAudience: 'https://vmcp.example.com/mcp-resource'
+            # "appid" is where Microsoft Entra v1 tokens carry the calling
+            # application's client ID, verified against a real Entra tenant.
+            # Other issuers use a different claim name for the same purpose
+            # (for example Okta's client_credentials tokens use "cid"); check
+            # your issuer's own token shape, or use the literal value
+            # "client_id" (a sentinel, not a claim name) to read the token's
+            # client_id claim.
+            actorClaim: appid
+            allowedActors:
+              - <APP1_CLIENT_ID>
+            allowedDelegateClients:
+              - coding-agent
 ```
 
-`trustedIssuers[].issuerUrl` and `jwksUrl` identify the external identity
-provider that minted the subject token the agent will present (in this example,
-a user's Entra sign-in as a separate application, `App1`). `expectedAudience`
-must match the audience already present on that subject token. `actorClaim`
-names the claim carrying the calling application's client ID; it defaults to
-`azp` when you leave it unset. `allowedDelegateClients` is what binds an
-external actor to a specific ToolHive delegate client. Without it, every
-confidential client holding the token-exchange grant would be equivalent for
-delegation purposes. Set it to `["*"]` to declare that permissiveness
-explicitly; the wildcard must stand alone, and combining it with specific client
-IDs is rejected at admission.
+`trustedIssuers[].name` gives this issuer declaration a stable identifier that
+`issuerPolicies[].issuerRef` binds a grant policy to; `issuerUrl` and `jwksUrl`
+identify the external identity provider that minted the subject token the agent
+will present (in this example, a user's Entra sign-in as a separate application,
+`App1`). `expectedAudience` must match the audience already present on that
+subject token. `actorClaim` names the claim carrying the calling application's
+client ID; it defaults to `azp` when you leave it unset.
+`allowedDelegateClients` is what binds an external actor to a specific ToolHive
+delegate client. Without it, every confidential client holding the
+token-exchange grant would be equivalent for delegation purposes. Set it to
+`["*"]` to declare that permissiveness explicitly; the wildcard must stand
+alone, and combining it with specific client IDs is rejected at admission — and
+if you also enable `allowMayAct`, set it explicitly to `false` rather than
+omitting it, since an omitted `allowMayAct` combined with the wildcard is
+rejected by a validation rule that can't yet distinguish "not set" from "false"
+([tracked upstream](https://github.com/stacklok/toolhive/issues/6531)).
 
-For the complete `trustedIssuers` field list, including `jwksUrl`,
-`caBundleRef`, `allowPrivateIPs`, and the per-issuer `insecureAllowHTTP`, see
+For the complete field list, including `jwksUrl`, `caBundleRef`,
+`allowPrivateIPs`, and the per-issuer `insecureAllowHTTP`, see
 [the `MCPExternalAuthConfig` schema reference](../reference/crds/mcpexternalauthconfig.mdx).
 
 ### Trust a private issuer CA
@@ -190,9 +201,9 @@ on top of that.
 
 ## Choosing a consent policy
 
-`trustedIssuers` entries support three independent ways to authorize delegation
-from an external issuer. Any one of them being satisfied is sufficient; they
-aren't layered as an all-must-pass chain:
+`inboundGrants.tokenExchange.issuerPolicies` entries support three independent
+ways to authorize delegation from an external issuer. Any one of them being
+satisfied is sufficient; they aren't layered as an all-must-pass chain:
 
 | Field           | How it authorizes                                                                                                                                                                                                                                                                                                                                                                                                 |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -276,15 +287,15 @@ one.
 
 ## Troubleshooting
 
-| Error                                                                                                                                                    | Likely cause                                                                                                                                                                     |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invalid_client` (exact hint varies by cause: wrong secret, wrong `token_endpoint_auth_method`, or a public client attempting a confidential-only grant) | The delegate client must be confidential. Verify `delegateClients[].clientSecretRef` is set and the client authenticated with the matching secret and method.                    |
-| `invalid_grant`: "The subject token does not authorize this client to act on behalf of the subject."                                                     | The subject token's `may_act.sub` doesn't match the actor ToolHive resolved for this request.                                                                                    |
-| `invalid_grant`: "This client is not authorized to exchange subject tokens from the external actor's issuer."                                            | The authenticated client isn't in `trustedIssuers[].allowedDelegateClients` for the issuer that minted the subject token.                                                        |
-| `invalid_grant`: "The subject token was issued to a different client."                                                                                   | The subject token's own `client_id` claim doesn't match the authenticated delegate client, and the client isn't in `allowedDelegateClients`.                                     |
-| `invalid_request`: "The subject token is invalid or could not be verified."                                                                              | The subject token failed signature, issuer, or audience validation against every configured `trustedIssuers` entry.                                                              |
-| CRD rejected: "allowedDelegateClients is required when expectedAudience, actorClaim, actorMatcher, or allowMayAct is set"                                | A `trustedIssuers` entry configures delegation fields without also setting `allowedDelegateClients`. Add it, or remove the delegation fields if only `jwtBearerGrant` is needed. |
-| CRD rejected: "delegateClients with an HTTP issuer require insecureAllowConfidentialOverLoopbackHTTP to be explicitly enabled"                           | A delegate client uses a plain-HTTP issuer. Use an `https://` issuer, or for local development set `insecureAllowConfidentialOverLoopbackHTTP: true` with a loopback issuer.     |
+| Error                                                                                                                                                    | Likely cause                                                                                                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_client` (exact hint varies by cause: wrong secret, wrong `token_endpoint_auth_method`, or a public client attempting a confidential-only grant) | The delegate client must be confidential. Verify `inboundGrants.tokenExchange.delegateClients[].clientSecretRef` is set and the client authenticated with the matching secret and method. |
+| `invalid_grant`: "The subject token does not authorize this client to act on behalf of the subject."                                                     | The subject token's `may_act.sub` doesn't match the actor ToolHive resolved for this request.                                                                                             |
+| `invalid_grant`: "This client is not authorized to exchange subject tokens from the external actor's issuer."                                            | The authenticated client isn't in `issuerPolicies[].allowedDelegateClients` for the issuer that minted the subject token.                                                                 |
+| `invalid_grant`: "The subject token was issued to a different client."                                                                                   | The subject token's own `client_id` claim doesn't match the authenticated delegate client, and the client isn't in `allowedDelegateClients`.                                              |
+| `invalid_request`: "The subject token is invalid or could not be verified."                                                                              | The subject token failed signature, issuer, or audience validation against every configured `trustedIssuers` entry.                                                                       |
+| CRD rejected: `issuerPolicies[]: allowedDelegateClients: Required value`                                                                                 | An `inboundGrants.tokenExchange.issuerPolicies` entry is missing `allowedDelegateClients`. Add it.                                                                                        |
+| CRD rejected: "delegateClients with an HTTP issuer require insecureAllowConfidentialOverLoopbackHTTP to be explicitly enabled"                           | A delegate client uses a plain-HTTP issuer. Use an `https://` issuer, or for local development set `insecureAllowConfidentialOverLoopbackHTTP: true` with a loopback issuer.              |
 
 ## Next steps
 

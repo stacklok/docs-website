@@ -528,21 +528,24 @@ correctly.
 Confidential DCR is registration-driven and unauthenticated. For a client that
 you control and know in advance (typically a backend service that performs RFC
 8693 token exchange against the embedded auth server), pre-provision it with
-`delegateClients` instead. Each entry references a Kubernetes Secret for the
-client secret and narrows the audiences and scopes the client may request:
+`inboundGrants.tokenExchange.delegateClients` instead. Each entry references a
+Kubernetes Secret for the client secret and narrows the audiences and scopes the
+client may request:
 
 ```yaml title="MCPExternalAuthConfig: delegate clients"
 spec:
   embeddedAuthServer:
-    delegateClients:
-      - clientId: backend-exchange
-        clientSecretRef:
-          name: backend-exchange-client-secret
-          key: client-secret
-        audiences:
-          - https://backend.example.com
-        scopes:
-          - backend-api:read
+    inboundGrants:
+      tokenExchange:
+        delegateClients:
+          - clientId: backend-exchange
+            clientSecretRef:
+              name: backend-exchange-client-secret
+              key: client-secret
+            audiences:
+              - https://backend.example.com
+            scopes:
+              - backend-api:read
 ```
 
 `clientId`, `clientSecretRef`, `audiences`, and `scopes` are all required.
@@ -558,35 +561,41 @@ development, you can use a plain-HTTP loopback issuer with
 `insecureAllowConfidentialOverLoopbackHTTP: true`. ToolHive rejects a plain-HTTP
 non-loopback issuer.
 
-To accept subject tokens minted by an external OIDC issuer, pair this with a
-`trustedIssuers` entry. The example below configures a delegate client named
-`coding-agent` to exchange user tokens from Microsoft Entra ID. It uses
-`disableUpstreamTokenInjection` because the backend is public: ToolHive
-validates the delegated token, then forwards the request without a credential.
+To accept subject tokens minted by an external OIDC issuer, pair this with an
+`inboundGrants.tokenExchange.issuerPolicies` entry. The example below configures
+a delegate client named `coding-agent` to exchange user tokens from Microsoft
+Entra ID. It uses `disableUpstreamTokenInjection` because the backend is public:
+ToolHive validates the delegated token, then forwards the request without a
+credential.
 
 ```yaml title="MCPExternalAuthConfig: external-user delegation"
 spec:
   embeddedAuthServer:
     issuer: 'https://<MCP_SERVER_PROXY_HOST>:<PROXY_PORT>'
     disableUpstreamTokenInjection: true
-    delegateClients:
-      - clientId: coding-agent
-        clientSecretRef:
-          name: coding-agent-secret
-          key: client-secret
-        audiences:
-          - 'https://<RESOURCE_IDENTIFIER>'
-        scopes:
-          - openid
     trustedIssuers:
-      - issuerUrl: 'https://sts.windows.net/<TENANT_ID>/'
-        expectedAudience: 'https://<RESOURCE_IDENTIFIER>'
+      - name: entra-issuer
+        issuerUrl: 'https://sts.windows.net/<TENANT_ID>/'
         jwksUrl: 'https://login.windows.net/<TENANT_ID>/discovery/v2.0/keys'
-        actorClaim: appid
-        allowedActors:
-          - '<EXTERNAL_CLIENT_ID>'
-        allowedDelegateClients:
-          - coding-agent
+    inboundGrants:
+      tokenExchange:
+        delegateClients:
+          - clientId: coding-agent
+            clientSecretRef:
+              name: coding-agent-secret
+              key: client-secret
+            audiences:
+              - 'https://<RESOURCE_IDENTIFIER>'
+            scopes:
+              - openid
+        issuerPolicies:
+          - issuerRef: entra-issuer
+            expectedAudience: 'https://<RESOURCE_IDENTIFIER>'
+            actorClaim: appid
+            allowedActors:
+              - '<EXTERNAL_CLIENT_ID>'
+            allowedDelegateClients:
+              - coding-agent
 ```
 
 The `issuer` must be the `MCPServer` proxy URL. Set the same URL on the
