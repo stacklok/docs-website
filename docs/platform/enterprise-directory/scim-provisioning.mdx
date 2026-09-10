@@ -1,30 +1,24 @@
 ---
-title: SCIM provisioning
+title: Configure SCIM provisioning
 sidebar_label: SCIM provisioning
 description:
   Provision directory users and groups automatically from Okta, Entra ID, or any
   SCIM 2.0 identity provider.
 ---
 
-SCIM lets your identity provider keep the directory current: users appear when
-they join, group membership follows your provider's groups, and deactivation
-propagates when someone leaves. The platform implements SCIM 2.0
+Use System for Cross-domain Identity Management (SCIM) to provision directory
+users, groups, memberships, and deactivation from your identity provider.
+Stacklok Enterprise implements SCIM 2.0
 ([RFC 7644](https://datatracker.ietf.org/doc/html/rfc7644)) as a service
-provider, so your provider pushes changes rather than the platform polling.
+provider.
 
-Provisioning is the recommended way to populate the directory. Records it
-creates are marked with a SCIM source, which is how an administrator knows to
-make edits in the identity provider rather than in the console.
+SCIM records display their source in the console. Update these records in the
+identity provider.
 
 ## Declare the issuer first
 
-Provisioning is configured in the platform chart, not in the console. Before you
-touch your identity provider, add an entry for it under `directory.issuers` and
-create the Secret holding the token it will authenticate with.
-
-The token is **yours to generate**. Nothing issues it for you: the platform
-compares what your provider sends against the value in this Secret, so create a
-long random string and put it somewhere your provider can read it from too.
+Add the provider under `directory.issuers` in the platform chart and create a
+Secret containing a random bearer token:
 
 ```bash
 kubectl create secret generic directory-scim-token-okta \
@@ -32,7 +26,7 @@ kubectl create secret generic directory-scim-token-okta \
   --from-literal=token="$(openssl rand -base64 32)"
 ```
 
-Then declare the issuer:
+Declare the issuer:
 
 ```yaml title="values.yaml"
 directory:
@@ -50,7 +44,7 @@ directory:
         key: 'token'
 ```
 
-| Field                   | What to put in it                                                                  |
+| Field                   | Value                                                                              |
 | ----------------------- | ---------------------------------------------------------------------------------- |
 | `id`                    | A short name you choose. It becomes a path segment, so keep it URL-safe            |
 | `issuer_url`            | Your provider's OIDC discovery base URL, HTTPS only                                |
@@ -64,21 +58,17 @@ provider carries that identifier somewhere else.
 
 ## The endpoint
 
-Once the issuer is declared, its base URL is the `id` you chose:
+The issuer's `id` determines its base URL:
 
 ```text
 https://<PLATFORM_HOST>/scim/<ISSUER_ID>/v2
 ```
 
-Point your identity provider's provisioning configuration at that base, and give
-it the bearer token from the Secret. The `/Users` and `/Groups` collections sit
-beneath it, along with the standard `/ServiceProviderConfig`, `/Schemas`, and
-`/ResourceTypes` discovery endpoints.
+Configure the identity provider with this base URL and the bearer token from the
+Secret. Standard discovery endpoints and the `/Users` and `/Groups` collections
+are available beneath the base path.
 
-Scoping the path per issuer means two identity providers can provision into the
-same directory without colliding, and a record always carries the issuer it came
-from. Adding a second provider is another entry in `issuers` with its own `id`
-and its own Secret.
+Give each additional provider its own `issuers` entry, `id`, and Secret.
 
 ## What is supported
 
@@ -92,18 +82,14 @@ and its own Secret.
 | ETags            | No        |                                                                     |
 | Password change  | No        | Credentials stay with your identity provider                        |
 
-Your provider reads these from `/ServiceProviderConfig` and adapts on its own,
-so there is nothing to configure for the unsupported items. Bulk is the only one
-worth knowing about in advance: a provider that would have batched will issue
-individual requests instead, which is slower on a large initial sync but
-otherwise equivalent.
+Providers read these capabilities from `/ServiceProviderConfig`. Large initial
+syncs use individual requests because the service does not support SCIM bulk
+operations.
 
 ## How records are matched
 
-A user is keyed on the external identifier your provider sends, scoped to the
-issuer. That is deliberately not the email address: people change names and
-addresses, and matching on a stable provider-side identifier means a rename
-updates the existing record instead of creating a second one.
+The directory matches a user by external identifier and issuer. Use a stable
+provider identifier so email or name changes update the existing record.
 
 Group membership can reference both users and other groups, so a nested group
 structure in your provider arrives as
@@ -122,48 +108,60 @@ structure in your provider arrives as
 6. Push an initial sync, then confirm in the console under **User management**
    that users and groups appear with a SCIM source.
 
-Start with a small test group rather than your whole directory. The initial sync
-is the step most likely to surface a mapping problem, and it is much easier to
-read the result on ten records than on ten thousand.
+Start with a small test group to validate mappings before a full sync.
 
 ## After provisioning
 
-Group names arriving from your provider are what you will grant connector access
-to and address budgets against, so it is worth agreeing on them before wide
-rollout. Renaming a group later is safe, but every grant and budget referencing
-it needs revisiting.
+Connector grants and budgets reference the provisioned directory groups. Define
+a stable naming convention before rollout and update references after renaming a
+group.
 
-If you also use cluster-level authorization policy, provisioning from the same
-provider groups you name in that policy is what keeps the
-[two group models](../concepts/two-group-models.mdx) aligned. That alignment is
-a convention you maintain; the platform does not enforce it.
+If you use cluster authorization policy, align SCIM directory groups with the
+OIDC group claims used in policy. See
+[Directory groups and OIDC claim groups](../concepts/two-group-models.mdx).
 
 ## Next steps
 
 - [Users and groups](./users-and-groups.mdx) for what these records govern.
-- [Identity providers](./identity-providers.mdx), which is a different thing:
-  the upstream services connectors authenticate against, not the provider that
-  signs your users in.
+- [Identity providers](./identity-providers.mdx) to configure upstream OAuth for
+  connectors.
 
 ## Troubleshooting
 
-**Your provider cannot authenticate.** The token it sends is compared directly
-against the Secret named in `scim_bearer_token_ref`, so the two must match
-exactly. Check for a trailing newline in the Secret value, and that the Secret
-is in the namespace the reference names.
+<details>
+<summary>Your provider cannot authenticate</summary>
 
-**The endpoint is not found.** The path segment is the issuer's `id` from
-`directory.issuers`, not your provider's name. Confirm the release has been
-upgraded since you added the entry.
+Confirm that the token matches the Secret named in `scim_bearer_token_ref`.
+Check the Secret namespace and remove trailing newlines from the value.
 
-**Users provisioned but no groups.** Group provisioning is usually a separate
-switch from user provisioning, and providers commonly require users to sync
-first.
+</details>
 
-**Deactivation not taking effect.** Check that your provider is configured to
-send deactivation rather than deletion. A deactivated user resolves to nothing
-here, which is the intended end state.
+<details>
+<summary>The endpoint is not found</summary>
 
-**Duplicate users.** Almost always a changed external identifier on the provider
-side, which the platform reads as a new person. Reconcile in the provider, then
-resync.
+Use the issuer `id` from `directory.issuers` in the path and confirm that the
+release includes your updated values.
+
+</details>
+
+<details>
+<summary>Users are provisioned but groups are missing</summary>
+
+Enable group provisioning after the initial user sync.
+
+</details>
+
+<details>
+<summary>User deactivation does not take effect</summary>
+
+Configure the provider to send deactivation.
+
+</details>
+
+<details>
+<summary>Duplicate users appear</summary>
+
+Check whether the external identifier changed in the provider. Reconcile the
+records there, then resync.
+
+</details>

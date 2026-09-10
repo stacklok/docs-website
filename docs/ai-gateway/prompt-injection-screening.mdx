@@ -6,20 +6,14 @@ description:
   including rollout from monitor to enforce, IAM setup, and cost.
 ---
 
-Prompt injection screening checks every inbound prompt against a cloud screening
-service before it reaches your model provider. It is configured under
-`spec.guardrails` on the `AIGateway` resource.
-
-Screening references a guardrail you have already created in your own AWS
-account, by ID and version. The gateway does not create or manage the guardrail
-itself, so the filters, thresholds, and denied topics stay under your control in
-AWS.
+Prompt injection screening sends inbound prompts to an AWS Bedrock Guardrail
+before the model request reaches its provider. Configure the existing guardrail
+ID and version under `spec.guardrails` on the `AIGateway` resource.
 
 :::note
 
-This is a different surface from [PCI/PII controls](./pci-pii-controls.mdx),
-which scan for sensitive data in-cluster and never call out to AWS. The two are
-configured independently and can be used together or separately.
+[PCI/PII controls](./pci-pii-controls.mdx) scan sensitive data in your cluster.
+Configure either control independently or use them together.
 
 :::
 
@@ -42,26 +36,20 @@ configured independently and can be used together or separately.
 | `failurePolicy`             | `Fail`    | What happens if the screening call itself fails                      |
 | `unscreenableContentPolicy` | `Deny`    | What happens to content that cannot be turned into text              |
 
-`failurePolicy` and `unscreenableContentPolicy` look similar and are
-deliberately separate. A timeout or an AWS error is a **failure**, governed by
-`failurePolicy`. An image-only message that contains no text to screen is not a
-failure, it is **unscreenable**, and is governed by `unscreenableContentPolicy`.
-Vision workloads usually want `Admit` for the second while keeping `Fail` for
-the first.
+`failurePolicy` handles timeouts and AWS errors. `unscreenableContentPolicy`
+handles content that the gateway cannot convert to text, such as an image-only
+message. For vision workloads, consider `Admit` for unscreenable content while
+retaining `Fail` for screening errors.
 
-Two situations count as unscreenable: a message whose user content is present
-but not text, such as an image, and a request body that carries no recognizable
-chat container at all. The second usually means a provider was connected whose
-request shape the screening layer has not been taught to read, so it is worth
-alerting on separately. Either decision is recorded in the audit trail. A
-genuinely empty body, or a chat request with no user turn, is not unscreenable
-and is admitted without screening.
+The gateway also marks unrecognized provider request formats as unscreenable.
+Alert on this reason because it can indicate that prompts are bypassing
+screening. Empty request bodies and requests without a user message are admitted
+without screening. The audit trail records each decision.
 
 ## Enable screening
 
-Start in `Monitor` with `failurePolicy: Ignore`. Nothing can be blocked in this
-posture, so you can observe verdicts and measure cost against real traffic
-first.
+Start in `Monitor` with `failurePolicy: Ignore` to measure verdicts, latency,
+and cost before enforcing the control.
 
 ```yaml title="aigateway.yaml"
 apiVersion: ai-gateway.stacklok.dev/v1alpha1
@@ -84,8 +72,7 @@ spec:
       region: us-east-1
 ```
 
-Once you are satisfied with the verdicts and the cost, switch both knobs and
-re-apply. The gateway reconciles within a few seconds.
+After validation, enforce verdicts and fail closed on screening errors:
 
 ```yaml
 mode: Enforce
@@ -109,16 +96,14 @@ the guardrail:
 }
 ```
 
-`bedrock:ApplyGuardrail` is a data-plane action, and it is not implied by the
-control-plane actions `bedrock:GetGuardrail` or `bedrock:ListGuardrails`. A role
-that can list and describe guardrails but lacks `ApplyGuardrail` fails on every
-screening call. That is treated as a call failure and resolved by
-`failurePolicy`, so it does not surface as a configuration error at startup.
+Grant `bedrock:ApplyGuardrail` explicitly. The control-plane actions
+`bedrock:GetGuardrail` and `bedrock:ListGuardrails` do not include this
+permission. Missing permission causes screening calls to follow `failurePolicy`.
 
 ### IRSA
 
 The gateway creates a ServiceAccount named `<GATEWAY_NAME>-guardrails-adapter`.
-Annotating it with the IAM role is your step, not the gateway's:
+Annotate it with the IAM role:
 
 ```bash
 kubectl annotate serviceaccount \
@@ -127,20 +112,17 @@ kubectl annotate serviceaccount \
   eks.amazonaws.com/role-arn=arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME>
 ```
 
-Annotations are merged on each reconcile rather than overwritten, so yours
-survives resource updates. Restart the screening pod once after annotating, so
-the new role token is projected into it.
+The operator preserves the annotation during reconciliation. Restart the
+screening pod to project the role token.
 
 ### EKS Pod Identity
 
 Associate the same ServiceAccount with an IAM role through an EKS Pod Identity
 association, and no annotation is needed.
 
-Pod Identity resolves credentials from a node-local agent on a link-local
-address over plain HTTP. The gateway's default network policy already allows
-exactly that egress. If you replace or tighten that policy, keep the rule:
-without it the credential fetch is dropped silently rather than refused, so the
-only symptom is every screening call timing out and failing closed.
+The default network policy allows access to the EKS Pod Identity node agent. If
+you replace the policy, preserve this egress rule. Blocking it causes credential
+requests and screening calls to time out.
 
 ### Static credentials
 
@@ -190,9 +172,8 @@ Verdicts reach you three ways:
   policy type, increments once per blocked category in both `Monitor` and
   `Enforce` mode. `aigw.guardrail.unscreenable`, labeled by reason, increments
   once per request that could not be screened, under both `Deny` and `Admit`.
-  Alert on the unrecognized-shape reason in particular: it means a connected
-  provider's request shape is not being read, whether or not requests are
-  currently being blocked because of it.
+  Alert on the `unrecognized-shape` reason because it indicates that the gateway
+  cannot extract text from a connected provider's requests.
 - **Component logs**, which name the categories that fired:
 
   ```bash
@@ -203,30 +184,12 @@ Verdicts reach you three ways:
 
 ## Cost
 
-Bedrock Guardrails bills per 1,000 text units, where a text unit is up to 1,000
-characters. Blocked requests still incur the evaluation cost. These figures are
-estimates; see the
-[AWS Bedrock pricing page](https://aws.amazon.com/bedrock/pricing/) for current
-rates.
+Bedrock Guardrails bills by text units and filter type. Blocked requests still
+incur evaluation cost. Review current rates on the
+[AWS Bedrock pricing page](https://aws.amazon.com/bedrock/pricing/).
 
-| Filter                                   | Rate per 1,000 text units |
-| ---------------------------------------- | ------------------------- |
-| Content filters, including prompt attack | $0.15                     |
-| Denied topics                            | $0.15                     |
-| Sensitive information, managed PII types | $0.10                     |
-| Sensitive information, regex patterns    | free                      |
-| Word filters                             | free                      |
-
-A prompt-attack filter alone is $0.15; with PII, $0.25; with denied topics on
-top, $0.40. At $0.25 per 1,000 text units, a knowledge worker sending around 20
-prompts a day costs roughly $0.11 a month, a developer using a coding assistant
-roughly $0.44, and heavy agent use around $2.20.
-
-Two things push that up. A threshold that fires too broadly inflates the bill
-without reducing model spend, since blocked requests are still evaluated, which
-is the practical reason to start in `Monitor` and measure the real block rate.
-And a guardrail in a different AWS region from your cluster adds cross-region
-data transfer, so colocate them where you can.
+Use `Monitor` mode to estimate cost against representative traffic. Deploy the
+guardrail in the same AWS region as the cluster to avoid cross-region transfer.
 
 The gateway emits no per-request cost telemetry for screening. Track that spend
 through your AWS billing tooling.
@@ -240,22 +203,20 @@ through your AWS billing tooling.
 
 ## Troubleshooting
 
-**`WebhooksReady=False` with a probe failure for guardrails.** The gateway pings
-the screening component once per reconcile to set this status. Read the detail
-rather than the condition alone:
+<details>
+<summary>`WebhooksReady=False` reports a guardrails probe failure</summary>
+
+The gateway pings the screening component once per reconcile to set this status.
+Inspect the probe details:
 
 ```bash
 kubectl get aigw <NAME> -n <NAMESPACE> \
   -o jsonpath='{.status.webhooks}' | jq
 ```
 
-A transport timeout with no matching entry in the component's own log means the
-ping never arrived, and the usual cause is a network policy. The default policy
-admits exactly two ingress peers: the gateway's main processor, which carries
-live traffic, and the operator, which sends the ping. If you replace that
-policy, keep both peers. A blocked peer is dropped silently, so a timeout is the
-only symptom.
+A transport timeout without a component log entry usually indicates a network
+policy problem. Preserve ingress from the gateway's main processor and the
+operator when replacing the default policy. Check component logs to confirm
+whether live screening requests succeed.
 
-This condition covers the ping alone. Screening runs over the other peer, so
-screening can be working correctly on live traffic while this reads false.
-Confirm from the component log rather than from the condition.
+</details>

@@ -10,22 +10,10 @@ as a single umbrella Helm chart that deploys the ToolHive Operator, the
 Enterprise Manager, the console, and the Registry Server in one release, along
 with the custom resource definitions (CRDs) the operator needs.
 
-:::tip[Distributed and multi-cluster deployments]
-
-The umbrella chart can also run a subset of components, so you can spread the
-platform across clusters or maintain separate registries per environment. See
-[Distributed deployments](./distributed-deployments.mdx).
-
-:::
-
-:::tip[Air-gapped or strict-egress clusters]
-
-This page installs the chart directly from Replicated, which requires outbound
-access at install time. If your cluster can't reach Replicated, or your security
-posture requires every artifact to come from an internal registry, see
-[Install from a private registry (air-gapped)](./airgap-install.mdx) instead.
-
-:::
+For multi-cluster installations or separate registries per environment, see
+[Distributed deployments](./distributed-deployments.mdx). For clusters that must
+pull artifacts from an internal registry, see
+[Install from a private registry (air-gapped)](./airgap-install.mdx).
 
 ## Prerequisites
 
@@ -51,12 +39,8 @@ Before deploying, ensure you have:
 
 ## What the chart includes
 
-The chart bundles each platform component and gives it an enable flag in a
-single `values.yaml`, so you turn on only the components you want.
-
-**Every flag defaults to off.** A `helm install` with no values renders an empty
-release, so this table is the list of decisions you have to make, not a list of
-things you can turn off.
+Enable each required component in `values.yaml`. All component flags default to
+`false`, and an install without values creates no platform workloads.
 
 | Enable flag                                | What it deploys                                                                                                                              |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -68,61 +52,35 @@ things you can turn off.
 | `global.stacklok.aiGateway.enabled`        | AI Gateway operator and its custom resource definitions                                                                                      |
 | `global.stacklok.connectorGateway.enabled` | Connector Gateway. Also requires `global.stacklok.connectorGatewayId` and `global.stacklok.authServerIssuer`                                 |
 
-Two things about that table are worth reading twice.
+The gateway flags belong under `global.stacklok`. The console's chart
+identifiers retain their original names: the flag is `cloudUi` and its
+configuration key is `toolhive-cloud-ui`, so use those spellings in the values
+file.
 
-**The last two live under `global.stacklok`, not at the top level.** A subchart
-can only read `global.*`, never a sibling chart's values, so these two toggles
-have to sit there. A values file that sets a top-level `aiGateway` or
-`connectorGateway` key instead fails the render with a message naming the key to
-use, so the wrong path surfaces as an error you can act on rather than a
-component that quietly stays off.
-
-**The console's chart identifiers keep their original names.** The flag is
-`cloudUi` and its configuration key is `toolhive-cloud-ui`, so use those
-spellings verbatim even though the product surface is now the console.
-
-Enabling the Connector Gateway is a three-value decision. Neither
-`global.stacklok.connectorGatewayId` nor `global.stacklok.authServerIssuer` has
-a default, and the render fails naming whichever is missing rather than starting
-a gateway that announces a placeholder identity or cannot complete a login. See
+The Connector Gateway requires its enable flag, gateway ID, and authorization
+server issuer. See
 [Configure the Connector Gateway](./configure-connector-gateway.mdx) and
 [Configure the AI Gateway](./configure-ai-gateway.mdx).
 
 The `toolhiveOperator` subchart deploys the enterprise build of the ToolHive
-Operator: the same operator codebase as ToolHive Community, repackaged as a
-hardened, signed, and versioned image. It manages the same workload types as the
-Community operator, so the existing guides apply unchanged. Use
+Operator. Use
 [Run MCP servers in Kubernetes](../../toolhive/guides-k8s/run-mcp-k8s.mdx) for
 MCP servers and remote proxies, and the
 [Virtual MCP Server guides](../../toolhive/guides-vmcp/index.mdx) for Virtual
 MCP Server (vMCP) gateways.
 
-:::note[Namespaces]
-
-This guide installs the platform into `stacklok-system` and uses that namespace
-throughout. You can choose a different one; adjust the commands to match.
-
-The operator can manage MCP server workloads in any namespace. Running them in
-their own namespace, separate from the platform components in `stacklok-system`,
-keeps the platform and the workloads it manages apart, and is the recommended
-setup. The Kubernetes guides linked above use `toolhive-system` in their
-examples, so substitute your own namespaces as you follow them.
-
-:::
+This guide uses the `stacklok-system` namespace. Adjust the commands if you use
+a different namespace. Run MCP server workloads in separate namespaces from the
+platform components.
 
 ## Run preflight checks
 
-Before you install, run the platform's **preflight** spec against your target
-cluster. The umbrella chart ships a `Preflight` custom resource as a labeled
-Secret, so rendering the chart and piping it to the `kubectl-preflight` plugin
-analyzes real prerequisites automatically. It catches misconfigurations before
-they surface later as failed pods or a stuck rollout: a Kubernetes version below
-the chart floor, tight node capacity, an unreachable OIDC issuer, a missing
-signing-key Secret.
+Before installation, render the chart and pass its `Preflight` resource to the
+`kubectl-preflight` plugin. The checks cover Kubernetes version, capacity,
+identity configuration, database connectivity, and required Secrets.
 
-Running the check itself requires the same registry access, namespace, Secrets,
-and `values.yaml` you use to install: complete
-[Step 1](#1-authenticate-to-the-replicated-registry),
+Use the registry access, namespace, Secrets, and `values.yaml` prepared for the
+installation. Complete [Step 1](#1-authenticate-to-the-replicated-registry),
 [Step 2](#2-prepare-secrets), and [Step 3](#3-configure-values) below first,
 then come back here before [Step 4](#4-install-the-chart).
 
@@ -147,56 +105,27 @@ tar -xzf preflight.tar.gz preflight
 sudo install -m 0755 preflight /usr/local/bin/kubectl-preflight
 ```
 
-Pinning matters because the CLI and the spec move independently. Stacklok tests
-this spec against the version above, so a newer CLI can grade a check
-differently than Stacklok validated it, giving you a `pass` or `fail` that
-doesn't reflect your cluster's real state.
+Stacklok validates the preflight specification with the version above.
 
-:::warning[Downloading the pinned version isn't enough to stay on it]
+:::warning[Disable automatic updates]
 
-The CLI updates itself. `--auto-update` defaults to true, so the binary you just
-pinned replaces itself on its first run, printing a line like
-`Updating preflight from 0.131.1 to 0.133.0...` as it goes. Pass
-`--auto-update=false` on every invocation to hold the version:
+The CLI enables automatic updates by default. Pass `--auto-update=false` on
+every invocation to retain the validated version:
 
 ```bash
 kubectl preflight --auto-update=false -
 ```
 
-You can't confirm this after the fact by asking the binary, either.
-`kubectl preflight version` keeps reporting the version you downloaded even once
-it's running newer code, so treat the flag as the control and the version output
-as unreliable.
+`kubectl preflight version` reports the downloaded version even after an
+automatic update.
 
 :::
 
-### Alternative: install with krew
-
-[krew](https://krew.sigs.k8s.io/), the `kubectl` plugin manager, is a quicker
-one-time setup:
-
-```bash
-kubectl krew install preflight
-```
-
-The tradeoff is that krew always resolves to whatever version its index
-currently serves, and it has no version-pin flag, so a krew install starts on
-whatever is current rather than the validated version. Pass
-`--auto-update=false` here too, to at least stop it moving further. If you hit
-unexpected preflight behavior, mention the version you installed when you open a
-support case, and note that the CLI's own `version` output can't be trusted to
-confirm it.
-
-krew also needs index access, so use the pinned download in an air-gapped
-environment.
-
 ### Run it against your real values
 
-Use the `values.yaml` you build in [Step 3](#3-configure-values), not an empty
-or minimal render. The opt-in analyzers (OIDC issuer, signing-key Secret,
-registry database) only render when their corresponding values are set, so
-preflighting against an empty file silently skips them, and a `pass` result
-verifies less than your real install actually needs.
+Use the complete `values.yaml` from [Step 3](#3-configure-values). Checks for
+identity, signing keys, and the registry database render only when their
+components are configured.
 
 ```bash
 helm template stacklok-enterprise \
@@ -209,19 +138,15 @@ helm template stacklok-enterprise \
 
 `<CHANNEL>` and `<VERSION>` are the channel slug and chart version the install
 portal at [install.stacklok.com](https://install.stacklok.com) generates for
-your release, in its **Existing cluster with Helm** instructions. Templating an
-`oci://` reference pulls the chart, so it reuses the `helm registry login`
-credentials from [Step 1](#1-authenticate-to-the-replicated-registry). There's
-no credential prompt: if that login is missing or expired, `helm template` fails
-with an authorization error. Log in again and rerun.
+your release in its **Existing cluster with Helm** instructions. `helm template`
+uses the registry credentials from
+[Step 1](#1-authenticate-to-the-replicated-registry). Log in again if the
+command returns an authorization error.
 
 :::warning[Pass the same `--namespace` you install into]
 
-`--namespace` is not optional here. The chart renders the namespace into the
-preflight spec, and `helm template` defaults it to `default` when the flag is
-absent. The signing-key check then looks for your Secret in the wrong namespace
-and reports `fail` on a cluster that is correctly prepared. Pass the same
-`--namespace` value you use in [Step 4](#4-install-the-chart).
+Pass the namespace used for installation. Otherwise, the signing-key check looks
+for the Secret in the `default` namespace.
 
 :::
 
@@ -239,24 +164,16 @@ and reports `fail` on a cluster that is correctly prepared. Pass the same
 
 :::note[A cluster-internal OIDC issuer can fail from your workstation]
 
-The OIDC check probes the issuer from wherever you run `kubectl preflight`, not
-from inside the cluster. If your issuer is only reachable on the cluster
-network, the check reports `fail` from a workstation even though the Enterprise
-Manager pod would reach it fine.
-
-That's a difference in network vantage point, not a misconfiguration. Confirm it
-by running the check from inside the cluster, which is what
-[enforcement mode](#optional-enforce-preflight-checks-in-cluster) does. For a
-publicly reachable issuer, treat a `fail` as real: it usually means a typo in
-the issuer URL.
+The OIDC check runs from the host executing `kubectl preflight`. For an issuer
+available only inside the cluster, run the check in-cluster through
+[enforcement mode](#optional-enforce-preflight-checks-in-cluster). Investigate a
+failure for a publicly reachable issuer.
 
 :::
 
 ### Check registry database reachability
 
-The registry database check needs a connection URI, which the chart doesn't
-ship. To exercise it, add these flags to the command above, alongside your real
-`--values values.yaml`:
+Pass a connection URI to enable the registry database check:
 
 ```bash
 helm template stacklok-enterprise \
@@ -269,59 +186,35 @@ helm template stacklok-enterprise \
   | kubectl preflight --auto-update=false -
 ```
 
-The check reports `fail` if the database is unreachable. This is the only check
-that touches a credential; the rest read capability metadata such as the
-Kubernetes version, node capacity, and distribution.
+This is the only check that reads a credential.
 
 :::warning[Pass the URI as a one-off flag]
 
-Supply `preflightDatabaseUri` with `--set` at preflight time, never in a
-permanent or GitOps-tracked values file. The preflight spec ships as a
-Kubernetes Secret, so a persistently configured URI leaves the database password
-in-cluster indefinitely, readable with `kubectl get secret ... -o yaml`, rather
-than existing only for the duration of one preflight run.
-
-Don't commit or upload the rendered output either, since it carries the URI.
+Supply `preflightDatabaseUri` with `--set` for the preflight command. A value in
+a persistent values file remains in the generated Kubernetes Secret. Do not
+commit or upload rendered output containing the URI.
 
 :::
 
 ### Preflight is advisory by default
 
-On the Helm CLI install path, `kubectl preflight` can't block `helm install`. A
-`fail` result is a signal to act on, not an automatic gate: don't
-[install the chart](#4-install-the-chart) while any check reports `fail`. Fix
-the underlying cluster condition first.
+The CLI check does not block `helm install`. Resolve every `fail` result before
+[installing the chart](#4-install-the-chart).
 
 ### Optional: enforce preflight checks in-cluster
 
-Set `preflight.enforce: true` in your values (or pass
-`--set preflight.enforce=true`) to opt into an in-cluster pre-install and
-pre-upgrade Helm hook Job that runs the same spec and genuinely fails
-`helm install` or `helm upgrade` on a `fail` outcome. This is real blocking
-rather than advisory.
+Set `preflight.enforce: true` to run the same checks in a pre-install and
+pre-upgrade Helm hook. A `fail` result blocks the Helm operation.
 
-This is off by default because it carries cost you should accept deliberately:
+The Job uses a dedicated ServiceAccount with cluster-scoped read access to
+nodes, namespaces, storage classes, and CRDs. When Enterprise Manager is
+enabled, it also reads the signing-key Secret. The Replicated integration
+supplies `global.replicated.dockerconfigjson` so the Job can pull the licensed
+runner image. If the pull fails, copy this value from the install portal's
+**Existing cluster with Helm** instructions.
 
-- The Job needs `global.replicated.dockerconfigjson` set. It pulls a
-  license-gated `preflight-runner` image before the Replicated SDK provisions
-  the ordinary pull secret; without it, the Job's pod can't pull its image and
-  the install hangs. On this standard (non-air-gapped) install path, Replicated
-  injects this value from your license when Helm pulls the chart, so you
-  normally don't set it by hand. If enforcement fails on an image pull, get the
-  value from the install portal's **Existing cluster with Helm** instructions
-  and set it explicitly.
-- The Job runs under its own ServiceAccount with cluster-scoped read RBAC
-  (nodes, namespaces, storage classes, CRDs), plus a namespaced read on the
-  signing-key Secret when `enterpriseManager.enabled` is set.
-
-Enforcement does not change the credential exposure described in
-[Check registry database reachability](#check-registry-database-reachability).
-That exposure comes from setting `toolhive-registry-server.preflightDatabaseUri`
-persistently at all: the password renders into the
-`stacklok-enterprise-preflight` Secret, which carries no hook annotations and so
-is never deleted, whether or not enforcement is on. Enforcement adds one further
-copy in the Job's own Secret, and that one is hook-deleted when the hook
-finishes. Either way, keep passing the URI as a one-off `--set`.
+Pass `toolhive-registry-server.preflightDatabaseUri` as a one-time `--set` value
+to avoid retaining the password in the preflight Secret.
 
 Enabling this on the [air-gapped path](./airgap-install.mdx) takes extra setup,
 since the Job's image defaults to a Stacklok-hosted registry. See
@@ -333,8 +226,7 @@ If enforcement blocks an install, read the Job's log to see why:
 kubectl logs job/stacklok-enterprise-preflight-check -n stacklok-system
 ```
 
-The Job and both Secrets are named after your Helm release, so substitute your
-own release name if it isn't `stacklok-enterprise`.
+Replace `stacklok-enterprise` when you use a different Helm release name.
 
 To bypass a known false positive for one run, re-run the same `helm` command
 with `--set preflight.enforce=false`.
@@ -375,10 +267,8 @@ chart, and per-release install instructions all live in the install portal at
 [install.stacklok.com](https://install.stacklok.com). Log in with the
 credentials Stacklok provides during onboarding.
 
-The portal serves the chart from an OCI registry (`oci.stacklok.com`), not a
-classic Helm chart repository, so you authenticate with `helm registry login`
-rather than `helm repo add`. Use your license email as the username and your
-**License ID** as the password:
+Authenticate to the OCI registry at `oci.stacklok.com` with your license email
+as the username and your **License ID** as the password:
 
 ```bash
 helm registry login oci.stacklok.com \
@@ -393,11 +283,9 @@ and the current chart version. Note those values; you reference them when you
 
 :::note[Image pulls during install]
 
-You don't create an image pull secret for this online install. The chart's
-Replicated integration provisions the pull credentials from your license, so the
-cluster pulls component images at install time. The
-[air-gapped path](./airgap-install.mdx) differs: you mirror the images and
-create the pull secret yourself.
+The chart's Replicated integration creates the image pull credentials from your
+license. For an air-gapped installation, create the pull secret as described in
+[Install from a private registry](./airgap-install.mdx).
 
 :::
 
@@ -610,10 +498,8 @@ The example above runs the Enterprise Manager without a database, which is a
 complete configuration: it serves signed configuration envelopes to Stacklok
 clients, and its database-backed modules stay switched off.
 
-The directory service is the main one of those. Users, groups, connectors,
-managed secrets, and virtual API keys all persist to PostgreSQL, so enabling
-`enterprise-manager.directory.enabled` without a database leaves those surfaces
-inert. Add the block below when you want them.
+The directory stores users, groups, connectors, managed secrets, and virtual API
+keys in PostgreSQL. Add the block below to enable these features.
 
 Provision two roles on your PostgreSQL instance first, in a database of their
 own:
@@ -671,18 +557,14 @@ row-level security, and that holds only while the application role is subject to
 the policy. Keep `database.user` and `database.migration.user` separate, and
 keep the application role unprivileged.
 
-The Enterprise Manager checks this at startup and refuses to run rather than
-serve unprotected data: an application role carrying `BYPASSRLS` aborts the boot
-with `app DB user "..." has BYPASSRLS — RLS is voided`. So the failure is loud,
-but it is a failure, and you will not get a working install until the roles are
-right.
+The Enterprise Manager exits at startup if the application role carries
+`BYPASSRLS`, with the error `app DB user "..." has BYPASSRLS - RLS is voided`.
 
 :::
 
-Cross-user connector administration is a separate, optional role again. Set
-`enterprise-manager.database.admin.user` and its Secret (key
-`postgres-admin-password`) to enable it; leave them unset and only that one
-administrative surface returns an error.
+Cross-user connector administration requires a separate database role. Set
+`enterprise-manager.database.admin.user` and its Secret with the key
+`postgres-admin-password` to enable it.
 
 That role must carry `BYPASSRLS`, and **nothing grants it for you**. The
 Enterprise Manager only checks the attribute and refuses to start without it, on
@@ -699,17 +581,13 @@ ships with the chart; the `ALTER ROLE` above is the whole remedy.
 
 #### Encrypting stored credentials
 
-The directory seals the credentials it stores, and the key-encryption key that
-does the sealing is off by default. Leave it off and the credential-backed
-surfaces refuse with a typed error rather than storing anything in the clear:
-managed secrets, connector credentials, and the catalog entry the platform seeds
-for your primary identity provider.
+The directory uses a key-encryption key (KEK) to encrypt managed secrets,
+connector credentials, and the catalog entry for your primary identity provider.
+Enable the KEK to use these features.
 
-Switching it on pulls in a chain of related settings, because the key is read
-from the Kubernetes API and the decrypted plaintext crosses the gRPC port. The
-chart enforces the whole chain with render-time errors that each name the value
-to set, so a partial configuration fails loudly rather than serving credentials
-unprotected:
+The key is read from the Kubernetes API, and the decrypted plaintext crosses the
+gRPC port. The chart validates the related settings at render time and
+identifies any missing value:
 
 ```yaml title="values.yaml (add alongside the other enterprise-manager keys)"
 enterprise-manager:
@@ -765,19 +643,16 @@ enterprise-manager:
           key: 'token'
 ```
 
-Use the claim your provider actually keys users on. `binding_claim` has no
-default and the Enterprise Manager rejects an entry without one, naming the
-issuer, so a wrong or missing value surfaces at startup rather than as failed
-logins later.
+Use the claim your provider uses as the stable user identifier. `binding_claim`
+has no default. The Enterprise Manager validates the claim and issuer at
+startup.
 
 #### Global Redis/Valkey defaults
 
-Several platform components can share an external Redis or Valkey instance for
-distributed session storage. Rather than repeating the configuration on every
-component, set it once under `global.redis` and let the components that support
-it inherit the value. Valkey is a drop-in replacement for Redis. This block is
-optional: when `global.redis.host` is empty, the global default is inactive and
-each component falls back to its own configuration.
+Several platform components can inherit an external Redis or Valkey instance
+from `global.redis` for distributed session storage. Valkey is a drop-in
+replacement for Redis. When `global.redis.host` is empty, each component uses
+its own configuration.
 
 ```yaml title="values.yaml (inside the existing global block)"
 global:
@@ -823,12 +698,12 @@ the components connect without credentials.
 
 The following components inherit `global.redis`:
 
-| Enable flag                         | How it uses the global default                                                                                                                                                                        |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `toolhiveOperator`                  | Default session storage for `MCPServer`, `MCPRemoteProxy`, and `VirtualMCPServer` (vMCP) workloads that have no explicit `spec.sessionStorage`. The per-resource setting always overrides.            |
-| `global.stacklok.aiGateway.enabled` | Rate limiting and virtual API key storage, when the bundled Valkey instance is disabled. This one does fall back to a Secret named `redis-auth` with key `redis-password` when no name is configured. |
+| Enable flag                         | How it uses the global default                                                                                                                                                             |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `toolhiveOperator`                  | Default session storage for `MCPServer`, `MCPRemoteProxy`, and `VirtualMCPServer` (vMCP) workloads that have no explicit `spec.sessionStorage`. The per-resource setting always overrides. |
+| `global.stacklok.aiGateway.enabled` | NER scan-result caching when an `AIGateway` enables the cache                                                                                                                              |
 
-Note that the embedded auth server's token storage is configured separately via
+The embedded auth server's token storage is configured separately through
 `MCPExternalAuthConfig`. See
 [Configure session storage](../../toolhive/guides-k8s/embedded-auth-server-k8s.mdx#configure-session-storage)
 in the operator guide.
@@ -913,19 +788,10 @@ helm install stacklok-enterprise \
   --wait --timeout 10m
 ```
 
-`--wait` is what makes the exit status mean something. Without it Helm reports
-`STATUS: deployed` as soon as the objects are accepted by the API server, which
-it does even when every pod then fails to start. With it, Helm blocks until the
-workloads report ready and exits non-zero if they don't inside the timeout.
-
-A timed-out install leaves the release in place rather than rolling it back, so
-the failing pods stay available to inspect in [Step 5](#5-verify-the-install).
-Rerun `helm upgrade` with the same flags once you have fixed the cause.
+`--wait` keeps Helm running until the workloads are ready and returns a non-zero
+exit status if they do not become ready within the timeout.
 
 ### 5. Verify the install
-
-If the install returned successfully, the pods are already ready and this step
-confirms what you have. If it timed out, this is where you find out why.
 
 List the pods and check that each is `Running` and fully ready, with no
 restarts:
@@ -946,11 +812,6 @@ For anything not ready, the events and logs name the cause:
 kubectl describe pod <POD_NAME> -n stacklok-system
 kubectl logs <POD_NAME> -n stacklok-system
 ```
-
-`ImagePullBackOff` on every pod points at the license credentials rather than at
-any one component: check that `enterprise-pull-secret` exists in the namespace
-and that `replicated.enabled` is `true` in your values, since that subchart is
-what creates it.
 
 Confirm the ToolHive CRDs registered:
 
@@ -983,12 +844,10 @@ Gateway resources your controller uses:
 | Enterprise Manager | `<RELEASE_NAME>-enterprise-manager` (80) | Stacklok CLI clients | `resourceURL`                 |
 | Registry Server    | `registry-api` (8080)                    | Stacklok CLI clients | the registry's public API URL |
 
-The Registry Server's Service name is fixed rather than release-prefixed.
+The Registry Server uses the fixed Service name `registry-api`.
 
-`betterAuth.url` is the public address the console tells browsers to return to
-during sign-in. It does not create the route: the chart ships no ingress, so
-publishing that hostname is yours to do, and the value has to match whatever you
-publish.
+Set `betterAuth.url` to the public console address that your ingress or gateway
+publishes.
 
 The in-cluster URLs (`apiBaseUrl`, `enterpriseManagerUrl`) stay as Service DNS
 and need no routing. Once the routes resolve, confirm the Enterprise Manager
@@ -1039,3 +898,22 @@ everything in `stacklok-system`, skip this step.
   clusters that can't reach Replicated at install time
 - [Configure platform identity](./configure-identity.mdx) - the identity
   provider configuration this deployment depends on as a prerequisite
+
+## Troubleshooting
+
+<details>
+<summary>`helm install` times out</summary>
+
+Inspect the pods as described in [Step 5](#5-verify-the-install). The release
+remains installed so its events and logs are available. After resolving the
+cause, run `helm upgrade` with the same values and wait options.
+
+</details>
+
+<details>
+<summary>Every pod reports `ImagePullBackOff`</summary>
+
+Confirm that `enterprise-pull-secret` exists in the installation namespace and
+that `replicated.enabled` is `true` in your values.
+
+</details>

@@ -6,14 +6,9 @@ description:
   install identity, and understand how it scopes connector access per user.
 ---
 
-The Connector Gateway is the per-user entry point for tool calls. Developers
-point a single MCP client at it, and it presents only the connectors that person
-is entitled to use, brokering the upstream OAuth flows on their behalf. It is
-part of the platform chart and **off by default**.
-
-This page covers enabling it and how it fits into the distribution. It does not
-reproduce the ToolHive operator or registry server guides; for those, see the
-[ToolHive documentation](../../toolhive/index.mdx).
+The Connector Gateway provides an identity-aware MCP endpoint and brokers
+upstream OAuth for connectors. Enable it through the Stacklok Enterprise
+platform chart.
 
 ## Prerequisites
 
@@ -23,9 +18,9 @@ reproduce the ToolHive operator or registry server guides; for those, see the
 - **The directory service**, which the gateway reaches over gRPC for identity,
   connector configuration, and access policy. It is part of the platform chart.
 
-## Enable it
+## Enable the Connector Gateway
 
-Enabling the Connector Gateway is a three-value decision, not a single flag:
+Set the enable flag, gateway identifier, and public issuer URL:
 
 ```yaml title="values.yaml"
 global:
@@ -36,48 +31,31 @@ global:
     authServerIssuer: https://<GATEWAY_HOST>
 ```
 
-`connectorGatewayId` has no default on purpose. A gateway announces this
-identity to the directory when it registers, so if the value were defaulted,
-every install would announce the same placeholder. Enabling the component
-without choosing an id fails the render with a message naming the value, rather
-than starting a gateway with a shared identity.
+| Value                      | Purpose                                            |
+| -------------------------- | -------------------------------------------------- |
+| `connectorGateway.enabled` | Deploy the Connector Gateway                       |
+| `connectorGatewayId`       | Identify this gateway to the directory and console |
+| `authServerIssuer`         | Set the gateway's public authorization server URL  |
 
-The same id scopes the console's admin **Connectors** view, so the console and
-the gateway agree on which install they are talking about.
+Choose a stable `connectorGatewayId` such as `prod-eu` or `platform-staging`.
+The value cannot be empty or contain a colon. Changing it creates a new gateway
+identity and changes the prefix used for stored per-user tokens.
 
-`authServerIssuer` has no default for the same reason: it is this deployment's
-own public auth-server URL, and no placeholder is correct for it. The gateway
-derives every identity provider's upstream OAuth callback from it, as
-`{issuer}/oauth/callback`, so an install without one is refused at render rather
-than starting a gateway that cannot complete a login.
-
-Set it only here. The chart owns the value and projects it, so setting
-`enterpriseConfig.authServer.issuer` or `appConfig.authServer.issuer` directly
-is refused, naming this key instead.
-
-The issuer is validated at render time, which saves an apply cycle. A trailing
-slash and a tenant path prefix are both accepted. Userinfo, a query, a fragment,
-percent-encoding, an uppercase scheme, and whitespace are all refused, as is
-`http://` on anything but a loopback host unless you also set
-`connector-gateway.enterpriseConfig.authServer.insecure_allow_http`.
+Set `authServerIssuer` to the HTTPS URL that clients use to reach this
+deployment. The gateway derives connector OAuth callbacks as
+`{issuer}/oauth/callback`. Configure the value under `global.stacklok`; the
+chart rejects equivalent settings under the component's internal configuration.
 
 :::note[Two different issuers]
 
-This is not `global.stacklok.primaryIdp.issuer`. That one is your corporate
-identity provider, the one your people sign in to the platform with. This one is
-the gateway's own embedded auth server. A full install sets both, to different
-values. See [Configure platform identity](./configure-identity.mdx).
+`global.stacklok.primaryIdp.issuer` identifies the corporate identity provider.
+`authServerIssuer` identifies the Connector Gateway's authorization server.
+Configure both values. See
+[Configure platform identity](./configure-identity.mdx).
 
 :::
 
-Any stable string works; it is not a UUID. Choose something that names the
-deployment, such as `prod-eu` or `platform-staging`. Two rules are enforced on
-every deployment: it cannot be empty, and it cannot contain a colon, which is
-the reserved delimiter in the per-user token-storage key the gateway builds from
-it. Treat it as fixed once set, since it is the identity the directory has
-registered and part of the key that existing tokens are stored under.
-
-## How it fits together
+## How connector access works
 
 ```mermaid
 flowchart LR
@@ -91,16 +69,14 @@ flowchart LR
   MCPGW -->|"only the connectors they are entitled to"| Backends
 ```
 
-The gateway holds no access list of its own. It asks the directory who the
-caller is and which connectors that caller may reach, then narrows the backends
-it exposes accordingly. Access is granted to directory groups, so changing a
-person's group membership changes what their MCP client can see.
+The gateway asks the directory to resolve each caller and return their connector
+grants. Directory group membership determines the MCP servers exposed to the
+client.
 
 :::note
 
-Connector access is decided by directory groups, which are **not** the same as
-the OIDC claim groups named in cluster-level authorization policy. See
-[The two group models](../concepts/two-group-models.mdx).
+Cluster authorization policy uses OIDC claim groups. See
+[Directory groups and OIDC claim groups](../concepts/two-group-models.mdx).
 
 :::
 
@@ -113,12 +89,8 @@ the OIDC claim groups named in cluster-level authorization policy. See
    [Connectors](../../connector-gateway/connectors.mdx) or through the directory
    API, which exposes the same operations under
    `/v1/gateways/{gateway_id}/connectors`.
-3. Have a developer point a client at it, following
-   [Connect a client](./connect-a-client.mdx). The console's setup page
-   generates the client configuration with the real endpoint filled in. They
-   then enable the connectors they want from their own view, and complete any
-   OAuth consent those connectors need, either there or when their client first
-   connects.
+3. Direct users to the deployment-specific instructions in the console. See
+   [Roll out gateway clients](./roll-out-gateway-clients.mdx).
 
 ## Next steps
 
@@ -126,5 +98,3 @@ the OIDC claim groups named in cluster-level authorization policy. See
   register connectors and grant access.
 - [Identity and directory](../enterprise-directory/index.mdx) for the users and
   groups that access is granted to.
-- [What you see depends on what is installed](../concepts/what-you-can-see.mdx)
-  for which console areas enabling this reveals.

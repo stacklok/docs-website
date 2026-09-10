@@ -1,40 +1,27 @@
 ---
 title: Configure the Registry Server
 description:
-  Configuration reference for the Registry Server component in the Stacklok
-  Enterprise platform chart.
+  Enable the Registry Server in the Stacklok Enterprise platform chart and
+  connect it to PostgreSQL.
 ---
 
 The Registry Server serves the approved MCP server and skills catalog that the
-console and Stacklok CLI clients consume. It ships as a hardened, license-gated
-build in the Stacklok Enterprise platform chart.
+console and Stacklok CLI use. Install it with the
+[platform chart](./deployment.mdx), either with the other platform components or
+as a separate release for a distributed deployment.
 
-:::tip[Deploy the platform first]
-
-Install the Registry Server with the [platform chart](./deployment.mdx), which
-deploys it alongside the other components. To run it in its own cluster, or to
-maintain a separate registry per environment, enable only this component as
-described in [Distributed deployments](./distributed-deployments.mdx).
-
-:::
-
-The enterprise Registry Server uses the same configuration schema as the open
-source [Registry Server guides](../../toolhive/guides-registry/index.mdx). Every
-configuration concern (sources, registries, sync policies, database,
-authentication, and authorization) is identical, so this page covers enabling
-the component and points to the open source reference for the field-level
-detail.
+The Enterprise build uses the open source Registry Server configuration schema.
+This page covers its platform chart values and links to the
+[Registry Server guides](../../toolhive/guides-registry/index.mdx) for service
+configuration.
 
 ## Prerequisites
 
 Before deploying, ensure you have:
 
 - A Kubernetes cluster (1.30 or later)
-- An external PostgreSQL database (14 or later) that you provide; the Registry
-  Server stores its catalog there. Whichever user runs the migrations, the
-  application user by default or a separate migration user if you configure one,
-  needs the **`CREATEROLE` attribute**: the first migration creates a role of
-  its own. See [Database roles](#database-roles) below.
+- An external PostgreSQL database (14 or later). The role that runs migrations
+  needs the **`CREATEROLE` attribute**. See [Database roles](#database-roles).
 - Stacklok Enterprise distribution access, which includes the Helm chart and
   container image registry credentials, provided by Stacklok during onboarding
 
@@ -45,13 +32,9 @@ configuration under the `toolhive-registry-server` key. The chart wraps the open
 source Registry Server chart under an `upstream` alias, so those values sit
 under `toolhive-registry-server.upstream`.
 
-The `upstream.config` block is the open source Registry Server configuration
-schema, rendered verbatim into a ConfigMap. A functioning server needs at least
-one `sources` entry and one `registries` entry alongside the `database`
-connection, and the chart already ships both: a `toolhive` source tracking the
-public catalog, and a `default` registry that serves it. The database wiring
-below is genuinely all you have to supply, so the skeleton is complete rather
-than abbreviated.
+The `upstream.config` block contains the open source Registry Server
+configuration. The chart provides a `toolhive` source for the public catalog and
+a `default` registry. Supply the database configuration below.
 
 Override `sources` and `registries` when you want your own catalog, more
 registries, or claim-scoped access to them; see the
@@ -59,11 +42,8 @@ registries, or claim-scoped access to them; see the
 
 ### Database roles
 
-The Registry Server applies its schema migrations at startup, and the first one
-creates a `toolhive_registry_server` role that later grants are made against.
-Creating a role needs the `CREATEROLE` attribute, which is a property of the
-role itself rather than a privilege you can `GRANT`, so owning the database or
-holding full rights on the schema is not enough.
+The first startup migration creates a `toolhive_registry_server` role. Assign
+the `CREATEROLE` attribute to the role that runs migrations.
 
 By default the application user runs the migrations, so it is the one that needs
 the attribute:
@@ -75,22 +55,6 @@ CREATE DATABASE toolhive_registry OWNER thv_user;
 
 If you configure a separate migration user, put `CREATEROLE` on that one instead
 and leave the application user unprivileged.
-
-:::warning[A failed migration leaves the database wedged]
-
-Without the attribute the first migration fails, and the migration tracking
-table is left flagged as dirty. The pod then crashloops on every restart:
-
-```
-Error: failed to run database migrations: failed to apply migrations:
-failed to run migrations: Dirty database version 1. Fix and force version.
-```
-
-Granting `CREATEROLE` afterwards does not clear the flag by itself. On a fresh
-install the simplest recovery is to drop and recreate the database, then let the
-corrected role run the migrations from the start.
-
-:::
 
 ### Create the database credential Secrets
 
@@ -186,3 +150,14 @@ The chart exposes the Registry Server through an in-cluster Service named
   populate the catalog
 - [Manage connectors](../../connector-gateway/connectors.mdx) in the console
   once the Registry Server is running
+
+## Troubleshooting
+
+<details>
+<summary>Migration reports `Dirty database version 1`</summary>
+
+The first migration failed because its database role lacked `CREATEROLE` and
+left the migration table marked dirty. For a new installation, assign the
+attribute, drop and recreate the database, and restart the Registry Server.
+
+</details>
