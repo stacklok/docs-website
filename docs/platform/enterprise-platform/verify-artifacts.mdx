@@ -5,16 +5,11 @@ description:
   Enterprise container images with cosign.
 ---
 
-You can independently verify the Stacklok-built container images you pull
-through the Replicated proxy (`image-proxy.stacklok.com`) without any access to
-Stacklok's internal registry or source repository. Verification works straight
-through the proxy with your license and the open source `cosign` tool.
-
-All Stacklok images are signed with **keyless** Cosign signing through GitHub
-OIDC. There are no long-lived signing keys. Each signature is tied to the GitHub
-Actions workflow identity that produced it and recorded in Sigstore's public
-transparency log (Rekor). Each image also carries three signed attestations: an
-SPDX SBOM, SLSA build provenance, and an OpenVEX vulnerability assessment.
+Verify Stacklok-built container images through the Replicated proxy with your
+license and the open source Cosign tool. Stacklok signs each image through
+GitHub OIDC and records the signature in Sigstore's Rekor transparency log. Each
+image also includes an SPDX software bill of materials (SBOM), SLSA build
+provenance, and an OpenVEX vulnerability assessment.
 
 Replace these placeholders throughout:
 
@@ -26,27 +21,15 @@ Replace these placeholders throughout:
 - `<NAMESPACE>` and `<SELECTOR>` - the namespace and label selector for a
   running workload, when you read a digest from the cluster.
 
-:::note[Verification relies on the proxy's Referrers behavior]
-
-Customers pull images through the Replicated proxy, not directly from a public
-registry. Cosign stores signatures and attestations as OCI referrers. The proxy
-returns a spec-compliant `404` on the OCI Referrers endpoint, so Cosign falls
-back to the referrers tag schema and verification works through the proxy with
-no re-signing. If you are on an older proxy deployment and verification fails
-with a `500` or `Internal Server Error` on a `/referrers/` request, contact
-Stacklok.
-
-:::
-
 ## Prerequisites
 
 - [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/) v2.x
-  or v3.x. This is the only tool you must install.
-- An OCI client you almost certainly already have, used only to log in and look
-  up a digest: `docker` (or `podman`). [`oras`](https://oras.land/) or
-  [`crane`](https://github.com/google/go-containerregistry) work too if you
-  prefer. Cosign reuses this client's credential store, so there is no separate
-  Cosign login.
+  or v3.x.
+- An OCI client to authenticate and resolve image digests: `docker`, `podman`,
+  [`oras`](https://oras.land/), or
+  [`crane`](https://github.com/google/go-containerregistry). Cosign uses the
+  client's credential store.
+- `jq` and `base64` to inspect decoded attestation payloads.
 - Outbound HTTPS to `image-proxy.stacklok.com`, plus `fulcio.sigstore.dev`,
   `rekor.sigstore.dev`, and `tuf-repo-cdn.sigstore.dev` for Sigstore's roots.
 - A valid, non-expired license. The proxy authenticates every request against
@@ -55,15 +38,12 @@ Stacklok.
 
 ## Step 1: Authenticate to the proxy
 
-Log in once with whatever client you already use. The username is your customer
-email, and the **password is the license ID** (it is the bearer credential for
-the proxy, exactly as for chart pulls). All of these write to the same
-credential store (`~/.docker/config.json` or `$REGISTRY_AUTH_FILE`) that Cosign
-reads, so you do not run any Cosign-specific login.
+Log in with your customer email as the username and your **license ID** as the
+password. The client writes the credentials to `~/.docker/config.json` or
+`$REGISTRY_AUTH_FILE`, where Cosign can use them.
 
 ```bash
-# Docker (most common, since you already use it for image pulls).
-# Paste <LICENSE_ID> at the password prompt.
+# Docker
 docker login image-proxy.stacklok.com -u "<YOUR_EMAIL>"
 
 # Podman
@@ -78,34 +58,35 @@ crane auth login image-proxy.stacklok.com -u "<YOUR_EMAIL>" --password-stdin <<<
 
 :::tip[Keep the license ID out of your shell history]
 
-Pipe it on stdin instead of typing it inline:
+Read the license ID into a temporary variable, then pipe it to `docker login`:
 
 ```bash
-echo "<LICENSE_ID>" | docker login image-proxy.stacklok.com \
+read -rsp 'License ID: ' LICENSE_ID
+printf '\n'
+printf '%s' "$LICENSE_ID" | docker login image-proxy.stacklok.com \
   -u "<YOUR_EMAIL>" --password-stdin
+unset LICENSE_ID
 ```
 
 :::
 
 ## Step 2: Resolve the image digest
 
-Verify **by digest**, never by a floating tag. Get the digest whichever way is
-easiest, using a tool you already have. The proxy path the examples use is the
-current one; the install portal prints the exact registry path for your release.
+Resolve the digest of the image you deployed. The install portal provides the
+registry path for your release.
 
 ```bash
 BASE=image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-enterprise
 
-# Best: read the digest of what you are ACTUALLY running, straight from the
-# cluster (no extra tooling).
+# Read the digest from the running workload.
 kubectl -n <NAMESPACE> get pod -l <SELECTOR> \
   -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'
 
-# docker, without pulling (buildx ships with modern Docker)
+# Resolve with Docker without pulling the image.
 docker buildx imagetools inspect "$BASE/<IMAGE>:<VERSION>" \
   --format '{{json .Manifest.Digest}}' | tr -d '"'
 
-# docker, plain (pulls the image, which you are doing anyway)
+# Pull and inspect with Docker.
 docker pull -q "$BASE/<IMAGE>:<VERSION>" >/dev/null \
   && docker inspect --format '{{index .RepoDigests 0}}' "$BASE/<IMAGE>:<VERSION>"
 
@@ -120,19 +101,15 @@ Set `DIGEST=sha256:...` from whichever command you used.
 
 :::note
 
-Cosign can also verify a tag directly
-(`cosign verify ... "$BASE/<IMAGE>:<VERSION>"`) and resolves the digest itself.
-Pinning to the digest you actually deployed (the `kubectl` line above) is the
-stronger check, since a tag can be repointed.
+Cosign can resolve and verify a tag directly. Verifying the deployed digest
+ensures that you check the exact image running in your cluster.
 
 :::
 
 ## Step 3: Verify the image
 
-The trust anchor is the signing identity: the signature was produced by a
-workflow under
-`github.com/stacklok/stacklok-enterprise-platform/.github/workflows/`, through
-GitHub's OIDC issuer. The regex below matches all three image-signing workflows.
+Verify that GitHub's OIDC issuer signed the image through one of Stacklok's
+release workflows:
 
 ```bash
 IDENTITY='^https://github\.com/stacklok/stacklok-enterprise-platform/\.github/workflows/_release-(image|toolhive-cloud-ui|upstream-repackaged)\.yml@.*$'
@@ -149,10 +126,7 @@ cosign verify \
   "$IMAGE"
 ```
 
-A successful run prints `Verification for ... --` followed by the validated
-claims, including the line "The code-signing certificate was verified using
-trusted certificate authority certificates", and a JSON array of the signed
-payloads.
+A successful run prints the validated claims and signed payloads.
 
 ### Verify the SBOM attestation
 
@@ -168,10 +142,8 @@ cosign verify-attestation \
   | jq '{name: .predicate.name, spdxVersion: .predicate.spdxVersion, packages: (.predicate.packages | length)}'
 ```
 
-The first lines confirm the attestation's signature, transparency-log, and
-certificate checks. The optional `jq` pipeline decodes the SPDX document and
-prints a summary (its name, SPDX version, and package count). Drop the `jq`
-filter to see the full SBOM.
+The pipeline decodes the SPDX document and prints its name, SPDX version, and
+package count. Remove the final `jq` filter to inspect the full SBOM.
 
 ### Verify the SLSA build provenance
 
@@ -188,23 +160,9 @@ cosign verify-attestation \
   | jq '.predicate.runDetails.builder.id, .predicate.buildDefinition.buildType'
 ```
 
-`--type slsaprovenance1` selects the SLSA provenance v1.0 schema; it is not a
-"level" selector. The build L3 property comes from how the provenance was
-produced (isolated GitHub Actions reusable workflows, non-forgeable OIDC-bound
-signing). Confirm it by checking that `runDetails.builder.id` is a trusted
-`stacklok-enterprise-platform/.github/workflows/...` reusable-workflow identity
-and that the certificate identity above matched.
-
-:::note[Provenance availability]
-
-Cosign-verifiable provenance is present on releases built after Stacklok
-introduced it. For older releases, only a GitHub-native provenance attestation
-exists, which is not customer-verifiable because it requires read access to the
-private source repository. If `cosign verify-attestation --type slsaprovenance1`
-reports no matching attestation, the image predates this and you can request the
-provenance from Stacklok.
-
-:::
+`--type slsaprovenance1` selects the SLSA provenance v1.0 schema. Confirm that
+`runDetails.builder.id` identifies a trusted
+`stacklok-enterprise-platform/.github/workflows/...` reusable workflow.
 
 ### Verify the OpenVEX attestation
 
@@ -223,10 +181,8 @@ cosign verify-attestation \
   | jq -r '.predicate.statements[] | "[\(.status)] \(.vulnerability.name) \(.justification // .impact_statement // "")"'
 ```
 
-The first lines confirm the attestation's signature, transparency-log, and
-certificate checks. The `jq` pipeline lists each CVE and its assessment. To feed
-the document to a scanner that consumes OpenVEX (for example, `trivy --vex`),
-write the decoded predicate to a file:
+The `jq` pipeline lists each CVE and its assessment. To use the document with an
+OpenVEX-compatible scanner, write the decoded predicate to a file:
 
 ```bash
 cosign verify-attestation \
@@ -248,40 +204,18 @@ oras discover "$IMAGE"
 
 ## Which images are signed
 
-| Image (`<IMAGE>`)                                                                                      | Signing workflow                   | Verifiable |
-| ------------------------------------------------------------------------------------------------------ | ---------------------------------- | :--------: |
-| `thv`, `operator`, `proxyrunner`, `vmcp`, `registry-api`, `toolhive-enterprise`                        | `_release-image.yml`               |     ✓      |
-| `ai-gateway-operator`, `ai-gateway-main-processor`, `ai-gateway-api-key-service`                       | `_release-image.yml`               |     ✓      |
-| `cloud-ui`                                                                                             | `_release-toolhive-cloud-ui.yml`   |     ✓      |
-| `ai-gateway-controller`, `ai-gateway-extproc`, `envoy-gateway`, `envoy-ratelimit`, `presidio-analyzer` | `_release-upstream-repackaged.yml` |     ✓      |
-| Third-party dependencies (Stacklok License Manager)                                                    | upstream, not re-signed            |    n/a     |
+| Image (`<IMAGE>`)                                                                                      | Signing workflow                   |
+| ------------------------------------------------------------------------------------------------------ | ---------------------------------- |
+| `thv`, `operator`, `proxyrunner`, `vmcp`, `registry-api`, `toolhive-enterprise`                        | `_release-image.yml`               |
+| `ai-gateway-operator`, `ai-gateway-main-processor`, `ai-gateway-api-key-service`                       | `_release-image.yml`               |
+| `cloud-ui`                                                                                             | `_release-toolhive-cloud-ui.yml`   |
+| `ai-gateway-controller`, `ai-gateway-extproc`, `envoy-gateway`, `envoy-ratelimit`, `presidio-analyzer` | `_release-upstream-repackaged.yml` |
+| Stacklok License Manager                                                                               | Upstream signature                 |
 
-Envoy Gateway, Envoy Ratelimit, and Presidio are repackaged (re-signed with a
-Stacklok signature, SBOM, and provenance) rather than shipped as upstream
-passthrough — verify them the same way as any other image in this table. Only
-the Stacklok License Manager image remains genuine third-party passthrough.
-
-:::note[Third-party dependency images]
-
-The Stacklok License Manager (the in-cluster component branded from the
-Replicated SDK — it appears as `stacklok-license-manager-*` in
-`kubectl get pods`) is not re-signed by Stacklok, and unlike every other image
-on this page, it is not rewritten through `image-proxy.stacklok.com` at all — it
-is pulled directly from Replicated's own registry at
-`proxy.replicated.com/library/replicated-sdk-image`. Verify it against its
-original publisher's signature if required. It is pulled by digest, so its
-content is pinned.
-
-:::
-
-The repackaged third-party images each play a specific role in the platform:
-
-| Dependency               | Role in the stack                                                                                                            |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| Envoy Gateway            | Kubernetes Gateway API data plane that fronts the AI gateway                                                                 |
-| Envoy Ratelimit          | Rate-limiting service backing the AI gateway's token budget enforcement                                                      |
-| Presidio                 | Microsoft Presidio engine for PII and PCI detection and redaction in prompts                                                 |
-| Stacklok License Manager | In-cluster component (Replicated SDK, rebranded) that reports install status and license state to Replicated (not re-signed) |
+Stacklok repackages and signs Envoy Gateway, Envoy Ratelimit, and Presidio. The
+Stacklok License Manager retains its upstream image and signature. It appears as
+`stacklok-license-manager-*` in `kubectl get pods` and is pulled by digest from
+`proxy.replicated.com/library/replicated-sdk-image`.
 
 ## Verify across all images
 
@@ -312,8 +246,8 @@ done
 
 ## Next steps
 
-- [Configure platform identity](./configure-identity.mdx) to wire your identity
-  provider to the platform components
+- [Configure platform identity](./configure-identity.mdx) to connect your
+  identity provider to the platform components
 - [Configure policies](../enterprise-manager/policies/) to control client
   behavior across your organization
 
@@ -337,17 +271,25 @@ OCI Referrers endpoint so Cosign falls back to the tag schema. Contact Stacklok.
 <details>
 <summary>`401 Unauthorized` on login or pull</summary>
 
-Confirm `<LICENSE_ID>` is the password (not the username) and that your license
-is assigned to the channel serving the version. Expired licenses fail here.
+Use your customer email as the username and `<LICENSE_ID>` as the password.
+Confirm that your license is valid and assigned to the channel serving the
+version.
 
 </details>
 
 <details>
 <summary>`certificate identity ... does not match`</summary>
 
-Cosign prints the actual certificate identity it found. Confirm it is a
-`github.com/stacklok/stacklok-enterprise-platform/.github/workflows/...` path
-signed by `https://token.actions.githubusercontent.com`. If it is not, do not
-trust the image and contact Stacklok.
+Trust only a
+`github.com/stacklok/stacklok-enterprise-platform/.github/workflows/...`
+identity signed by `https://token.actions.githubusercontent.com`. Contact
+Stacklok for any other identity or issuer.
+
+</details>
+
+<details>
+<summary>`no matching attestation` for SLSA provenance</summary>
+
+Request the provenance for your release from Stacklok.
 
 </details>

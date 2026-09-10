@@ -6,10 +6,9 @@ description:
   OpenAI-compatible providers to the AI Gateway, and rotate their credentials.
 ---
 
-Every model the gateway can reach belongs to a _provider_: an upstream API, its
-network endpoint, and the credential the gateway uses to authenticate to it.
-Providers are declared in `spec.providers` on the `AIGateway` resource, and the
-credential itself always lives in a Kubernetes Secret, never in the manifest.
+A _provider_ defines an upstream API endpoint and its authentication method.
+Declare providers in `spec.providers` on the `AIGateway` resource and store
+credentials in Kubernetes Secrets.
 
 ## Supported providers
 
@@ -24,22 +23,16 @@ credential itself always lives in a Kubernetes Secret, never in the manifest.
 | Google AI Studio      | `GeminiAIStudio`           | `APIKey`           | `apiKey`               |
 | Google Gemini API     | `GoogleGenerativeLanguage` | `APIKey`           | `apiKey`               |
 
-That is the complete set of `schema` values. `credentials.type` accepts one
-further value, `AzureCredentials`, for Azure deployments that authenticate by
-role rather than by key; like `AWSCredentials` and `GCPCredentials` it takes a
-`region`.
+For Azure deployments that authenticate by role, use
+`credentials.type: AzureCredentials` with `region`.
 
-Two of these target the same models by different routes. `AWSBedrock` uses
-Bedrock's Converse API, while `AWSAnthropic` serves Claude models through
-Bedrock's InvokeModel API in Anthropic's native wire format, and its traffic is
-priced under the `awsanthropic` family rather than Bedrock's.
+`AWSBedrock` uses the Bedrock Converse API. `AWSAnthropic` uses the Bedrock
+InvokeModel API with Anthropic's native request format and the `awsanthropic`
+pricing family.
 
-The credential field names are type-dependent, and several pairings are enforced
-rather than conventional: `GeminiAIStudio` and `GoogleGenerativeLanguage` both
-require `APIKey`, and `GCPVertexAI` requires `GCPCredentials` together with
-`region`, `projectName`, and a `secretRef`. Pairing a `schema` with the wrong
-`credentials.type` fails validation when you apply the resource, naming the
-combination it rejected.
+`GeminiAIStudio` and `GoogleGenerativeLanguage` require `APIKey`. `GCPVertexAI`
+requires `GCPCredentials`, `region`, `projectName`, and `secretRef`. Resource
+validation rejects unsupported schema and credential type combinations.
 
 ## Add a provider
 
@@ -68,9 +61,8 @@ combination it rejected.
              key: apiKey
    ```
 
-3. Add at least one route that references it. A provider with no route is not
-   reachable, and validation rejects a route that names a provider you have not
-   declared:
+3. Add a route that references the provider. Resource validation requires every
+   route to reference a declared provider:
 
    ```yaml title="aigateway.yaml"
    spec:
@@ -128,9 +120,8 @@ providers:
 
 ### AWS Bedrock
 
-Bedrock authenticates with IAM rather than a stored key, so there is no Secret.
-Give the gateway's proxy pods an IAM role, through IRSA or pod identity, that
-permits the Bedrock actions you intend to use.
+Assign the gateway proxy pods an IAM role through IAM roles for service accounts
+(IRSA) or EKS Pod Identity. Grant the role the required Bedrock actions.
 
 ```yaml
 providers:
@@ -146,12 +137,10 @@ providers:
 
 ### Google Vertex AI
 
-Vertex is reached through a regional endpoint and authenticates with a Google
-service-account key. The `credentials.region` value must match the region prefix
-in the hostname.
+Vertex AI uses a regional endpoint and Google service account key. Match
+`credentials.region` to the region prefix in the hostname.
 
-**The Secret's data key must be `service_account.json`.** That name is fixed,
-and a different key is ignored on this path rather than reported as an error.
+Name the Secret data key `service_account.json`.
 
 ```bash
 kubectl create secret generic vertex-sa \
@@ -179,10 +168,8 @@ Federation is not supported.
 
 ### Google AI Studio
 
-Google AI Studio has no native schema of its own. Selecting `GeminiAIStudio`
-makes the gateway speak OpenAI's request and response shape and rewrite the path
-for AI Studio's OpenAI-compatible surface, so no extra configuration is needed
-beyond the API key.
+`GeminiAIStudio` uses Google AI Studio's OpenAI-compatible API and requires only
+an API key.
 
 ### OpenAI-compatible providers
 
@@ -210,18 +197,14 @@ spec:
 `pathPrefix` is valid only with `schema: OpenAI`. Providers that already carry
 their own prefix, such as `GeminiAIStudio`, must not set it.
 
-Onboarding an OpenAI-compatible provider needs no code change, only this
-resource edit. In the audit and journaling streams it is identified by its
-`name`, so it stays distinguishable from a native OpenAI provider.
+Audit and journaling events identify an OpenAI-compatible provider by its
+configured `name`.
 
 :::warning[Name an OpenRouter provider exactly `openrouter`]
 
-Rates for an OpenAI-compatible provider are looked up first by the provider's
-`name`, then by its schema family. The pricing catalog accepts a fixed set of
-provider values, so an OpenRouter provider named anything else has no rates it
-can resolve, and its OpenRouter-only model slugs are refused at admission rather
-than billed at the wrong rate. Running more than one OpenRouter account, or
-renaming the provider, is not supported for spend tracking today.
+The pricing service resolves OpenRouter rates through the provider name. Use
+`openrouter` so the gateway can price and admit its model slugs. Spend tracking
+supports one OpenRouter provider.
 
 :::
 
@@ -241,9 +224,8 @@ Send a test request afterwards to confirm the new credential is in use.
 
 ## Remove a provider
 
-Remove the routes that reference the provider first, then the provider itself,
-then apply. Validation rejects a resource whose routes name a provider that no
-longer exists, so removing them in the other order fails.
+Remove routes that reference the provider, remove the provider, and apply the
+resource.
 
 ```bash
 kubectl apply -f aigateway.yaml
@@ -255,7 +237,6 @@ automatically.
 
 ## Next steps
 
-- [Route models](./model-routing.mdx) to map model names onto the providers you
-  just connected, with weighting and failover.
-- [Budgets and pricing](./budgets-and-pricing.mdx) to price the models you route
-  to. A model with no price is refused, so this is not optional.
+- [Route models](./model-routing.mdx) to configure weighting and failover.
+- [Budgets and pricing](./budgets-and-pricing.mdx) to publish prices for the
+  models you route.

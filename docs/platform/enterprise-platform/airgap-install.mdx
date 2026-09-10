@@ -8,24 +8,21 @@ description:
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-The [standard deployment](./deployment.mdx) pulls the umbrella Helm chart and
-its images from Replicated at install time, using the license credentials you
-receive during onboarding. That works when your cluster can reach Replicated
-while it installs. When it can't, or your security posture requires every
-artifact to come from an internal registry, use this air-gapped path instead. It
-produces the same umbrella release, just sourced from your own registry.
+Use this workflow when your cluster cannot reach Replicated during installation
+or must pull every artifact from an internal registry. You mirror the Stacklok
+Enterprise chart and images into your registry, then install the same umbrella
+release from there.
 
 ## How it works
 
-You move the platform artifacts across the air gap once, then install from your
-side of it:
+Move the platform artifacts across the air gap, then install from your registry:
 
 1. **Pull the bundle from Replicated.** Use the Stacklok install portal's Helm
    air-gap flow to download the umbrella chart and the container images it
    references.
 1. **Mirror into your registry.** Push the chart and images into a private OCI
-   registry you control. Amazon Elastic Container Registry (ECR) is the worked
-   example below, but any OCI-compliant registry works the same way.
+   registry you control. The examples use Amazon Elastic Container Registry
+   (ECR) and include commands for other OCI-compliant registries.
 1. **Repoint the install.** Override the chart's image references and Helm
    source to your registry, and supply a pull secret.
 1. **Install with Helm.** Run `helm install` against your registry and verify
@@ -43,10 +40,8 @@ flowchart LR
   Registry -->|"helm install\n(chart + image pulls)"| Cluster
 ```
 
-Upgrades follow the same path: when Stacklok publishes a new release, re-pull
-the chart and images at the new version, mirror them into your registry again,
-then re-run the install (or let your GitOps controller reconcile the bumped
-version). See [Automate with GitOps](#automate-with-gitops).
+For upgrades, mirror the new chart and images, then update the Helm release or
+the version in your GitOps configuration.
 
 ## Prerequisites
 
@@ -59,11 +54,8 @@ Before you start, make sure you have:
   PostgreSQL database for the Registry Server (the MCP and skills catalog
   component, distinct from the private OCI image registry this page mirrors
   into).
-- A **StorageClass** for persistent volumes (only needed if you're enabling the
-  AI Gateway). Valkey runs as a StatefulSet with a `ReadWriteOnce` persistent
-  volume claim, so the cluster needs a StorageClass, ideally one marked
-  **default**. If none is marked default, the claim stays `Pending` and Valkey
-  never starts; set the class explicitly in your values (see
+- A **StorageClass** for the AI Gateway's Valkey persistent volume. Use the
+  default StorageClass or set one explicitly in your values (see
   [Step 4](#step-4-point-the-install-at-your-registry)).
 - A private OCI registry you control (Amazon ECR, Google Artifact Registry,
   Azure Container Registry, Artifactory, Harbor, or any OCI-compliant registry)
@@ -86,10 +78,7 @@ Before you start, make sure you have:
 
 :::note[Egress for the transfer workstation]
 
-The transfer workstation needs outbound HTTPS (port 443) to the Stacklok
-distribution hosts and to your own registry. In a locked-down network, get these
-allowlisted first; a blocked host surfaces as an opaque TLS or connection
-timeout rather than a clear error:
+Allow outbound HTTPS from the transfer workstation to:
 
 - the install portal (`install.stacklok.com`)
 - the OCI chart host and image-proxy host the portal prints for your release
@@ -97,18 +86,16 @@ timeout rather than a clear error:
 - `proxy.replicated.com`, if the Replicated SDK is enabled
 - your own registry host, so you can push
 
-The cluster's own egress (identity provider issuer, telemetry, upstream MCP
-endpoints) is separate and isn't covered here.
+Configure cluster egress separately for your identity provider, telemetry, and
+upstream MCP endpoints.
 
 :::
 
 :::note[Fully disconnected environments]
 
-If the transfer workstation can't reach your registry and your cluster at the
-same time, the install portal also produces a downloadable air-gap bundle (a
-`.tgz` of the chart and images). Move the bundle across the gap on your own
-media, then run the mirror steps below from a workstation on the internal
-network. The commands are identical once the artifacts are local.
+For a fully disconnected environment, download the air-gap bundle from the
+install portal and transfer it to a workstation on the internal network. Run the
+mirror steps there after unpacking the bundle.
 
 When you unpack the bundle, watch the OCI layout. A `tar --strip-components` can
 drop the `index.json` at the layout root, and archives created on macOS carry
@@ -120,11 +107,8 @@ your target operating system.
 
 ## Step 1: Get your license and image list
 
-Stacklok distributes the platform through Replicated and gives you a
-customer-facing install portal at
-[install.stacklok.com](https://install.stacklok.com). Log in with the
-credentials Stacklok provides during onboarding. The portal hosts your license,
-the chart, and per-release install instructions.
+Log in to the [Stacklok install portal](https://install.stacklok.com) with the
+credentials provided during onboarding.
 
 In the portal, open the **Existing cluster with Helm** instructions and select
 the air-gap flow. The portal generates the exact commands for your release,
@@ -141,17 +125,10 @@ the image references tell you what to mirror.
 
 :::warning[Mirror every image the portal lists]
 
-Use the portal's image list for your release as the source of truth, and mirror
-every image on it. Don't try to derive the list yourself by rendering the chart:
-the platform subcharts are disabled by default, so a plain `helm template`
-doesn't render most of them; some images are pinned inside subcharts or passed
-through as operator settings as full `repo:tag` strings; and a few default to
-other registries such as `docker.io` or `mcr.microsoft.com`. Grepping
-`values.yaml` for `image.repository` fields under-reports for the same reasons.
-If anything looks missing for your release, confirm the full set with Stacklok
-before you install. An image you miss surfaces later as an `ImagePullBackOff`,
-because the cluster pulls only from your registry and the missing image was
-never mirrored into it.
+Mirror every image in the portal's list for your release. Rendering the chart or
+searching `values.yaml` produces an incomplete list because disabled subcharts
+and operator settings contain additional image references. Confirm any apparent
+omissions with Stacklok before installation.
 
 :::
 
@@ -196,9 +173,8 @@ mirroring. If yours requires repositories to exist first, create one per
 artifact from Step 1 (the umbrella chart plus each image) under a shared prefix,
 using your registry's console or CLI.
 
-Whichever registry you use, note its host (for example, `myorg.jfrog.io` or
-`<REGION>-docker.pkg.dev/<PROJECT>`) and a prefix to group the Stacklok
-artifacts. You reference both in the next steps.
+Note the registry host, such as `<REGION>-docker.pkg.dev/<PROJECT>`, and a
+prefix for the Stacklok artifacts. You reference both in the next steps.
 
 </TabItem>
 </Tabs>
@@ -210,14 +186,11 @@ your own.
 
 ### Authenticate to both registries
 
-You authenticate to two registries: the Replicated proxy registry you pull
-**from** (the source), and your own registry you push **to** (the target).
-
 Log in to the source with your **License ID** from
 [Step 1](#step-1-get-your-license-and-image-list). Replicated serves the chart
 and the images from different hosts: the chart from an `oci.*` host (Helm) and
 the images from an `image-proxy.*` host (skopeo). Use the exact hosts the
-install portal printed for your release; the logins follow this shape:
+install portal printed for your release:
 
 ```bash
 # Use your License ID as the password for both.
@@ -270,9 +243,8 @@ access token, or a service-account key). The rest of the flow is identical.
 
 ### Copy the images
 
-Mirror each image with `skopeo copy --all`. The `--all` flag copies the full
-multi-arch manifest list (for example, `amd64` and `arm64`) rather than a single
-platform, so the image still resolves on every node type in your cluster:
+Mirror each image with `skopeo copy --all` to preserve its multi-architecture
+manifest:
 
 ```bash
 skopeo copy --all \
@@ -280,20 +252,15 @@ skopeo copy --all \
   docker://$ECR_HOST/$ECR_PREFIX/<IMAGE>:<TAG>
 ```
 
-Run one `skopeo copy` per image from the portal's image list. Take the
-`<SOURCE_IMAGE_REGISTRY>` and `<IMAGE>:<TAG>` values directly from that list so
-the tags match what the chart expects. The `docker://` prefix is skopeo's
-registry transport, not a dependency on Docker; you don't need a container
-engine for this step.
+Run one `skopeo copy` per image from the portal's image list. Use the
+`<SOURCE_IMAGE_REGISTRY>` and `<IMAGE>:<TAG>` values from that list. The
+`docker://` prefix selects skopeo's registry transport.
 
 :::note[Preserve the multi-arch manifest]
 
-[`crane copy`](https://github.com/google/go-containerregistry) preserves the
-manifest list the same way and is a drop-in alternative (it takes bare image
-references, with no `docker://` prefix). Avoid mirroring with a container
-engine's single-image pull and push, such as `docker pull` and `docker push` (or
-the `podman` and `nerdctl` equivalents), which flattens the image to one
-architecture and breaks pulls on mixed `amd64` and `arm64` clusters.
+You can also use [`crane copy`](https://github.com/google/go-containerregistry)
+with bare image references. Both commands preserve the manifest required for
+clusters with mixed `amd64` and `arm64` nodes.
 
 :::
 
@@ -315,9 +282,8 @@ helm pull oci://$ECR_HOST/$ECR_PREFIX/stacklok-enterprise-platform \
   --version <VERSION>
 ```
 
-Confirm the version that resolves is the one you pushed, not a stale cached
-entry under a reused tag (a stale chart surfaces later as confusing CRD-schema
-mismatches):
+Confirm that the resolved version matches the chart you pushed. A cached chart
+under a reused tag can cause CRD schema mismatches:
 
 ```bash
 helm show chart oci://$ECR_HOST/$ECR_PREFIX/stacklok-enterprise-platform \
@@ -332,10 +298,8 @@ the chart a pull secret for it.
 
 ### Create an image pull secret
 
-Create a `docker-registry` secret in the install namespace so the cluster can
-authenticate when it pulls images. Despite the name, this Kubernetes secret type
-works for any OCI registry, not just Docker Hub; it's how the kubelet stores
-registry pull credentials.
+Create a `docker-registry` secret in the install namespace. Kubernetes uses this
+secret type for OCI registry credentials.
 
 <Tabs groupId='registry'>
 <TabItem value='ecr' label='Amazon ECR' default>
@@ -351,8 +315,8 @@ kubectl create secret docker-registry stacklok-enterprise-pull \
   --docker-password="$(aws ecr get-login-password --region "$AWS_REGION")"
 ```
 
-An ECR pull token expires after 12 hours, so don't pin it into a static secret.
-Use a refreshing credential instead. See
+ECR pull tokens expire after 12 hours. Configure a refreshing credential as
+described in
 [Keep registry credentials fresh](#keep-registry-credentials-fresh).
 
 </TabItem>
@@ -378,16 +342,11 @@ cluster needs. If it issues short-lived tokens, see
 
 ### Override the image source in values
 
-Add your registry overrides and pull secret to the `values.yaml` from the
-[standard deployment](./deployment.mdx#3-configure-values), so the chart pulls
-every image from your registry instead of the default.
-
-This chart has no global image-registry override (no `global.imageRegistry`),
-and no single `global.imagePullSecrets` that reaches every component. Repoint
-each component's image, and set its pull secret, in that component's own
-subchart values. The example below uses verified key paths; confirm them against
-the `values.yaml` in the chart you pulled in Step 1, since paths can change
-between versions.
+Add registry overrides and the pull secret to the `values.yaml` from the
+[standard deployment](./deployment.mdx#3-configure-values). Set each component's
+image and pull secret under its subchart because the umbrella chart has no
+global image registry or pull-secret value. Confirm these paths against the
+`values.yaml` in your chart version.
 
 ```yaml title="values.yaml (air-gap additions)"
 # The air-gapped path uses your own pull secret, not the Replicated SDK. The
@@ -437,11 +396,8 @@ toolhive-operator:
     registryAPI:
       image: <YOUR_REGISTRY_HOST>/<YOUR_PREFIX>/registry-api:<VERSION>
 
-# AI Gateway operator (aliased enterprise-ai-gateway-operator). Its subchart
-# images live under upstream.*, and it honors a subchart-scoped
-# global.imagePullSecrets. Repoint the operator, AI Gateway controller and
-# ext-proc, Envoy Gateway, ratelimit, Valkey, and Presidio image references
-# here, following the same paths in the chart's values.yaml.
+# AI Gateway images live under upstream.*. Set each image path from the chart's
+# values.yaml and apply the pull secret across its subcharts.
 enterprise-ai-gateway-operator:
   upstream:
     global:
@@ -468,31 +424,13 @@ enterprise-ai-gateway-operator:
 
 :::
 
-If your cluster has no **default** StorageClass, pin one for Valkey. It's
-deployed as a StatefulSet with a `ReadWriteOnce` claim, so without a class the
-claim stays `Pending` and Valkey never starts:
-
-```yaml
-enterprise-ai-gateway-operator:
-  upstream:
-    valkey:
-      persistence:
-        storageClass: <YOUR_STORAGECLASS> # for example, an EBS gp3 class
-```
-
-Persistence is enabled by default with a 1Gi claim, so you only need to set the
-class.
-
 ## Step 5: Preflight, install, and verify
 
 ### Run preflight checks against the mirrored chart
 
-Before you install, run the platform's **preflight** spec against your target
-cluster. The default spec runs entirely offline, without cluster egress, so it
-works unchanged in an air-gapped install. Template the local `.tgz` you pulled
-in [Step 3](#step-3-mirror-the-chart-and-images), rather than an `oci://`
-reference, and pipe it to the `kubectl-preflight` plugin the same way as the
-[standard deployment](./deployment.mdx#run-preflight-checks):
+Run the platform's **preflight** spec against your target cluster. Template the
+local `.tgz` from [Step 3](#step-3-mirror-the-chart-and-images) and pipe it to
+the `kubectl-preflight` plugin:
 
 ```bash
 helm template stacklok-enterprise \
@@ -506,43 +444,30 @@ asset for your platform (`preflight_linux_<ARCH>.tar.gz`, or
 `preflight_darwin_all.tar.gz` on macOS) from
 [replicatedhq/troubleshoot releases](https://github.com/replicatedhq/troubleshoot/releases)
 alongside the chart and image transfer in
-[Step 1](#step-1-get-your-license-and-image-list). Use the
-[pinned version](./deployment.mdx#install-the-cli-plugin) rather than krew here,
-since krew needs index access an air-gapped host doesn't have.
+[Step 1](#step-1-get-your-license-and-image-list). Install the
+[pinned version](./deployment.mdx#install-the-cli-plugin) from the mirrored
+release asset because krew requires index access.
 
-The advisory workflow above needs nothing in your registry, only the CLI binary.
-
-:::note[Enabling in-cluster enforcement]
+### Enforce preflight checks in the cluster
 
 The optional
 [enforcement mode](./deployment.mdx#optional-enforce-preflight-checks-in-cluster)
-runs the same checks as a pre-install hook Job that blocks a failing install.
-Enabling it on this path takes three things:
+runs the checks as a pre-install hook Job. For an air-gapped installation:
 
-- Confirm the `preflight-runner` image reached your registry. It's on the
-  portal's image list, so [Step 3](#step-3-mirror-the-chart-and-images) mirrors
-  it like any other image, but it's easy to skip as an optional component's
-  image.
-- Repoint `preflight.image.repository` at your registry, the same way you
-  repoint every other component in
-  [Step 4](#step-4-point-the-install-at-your-registry). It defaults to a
-  Stacklok-hosted host that an air-gapped cluster can't reach, and the chart has
-  no global registry override to do this for you.
+- Mirror the `preflight-runner` image from the portal's image list.
+- Set `preflight.image.repository` to the image in your registry.
 - Set `global.replicated.dockerconfigjson` to credentials for your registry. The
   Job renders its own hook-ordered pull secret from that value, and it can't use
   the `stacklok-enterprise-pull` secret you created above, because a pre-install
   hook runs before ordinary chart resources exist. This value is still required
   even though you set `replicated.enabled: false`.
 
-Because the Job runs before anything else installs, missing any of these hangs
-the install rather than surfacing as an `ImagePullBackOff` later.
-
-:::
+The Job runs before the chart creates ordinary resources, so it requires its own
+image credentials.
 
 ### Install and verify
 
-Install the chart from your registry with the merged values. Reference the chart
-by its `oci://` URL rather than a Helm repo alias:
+Install the chart from its `oci://` URL with the merged values:
 
 ```bash
 helm install stacklok-enterprise \
@@ -557,12 +482,6 @@ Verify the platform comes up the same way as in the
 [standard deployment](./deployment.mdx#5-verify-the-install): confirm every pod
 in `stacklok-system` reaches `Running` and the ToolHive CRDs registered.
 
-In an air-gapped install, the failure mode to watch for is a pod stuck in
-`ImagePullBackOff`. It almost always means an image the chart references wasn't
-mirrored, or the pull secret can't authenticate. Recheck the pod's image against
-the portal's image list to confirm you mirrored it, and confirm the
-`stacklok-enterprise-pull` secret is valid.
-
 ## Step 6: Prepare workload namespaces
 
 If you run MCP server and vMCP workloads in a namespace other than
@@ -575,7 +494,7 @@ it in the pod's own namespace. Provide that access the same way as
 
 - **Long-lived credentials** (Artifactory or Harbor robot accounts, a GAR or ACR
   service-account key): create `stacklok-enterprise-pull` in each workload
-  namespace, as you did in `stacklok-system`. That's all the namespace needs:
+  namespace, as you did in `stacklok-system`:
 
   ```bash
   kubectl create namespace <WORKLOAD_NAMESPACE>
@@ -594,40 +513,16 @@ it in the pod's own namespace. Provide that access the same way as
 
 ## Automate with GitOps
 
-The manual flow above is the clearest way to understand the air-gap path, but
-most teams run it through their existing infrastructure-as-code and GitOps
-tooling so it's repeatable and auditable.
+Automate the mirror and deployment workflow with your infrastructure-as-code and
+GitOps tools:
 
-- **Provision with infrastructure-as-code, in the right order.** Use Terraform,
-  OpenTofu, or your preferred tool to create the registry repositories and the
-  image pull secret. They must exist before the controller first reconciles, or
-  the HelmRelease fails with `chart not found` or `secret not found` and you're
-  debugging a race. Provision the registry side first, then point the controller
-  at it.
-- **Reconcile with GitOps, from a self-refreshing source.** Point Flux or Argo
-  CD at your registry's `oci://` chart URL and let the controller install and
-  upgrade the umbrella release. Rather than a static pull secret, let the
-  controller pull the chart with a workload identity (for Flux, a
-  `HelmRepository` with `provider: aws` and no `secretRef`); this is the
-  chart-pull half of
-  [Keep registry credentials fresh](#keep-registry-credentials-fresh). The
-  values you assemble in [Step 4](#step-4-point-the-install-at-your-registry) go
-  in your Git source of truth.
-- **Mirror new releases, and keep Git in sync with what you mirrored.** Wrap the
-  [Step 3](#step-3-mirror-the-chart-and-images) `skopeo` and `helm push`
-  commands in a job that runs whenever Stacklok publishes a new release. In an
-  air-gapped setup, Git can drift from reality: an out-of-band mirror leaves the
-  cluster on a version Git never recorded. Pin the exact mirrored version and
-  commit the bump when you mirror.
-
-:::note[If you automate further]
-
-Flux image-automation semver matchers ignore pre-release tags by default. And
-infrastructure-as-code that creates registry repositories and IAM roles in a
-single apply often needs retries: a freshly created IAM principal isn't
-immediately usable, and the apply can fail with `Invalid principal in policy`.
-
-:::
+1. Provision the registry repositories and credentials before the GitOps
+   controller reconciles the Helm release.
+1. Configure Flux or Argo CD to install the chart from your registry's `oci://`
+   URL with the values from
+   [Step 4](#step-4-point-the-install-at-your-registry).
+1. Mirror each new release and commit the mirrored version to your Git source of
+   truth in the same change.
 
 ### Keep registry credentials fresh
 
@@ -674,12 +569,10 @@ pod, so pod-level workload identity fits here:
 
 - [Verify the distribution](./verify-artifacts.mdx) to confirm the signatures,
   provenance, and SBOMs of the images you mirrored
-- [Configure platform identity](./configure-identity.mdx) to wire your identity
-  provider to the platform components
+- [Configure platform identity](./configure-identity.mdx) to connect your
+  identity provider to the platform components
 - [Configure policies](../enterprise-manager/policies/) to control client
   behavior across your organization
-- [Sign in to the console](../enterprise-console/index.mdx) once the platform is
-  running
 
 ## Related information
 
@@ -687,3 +580,14 @@ pod, so pod-level workload identity fits here:
   from Replicated at install time
 - [Configure the Registry Server](./configure-registry-server.mdx) - the catalog
   the console reads
+
+## Troubleshooting
+
+<details>
+<summary>Pods remain in `ImagePullBackOff`</summary>
+
+Compare the pod's image reference with the portal's image list and confirm that
+you mirrored it. Then verify that the `stacklok-enterprise-pull` secret contains
+valid credentials for your registry.
+
+</details>

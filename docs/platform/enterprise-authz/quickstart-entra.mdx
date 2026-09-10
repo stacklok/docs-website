@@ -5,13 +5,9 @@ description:
   authorization with a compiled ToolhiveAuthorizationPolicy.
 ---
 
-By the end of this walkthrough, you'll stand up an Entra ID-authenticated GitHub
-MCP server, attach a policy that gives one user full write access and another
-user read-only access, and verify the split with live tool calls. The reader is
-restricted by a tool annotation filter so the same `reader`
-`ClusterPlatformRole` can be reused elsewhere with different scoping. An
-optional final step demonstrates a second pattern: narrowing a broad role to a
-named allow-list of tools at bind time.
+Deploy an Entra ID-authenticated GitHub MCP server, give one test user write
+access and another read-only access, then verify both policies with live tool
+calls. An optional step restricts a third user to a named list of tools.
 
 ## What you'll learn
 
@@ -172,8 +168,8 @@ kubectl -n authz-demo wait --for=condition=Ready \
 `oidcConfigRef.audience` must match the `aud` claim Entra puts in your access
 tokens. The manifest above uses the client GUID, which is the v2 default. If
 your tenant is configured to emit the Application ID URI (`api://<CLIENT-ID>`)
-instead, set `audience` to that string. If you hit `401` errors later, step 9
-covers how to inspect a token and fix the mismatch.
+instead, set `audience` to that string. If you receive a `401` response, see
+[Troubleshooting](#troubleshooting).
 
 :::
 
@@ -226,17 +222,16 @@ spec:
 kubectl apply -f 10-trb-admin-viewer.yaml
 ```
 
-This `ClusterPlatformRoleBinding` says: any caller whose JWT carries
-`roles: ["mcp-admin"]` gets the `writer` role, and any caller with
-`roles: ["mcp-viewer"]` gets the `reader` role. The binding is cluster-scoped
-and doesn't yet apply to any server; that's the job of the next step.
+This `ClusterPlatformRoleBinding` grants the `writer` role to callers whose JWT
+carries `roles: ["mcp-admin"]` and the `reader` role to callers whose JWT
+carries `roles: ["mcp-viewer"]`. The binding is cluster-scoped and applies after
+a `ToolhiveAuthorizationPolicy` attaches it to a server.
 
 ## Step 5: Apply the per-server policy with reader and writer
 
 The `ToolhiveAuthorizationPolicy` attaches roles to a specific MCP server. This
-policy binds the `writer` role unrestricted, and binds the `reader` role with a
-`toolHintFilter` that limits the binding to tools that declare the MCP
-`readOnlyHint` annotation.
+policy binds the unrestricted `writer` role and uses a `toolHintFilter` to limit
+the `reader` binding to tools that declare the MCP `readOnlyHint` annotation.
 
 ```yaml title="11-tap-reader-writer.yaml"
 apiVersion: toolhive.enterprise.stacklok.com/v1alpha1
@@ -258,11 +253,8 @@ spec:
         readOnlyHint: true
 ```
 
-`targetRef.kind` defaults to `MCPServer`, so it's omitted. `toolHintFilter`
-lives on the binding rather than on the role itself: the same `reader` role can
-be reused in a different policy without a filter, or with a different filter
-like `destructiveHint: false`. The role describes the verbs; the binding decides
-which tools at the target satisfy those verbs.
+`targetRef.kind` defaults to `MCPServer`. The role defines the actions, and the
+binding uses `toolHintFilter` to select the tools allowed at this target.
 
 Apply the policy and wait for the operator to compile it:
 
@@ -281,10 +273,9 @@ into the Cedar policy bundle the proxy will enforce. If it doesn't compile, see
 Point an MCP client at the server using each user's token, and call a read tool
 (`list_issues`) and a write tool (`issue_write`) to see the policy in action.
 
-In a real deployment, clients reach the MCP server through the ingress or
-gateway your platform exposes, and you point the client at that URL. For a quick
-local check against this quickstart, forward the proxy Service to your machine.
-This is a validation convenience, not a production access path:
+For this local check, forward the proxy Service to your machine. In production,
+configure clients with the MCP server URL exposed through your ingress or
+gateway.
 
 ```bash
 kubectl -n authz-demo port-forward svc/mcp-github-demo-proxy 18080:8080
@@ -363,16 +354,15 @@ server:
 | `mcp-admin`  | succeeds      | succeeds (issue created) |
 | `mcp-viewer` | succeeds      | denied                   |
 
-The viewer's denial surfaces as a transport error carrying the proxy's `403`:
+The client reports the proxy's `403` response as a transport error:
 
 ```text
 Failed to call tool issue_write: Streamable HTTP error: Error POSTing to
 endpoint: {"Result":null,"Error":{"code":403,"message":"Unauthorized"},"ID":{}}
 ```
 
-That 403 is the policy doing its job: `issue_write` does not carry the
-`readOnlyHint` annotation, so the reader binding's `toolHintFilter` excludes it,
-while the read-only `list_issues` is allowed.
+The proxy rejects `issue_write` because it lacks the `readOnlyHint` annotation.
+The reader binding permits `list_issues`, which carries the annotation.
 
 :::note[Tool names track the server version]
 
@@ -384,11 +374,9 @@ This guide targets `github-mcp-server:v1.0.3`, where issue writes go through the
 
 ## Step 7: (Optional) Give a reviewer access to only the tools they need
 
-A code reviewer doesn't need every tool the GitHub MCP server exposes, just the
-ones for reading pull requests, searching code, and listing issues. Grant them
-exactly that set by listing tool names in `ruleRestrictions.tools` on the
-binding. The underlying `code-reviewer` role can still be reused elsewhere with
-a different tool list; the per-target policy decides the narrowing.
+List the tools a code reviewer needs in `ruleRestrictions.tools` on the binding.
+The following policy permits reading pull requests, searching code, and listing
+issues.
 
 ```yaml title="20-platformrole-code-reviewer.yaml"
 apiVersion: platform.enterprise.stacklok.com/v1alpha1
@@ -471,9 +459,9 @@ narrows the tool list to exactly the three names in `ruleRestrictions.tools`.
 ## Step 8: Clean up
 
 Deleting the namespace removes the MCPServer, OIDC config, secret, and
-namespaced `ToolhiveAuthorizationPolicy` in one shot. The two cluster-scoped
-role bindings (and the custom `code-reviewer` role from the optional step) live
-outside the namespace, so delete them explicitly:
+namespaced `ToolhiveAuthorizationPolicy`. The two cluster-scoped role bindings
+(and the custom `code-reviewer` role from the optional step) live outside the
+namespace, so delete them explicitly:
 
 ```bash
 kubectl delete clusterplatformrolebinding \
@@ -484,8 +472,8 @@ kubectl delete namespace authz-demo
 
 ## Next steps
 
-- Hand a namespace and a scoped policy surface to an application team with
-  [Namespace self-service](./namespace-self-service.mdx).
+- Delegate access grants to an application team with
+  [namespace authorization](./namespace-self-service.mdx).
 - See every field on the policy resource in the
   [ToolhiveAuthorizationPolicy CRD reference](../reference/crds/toolhiveauthorizationpolicy.mdx).
 - Understand what the operator compiles your `ToolhiveAuthorizationPolicy` into

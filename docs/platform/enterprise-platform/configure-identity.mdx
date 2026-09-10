@@ -6,23 +6,15 @@ description:
 ---
 
 Stacklok Enterprise authenticates every request through your identity provider.
-When a developer signs in to the Stacklok CLI or the console, the identity
-provider issues an access token that the platform components validate before
-serving any data. This page walks through the values each component expects from
-your identity provider and shows two supported ways to model them, so that each
-component accepts the tokens your provider issues.
+Configure the issuer, audiences, scopes, and claims that the platform components
+validate in access tokens.
 
-This page covers the shared platform components: the Enterprise Manager, the
-console, and the Registry Server. Individual MCP servers validate tokens through
-their own per-server OIDC configuration, which you set up alongside each
-server's policy in [enterprise authorization](../enterprise-authz/index.mdx).
-The same identity provider issues both, so the claims you configure here also
-feed the role bindings on your MCP servers.
+This page covers the Enterprise Manager, the console, and the Registry Server.
+Configure identity for individual MCP servers through
+[enterprise authorization](../enterprise-authz/index.mdx).
 
-You should already have an OIDC-compatible identity provider (Okta, Entra ID, or
-a generic OIDC provider) where you can create authorization servers, OAuth
-client applications, custom scopes, and custom claims. Stacklok Enterprise does
-not ship its own identity provider.
+You need an OIDC-compatible identity provider where you can create authorization
+servers, OAuth client applications, custom scopes, and custom claims.
 
 ## What each component expects
 
@@ -35,7 +27,7 @@ at a different combination of audience, scope, and claims.
 | Component                                                   | What the component verifies                                                                                                                                                           |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Enterprise Manager](../enterprise-manager/configure.mdx)   | Issuer, an audience that matches the configured value, and the configured scope is present                                                                                            |
-| [The console](../enterprise-console/index.mdx)              | Issuer and an audience that matches the console's OAuth client application                                                                                                            |
+| [Console](../enterprise-console/index.mdx)                  | Issuer and an audience that matches the console's OAuth client application                                                                                                            |
 | [Registry Server](../../toolhive/guides-registry/index.mdx) | Issuer, the role claim that maps the user to a platform role, and the group claim used for bindings                                                                                   |
 | [MCP servers](../enterprise-authz/quickstart-entra.mdx)     | Issuer and an audience that matches the server's `MCPOIDCConfig`, plus the role and group claims that [enterprise authorization](../enterprise-authz/index.mdx) policies bind against |
 
@@ -48,9 +40,8 @@ tokens.
 
 ## Pick a setup
 
-The components do not care whether their tokens come from the same authorization
-server or from different ones. They care that the audience on the token matches
-the audience configured on the component. Two setups satisfy that requirement.
+Each token's audience must match the audience configured for its platform
+component. Use one of these identity provider setups.
 
 **One authorization server per component.** Recommended where your identity
 provider supports it. Create one custom authorization server per platform
@@ -115,9 +106,9 @@ On the **Scopes** tab, add a custom scope:
 
 The Registry Server and the per-server MCP authorization policies both read
 group and role claims from the token to map each user to a platform role. The
-platform matches against the claim names, so those matter, but the values flow
-through from your identity provider's user profile. Adjust the value expressions
-to match how your Okta tenant carries group membership and role assignment.
+platform matches the claim names, while the values come from your identity
+provider's user profile. Adjust the expressions for your Okta tenant's group
+membership and role assignments.
 
 On the **Claims** tab, add the claims each component reads:
 
@@ -133,10 +124,9 @@ names to platform roles, and the ConfigMap that overrides them, see
 
 ### Step 4: Add a default access policy
 
-The Okta free tier ships the `default` authorization server without an access
-policy, so client applications cannot request scopes against it until you add
-one. Paid tiers usually have a permissive default policy already in place, so
-this step is a no-op for them.
+The Okta free tier's `default` authorization server requires an access policy
+before client applications can request scopes. If your server already has an
+applicable policy, continue to the next step.
 
 On the **Access Policies** tab, add a default policy with one rule that permits
 your OAuth clients to request the audiences and scope from steps 1 and 2.
@@ -151,17 +141,14 @@ application, because it runs an authorization code flow on its server.
 | Application  | Type                       | Audience requested   |
 | ------------ | -------------------------- | -------------------- |
 | Stacklok CLI | Native (PKCE, no secret)   | `enterprise-manager` |
-| The console  | Web (confidential, secret) | `cloud-ui`           |
+| Console      | Web (confidential, secret) | `cloud-ui`           |
 
 Note the client IDs and, for the console, the client secret for the next step.
 
-### Step 6: Wire the values into the component charts
+### Step 6: Configure component chart values
 
-The issuer is platform-wide: set it once and every component trusts it. Audience
-and scope are per component, so each component takes those from its own chart
-values. The values you wire in here must match the audiences and scope you
-configured in steps 1 through 5, or the component will reject the tokens at
-runtime.
+Set the platform-wide issuer once. Configure the audience and scope for each
+component to match the values from steps 1 through 5.
 
 Set the identity provider for the whole platform under `global.stacklok`:
 
@@ -205,9 +192,8 @@ structure.
 
 ## Verify a token
 
-Once a Stacklok client can sign in, you can confirm the tokens it receives carry
-the right values before wiring them into a component. Decode the access token
-and check the issuer, audience, and scope:
+After a Stacklok client can sign in, decode its access token and verify the
+issuer, audience, and scope:
 
 ```bash
 echo "<ACCESS_TOKEN>" | cut -d. -f2 | base64 -d 2>/dev/null | jq '.iss, .aud, .scp'
@@ -228,7 +214,7 @@ component returns `401 Unauthorized`.
 ## Next steps
 
 - [Configure the Enterprise Manager](../enterprise-manager/configure.mdx) with
-  the issuer, audience, and scope from this page wired into its chart
+  the issuer, audience, and scope from this page
 - [SCIM provisioning](../enterprise-directory/scim-provisioning.mdx) to populate
   the directory from the same identity provider
 
@@ -250,7 +236,7 @@ so that access tokens are issued as JWTs.
 <summary>`aud` is an array, not a string</summary>
 
 Some identity providers put a single audience into an array
-(`"aud": ["enterprise-manager"]`). The components accept both shapes. If
+(`"aud": ["enterprise-manager"]`). The components accept both forms. If
 validation still fails, confirm the string inside the array matches the
 configured audience exactly, including any prefix like `api://`.
 

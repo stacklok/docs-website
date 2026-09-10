@@ -365,7 +365,7 @@ const platformSidebar: SidebarsConfig[string] = [
       'platform/enterprise-platform/configure-identity',
       'platform/enterprise-platform/configure-ai-gateway',
       'platform/enterprise-platform/configure-connector-gateway',
-      'platform/enterprise-platform/connect-a-client',
+      'platform/enterprise-platform/roll-out-gateway-clients',
       'platform/enterprise-platform/api-reference',
     ],
   },
@@ -454,18 +454,25 @@ const platformSidebar: SidebarsConfig[string] = [
     defaultStyle: false,
   },
 
-  'platform/concepts/what-you-can-see',
   'platform/concepts/two-group-models',
 ];
 
 const connectorGatewaySidebar: SidebarsConfig[string] = [
-  'connector-gateway/index',
+  {
+    type: 'doc',
+    id: 'connector-gateway/index',
+    className: 'enterprise-only enterprise-only--tooltip-below',
+  },
   'connector-gateway/connectors',
   'connector-gateway/tool-usage',
 ];
 
 const aiGatewaySidebar: SidebarsConfig[string] = [
-  'ai-gateway/index',
+  {
+    type: 'doc',
+    id: 'ai-gateway/index',
+    className: 'enterprise-only enterprise-only--tooltip-below',
+  },
   'ai-gateway/providers-and-models',
   'ai-gateway/model-routing',
   'ai-gateway/budgets-and-pricing',

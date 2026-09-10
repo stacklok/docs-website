@@ -6,9 +6,8 @@ description:
   lifecycle, then ship them to Splunk, Elastic, Kafka, or Loki.
 ---
 
-The gateway emits structured JSON audit events to the standard output of each of
-its pods. Events cover data-plane and application-layer actions: request
-admission, detection decisions, virtual key lifecycle, and authentication
+The AI Gateway emits structured JSON audit events to pod standard output for
+request admission, detection decisions, virtual key changes, and authentication
 outcomes.
 
 Every event carries the fields required by NIST SP 800-53 controls AU-2, AU-3,
@@ -29,9 +28,8 @@ spec:
     enabled: true
 ```
 
-When enabled, every audit event fires. There are no per-component toggles and no
-sampling, on the principle that routing and volume control belong to your ingest
-layer rather than to the thing being audited.
+Enabling audit events captures every supported event without sampling. Filter
+and route events in your log pipeline.
 
 ## What gets captured
 
@@ -53,8 +51,7 @@ layer rather than to the thing being audited.
 | `aigw.apikey.validation.failed`    | An invalid or unknown virtual key was presented              | failure         |
 | `aigw.apikey.ratelimit.exceeded`   | A per-key request rate limit was exceeded                    | denied          |
 
-Event types follow the namespace `aigw.<component>.<resource>.<verb>`, so a SIEM
-rule can match a whole component or a single verb.
+Event types use `aigw.<component>.<resource>.<verb>`.
 
 ## Event schema
 
@@ -87,27 +84,23 @@ rule can match a whole component or a single verb.
 }
 ```
 
-**Subjects** are never taken from attacker-controllable headers. `user` comes
-from the authenticated caller's token on API events, or from a header set by a
-trusted upstream filter on request-path events. `virtual_key_id` is stamped only
-after a key has been validated.
+**Subjects** come from authenticated tokens on API events or a trusted upstream
+filter on request-path events. The gateway adds `virtual_key_id` after key
+validation.
 
-**Targets** are `{type: llm_request, model, provider, route}` on request-path
-events and `{type: virtual_api_key, key_id, prefix}` on key events. Secret key
-material is never emitted. A SIEM rule keying on `target.provider` should match
-the lowercase provider set: `openai`, `anthropic`, `awsbedrock`, `azureopenai`,
-`gcpvertexai`, `geminiaistudio`.
+**Targets** use `{type: llm_request, model, provider, route}` on request events
+and `{type: virtual_api_key, key_id, prefix}` on key events. Key events omit
+secret material. Match `target.provider` against these lowercase values:
+`openai`, `anthropic`, `awsbedrock`, `azureopenai`, `gcpvertexai`, and
+`geminiaistudio`.
 
 **Common extras** are `request_id`, `trace_id` and `span_id` for OpenTelemetry
 correlation, `client_ip`, `user_agent`, `pod`, and the gateway's name and
 namespace.
 
-Detection events additionally carry `detection_types`, the entity names that
-fired, and `action`, one of `block`, `redact`, or `log-only`. Passive detections
-split their attribution into `shadow_types`, for detectors configured but not
-acting, and `log_only_types`, for detectors whose policy is deliberately
-passive. Keeping those distinct lets a compliance team tell "we saw this and
-chose not to act" apart from "policy here is passive by design".
+Detection events add `detection_types` and `action`. `action` is `block`,
+`redact`, or `log-only`. Passive detections use `shadow_types` for detectors in
+shadow mode and `log_only_types` for log-only policy.
 
 Request-path events carry `body_bytes`; response-path events carry
 `chunk_bytes`, which is per-chunk for streaming responses and must not be summed
@@ -260,29 +253,21 @@ if $msg contains '"logger":"audit"' and $msg contains '"msg":"audit_event"' then
 
 ## Retention, tamper evidence, and GDPR
 
-The gateway emits events and takes no position on how long you keep them,
-whether storage is tamper-evident (NIST SP 800-53 AU-9), or which fields are in
-scope for GDPR. Those are decisions for your ingest layer. Index retention
-policies, index lifecycle management, log-group retention, and write-once
-archival with object lock all work here.
+Configure retention, tamper evidence, and privacy controls in your ingest and
+storage systems. Use lifecycle policies and write-once storage where your
+compliance requirements call for them.
 
-Field-level redaction, for example stripping a caller's email address for EU
-data subjects, is best enforced as an ingest-time transform before the event
-reaches long-term storage. The gateway never reads back or replays events after
-emitting them.
+Apply field-level redaction before events reach long-term storage. The gateway
+does not retain or replay emitted audit events.
 
-## What these events are not
-
-Two adjacent streams are out of scope.
+## Related logs
 
 The **Kubernetes API audit log** covers control-plane activity such as `kubectl`
-calls and operator reconciles. Enable it in your API server audit policy and
-forward it separately.
+calls and operator reconciles. Configure it through the API server audit policy.
 
-**Interaction journaling** captures full prompt and response content for every
-request, configured under `spec.journaling`. Audit events record _that_ a
-request was admitted, denied, or masked and _why_; journaling records _what_ the
-prompt and response contained.
+**Interaction journaling**, configured under `spec.journaling`, captures prompt
+and response content. Audit events capture decisions and reasons without the
+full interaction content.
 
 ## Next steps
 

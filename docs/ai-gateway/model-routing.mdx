@@ -6,11 +6,8 @@ description:
   priority failover, retries, and timeouts on the AI Gateway.
 ---
 
-A _route_ maps what a client asks for onto the provider that serves it. Clients
-send a normal `model` value in their request; the gateway matches it against
-`spec.routes` and forwards to the referenced provider. Because the mapping lives
-on the gateway, you can move a logical model name to a different provider
-without touching a single client.
+A _route_ maps a requested model name to one or more providers. Configure routes
+under `spec.routes` to change model providers without updating clients.
 
 ## Route a specific model
 
@@ -42,9 +39,8 @@ spec:
         - provider: openai
 ```
 
-Without a default route, a request for an unmatched model is refused. That is
-often what you want: it means users can only reach models you have deliberately
-routed.
+If you omit a default route, the gateway denies requests for unmatched models.
+Use this behavior to allow only explicitly routed models.
 
 ## Spread traffic across providers
 
@@ -82,18 +78,14 @@ spec:
 
 :::warning[Failover needs retries configured]
 
-`priority` sets the failover order, but the gateway only walks that order when
-`spec.resilience.retry` is set. With no retry configuration, a failure at the
-first priority is returned to the client and the lower-priority provider is
-never tried. Configuring priorities alone gives you no failover.
+Configure `spec.resilience.retry` with `priority`. A failed request reaches the
+next priority only during a retry.
 
 :::
 
 ## Configure retries, health checks, and timeouts
 
-`spec.resilience` is opt-in and applies to the whole gateway. Every sub-block is
-optional, and omitting one leaves the underlying default in place, so a gateway
-that does not set `spec.resilience` behaves exactly as it does today.
+`spec.resilience` applies to the whole gateway. Each sub-block is optional.
 
 ```yaml title="aigateway.yaml"
 spec:
@@ -135,21 +127,16 @@ retries, so a retry storm cannot exhaust upstream capacity.
 
 ## How retries interact with budgets
 
-A request denied for budget reasons is refused before any retry happens, and
-retried attempts against a provider error do not charge the budget again. So
-retries cannot inflate a user's spend, and a budget denial is never retried into
-an accidental success.
+The gateway evaluates budgets before retries and charges the request once.
+Provider retries do not add charges, and budget denials are not retried.
 
 ## Limits worth knowing
 
 - A gateway supports up to 20 providers and 120 routes.
-- Routes that share the same backends and timeout are combined internally, so
-  the practical ceiling is roughly 15 distinct backend and timeout combinations
-  rather than 15 routes. Forty routes that all point at the same provider count
-  as one combination.
-- If a change would exceed that ceiling, the gateway keeps the last working
-  configuration and reports `RoutesValid=False` with reason `TooManyRouteRules`
-  rather than applying it.
+- The gateway supports approximately 15 distinct combinations of backends and
+  timeouts. Routes that share a combination are consolidated.
+- A configuration that exceeds this limit reports `RoutesValid=False` with
+  reason `TooManyRouteRules` and preserves the previous working routes.
 
 ## Next steps
 

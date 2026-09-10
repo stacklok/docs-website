@@ -1,79 +1,49 @@
 ---
-title: The two group models
-sidebar_label: The two group models
+title: Directory groups and OIDC claim groups
+sidebar_label: Group models
 description:
-  Connector access uses directory groups, cluster authorization policy uses OIDC
-  claim groups, and the platform does not link them.
+  Compare the group models used for connector access, budgets, and cluster
+  authorization policy.
 ---
 
-Stacklok Enterprise has two things called groups, and they are not the same
-thing. They are maintained separately, matched differently, and the platform
-does not keep them in sync. Knowing which one a given control uses is the
-difference between a policy that works and one that silently does nothing.
+Stacklok Enterprise uses directory groups for connector access and budgets. It
+uses OpenID Connect (OIDC) claim groups for cluster authorization policy. Choose
+the group model that matches the control you are configuring.
+
+| Control                                               | Group model      |
+| ----------------------------------------------------- | ---------------- |
+| Connector access                                      | Directory group  |
+| AI Gateway budget                                     | Directory group  |
+| `PlatformRoleBinding` or `ClusterPlatformRoleBinding` | OIDC claim group |
+| `ToolhiveAuthorizationPolicy`                         | OIDC claim group |
 
 ## Directory groups
 
-A directory group is a record in the directory service, with its own identifier,
-a name, and an explicit membership list. You see and edit them in the console
-under **User management**, and they can also be provisioned from your identity
-provider over SCIM.
+A directory group is a record in the directory service with an identifier, name,
+and membership list. Administrators can manage directory groups in the console
+or provision them from an identity provider through System for Cross-domain
+Identity Management (SCIM).
 
-**Directory groups decide connector access.** When a developer's MCP client asks
-what tools it can reach, the Connector Gateway resolves the caller to a
-directory user, reads that user's directory group memberships, and exposes only
-the connectors granted to those groups. Adding someone to a group in the console
-changes what their client can see.
-
-They also carry budgets. A group budget is addressed by the directory group's
-identifier.
+The Connector Gateway resolves each caller to a directory user and uses their
+group memberships to determine connector access. AI Gateway group budgets also
+reference the directory group's identifier.
 
 ## OIDC claim groups
 
-An OIDC claim group is just a string that appears in the groups claim of the
-caller's token. It has no record anywhere in the platform; it exists only as
-text inside a token your identity provider issued.
+An OIDC claim group is a string in the caller's token. The
+`PlatformRoleBinding`, `ClusterPlatformRoleBinding`, and
+`ToolhiveAuthorizationPolicy` resources match these strings when evaluating
+cluster authorization policy.
 
-**Claim groups decide cluster-level authorization.** The `PlatformRoleBinding`,
-`ClusterPlatformRoleBinding`, and `ToolhiveAuthorizationPolicy` resources name
-groups as plain strings, and those strings are matched against the token's
-claim. Nothing on that path consults the directory.
-
-## Why this matters
-
-Because the two are independent, all of the following are true at once:
-
-- Adding a user to a directory group in the console **does** change their
-  connector access, and **does not** change what any `PlatformRoleBinding`
-  grants them.
-- Adding a user to a group in your identity provider **does** change what claim
-  groups their next token carries, and **does not** create directory membership
-  unless SCIM is provisioning groups.
-- Two groups with the same name in both systems are a coincidence you are
-  maintaining, not a link the platform enforces.
-
-The failure this produces is quiet. Someone adds a colleague to the Engineering
-group in the console, the colleague still cannot call a tool governed by a
-cluster authorization policy, and nothing anywhere reports an error, because
-both systems behaved exactly as configured.
-
-## Which one am I using?
-
-| If you are configuring                                | You are naming      |
-| ----------------------------------------------------- | ------------------- |
-| Connector access, in the console                      | A directory group   |
-| A budget, in the console                              | A directory group   |
-| `PlatformRoleBinding` or `ClusterPlatformRoleBinding` | An OIDC claim group |
-| `ToolhiveAuthorizationPolicy`                         | An OIDC claim group |
+These resources read group values directly from the token. Configure the
+identity provider to include the expected values.
 
 ## Keeping them aligned
 
-If you want one set of groups to govern both, provision directory groups from
-the same identity provider groups you name in authorization policy, and keep the
-names identical. SCIM group provisioning is what makes that maintainable,
-because membership then tracks your provider on both sides.
-
-That alignment is a convention you choose and maintain. The platform will not
-warn you when the two drift.
+To use the same organizational groups for both control planes, provision
+directory groups through SCIM from the identity provider that issues the OIDC
+group claims. Keep the directory group names and claim values aligned. Stacklok
+Enterprise evaluates the two group models independently.
 
 ## Related information
 
