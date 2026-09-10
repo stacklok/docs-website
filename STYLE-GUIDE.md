@@ -100,9 +100,9 @@ Prefer positive statements. Say what the product does and what the reader should
 do; don't restate a positive statement in negative form. If a negation carries a
 genuinely new fact, fold that fact into the positive statement.
 
-:white_check_mark: Yes: The Cloud UI uses the registry policy's `server_api_url`
+:white_check_mark: Yes: The console uses the registry policy's `server_api_url`
 value.\
-:x: No: The Cloud UI reads `server_api_url`, not `api_url`.
+:x: No: The console reads `server_api_url`, not `api_url`.
 
 **Exception for breaking changes**: a breaking change or major behavioral change
 (a changed default, behavior that silently differs for existing setups) may
@@ -378,8 +378,8 @@ server images.
 **ToolHive**: A collection of open source projects that form the foundation of
 Stacklok Enterprise. ToolHive includes everything you need to use MCP servers in
 production. It's made up of four key components: the Runtime, Registry Server,
-Gateway, and Portal. It's written bi-capitalized as one word (not "Toolhive" or
-"Tool Hive").
+Gateway, and Interfaces. It's written bi-capitalized as one word (not "Toolhive"
+or "Tool Hive").
 
 **ToolHive Runtime**: The core ToolHive CLI, desktop UI app, and Kubernetes
 Operator. ToolHive manages containerized MCP servers on your local machine, in
@@ -399,19 +399,47 @@ When referring to a gateway generically, use lowercase.
 of the ToolHive Gateway. Use the full name on first reference, and "vMCP"
 thereafter.
 
-**ToolHive Portal**: A web-based frontend to the ToolHive Registry Server.
+**ToolHive Interfaces**: The ToolHive UI and ToolHive CLI, the surfaces users
+work through to discover, configure, and run MCP servers. Named as one of
+ToolHive's four components alongside the Runtime, Registry Server, and Gateway.
 
-**Stacklok Desktop**: The enterprise edition of the ToolHive desktop app
-(ToolHive UI). It adds OIDC sign-in and enterprise lockdown policies controlled
-by the Enterprise Manager. Not "Enterprise UI", "Enterprise Studio", or
-"Stacklok UI".
+**ToolHive Portal**: Retired name. Interfaces replaced it as the name of the
+fourth component; don't reintroduce it.
 
 **Enterprise Manager**: The Stacklok Enterprise component that pushes policy
-configuration to Stacklok Desktop and the Stacklok CLI, controlling client
-behavior across the organization.
+configuration to the Stacklok CLI, controlling client behavior across the
+organization.
 
-**Enterprise Cloud UI**: The Stacklok Enterprise web console for browsing and
-managing the MCP server catalog.
+**AI Gateway**: The Stacklok Enterprise component that governs which models
+agents can call, and what they may spend doing it. Capitalized as a product
+name.
+
+**Connector Gateway**: The Stacklok Enterprise component that governs which
+tools agents can use, brokering per-user access to MCP servers registered as
+connectors. Capitalized as a product name. Not "MCP gateway", which reads as a
+generic description and collides with the ToolHive Gateway and vMCP. The Helm
+identifiers match: `global.stacklok.connectorGateway.enabled` and
+`connectorGatewayId`.
+
+**the console**: The Stacklok Enterprise web interface, covering both the
+administration and end-user experiences. Lowercase in running prose, since it is
+a common noun rather than a product name. Not "Enterprise Cloud UI", "Cloud UI",
+or "Enterprise UI".
+
+This is a different product from the open source ToolHive Cloud UI, which is
+retired and keeps its own name on the page that records the retirement.
+
+The Helm identifiers keep their original spelling: the enable flag is `cloudUi`
+and the subchart configuration key is `toolhive-cloud-ui`. Use those verbatim in
+values examples.
+
+Engineering codenames and route prefixes are internal. Use the product name in
+published content, and never document a URL path that exists only as an
+implementation detail.
+
+**Stacklok Desktop**: Retired. The enterprise desktop app no longer ships, and
+no page should reference it. The enterprise client is the
+[Stacklok CLI](#word-list--glossary).
 
 ## Word list & glossary
 

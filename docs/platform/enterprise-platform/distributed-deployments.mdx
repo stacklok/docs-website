@@ -20,13 +20,14 @@ releases.
 
 Every component has its own enable flag in the umbrella chart's values:
 
-| Enable flag         | Component                                              |
-| ------------------- | ------------------------------------------------------ |
-| `toolhiveOperator`  | ToolHive operator (runs MCP workloads)                 |
-| `enterpriseManager` | Enterprise Manager (serves policies and feature flags) |
-| `cloudUi`           | Enterprise Cloud UI                                    |
-| `registryServer`    | Registry Server (MCP server and skills catalog)        |
-| `aiGateway`         | AI Gateway operator                                    |
+| Enable flag                                | Component                                                                                                                                                                  |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `toolhiveOperator`                         | ToolHive operator (runs MCP workloads)                                                                                                                                     |
+| `enterpriseManager`                        | Enterprise Manager (serves policies and feature flags)                                                                                                                     |
+| `cloudUi`                                  | The console                                                                                                                                                                |
+| `registryServer`                           | Registry Server (MCP server and skills catalog)                                                                                                                            |
+| `global.stacklok.aiGateway.enabled`        | AI Gateway operator                                                                                                                                                        |
+| `global.stacklok.connectorGateway.enabled` | Connector Gateway. Also requires `global.stacklok.connectorGatewayId`, which must differ per install, and `global.stacklok.authServerIssuer`, the gateway's own public URL |
 
 To build a distributed topology, install the chart once per cluster or
 environment, each time with a `values.yaml` that enables only the components
@@ -37,8 +38,7 @@ references to ingress hostnames rather than in-cluster Service DNS.
 :::note
 
 Configure each enabled component exactly as the per-component pages describe.
-See [Configure the Enterprise Manager](../enterprise-manager/configure.mdx),
-[Configure the Enterprise Cloud UI](../enterprise-cloud-ui/configure.mdx), and
+See [Configure the Enterprise Manager](../enterprise-manager/configure.mdx) and
 [Configure the Registry Server](./configure-registry-server.mdx).
 
 :::
@@ -47,15 +47,15 @@ See [Configure the Enterprise Manager](../enterprise-manager/configure.mdx),
 
 Run the shared services once in a control cluster and run the operator in each
 workload cluster that hosts MCP server workloads. Developers and clients talk to
-a single Enterprise Manager, Registry Server, and Cloud UI, while MCP servers
-run close to the teams and data that need them.
+a single Enterprise Manager, Registry Server, and console, while MCP servers run
+close to the teams and data that need them.
 
 ```mermaid
 flowchart TB
   subgraph Control["<strong>Control cluster</strong>"]
     EM["Enterprise Manager"]
     RS["Registry Server"]
-    CloudUI["Enterprise Cloud UI"]
+    CloudUI["The console"]
   end
 
   subgraph WL1["<strong>Workload cluster A</strong>"]
@@ -66,7 +66,7 @@ flowchart TB
     Op2["ToolHive operator"]
   end
 
-  Clients["Stacklok Desktop & CLI"]
+  Clients["Stacklok CLI"]
 
   Clients -->|"policy + catalog"| Control
   Op1 -->|"catalog source"| RS
@@ -85,8 +85,6 @@ cloudUi:
   enabled: true
 registryServer:
   enabled: true
-aiGateway:
-  enabled: false
 
 # Configure each enabled component as its per-component page describes.
 ```
@@ -102,8 +100,6 @@ cloudUi:
   enabled: false
 registryServer:
   enabled: false
-aiGateway:
-  enabled: false
 ```
 
 The operator in each workload cluster is the standard enterprise operator, so
@@ -118,10 +114,10 @@ Promote MCP servers and skills through a sequence of environments, for example
 development, staging, and production, as they pass each stage's review. This
 topology leans on three concepts that the Registry Server keeps separate:
 
-- A **Registry Server** is the instance you deploy. The Cloud UI connects to a
+- A **Registry Server** is the instance you deploy. The console connects to a
   single instance.
 - A **registry** is a named, claim-scoped catalog that an instance serves. One
-  instance can host several, and the Cloud UI shows each user the registries
+  instance can host several, and the console shows each user the registries
   their claims allow as a dropdown.
 - A **source** is where a registry's entries come from. The `api` source type
   pulls from another Registry Server, since every instance implements the
@@ -131,13 +127,13 @@ Run a Registry Server in each environment so servers can be reviewed and
 promoted in place. The production instance does double duty: alongside its own
 gated `production` registry, it defines `staging` and `development` registries
 whose entries come from `api` sources pointing at those environments' instances.
-Point the Cloud UI at the production instance, and scope each registry with
+Point the console at the production instance, and scope each registry with
 identity claims so reviewers see the staging and development catalogs while
 everyone sees production.
 
 :::note
 
-The per-registry claims drive the Cloud UI dropdown: a user sees only the
+The per-registry claims drive the console's dropdown: a user sees only the
 registries whose claims match their identity. The common pattern surfaces
 development and staging to developers and reviewers while production stays
 broadly visible.
@@ -146,7 +142,7 @@ broadly visible.
 
 ```mermaid
 flowchart TB
-  CloudUI["Enterprise Cloud UI"]
+  CloudUI["The console"]
 
   subgraph Prod["<strong>Production Registry Server</strong>"]
     RegProd["production registry"]
@@ -173,8 +169,6 @@ cloudUi:
   enabled: false
 registryServer:
   enabled: true
-aiGateway:
-  enabled: false
 
 # Registry Server configuration. See "Configure the Registry Server".
 toolhive-registry-server:
@@ -183,8 +177,8 @@ toolhive-registry-server:
       # sources, registries, and database wiring for this environment
 ```
 
-Install the production release with the Cloud UI, then point the Cloud UI at
-this instance's own Registry Server:
+Install the production release with the console, then point the console at this
+instance's own Registry Server:
 
 ```yaml title="prod-values.yaml"
 toolhiveOperator:
@@ -195,8 +189,6 @@ cloudUi:
   enabled: true
 registryServer:
   enabled: true
-aiGateway:
-  enabled: false
 
 toolhive-cloud-ui:
   # Point at this instance's own Registry Server.
@@ -208,7 +200,7 @@ toolhive-registry-server:
       # Define a local, gated `production` registry, plus `staging` and
       # `development` registries backed by `api` sources that point at those
       # environments' Registry Servers. Scope each registry with identity
-      # claims so the Cloud UI dropdown shows the right catalog to each user.
+      # claims so the console's dropdown shows the right catalog to each user.
       # See "Configure the Registry Server".
 ```
 
@@ -217,10 +209,10 @@ with the open source
 [Registry Server configuration](../../toolhive/guides-registry/configuration.mdx)
 reference. The enterprise build reads the same configuration schema.
 
-If you'd rather not have the production instance carry the Cloud UI and the
+If you'd rather not have the production instance carry the console and the
 cross-environment `api` sources, deploy a dedicated Registry Server instance for
-aggregation and point the Cloud UI at it instead. The registry model is the
-same; only the instance hosting the aggregating registries changes.
+aggregation and point the console at it instead. The registry model is the same;
+only the instance hosting the aggregating registries changes.
 
 ## Next steps
 

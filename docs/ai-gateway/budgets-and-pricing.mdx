@@ -1,0 +1,340 @@
+---
+title: Budgets and pricing
+sidebar_label: Budgets and pricing
+description:
+  Cap LLM spend per user or group in USD, publish a pricing catalog, and
+  understand why an unpriced model is refused at the gateway.
+---
+
+A _budget_ caps what one user or one group is allowed to spend on model calls,
+denominated in USD. Every request is checked against the budget store before any
+tokens are spent, and every response is priced from the provider's reported
+usage and charged against that same store.
+
+You manage budgets in the console, under [Budgets](manage-budgets.mdx). Each one
+is independent: creating, editing, or deleting a budget has no effect on any
+other budget's counters.
+
+A REST API covers the same ground for automation, bulk import, and the few
+things the console does not expose yet. This page uses it where it is the
+clearer way to show a rule, and names the console screen wherever there is one.
+
+:::danger[Cover every caller before you turn enforcement on]
+
+A caller that no budget covers is **denied**. Pointing the gateway at the budget
+service before every caller is covered is a hard outage, not a degraded mode.
+See [Cover every caller first](#cover-every-caller-first) for the two ways to do
+it.
+
+:::
+
+## Prerequisites
+
+Budget enforcement is only injected into a gateway that has at least one
+`AIPolicy` targeting it. The policy's contents are not consulted for budgets, so
+an `AIPolicy` that exists purely to satisfy this requirement is a normal and
+supported shape. Without one, budgets are silently not enforced.
+
+Confirm enforcement is actually live before you rely on it:
+
+```bash
+kubectl get aigw <NAME> -n <NAMESPACE> \
+  -o jsonpath='{.status.webhooks}' | jq .
+```
+
+Both budget entries should report `probeSucceeded: true`. A `false` almost
+always means the audience configured on the gateway and on the budget service do
+not match exactly.
+
+## Cover every caller first
+
+Enforcement is fail-closed: there is no implicit allow, so a caller no budget
+covers cannot make requests at all. Before pointing the gateway at the budget
+service in an environment that already has traffic, cover everyone by one of two
+routes.
+
+**Set the organization default.** One value covers every user who has no budget
+of their own. This is the simpler route and usually the right one. Set it on the
+**Defaults** tab of the console's [Budgets](manage-budgets.mdx) screen, or see
+[Set an organization default](#set-an-organization-default) for the API.
+
+**Or create budgets individually**, for every existing user and group. For a
+large existing estate, the [bulk import](#import-in-bulk) below is faster than
+doing it one at a time.
+
+The default covers **users** only. There is no group default, so a caller who
+resolves to no directory user at all stays uncovered whichever route you take.
+
+## Create budgets
+
+Every budget belongs to one directory user or one directory group, and carries a
+limit in USD and a period of daily, monthly, or yearly. Periods are
+calendar-aligned rather than rolling windows from the first request, so a
+monthly budget resets on the first of the month.
+
+The console's [Budgets](manage-budgets.mdx) screen is where you normally do
+this: one tab per group budgets, user budgets, and the organization default. The
+rest of this section covers the same operations through the API, for automation
+and for bulk changes.
+
+Over the API a budget identifies its principal by scope and subject. `scope` is
+`user` or `group`; `subject_id` is the OIDC subject for a user, or the directory
+group's UUID for a group. `limit_usd` is a decimal string and `period` is `day`,
+`month`, or `year`.
+
+### Set an organization default
+
+One org-wide default covers every user who has no budget of their own, so you do
+not have to create a row per person. In the console this is the **Defaults**
+tab. Over the API:
+
+```bash
+curl -X PUT https://<GATEWAY_API>/v1/budgets/default \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"limit_usd": "350.000000000", "period": "day"}'
+```
+
+The default is a singleton: setting it replaces the previous value, and deleting
+it leaves every user who has no explicit budget uncovered again.
+
+At admission the default is materialized against the caller's own subject, using
+the same key an explicit budget would, so spend counters carry over unchanged
+when you later give that person a budget of their own. Promoting someone from
+the default to an exception does not reset their usage.
+
+The default is user-scope only. There is no group default.
+
+### One budget at a time
+
+These create or update exactly one budget and cannot delete another by omission,
+which is what the console's per-row editing uses. Prefer them for anything
+scripted that touches a single principal:
+
+```bash
+curl -X PUT https://<GATEWAY_API>/v1/budgets/users/<SUBJECT_ID> \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"limit_usd": "5.000000000", "period": "day"}'
+
+curl -X PUT https://<GATEWAY_API>/v1/budgets/groups/<GROUP_UUID> \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"limit_usd": "500.000000000", "period": "month", "precedence": 1}'
+```
+
+Group budgets take a 1-based `precedence`. User budgets do not, because a user's
+own budget is always charged first.
+
+### Import in bulk
+
+This is the one operation with no console equivalent, and the reason to reach
+for the API when you are covering an existing estate.
+
+`PUT /v1/budgets` replaces the **entire** collection: budgets in the request are
+created or updated, and **budgets absent from the request are deleted**. Use it
+for import, never for edits.
+
+```bash
+curl -X PUT https://<GATEWAY_API>/v1/budgets \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "budgets": [
+      {"scope": "user",  "subject_id": "<SUBJECT_ID>", "limit_usd": "5.000000000",   "period": "day"},
+      {"scope": "group", "subject_id": "<GROUP_UUID>", "limit_usd": "500.000000000", "period": "month"}
+    ]
+  }'
+```
+
+Spend counters survive a collection replace, because they are keyed on the
+principal rather than on the budget row, so a bulk import does not reset
+anyone's usage.
+
+`GET /v1/budgets` returns the collection with an `ETag`. Send it back as
+`If-Match` on your next write to detect a concurrent change; a `412` response
+means re-read and retry.
+
+## Which budget gets charged
+
+A user's own budget is tried first, whatever their group membership, and the
+organization default stands in for it when they have none. If that budget has no
+headroom left, the request charges the first group budget in ascending
+`precedence` order that still has headroom. A caller that no budget covers at
+all is the fail-closed case: refused.
+
+## Publish a pricing catalog
+
+Pricing has no console screen today, so this is API-only.
+
+Pricing is one organization-wide catalog, versioned by `effective_from`. A
+published version takes effect immediately for interactions after that
+timestamp, with no restart.
+
+The gateway ships a baseline catalog, regenerated weekly from public model
+pricing data, so a fresh install prices new models without any action from you.
+The baseline is dated far in the past, which means **any** version you publish
+outranks it permanently. Once you publish, the weekly baseline refresh never
+reaches your deployment again: to pick up a model the refreshed baseline added,
+add it to your own catalog.
+
+:::warning[`PUT` replaces the whole catalog]
+
+`PUT /v1/budgets/pricing` publishes a complete replacement, not a partial merge.
+Every entry you omit becomes unpriced, and unpriced models are refused. Always
+`GET` the active catalog, edit the returned matrix, then `PUT` the whole thing
+back.
+
+:::
+
+```bash
+curl https://<GATEWAY_API>/v1/budgets/pricing \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" > catalog.json
+# edit catalog.json
+curl -X PUT https://<GATEWAY_API>/v1/budgets/pricing \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d @catalog.json
+```
+
+If your active catalog omits a model the baseline prices, the service logs a
+warning at startup naming the active version and the exact provider and model
+pairs it does not cover. Read that as a standing statement that those models are
+unpriced, not as a transient condition.
+
+A binary rollback does not roll pricing back. Whatever version was active stays
+active, so recovery is a `PUT` of the rates you want.
+
+### Rate fields by provider
+
+Set the optional sub-counts when a model in your workload reports them.
+Otherwise the cost falls back to the nearest required rate, which can materially
+under-bill audio and reasoning workloads.
+
+Anthropic reports cache-creation tokens split by time to live, so declare each
+rate separately:
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "anthropic": {
+    "inputUsdPerMillion": "3",
+    "cacheCreation5mInputUsdPerMillion": "3.75",
+    "cacheCreation1hInputUsdPerMillion": "6",
+    "cachedInputUsdPerMillion": "0.3",
+    "outputUsdPerMillion": "15"
+  }
+}
+```
+
+OpenAI reasoning models report reasoning tokens, and the audio families report
+audio input and output separately:
+
+```json
+{
+  "provider": "openai",
+  "model": "gpt-4o-audio-preview",
+  "openai": {
+    "inputUsdPerMillion": "2.5",
+    "cachedInputUsdPerMillion": "1.25",
+    "outputUsdPerMillion": "10",
+    "audioInputUsdPerMillion": "40",
+    "audioOutputUsdPerMillion": "80"
+  }
+}
+```
+
+Some models charge a higher rate above a prompt-size threshold. Encode that with
+`promptSizeTiers`:
+
+```json
+{
+  "provider": "google",
+  "model": "gemini-2.5-pro",
+  "google": {
+    "inputUsdPerMillion": "1.25",
+    "cachedInputUsdPerMillion": "0.125",
+    "outputUsdPerMillion": "10",
+    "thoughtsOutputUsdPerMillion": "10",
+    "promptSizeTiers": [
+      {
+        "aboveTokens": 200000,
+        "inputUsdPerMillion": "2.5",
+        "cachedInputUsdPerMillion": "0.25",
+        "outputUsdPerMillion": "15"
+      }
+    ]
+  }
+}
+```
+
+Server-side tools that bill per thousand calls go in a `tools` block alongside
+`entries`, per provider rather than per model:
+
+```json
+{
+  "entries": ["...per-model entries..."],
+  "tools": {
+    "anthropic": { "webSearchUsdPerThousand": "10" },
+    "openai": {
+      "webSearchUsdPerThousand": "10",
+      "fileSearchUsdPerThousand": "2.5"
+    },
+    "google": { "groundingSearchUsdPerThousand": "35" }
+  }
+}
+```
+
+## An unpriced model is refused
+
+If a request names a provider and model with no entry in the active catalog, the
+gateway refuses it. The platform will not serve a request it cannot account for,
+so keep the catalog complete for every model you route to.
+
+This is deliberately the same treatment as a caller whose identity cannot be
+resolved: both are cases where the platform cannot govern the request, rather
+than cases where the caller is out of money.
+
+## Monitor spend
+
+Use the console for this. [Budgets](manage-budgets.mdx) shows each budget's
+usage against its limit. Developers see their own figures in the console.
+
+The API returns the same figures when you need them somewhere else, such as a
+finance report or your own dashboard:
+
+| Endpoint                    | Returns                                                          |
+| --------------------------- | ---------------------------------------------------------------- |
+| `GET /v1/budgets/summary`   | Used, limit, and remaining per principal for the period          |
+| `GET /v1/budgets/spend`     | A spend time series, for charting                                |
+| `GET /v1/budgets/breakdown` | Current-period spend for one budget, by user, model, or provider |
+| `GET /v1/budgets/charges`   | Recorded charges, newest first, with the exact amount charged    |
+| `GET /v1/budgets/events`    | Raw usage events, including those that resolved to no charge     |
+
+`GET /v1/budgets/groups/<ID>` and `GET /v1/budgets/users/<ID>` return the same
+breakdown addressed per budget, with a `dimension` query parameter.
+
+Any authenticated caller can read their own figures at the `/v1/me/budgets/*`
+equivalents without an admin grant. The admin routes above require the platform
+admin grant, the same one directory administration requires; there is no
+separate budgets role.
+
+## When a budget runs out
+
+An exhausted budget refuses further requests with the same response as any other
+policy denial. The response deliberately does not reveal which condition
+matched, so to tell exhaustion apart from a missing budget, check the caller in
+the console: a budget at full utilization is exhaustion, and no budget listed at
+all is the other case.
+
+A budget recovers on its own when the calendar period rolls over. To restore
+access immediately, raise the limit on the affected budget; it applies to the
+next request, with no restart and no counter reset.
+
+## Next steps
+
+- [Budgets in the console](manage-budgets.mdx) to do all of this without the
+  API.
+- [Connect model providers](./providers-and-models.mdx) if a model you need to
+  price is not routed yet.
