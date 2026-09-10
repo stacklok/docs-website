@@ -1,0 +1,866 @@
+{
+    "components": {
+        "schemas": {
+            "ConnectResponse": {
+                "properties": {
+                    "authorize_url": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "Connector": {
+                "properties": {
+                    "connector_id": {
+                        "type": "string"
+                    },
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "updated_at": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ConnectorAuthStatusItem": {
+                "properties": {
+                    "connection_status": {
+                        "enum": [
+                            "ready",
+                            "needs_auth",
+                            "connected"
+                        ],
+                        "type": "string"
+                    },
+                    "connector_id": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ConnectorAuthStatusListResponse": {
+                "properties": {
+                    "statuses": {
+                        "items": {
+                            "$ref": "#/components/schemas/ConnectorAuthStatusItem"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "type": "object"
+            },
+            "ConnectorAuthStatusResponse": {
+                "properties": {
+                    "connection_status": {
+                        "enum": [
+                            "ready",
+                            "needs_auth",
+                            "connected"
+                        ],
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ConnectorListItem": {
+                "properties": {
+                    "connection_status": {
+                        "description": "ConnectionStatus is the per-connector upstream auth state (ready | needs_auth |\nconnected), populated for enabled connectors from the caller's stored upstream\ntokens (#2531). Empty (omitted) when the auth server is not configured or the\nstatus read was unavailable, so the field degrades rather than blocking the list.",
+                        "type": "string"
+                    },
+                    "connector_id": {
+                        "type": "string"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "updated_at": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ConnectorListResponse": {
+                "properties": {
+                    "connectors": {
+                        "items": {
+                            "$ref": "#/components/schemas/ConnectorListItem"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "type": "object"
+            },
+            "ConnectorStatus": {
+                "properties": {
+                    "connection_status": {
+                        "description": "ConnectionStatus is stubbed in phase 3 (see domain.ConnectorStatus); omitted\nfrom the wire until the catalog join lands.",
+                        "type": "string"
+                    },
+                    "connector_id": {
+                        "type": "string"
+                    },
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "updated_at": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ErrorResponse": {
+                "properties": {
+                    "error": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "GatewayView": {
+                "properties": {
+                    "connectors": {
+                        "items": {
+                            "$ref": "#/components/schemas/ConnectorStatus"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "connectors_retired": {
+                        "description": "ConnectorsRetired is true only when the connectorGatewayDirectoryConfigMigration\ntoggle is on: the per-User connector configuration has moved to the Connection\nsurface (/v1/me/connections) and is no longer served here. Omitted (false) on a\ntoggle-off install, so its presence is an unambiguous positive signal rather than\nan inference from a missing connectors array.",
+                        "type": "boolean"
+                    },
+                    "endpoint_url": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "PutConnectorRequest": {
+                "properties": {
+                    "enabled": {
+                        "type": "boolean"
+                    }
+                },
+                "type": "object"
+            },
+            "Tool": {
+                "properties": {
+                    "description": {
+                        "type": "string"
+                    },
+                    "destructive_hint": {
+                        "description": "DestructiveHint is omitted (not false) when the backend did not advertise the hint —\nmirroring domain.Tool's own nil-means-unknown contract, so a toggle UI can\ndistinguish \"confirmed safe\" from \"the backend never said.\"",
+                        "type": "boolean"
+                    },
+                    "input_schema": {
+                        "additionalProperties": {},
+                        "type": "object"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "read_only_hint": {
+                        "description": "ReadOnlyHint is omitted (not false) when the backend did not advertise the hint —\nmirroring domain.Tool's own nil-means-unknown contract, so a toggle UI can\ndistinguish \"confirmed safe\" from \"the backend never said.\"",
+                        "type": "boolean"
+                    }
+                },
+                "type": "object"
+            },
+            "ToolsListResponse": {
+                "properties": {
+                    "tools": {
+                        "items": {
+                            "$ref": "#/components/schemas/Tool"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "type": "object"
+            }
+        },
+        "securitySchemes": {
+            "BearerAuth": {
+                "description": "Bearer token from OIDC provider",
+                "in": "header",
+                "name": "Authorization",
+                "type": "apiKey"
+            }
+        }
+    },
+    "info": {
+        "description": "Stacklok connector-gateway control-plane — user-self API to view and toggle the caller's MCP connectors.",
+        "title": "Connector Gateway API",
+        "version": "0.1.0"
+    },
+    "externalDocs": {
+        "description": "",
+        "url": ""
+    },
+    "paths": {
+        "/v1/users/me/gateway": {
+            "get": {
+                "operationId": "getMyGateway",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GatewayView"
+                                }
+                            }
+                        },
+                        "description": "OK",
+                        "headers": {
+                            "ETag": {
+                                "description": "Strong ETag over the gateway view",
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "304": {
+                        "description": "Not Modified"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    }
+                },
+                "summary": "Get the caller's gateway view"
+            }
+        },
+        "/v1/users/me/gateway/connectors": {
+            "get": {
+                "operationId": "listMyConnectors",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ConnectorListResponse"
+                                }
+                            }
+                        },
+                        "description": "OK",
+                        "headers": {
+                            "ETag": {
+                                "description": "Strong ETag over the connector list",
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "304": {
+                        "description": "Not Modified"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    },
+                    "501": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Retired under connectorGatewayDirectoryConfigMigration; use /v1/me/connections"
+                    }
+                },
+                "summary": "List the caller's connectors (catalog joined with per-user state)"
+            }
+        },
+        "/v1/users/me/gateway/connectors/status": {
+            "get": {
+                "operationId": "listMyConnectorStatuses",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ConnectorAuthStatusListResponse"
+                                }
+                            }
+                        },
+                        "description": "OK",
+                        "headers": {
+                            "ETag": {
+                                "description": "Strong ETag over the status list",
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "304": {
+                        "description": "Not Modified"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    }
+                },
+                "summary": "List every connector's upstream connection status"
+            }
+        },
+        "/v1/users/me/gateway/connectors/{connector_id}": {
+            "delete": {
+                "operationId": "resetConnectorState",
+                "parameters": [
+                    {
+                        "description": "Connector (vmcp backend) ID",
+                        "in": "path",
+                        "name": "connector_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Current connector ETag. Missing -\u003e 428; stale -\u003e 412.",
+                        "in": "header",
+                        "name": "If-Match",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "412": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Precondition Failed"
+                    },
+                    "428": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Precondition Required"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    },
+                    "501": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Retired under connectorGatewayDirectoryConfigMigration; use /v1/me/connections"
+                    }
+                },
+                "summary": "Clear a connector's explicit state (revert to default)"
+            },
+            "get": {
+                "operationId": "getMyConnector",
+                "parameters": [
+                    {
+                        "description": "Connector (vmcp backend) ID",
+                        "in": "path",
+                        "name": "connector_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Connector"
+                                }
+                            }
+                        },
+                        "description": "OK",
+                        "headers": {
+                            "ETag": {
+                                "description": "Strong ETag over the connector state",
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "304": {
+                        "description": "Not Modified"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    },
+                    "501": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Retired under connectorGatewayDirectoryConfigMigration; use /v1/me/connections"
+                    }
+                },
+                "summary": "Get one connector's current state"
+            },
+            "put": {
+                "operationId": "setConnectorEnabled",
+                "parameters": [
+                    {
+                        "description": "Connector (vmcp backend) ID",
+                        "in": "path",
+                        "name": "connector_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Current connector ETag. Missing -\u003e 428; stale -\u003e 412.",
+                        "in": "header",
+                        "name": "If-Match",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/PutConnectorRequest",
+                                        "summary": "body",
+                                        "description": "Desired state"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "Desired state",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Connector"
+                                }
+                            }
+                        },
+                        "description": "OK",
+                        "headers": {
+                            "ETag": {
+                                "description": "Strong ETag over the resulting connector config",
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "412": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Precondition Failed"
+                    },
+                    "428": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Precondition Required"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    },
+                    "501": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Retired under connectorGatewayDirectoryConfigMigration; use /v1/me/connections"
+                    }
+                },
+                "summary": "Set a connector's enable/disable state"
+            }
+        },
+        "/v1/users/me/gateway/connectors/{connector_id}/connect": {
+            "post": {
+                "operationId": "connectMyConnector",
+                "parameters": [
+                    {
+                        "description": "Connector (vmcp backend) ID",
+                        "in": "path",
+                        "name": "connector_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ConnectResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Conflict"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    }
+                },
+                "summary": "Start a connector's upstream connect flow"
+            }
+        },
+        "/v1/users/me/gateway/connectors/{connector_id}/status": {
+            "get": {
+                "operationId": "getMyConnectorStatus",
+                "parameters": [
+                    {
+                        "description": "Connector id: a Directory connectors.id under the toggle, the vmcp backend id otherwise",
+                        "in": "path",
+                        "name": "connector_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ConnectorAuthStatusResponse"
+                                }
+                            }
+                        },
+                        "description": "OK",
+                        "headers": {
+                            "ETag": {
+                                "description": "Strong ETag over the connection status",
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "304": {
+                        "description": "Not Modified"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "500": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Internal Server Error"
+                    }
+                },
+                "summary": "Get one connector's upstream connection status"
+            }
+        },
+        "/v1/users/me/gateway/connectors/{connector_id}/tools": {
+            "get": {
+                "operationId": "listConnectorTools",
+                "parameters": [
+                    {
+                        "description": "Connector (Directory connectors.id) UUID",
+                        "in": "path",
+                        "name": "connector_id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ToolsListResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "502": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Bad Gateway"
+                    }
+                },
+                "summary": "List a Connector's Tools"
+            }
+        }
+    },
+    "openapi": "3.1.0",
+    "servers": [
+        {
+            "url": "/"
+        }
+    ]
+}

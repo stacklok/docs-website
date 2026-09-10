@@ -12,7 +12,7 @@ Perform critical editorial reviews as a tech writer / copyeditor, focusing on cl
 
 1. **Read the document(s) fully** before making observations
 2. **Check related documents** if reviewing changes to existing docs or new docs in a doc set
-3. **Check for a project style guide** (STYLE-GUIDE.md, CLAUDE.md, or similar)
+3. **Check the project style guide.** `STYLE-GUIDE.md` is authoritative for terminology, naming, and page structure. `AGENTS.md` (symlinked as `CLAUDE.md`) restates a subset for agents; where the two differ, the style guide wins
 4. **Verify claims against authoritative sources** - cross-check documented behavior against CLI reference docs, API specs, auto-generated references, and upstream specifications. Note: docs may be drafted ahead of a release, so auto-generated references may lag behind - flag contradictions, not just absences
 5. **Walk through as the reader** - mentally follow the page as a user doing the task for the first time. Are prerequisites complete? Can you follow each step in order? Would you have the knowledge needed at each point, or does the page assume something it hasn't established?
 6. **Assess information architecture** - document placement, scope, cross-document duplication

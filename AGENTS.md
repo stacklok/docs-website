@@ -190,8 +190,8 @@ Docs describe how the product works today; they are not a changelog or upgrade g
   - No: The JSON-RPC error code moved from `-32029` to `429` in v0.41.0.
 - Upgrade sequencing and migration caveats belong in release notes, not inline in how-to guides.
 - Prefer positive statements. Say what the product does and what the reader should do; don't restate a positive statement in negative form ("uses X, not Y", "don't point it at..."). If a negation carries a genuinely new fact, fold that fact into the positive statement.
-  - Yes: The Cloud UI uses the registry policy's `server_api_url` value.
-  - No: The Cloud UI reads `server_api_url`, not `api_url`.
+  - Yes: The console uses the registry policy's `server_api_url` value.
+  - No: The console reads `server_api_url`, not `api_url`.
 - Exception: a breaking change or major behavioral change (a changed default, behavior that silently differs for existing setups) may carry a clearly labeled, versioned admonition (e.g. `:::info[Changed in v0.30.1]`) when upgraders need an explanation or action they can't infer from an error message. Keep the surrounding prose standalone about current behavior; the admonition carries only the upgrade delta and action. Remove these notes after a few releases, once the upgrade audience has moved on. Changes that fail loudly at startup with an obvious cause don't qualify.
 - Large migrations (API version promotions, multi-field removals) get a dedicated migration guide (see `guides-k8s/migrate-to-v1beta1.mdx`); guide pages link to it with a short pointer rather than carrying the details inline.
 - Deprecation notices are current state, not changelog. Documenting that a feature is deprecated, still read but warned about, or scheduled for removal is fine.
@@ -251,9 +251,10 @@ ALWAYS use these exact terms and capitalizations. When editing documentation, re
 - Microsoft Entra ID ("Entra ID" after first use; avoid "Azure AD" unless you are quoting a literal API, CLI, or field value)
 - Virtual MCP Server (vMCP) - a feature of ToolHive that aggregates multiple MCP servers into a single endpoint; use "Virtual MCP Server (vMCP)" on first use, "vMCP" thereafter
 - Stacklok Enterprise - the commercial, enterprise-licensed distribution of ToolHive, adding turnkey IdP integration, centralized policy enforcement, hardened and signed releases, and SLA-backed support
-- Stacklok Desktop - the enterprise edition of the ToolHive desktop app, with enterprise lockdown policies controlled by the Enterprise Manager (not "Enterprise UI", "Enterprise Studio", or "Stacklok UI")
-- Enterprise Manager - the Stacklok Enterprise component that pushes policy configuration to Stacklok Desktop and the Stacklok CLI
-- Enterprise Cloud UI - the Stacklok Enterprise web console for browsing and managing the MCP server catalog
+- Enterprise Manager - the Stacklok Enterprise component that pushes policy configuration to the Stacklok CLI
+- the console - the Stacklok Enterprise web interface, covering both the administration and end-user experiences. Lowercase in running prose; it is a common noun, not a product name (not "Enterprise Cloud UI", "Cloud UI", or "Enterprise UI"). Distinct from the open source ToolHive Cloud UI, which is retired and keeps its own name on the page that records the retirement. Its Helm identifiers keep their original spelling: the enable flag is `cloudUi` and the subchart key is `toolhive-cloud-ui`, so use those verbatim in values examples
+- Stacklok Desktop - retired. The enterprise desktop app no longer ships and no page should reference it; the enterprise client is the Stacklok CLI
+- engineering codenames and route prefixes are internal. Use the product name in published content, and never document a URL path that exists only as an implementation detail
 - enterprise authorization - the Stacklok Enterprise capability that compiles RBAC-style custom resources (roles, bindings, and per-server attachment policies) into the Cedar policies ToolHive enforces. It is a feature, not a named component: write it lowercase, capitalizing only at the start of a sentence, heading, or title. Don't treat it as a proper noun like the Enterprise Manager.
 
 If you encounter a term not listed here that appears frequently in the documentation, consider adding it to this list for consistency.

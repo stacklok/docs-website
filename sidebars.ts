@@ -340,6 +340,7 @@ const mcpSidebar: SidebarsConfig[string] = [
 
 const platformSidebar: SidebarsConfig[string] = [
   'platform/index',
+  'platform/enterprise-console/index',
 
   {
     type: 'html',
@@ -362,6 +363,10 @@ const platformSidebar: SidebarsConfig[string] = [
       'platform/enterprise-platform/verify-artifacts',
       'platform/enterprise-platform/configure-registry-server',
       'platform/enterprise-platform/configure-identity',
+      'platform/enterprise-platform/configure-ai-gateway',
+      'platform/enterprise-platform/configure-connector-gateway',
+      'platform/enterprise-platform/connect-a-client',
+      'platform/enterprise-platform/api-reference',
     ],
   },
 
@@ -370,6 +375,22 @@ const platformSidebar: SidebarsConfig[string] = [
     value: 'Govern the platform',
     className: 'sidebar-title',
     defaultStyle: false,
+  },
+
+  {
+    type: 'category',
+    label: 'Identity and directory',
+    link: {
+      type: 'doc',
+      id: 'platform/enterprise-directory/index',
+    },
+    items: [
+      'platform/enterprise-directory/users-and-groups',
+      'platform/enterprise-directory/scim-provisioning',
+      'platform/enterprise-directory/identity-providers',
+      'platform/enterprise-directory/managed-secrets',
+      'platform/enterprise-directory/virtual-api-keys',
+    ],
   },
 
   {
@@ -409,7 +430,6 @@ const platformSidebar: SidebarsConfig[string] = [
           'platform/enterprise-manager/policies/telemetry',
           'platform/enterprise-manager/policies/ca-certificate',
           'platform/enterprise-manager/policies/build-env',
-          'platform/enterprise-manager/policies/desktop-app',
         ],
       },
       'platform/enterprise-manager/degraded-mode',
@@ -425,56 +445,35 @@ const platformSidebar: SidebarsConfig[string] = [
     defaultStyle: false,
   },
 
-  {
-    type: 'category',
-    label: 'Enterprise Cloud UI',
-    link: {
-      type: 'doc',
-      id: 'platform/enterprise-cloud-ui/index',
-    },
-    items: [
-      'platform/enterprise-cloud-ui/intro',
-      'platform/enterprise-cloud-ui/configure',
-      'platform/enterprise-cloud-ui/browse-catalog',
-      {
-        type: 'category',
-        label: 'Registry management',
-        link: {
-          type: 'doc',
-          id: 'platform/enterprise-cloud-ui/administration/index',
-        },
-        items: [
-          'platform/enterprise-cloud-ui/administration/entries',
-          'platform/enterprise-cloud-ui/administration/sources',
-          'platform/enterprise-cloud-ui/administration/registries',
-        ],
-      },
-    ],
-  },
-
-  {
-    type: 'category',
-    label: 'Stacklok Desktop',
-    link: {
-      type: 'doc',
-      id: 'platform/enterprise-desktop/index',
-    },
-    items: [
-      'platform/enterprise-desktop/intro',
-      {
-        type: 'doc',
-        id: 'platform/enterprise-desktop/rollout',
-        label: 'Rollout',
-      },
-      'platform/enterprise-desktop/policy-enforcement',
-      'platform/enterprise-desktop/deep-links',
-    ],
-  },
-
   'platform/enterprise-cli/index',
+
+  {
+    type: 'html',
+    value: 'Concepts',
+    className: 'sidebar-title',
+    defaultStyle: false,
+  },
+
+  'platform/concepts/what-you-can-see',
+  'platform/concepts/two-group-models',
 ];
 
-const aiGatewaySidebar: SidebarsConfig[string] = ['ai-gateway/index'];
+const connectorGatewaySidebar: SidebarsConfig[string] = [
+  'connector-gateway/index',
+  'connector-gateway/connectors',
+  'connector-gateway/tool-usage',
+];
+
+const aiGatewaySidebar: SidebarsConfig[string] = [
+  'ai-gateway/index',
+  'ai-gateway/providers-and-models',
+  'ai-gateway/model-routing',
+  'ai-gateway/budgets-and-pricing',
+  'ai-gateway/manage-budgets',
+  'ai-gateway/prompt-injection-screening',
+  'ai-gateway/pci-pii-controls',
+  'ai-gateway/forward-audit-logs',
+];
 
 const resourcesSidebar: SidebarsConfig[string] = [
   {
@@ -563,6 +562,7 @@ const sidebars: SidebarsConfig = {
   platformSidebar,
   mcpSidebar,
   aiGatewaySidebar,
+  connectorGatewaySidebar,
   resourcesSidebar,
 };
 

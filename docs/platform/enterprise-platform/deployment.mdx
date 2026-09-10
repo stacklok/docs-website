@@ -7,8 +7,8 @@ description:
 
 The Stacklok Enterprise platform runs in your Kubernetes cluster. You install it
 as a single umbrella Helm chart that deploys the ToolHive Operator, the
-Enterprise Manager, the Enterprise Cloud UI, and the Registry Server in one
-release, along with the custom resource definitions (CRDs) the operator needs.
+Enterprise Manager, the console, and the Registry Server in one release, along
+with the custom resource definitions (CRDs) the operator needs.
 
 :::tip[Distributed and multi-cluster deployments]
 
@@ -31,16 +31,19 @@ posture requires every artifact to come from an internal registry, see
 
 Before deploying, ensure you have:
 
-- A Kubernetes cluster (1.28 or later)
+- A Kubernetes cluster (1.30 or later)
 - An ingress or gateway controller to publish the components, plus DNS records
-  and TLS certificates for the hostnames you expose the Cloud UI, Enterprise
+  and TLS certificates for the hostnames you expose the console, Enterprise
   Manager, and Registry Server on. The chart creates Services but no ingress,
   DNS, or certificates; see [Step 6](#6-expose-the-platform-endpoints).
 - An OIDC-compatible identity provider configured per
   [Configure platform identity](./configure-identity.mdx)
-- A PostgreSQL database for the [Registry Server](#what-the-chart-includes). The
-  Registry Server serves the MCP and skills catalog the Enterprise Cloud UI
-  reads, and stores it in an external PostgreSQL instance you provide.
+- A PostgreSQL database. The [Registry Server](#what-the-chart-includes) stores
+  the MCP and skills catalog the console reads in an external PostgreSQL
+  instance you provide, and the Enterprise Manager's directory service needs one
+  too. One instance can serve both, but each component needs its own database
+  and its own credentials on it; see
+  [the Enterprise Manager database](#enterprise-manager-database).
 - Your Stacklok Enterprise license, available from the Stacklok install portal
   at [install.stacklok.com](https://install.stacklok.com). The license grants
   access to the umbrella chart and the container images it references. Stacklok
@@ -49,16 +52,41 @@ Before deploying, ensure you have:
 ## What the chart includes
 
 The chart bundles each platform component and gives it an enable flag in a
-single `values.yaml`, so you turn on only the components you want. Each flag
-maps to a platform component:
+single `values.yaml`, so you turn on only the components you want.
 
-| Enable flag         | What it deploys                                                                                                               |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `toolhiveOperator`  | The ToolHive Operator and its custom resource definitions (`MCPServer`, `VirtualMCPServer`, and others)                       |
-| `enterpriseManager` | Enterprise Manager service that serves configuration to Stacklok clients                                                      |
-| `cloudUi`           | Enterprise Cloud UI Next.js application                                                                                       |
-| `registryServer`    | Registry Server that serves the MCP and skills catalog to the Enterprise Cloud UI, backed by an external PostgreSQL database. |
-| `aiGateway`         | AI Gateway operator that exposes large language models behind a managed gateway. Disabled by default.                         |
+**Every flag defaults to off.** A `helm install` with no values renders an empty
+release, so this table is the list of decisions you have to make, not a list of
+things you can turn off.
+
+| Enable flag                                | What it deploys                                                                                                                              |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `toolhiveOperator`                         | The ToolHive Operator and its custom resource definitions (`MCPServer`, `VirtualMCPServer`, and others)                                      |
+| `enterpriseManager`                        | Enterprise Manager, which serves configuration to Stacklok clients                                                                           |
+| `enterprise-manager.directory.enabled`     | The directory service: users, groups, connectors, secrets, and virtual keys. Needs `enterpriseManager` and a PostgreSQL database you provide |
+| `cloudUi`                                  | The console, a Next.js application                                                                                                           |
+| `registryServer`                           | Registry Server, backed by an external PostgreSQL database you provide                                                                       |
+| `global.stacklok.aiGateway.enabled`        | AI Gateway operator and its custom resource definitions                                                                                      |
+| `global.stacklok.connectorGateway.enabled` | Connector Gateway. Also requires `global.stacklok.connectorGatewayId` and `global.stacklok.authServerIssuer`                                 |
+
+Two things about that table are worth reading twice.
+
+**The last two live under `global.stacklok`, not at the top level.** A subchart
+can only read `global.*`, never a sibling chart's values, so these two toggles
+have to sit there. A values file that sets a top-level `aiGateway` or
+`connectorGateway` key instead fails the render with a message naming the key to
+use, so the wrong path surfaces as an error you can act on rather than a
+component that quietly stays off.
+
+**The console's chart identifiers keep their original names.** The flag is
+`cloudUi` and its configuration key is `toolhive-cloud-ui`, so use those
+spellings verbatim even though the product surface is now the console.
+
+Enabling the Connector Gateway is a three-value decision. Neither
+`global.stacklok.connectorGatewayId` nor `global.stacklok.authServerIssuer` has
+a default, and the render fails naming whichever is missing rather than starting
+a gateway that announces a placeholder identity or cannot complete a login. See
+[Configure the Connector Gateway](./configure-connector-gateway.mdx) and
+[Configure the AI Gateway](./configure-ai-gateway.mdx).
 
 The `toolhiveOperator` subchart deploys the enterprise build of the ToolHive
 Operator: the same operator codebase as ToolHive Community, repackaged as a
@@ -92,10 +120,11 @@ they surface later as failed pods or a stuck rollout: a Kubernetes version below
 the chart floor, tight node capacity, an unreachable OIDC issuer, a missing
 signing-key Secret.
 
-Running the check itself requires the same registry access and `values.yaml` you
-use to install: complete [Step 1](#1-authenticate-to-the-replicated-registry)
-and [Step 3](#3-configure-values) below first, then come back here before
-[Step 4](#4-install-the-chart).
+Running the check itself requires the same registry access, namespace, Secrets,
+and `values.yaml` you use to install: complete
+[Step 1](#1-authenticate-to-the-replicated-registry),
+[Step 2](#2-prepare-secrets), and [Step 3](#3-configure-values) below first,
+then come back here before [Step 4](#4-install-the-chart).
 
 ### Install the CLI plugin
 
@@ -123,6 +152,24 @@ this spec against the version above, so a newer CLI can grade a check
 differently than Stacklok validated it, giving you a `pass` or `fail` that
 doesn't reflect your cluster's real state.
 
+:::warning[Downloading the pinned version isn't enough to stay on it]
+
+The CLI updates itself. `--auto-update` defaults to true, so the binary you just
+pinned replaces itself on its first run, printing a line like
+`Updating preflight from 0.131.1 to 0.133.0...` as it goes. Pass
+`--auto-update=false` on every invocation to hold the version:
+
+```bash
+kubectl preflight --auto-update=false -
+```
+
+You can't confirm this after the fact by asking the binary, either.
+`kubectl preflight version` keeps reporting the version you downloaded even once
+it's running newer code, so treat the flag as the control and the version output
+as unreliable.
+
+:::
+
 ### Alternative: install with krew
 
 [krew](https://krew.sigs.k8s.io/), the `kubectl` plugin manager, is a quicker
@@ -133,10 +180,12 @@ kubectl krew install preflight
 ```
 
 The tradeoff is that krew always resolves to whatever version its index
-currently serves, and it has no version-pin flag, so a krew install can drift
-ahead of the validated version silently. If you hit unexpected preflight
-behavior on a krew-installed CLI, compare `kubectl preflight version` against
-the pinned version above before opening a support case.
+currently serves, and it has no version-pin flag, so a krew install starts on
+whatever is current rather than the validated version. Pass
+`--auto-update=false` here too, to at least stop it moving further. If you hit
+unexpected preflight behavior, mention the version you installed when you open a
+support case, and note that the CLI's own `version` output can't be trusted to
+confirm it.
 
 krew also needs index access, so use the pinned download in an air-gapped
 environment.
@@ -153,8 +202,9 @@ verifies less than your real install actually needs.
 helm template stacklok-enterprise \
   oci://oci.stacklok.com/stacklok-enterprise/<CHANNEL>/stacklok-enterprise-platform \
   --version <VERSION> \
+  --namespace stacklok-system \
   --values values.yaml \
-  | kubectl preflight -
+  | kubectl preflight --auto-update=false -
 ```
 
 `<CHANNEL>` and `<VERSION>` are the channel slug and chart version the install
@@ -165,16 +215,26 @@ credentials from [Step 1](#1-authenticate-to-the-replicated-registry). There's
 no credential prompt: if that login is missing or expired, `helm template` fails
 with an authorization error. Log in again and rerun.
 
+:::warning[Pass the same `--namespace` you install into]
+
+`--namespace` is not optional here. The chart renders the namespace into the
+preflight spec, and `helm template` defaults it to `default` when the flag is
+absent. The signing-key check then looks for your Secret in the wrong namespace
+and reports `fail` on a cluster that is correctly prepared. Pass the same
+`--namespace` value you use in [Step 4](#4-install-the-chart).
+
+:::
+
 ### What it checks
 
 | Check                          | Renders when                                                                                        | Outcome                                                                                    |
 | ------------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Kubernetes version             | Always                                                                                              | `fail` below 1.28 (the chart's floor)                                                      |
+| Kubernetes version             | Always                                                                                              | `fail` below 1.30 (the chart's floor)                                                      |
 | Node capacity (CPU and memory) | Always                                                                                              | `warn` below 4 allocatable cores or 6Gi, evaluated on the smallest node                    |
 | Distribution                   | Always                                                                                              | `warn` on OpenShift OCP                                                                    |
 | Egress reachability            | `preflight.checkEgress=true`                                                                        | `warn` only; off by default, always fails in air gap                                       |
 | Registry database reachability | `registryServer.enabled` and a run-time `toolhive-registry-server.preflightDatabaseUri` is supplied | `fail` if unreachable                                                                      |
-| OIDC issuer reachability       | `enterpriseManager.enabled=true` and `enterprise-manager.idpConfig.issuer` is set                   | `fail` if unreachable or misconfigured (see the note below)                                |
+| OIDC issuer reachability       | `enterpriseManager.enabled=true` and `global.stacklok.primaryIdp.issuer` is set                     | `fail` if unreachable or misconfigured (see the note below)                                |
 | Signing-key Secret exists      | `enterpriseManager.enabled=true`                                                                    | `fail` if the Secret named in `enterprise-manager.signingConfig.existingSecret` is missing |
 
 :::note[A cluster-internal OIDC issuer can fail from your workstation]
@@ -202,10 +262,11 @@ ship. To exercise it, add these flags to the command above, alongside your real
 helm template stacklok-enterprise \
   oci://oci.stacklok.com/stacklok-enterprise/<CHANNEL>/stacklok-enterprise-platform \
   --version <VERSION> \
+  --namespace stacklok-system \
   --values values.yaml \
   --set registryServer.enabled=true \
   --set 'toolhive-registry-server.preflightDatabaseUri=postgres://<USER>:<PASSWORD>@<HOST>:5432/<DATABASE>?sslmode=require' \
-  | kubectl preflight -
+  | kubectl preflight --auto-update=false -
 ```
 
 The check reports `fail` if the database is unreachable. This is the only check
@@ -253,12 +314,14 @@ This is off by default because it carries cost you should accept deliberately:
   (nodes, namespaces, storage classes, CRDs), plus a namespaced read on the
   signing-key Secret when `enterpriseManager.enabled` is set.
 
-If you also set `toolhive-registry-server.preflightDatabaseUri` persistently,
-enforcement widens the credential exposure described in
-[Check registry database reachability](#check-registry-database-reachability):
-the password renders into the long-lived `stacklok-enterprise-preflight` Secret,
-not just the Job's own Secret, which is deleted when the hook finishes. Keep
-passing the URI as a one-off `--set`.
+Enforcement does not change the credential exposure described in
+[Check registry database reachability](#check-registry-database-reachability).
+That exposure comes from setting `toolhive-registry-server.preflightDatabaseUri`
+persistently at all: the password renders into the
+`stacklok-enterprise-preflight` Secret, which carries no hook annotations and so
+is never deleted, whether or not enforcement is on. Enforcement adds one further
+copy in the Job's own Secret, and that one is hook-deleted when the hook
+finishes. Either way, keep passing the URI as a one-off `--set`.
 
 Enabling this on the [air-gapped path](./airgap-install.mdx) takes extra setup,
 since the Job's image defaults to a Stacklok-hosted registry. See
@@ -301,7 +364,7 @@ either:
   reinstalling over a previous release, check
   `kubectl get crd | grep -E 'aigateway|toolhive'` for version conflicts by
   hand. The pattern covers the AI Gateway CRDs as well, which install separately
-  when `aiGateway.enabled` is set.
+  when `global.stacklok.aiGateway.enabled` is set.
 
 ## Deploy with Helm
 
@@ -350,13 +413,28 @@ kubectl create namespace stacklok-system
 Then prepare the Secrets for the components you're enabling before you configure
 values.
 
+**Identity provider client secret.** The console signs users in against your
+corporate provider using a confidential client, and the chart reads that
+client's secret from a Secret you create. There is no plaintext fallback. Use
+the client secret from the console's client registration in
+[Configure platform identity](./configure-identity.mdx):
+
+```bash
+kubectl create secret generic console-oidc-client \
+  --namespace stacklok-system \
+  --from-literal=client-secret='<CONSOLE_CLIENT_SECRET>'
+```
+
+The values file references it through
+`global.stacklok.primaryIdp.clientSecretRef`.
+
 **Enterprise Manager signing key.** Generate the key and create the Secret as
 described in
 [Generate a signing key](../enterprise-manager/configure.mdx#generate-a-signing-key).
 The values file references it by name through
 `enterprise-manager.signingConfig.existingSecret`.
 
-**Better Auth session secret.** The Cloud UI needs a secret of at least 32
+**Better Auth session secret.** The console needs a secret of at least 32
 characters to encrypt its sessions. Generate one:
 
 ```bash
@@ -372,13 +450,39 @@ in
 The values file references them through `secretKeyRef`, as the example below
 shows.
 
+**Enterprise Manager database passwords.** The Enterprise Manager reads its own
+database passwords from Secrets, one per role, each under a fixed key. Create
+them with the passwords you assigned when you provisioned the roles described in
+[the Enterprise Manager database](#enterprise-manager-database):
+
+```bash
+kubectl create secret generic enterprise-manager-db \
+  --namespace stacklok-system \
+  --from-literal=postgres-password='<APP_PASSWORD>'
+
+kubectl create secret generic enterprise-manager-db-migration \
+  --namespace stacklok-system \
+  --from-literal=postgres-migration-password='<MIGRATION_PASSWORD>'
+```
+
+The key names matter: the chart defaults to `postgres-password` and
+`postgres-migration-password` and looks them up by those names.
+
 ### 3. Configure values
 
 Create a `values.yaml` file that enables the components you want and supplies
 their settings. Each component has an enable flag, and its configuration goes
-under that component's own key, as the example shows. The example below installs
-the operator, Enterprise Manager, Cloud UI, and Registry Server, with the AI
-Gateway disabled:
+under that component's own key, as the example shows. Platform-wide settings,
+such as the identity provider every component trusts, go under `global` at the
+top level. The example below installs the operator, Enterprise Manager, the
+console, and Registry Server. Every other component, including the AI Gateway,
+stays off because each flag defaults to off.
+
+Two optional additions later on this page, the
+[Redis/Valkey](#global-redisvalkey-defaults) and
+[PostgreSQL](#global-postgresql-defaults) defaults, also live under `global`.
+Merge those into the single `global` block below rather than appending a second
+one; see the warning after the example.
 
 ```yaml title="values.yaml"
 # Replicated SDK subchart. Required for the online install: it turns the license
@@ -396,14 +500,25 @@ cloudUi:
   enabled: true
 registryServer:
   enabled: true
-aiGateway:
-  enabled: false
+
+# The corporate identity provider, configured once for the whole platform. Every
+# component reads it from here. See "Configure platform identity" for the client
+# registrations these values correspond to.
+global:
+  stacklok:
+    primaryIdp:
+      issuer: 'https://idp.example.com'
+      clientId: '<CONSOLE_CLIENT_ID>'
+      clientSecretRef:
+        # Secret created in "Prepare secrets" above
+        name: 'console-oidc-client'
+        key: 'client-secret'
+      scopes: 'openid,profile,email'
 
 # Enterprise Manager configuration. See the Enterprise Manager deployment page
 # for the full reference of fields under this key.
 enterprise-manager:
   idpConfig:
-    issuer: 'https://idp.example.com'
     audience: 'enterprise-manager'
     requiredScope: 'toolhive:config:read'
     idpType: 'generic'
@@ -413,9 +528,11 @@ enterprise-manager:
   resourceURL: 'https://config.example.com'
   clientID: '<STACKLOK_CLI_CLIENT_ID>'
 
-# Registry Server configuration. Serves the MCP and skills catalog the Cloud
-# UI reads. Requires an external PostgreSQL database; supply the password from
-# a Secret, never inline.
+# Registry Server configuration. Serves the MCP and skills catalog the console
+# reads. Requires an external PostgreSQL database; supply the password from
+# a Secret, never inline. This user runs the schema migrations, so it needs the
+# CREATEROLE attribute. See "Configure the Registry Server" for why, and for
+# how to recover if the first migration fails partway.
 toolhive-registry-server:
   upstream:
     config:
@@ -432,29 +549,226 @@ toolhive-registry-server:
             name: registry-db-credentials
             key: password
 
-# Enterprise Cloud UI configuration. See the Cloud UI deployment page for the
-# full reference of fields under this key.
+# Configuration for the console.
 toolhive-cloud-ui:
   # URL of the Registry Server. When it runs in this cluster, point at its
   # in-cluster Service (named registry-api on port 8080).
   apiBaseUrl: 'http://registry-api.stacklok-system.svc.cluster.local:8080'
-  # Cloud UI backend's URL for the Enterprise Manager; matches resourceURL
-  # above.
-  enterpriseManagerUrl: 'https://config.example.com'
-  oidc:
-    issuerUrl: 'https://idp.example.com'
-    clientId: '<CLOUD_UI_CLIENT_ID>'
-    clientSecret: '<CLOUD_UI_CLIENT_SECRET>'
+  # URL of the Enterprise Manager. Only the console's server side calls it, so
+  # point at its in-cluster Service, named <RELEASE_NAME>-enterprise-manager
+  # on port 80.
+  enterpriseManagerUrl: 'http://stacklok-enterprise-enterprise-manager.stacklok-system.svc.cluster.local'
   betterAuth:
     # Generated in "Prepare secrets" above (openssl rand -base64 32)
     secret: '<BETTER_AUTH_SECRET>'
-    url: 'https://cloud-ui.example.com'
+    # Public URL of the console. The browser is redirected here during
+    # sign-in, so it must be externally reachable.
+    url: 'https://console.example.com'
 ```
 
+:::danger[Keep `global` to a single top-level block]
+
+The optional Redis/Valkey and PostgreSQL sections below are also rooted at
+`global`. YAML has no merge semantics for repeated top-level keys: a file with
+two `global:` blocks keeps only the last one, so appending either section
+verbatim discards the `global.stacklok.primaryIdp` settings above.
+
+Nothing catches this. The render succeeds, preflight's OIDC analyzer stops
+rendering along with the issuer it was checking, and you get a platform with no
+identity provider configured and no error anywhere saying so. Add `redis` and
+`postgres` as siblings of `stacklok` inside the one `global` block instead.
+
+:::
+
+:::warning[Set the identity provider only under `global.stacklok.primaryIdp`]
+
+The identity provider is configured once for the whole platform, and every
+component reads it from `global.stacklok.primaryIdp`. The per-component keys
+`toolhive-cloud-ui.oidc.*` (`issuerUrl`, `clientId`, `clientSecret`,
+`existingSecret`, `existingSecretKey`, and `scopes`) and
+`enterprise-manager.idpConfig.issuer` are not read. Setting any of them fails
+the render with a message naming the `global.stacklok.primaryIdp` field to use
+instead.
+
+The rest of `enterprise-manager.idpConfig`, including `audience`,
+`requiredScope`, and `idpType`, is component-scoped and belongs under
+`enterprise-manager` as the example shows.
+`toolhive-cloud-ui.oidc.additionalProviders` is a separate multi-provider
+feature and is unaffected.
+
+See [Configure platform identity](./configure-identity.mdx).
+
+:::
+
 For the full reference of fields each component accepts, see
-[Configure the Enterprise Manager](../enterprise-manager/configure.mdx),
-[Configure the Enterprise Cloud UI](../enterprise-cloud-ui/configure.mdx), and
+[Configure the Enterprise Manager](../enterprise-manager/configure.mdx) and
 [Configure the Registry Server](./configure-registry-server.mdx).
+
+#### Enterprise Manager database
+
+The example above runs the Enterprise Manager without a database, which is a
+complete configuration: it serves signed configuration envelopes to Stacklok
+clients, and its database-backed modules stay switched off.
+
+The directory service is the main one of those. Users, groups, connectors,
+managed secrets, and virtual API keys all persist to PostgreSQL, so enabling
+`enterprise-manager.directory.enabled` without a database leaves those surfaces
+inert. Add the block below when you want them.
+
+Provision two roles on your PostgreSQL instance first, in a database of their
+own:
+
+- An **application role** for normal reads and writes. Make it a plain role: not
+  a superuser, and without `BYPASSRLS`.
+- A **migration role**, which owns the schema and applies migrations at startup.
+  It needs the **`CREATEROLE` attribute**, because the Enterprise Manager
+  creates a module role of its own at startup, on the migration connection:
+
+  ```sql
+  CREATE ROLE em_migrator LOGIN PASSWORD '<MIGRATION_PASSWORD>' CREATEROLE;
+  CREATE ROLE em_app LOGIN PASSWORD '<APP_PASSWORD>';
+  CREATE DATABASE enterprise_manager OWNER em_migrator;
+  ```
+
+  `CREATEROLE` is a role attribute rather than a grant, so it is not implied by
+  ownership or by any `GRANT` on the schema. Without it the Enterprise Manager
+  exits at startup with `permission denied to create role`.
+
+```yaml title="values.yaml (add alongside the other enterprise-manager keys)"
+enterprise-manager:
+  # Required whenever the directory service is on: the chart pins a
+  # secret-reader grant, and it refuses to render if that grant would land on
+  # the namespace's shared `default` ServiceAccount. automount is needed as
+  # well, because the module reads Secrets from the Kubernetes API at startup
+  # and cannot do so without a projected token.
+  serviceAccount:
+    create: true
+    automount: true
+  database:
+    host: 'postgres.example.com'
+    port: 5432
+    name: 'enterprise_manager'
+    user: 'em_app'
+    sslMode: 'require'
+    # Secret created in "Prepare secrets" above, key postgres-password.
+    existingSecret: 'enterprise-manager-db'
+    migration:
+      user: 'em_migrator'
+      # Secret created in "Prepare secrets" above, key
+      # postgres-migration-password.
+      existingSecret: 'enterprise-manager-db-migration'
+  directory:
+    enabled: true
+    # Externally reachable URL of the Enterprise Manager. SCIM clients read it
+    # in Location headers and member references.
+    scimExternalBaseURL: 'https://config.example.com'
+```
+
+:::warning[Use two distinct roles]
+
+The directory keeps one user's data from reaching another with PostgreSQL
+row-level security, and that holds only while the application role is subject to
+the policy. Keep `database.user` and `database.migration.user` separate, and
+keep the application role unprivileged.
+
+The Enterprise Manager checks this at startup and refuses to run rather than
+serve unprotected data: an application role carrying `BYPASSRLS` aborts the boot
+with `app DB user "..." has BYPASSRLS — RLS is voided`. So the failure is loud,
+but it is a failure, and you will not get a working install until the roles are
+right.
+
+:::
+
+Cross-user connector administration is a separate, optional role again. Set
+`enterprise-manager.database.admin.user` and its Secret (key
+`postgres-admin-password`) to enable it; leave them unset and only that one
+administrative surface returns an error.
+
+That role must carry `BYPASSRLS`, and **nothing grants it for you**. The
+Enterprise Manager only checks the attribute and refuses to start without it, on
+every PostgreSQL, whether self-hosted or managed. Grant it yourself before
+installing:
+
+```sql
+CREATE ROLE em_admin LOGIN PASSWORD '<ADMIN_PASSWORD>';
+ALTER ROLE em_admin BYPASSRLS;
+```
+
+The startup error names a "database bootstrap Job" if you miss this. No such Job
+ships with the chart; the `ALTER ROLE` above is the whole remedy.
+
+#### Encrypting stored credentials
+
+The directory seals the credentials it stores, and the key-encryption key that
+does the sealing is off by default. Leave it off and the credential-backed
+surfaces refuse with a typed error rather than storing anything in the clear:
+managed secrets, connector credentials, and the catalog entry the platform seeds
+for your primary identity provider.
+
+Switching it on pulls in a chain of related settings, because the key is read
+from the Kubernetes API and the decrypted plaintext crosses the gRPC port. The
+chart enforces the whole chain with render-time errors that each name the value
+to set, so a partial configuration fails loudly rather than serving credentials
+unprotected:
+
+```yaml title="values.yaml (add alongside the other enterprise-manager keys)"
+enterprise-manager:
+  rbac:
+    create: true
+  directory:
+    kek:
+      enabled: true
+      # Have the chart mint a key on install. Use existingSecret instead for
+      # GitOps: chart generation is not render-stable under Argo CD or
+      # `helm template | kubectl apply`, which silently replaces the key and
+      # orphans every credential already stored.
+      generate: true
+  grpc:
+    tls:
+      enabled: true
+      # Bring your own certificate, or set issuerRef.name for cert-manager.
+      existingSecret: 'enterprise-manager-grpc-tls'
+    networkPolicy:
+      enabled: true
+      allowedClientSelector:
+        matchLabels:
+          app.kubernetes.io/name: connector-gateway
+```
+
+TLS is not optional here: the directory refuses a non-TLS peer at call time, so
+a key-encrypted install served over the cleartext port renders cleanly and then
+fails every credential resolution. Point callers at `grpc.tls.port`. If a
+service mesh or cluster-wide policy already restricts the gRPC ports, set
+`directory.kek.externallyManagedNetworkPolicy=true` to acknowledge that instead
+of defining a policy here; there is no equivalent escape for TLS, because a mesh
+terminates it in the sidecar and the peer still arrives without it.
+
+#### SCIM identity providers
+
+`enterprise-manager.directory.issuers` configures the identity providers the
+directory accepts SCIM provisioning from. An empty list is valid, and is the
+right starting point before any provider is onboarded, but SCIM stays off until
+you add an entry:
+
+```yaml title="values.yaml (add alongside the other enterprise-manager keys)"
+enterprise-manager:
+  directory:
+    issuers:
+      - id: 'okta-prod'
+        issuer_url: 'https://company.okta.com'
+        audience: 'enterprise-manager'
+        # The JWT claim carrying the stable per-user identifier. Required.
+        binding_claim: 'uid'
+        scim_bearer_token_ref:
+          namespace: 'stacklok-system'
+          name: 'directory-scim-token-okta'
+          key: 'token'
+```
+
+Use the claim your provider actually keys users on. `binding_claim` has no
+default and the Enterprise Manager rejects an entry without one, naming the
+issuer, so a wrong or missing value surfaces at startup rather than as failed
+logins later.
 
 #### Global Redis/Valkey defaults
 
@@ -465,36 +779,54 @@ it inherit the value. Valkey is a drop-in replacement for Redis. This block is
 optional: when `global.redis.host` is empty, the global default is inactive and
 each component falls back to its own configuration.
 
-```yaml title="values.yaml (global Redis/Valkey addition)"
+```yaml title="values.yaml (inside the existing global block)"
 global:
+  # The stacklok.primaryIdp block from the example above stays here unchanged.
+  # Add redis as its sibling; don't start a second top-level global block.
   redis:
     # When empty, the global default is inactive.
     host: 'redis.example.com'
     port: 6379
     # Enable the Redis Cluster protocol when connecting to the host.
     clusterMode: false
-    # Reference a pre-created Secret; omit for a passwordless instance.
-    existingSecret: 'valkey-auth'
-    existingSecretKey: 'redis-password'
     tls:
       enabled: false
 ```
 
-If passwordless, omit existingSecret and skip the Secret creation step. If your
-instance requires authentication, create the Secret before installing the chart:
+If your instance requires authentication, create a Secret holding the password
+and name it in values. Components read the name from configuration rather than
+looking for one by convention, so a Secret you create but never reference has no
+effect:
 
 ```bash
-kubectl create secret generic valkey-auth \
+kubectl create secret generic redis-auth \
   --namespace stacklok-system \
   --from-literal=redis-password="<YOUR_REDIS_PASSWORD>"
 ```
 
+```yaml title="values.yaml (inside the existing global block)"
+global:
+  redis:
+    host: 'redis.example.com'
+    existingSecret: 'redis-auth'
+    # Defaults to redis-password when omitted.
+    existingSecretKey: 'redis-password'
+```
+
+The ToolHive operator also accepts
+`toolhive-operator.upstream.operator.defaultRedis.existingSecret` and
+`existingSecretKey` for a component-specific credential, which take precedence
+over the global pair.
+
+A passwordless instance needs no Secret at all: leave `existingSecret` unset and
+the components connect without credentials.
+
 The following components inherit `global.redis`:
 
-| Enable flag        | How it uses the global default                                                                                                                                                             |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `toolhiveOperator` | Default session storage for `MCPServer`, `MCPRemoteProxy`, and `VirtualMCPServer` (vMCP) workloads that have no explicit `spec.sessionStorage`. The per-resource setting always overrides. |
-| `aiGateway`        | Rate limiting and virtual API key storage, when the bundled Valkey instance is disabled.                                                                                                   |
+| Enable flag                         | How it uses the global default                                                                                                                                                                        |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `toolhiveOperator`                  | Default session storage for `MCPServer`, `MCPRemoteProxy`, and `VirtualMCPServer` (vMCP) workloads that have no explicit `spec.sessionStorage`. The per-resource setting always overrides.            |
+| `global.stacklok.aiGateway.enabled` | Rate limiting and virtual API key storage, when the bundled Valkey instance is disabled. This one does fall back to a Secret named `redis-auth` with key `redis-password` when no name is configured. |
 
 Note that the embedded auth server's token storage is configured separately via
 `MCPExternalAuthConfig`. See
@@ -512,16 +844,19 @@ override. When set, it takes precedence over `global.redis.host` and
 
 #### Global PostgreSQL defaults
 
-The Registry Server reads its database host, port, and SSL mode from
-`global.postgres` when its own
-`toolhive-registry-server.upstream.config.database.host` is empty. This is the
-same pattern as `global.redis` above, intended for umbrella deployments that
-share a PostgreSQL instance across several backing services. The block is
-optional: when `global.postgres.host` is empty, the default is inactive and each
-subchart uses its own `config.database` block.
+Components that need PostgreSQL read its host, port, and SSL mode from
+`global.postgres` when their own `database.host` is empty. This is the same
+pattern as `global.redis` above, intended for umbrella deployments that share a
+PostgreSQL instance across several backing services. The block is optional: when
+`global.postgres.host` is empty, the default is inactive and each subchart uses
+its own database block.
 
-```yaml title="values.yaml (global PostgreSQL addition)"
+Both the Registry Server and the Enterprise Manager inherit from it, and that
+second one is easy to miss.
+
+```yaml title="values.yaml (inside the existing global block)"
 global:
+  # Another sibling of stacklok, in the same single global block.
   postgres:
     # When empty, the global default is inactive.
     host: 'postgres.example.com'
@@ -529,12 +864,39 @@ global:
     sslMode: 'require'
 ```
 
-Only `host`, `port`, and `sslMode` are inherited from the global block. The
-database user, database name, and credentials still go under the subchart's own
-`config.database` block (and `extraEnv` for the password Secret reference, as
-the example above shows). A locally set
-`toolhive-registry-server.upstream.config.database.host` always wins over
-`global.postgres.host`.
+`host`, `port`, and `sslMode` are inherited from the global block, and so is the
+password Secret: the Enterprise Manager falls back to
+`global.postgres.existingSecret` and `existingSecretKey` when its own
+`database.existingSecret` is empty. Database names and users have no global
+equivalent and always stay on the component, under
+`toolhive-registry-server.upstream.config.database` and
+`enterprise-manager.database`. A locally set value always wins over the global
+one.
+
+:::danger[Setting `global.postgres.host` switches on the Enterprise Manager's
+database]
+
+A host is all it takes. The Enterprise Manager inherits it, decides its
+database-backed modules are wanted, and then fails to start because
+`enterprise-manager.database.name` and `.user` have no global equivalent and are
+still empty:
+
+```
+create database pool: invalid configuration: user is required
+```
+
+The pod crashloops and `helm install --wait` times out. If you set
+`global.postgres`, configure
+[the Enterprise Manager database](#enterprise-manager-database) in the same
+values file.
+
+Note that the block earns you nothing if the Registry Server is the only
+component you meant it for, since the example in [Step 3](#3-configure-values)
+already sets that component's own host, and a local host always wins. Setting
+`enterprise-manager.database.host` directly, and leaving `global.postgres` out,
+avoids the interaction entirely.
+
+:::
 
 ### 4. Install the chart
 
@@ -547,16 +909,48 @@ helm install stacklok-enterprise \
   oci://oci.stacklok.com/stacklok-enterprise/<CHANNEL>/stacklok-enterprise-platform \
   --version <VERSION> \
   --namespace stacklok-system \
-  --values values.yaml
+  --values values.yaml \
+  --wait --timeout 10m
 ```
+
+`--wait` is what makes the exit status mean something. Without it Helm reports
+`STATUS: deployed` as soon as the objects are accepted by the API server, which
+it does even when every pod then fails to start. With it, Helm blocks until the
+workloads report ready and exits non-zero if they don't inside the timeout.
+
+A timed-out install leaves the release in place rather than rolling it back, so
+the failing pods stay available to inspect in [Step 5](#5-verify-the-install).
+Rerun `helm upgrade` with the same flags once you have fixed the cause.
 
 ### 5. Verify the install
 
-Wait for the platform pods to reach the `Running` state:
+If the install returned successfully, the pods are already ready and this step
+confirms what you have. If it timed out, this is where you find out why.
+
+List the pods and check that each is `Running` and fully ready, with no
+restarts:
 
 ```bash
 kubectl get pods -n stacklok-system
 ```
+
+The exact pod count depends on which components you enabled, so read the `READY`
+column rather than counting rows: every pod should show all of its containers
+ready, such as `1/1`, and a restart count that stays at zero. A pod stuck in
+`Pending`, `ImagePullBackOff`, `CrashLoopBackOff`, or cycling restarts is a
+failed install even though the objects exist.
+
+For anything not ready, the events and logs name the cause:
+
+```bash
+kubectl describe pod <POD_NAME> -n stacklok-system
+kubectl logs <POD_NAME> -n stacklok-system
+```
+
+`ImagePullBackOff` on every pod points at the license credentials rather than at
+any one component: check that `enterprise-pull-secret` exists in the namespace
+and that `replicated.enabled` is `true` in your values, since that subchart is
+what creates it.
 
 Confirm the ToolHive CRDs registered:
 
@@ -564,13 +958,17 @@ Confirm the ToolHive CRDs registered:
 kubectl get crd | grep toolhive.stacklok.dev
 ```
 
+This prints one line per registered CRD, and prints nothing at all if the
+operator's CRD chart didn't install. An empty result with `toolhiveOperator`
+enabled means the install did not complete, whatever `helm list` reports.
+
 ### 6. Expose the platform endpoints
 
 The chart creates ClusterIP Services for the components but no ingress. Publish
 these three through your ingress or gateway controller so browsers and clients
 outside the cluster can reach them at the hostnames you set in
-[Step 3](#3-configure-values). List the Services to get their names (two are
-prefixed with your Helm release name, `stacklok-enterprise`):
+[Step 3](#3-configure-values). List the Services to get their names (most are
+prefixed with your Helm release name):
 
 ```bash
 kubectl get svc -n stacklok-system
@@ -579,11 +977,18 @@ kubectl get svc -n stacklok-system
 Route each external hostname to its Service with the Ingress, HTTPRoute, or
 Gateway resources your controller uses:
 
-| Component           | Service (port)                                | Reached by                       | Hostname to route             |
-| ------------------- | --------------------------------------------- | -------------------------------- | ----------------------------- |
-| Enterprise Cloud UI | `stacklok-enterprise-toolhive-cloud-ui` (80)  | Browsers                         | `betterAuth.url`              |
-| Enterprise Manager  | `stacklok-enterprise-enterprise-manager` (80) | Stacklok Desktop and CLI clients | `resourceURL`                 |
-| Registry Server     | `registry-api` (8080)                         | Stacklok Desktop and CLI clients | the registry's public API URL |
+| Component          | Service (port)                           | Reached by           | Hostname to route             |
+| ------------------ | ---------------------------------------- | -------------------- | ----------------------------- |
+| The console        | `<RELEASE_NAME>-toolhive-cloud-ui` (80)  | Browsers             | `betterAuth.url`              |
+| Enterprise Manager | `<RELEASE_NAME>-enterprise-manager` (80) | Stacklok CLI clients | `resourceURL`                 |
+| Registry Server    | `registry-api` (8080)                    | Stacklok CLI clients | the registry's public API URL |
+
+The Registry Server's Service name is fixed rather than release-prefixed.
+
+`betterAuth.url` is the public address the console tells browsers to return to
+during sign-in. It does not create the route: the chart ships no ingress, so
+publishing that hostname is yours to do, and the value has to match whatever you
+publish.
 
 The in-cluster URLs (`apiBaseUrl`, `enterpriseManagerUrl`) stay as Service DNS
 and need no routing. Once the routes resolve, confirm the Enterprise Manager
@@ -623,8 +1028,8 @@ everything in `stacklok-system`, skip this step.
   behavior across your organization
 - [Verify the distribution](./verify-artifacts.mdx) to confirm the signatures,
   provenance, and SBOMs of the images you pulled
-- [Browse the catalog](../enterprise-cloud-ui/browse-catalog.mdx) once the Cloud
-  UI is running
+- [Sign in to the console](../enterprise-console/index.mdx) once the platform is
+  running
 
 ## Related information
 

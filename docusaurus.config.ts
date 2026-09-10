@@ -223,6 +223,21 @@ const config: Config = {
             spec: 'static/api-specs/toolhive-registry-api.yaml',
             config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
           },
+          {
+            id: 'enterprise-manager-api',
+            spec: 'static/api-specs/enterprise-manager-api.json',
+            config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
+          },
+          {
+            id: 'connector-gateway-api',
+            spec: 'static/api-specs/connector-gateway-api.json',
+            config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
+          },
+          {
+            id: 'ai-gateway-management-api',
+            spec: 'static/api-specs/ai-gateway-management-api.yaml',
+            config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
+          },
         ],
         theme: {
           primaryColor: '#2d684b',
@@ -273,6 +288,12 @@ const config: Config = {
           type: 'docSidebar',
           sidebarId: 'aiGatewaySidebar',
           label: 'AI Gateway',
+          position: 'left',
+        },
+        {
+          type: 'docSidebar',
+          sidebarId: 'connectorGatewaySidebar',
+          label: 'Connector Gateway',
           position: 'left',
         },
         {

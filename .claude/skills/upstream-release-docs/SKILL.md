@@ -251,7 +251,6 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 11. **Apply the readiness gate before documenting anything.** A release ships code; it does not thereby declare that code ready for readers. Three separate releases leaked experimental features into published docs (skills `sync`/`upgrade` and the lockfile, Sigstore signing for skills, desktop theme customization), and each cost a reviewer round-trip to remove. The pattern is always the same: the PR is well-written and enthusiastic, the code is real and complete, and nothing in either says "not yet". Readiness lives in the code, not the narrative.
 
     For every feature you are about to document, check the source at the tag for these signals:
-
     - **CLI**: `Hidden: true` on the `cobra.Command`, or registration behind a build tag or an `if` on an env var / config flag. A hidden command is not user-facing no matter how complete it is.
     - **Feature flags and gates**: a config key, env var, or CRD field that defaults to off/false and guards the code path. Search for the feature's entry point and read what has to be true for it to execute.
     - **Naming**: `experimental`, `alpha`, `beta`, `preview`, `internal`, `unstable`, `wip`, or `x-` prefixes on packages, flags, config keys, API routes, or CRD fields.
@@ -259,7 +258,6 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
     - **Upstream signals**: PR labels or titles carrying `experimental`/`do-not-document`, or a PR body that says the flag will be removed later.
 
     When any signal fires, **do not document the feature**. Instead:
-
     - Leave existing docs alone; don't add a section, a flag row, or a passing mention.
     - Record it in `SUMMARY.md` as a one-line deferral ("Skipped `thv skill sync` - hidden command at `cmd/skill.go:NN`") so the reviewer can see you considered and rejected it rather than missed it. This is the same treatment as a conscious deferral in the Phase 5 completeness pass, and it is what keeps the completeness check from flagging it as a gap.
     - Do not add a "coming soon" or "planned for a future release" note in its place. That is a change-log statement about an unreleased feature, and it goes stale on its own.
@@ -290,7 +288,7 @@ For each PR identified in Phase 1 (skip internal/infra unless user requests):
 
 3. **Heed the additive-only smell.** If your planned edit to an existing page only _appends_ a new section and revises no existing sentence (a `+N / -0` diff on a prose page), treat that as a signal, not a success. A newly added capability almost always falsifies an existing "only / default / planned" statement nearby. Reconcile the page you are editing with the section you just added to it, then check sibling pages that cover the same concept.
 
-4. Check the project style guide (CLAUDE.md, STYLE-GUIDE.md, or similar) for conventions. In this repo, also read the tech-writer skill (`.claude/skills/tech-writer/SKILL.md`) before drafting: classify each planned page or section by Diataxis mode, read the matching mode reference, and apply `.claude/skills/tech-writer/references/anti-patterns.md` while writing (release-diff drafting is especially prone to changelog framing).
+4. Check `STYLE-GUIDE.md` for conventions. It is authoritative for terminology, naming, and page structure; `AGENTS.md` (symlinked as `CLAUDE.md`) restates a subset for agents, and the style guide wins where they differ. Also read the tech-writer skill (`.claude/skills/tech-writer/SKILL.md`) before drafting: classify each planned page or section by Diataxis mode, read the matching mode reference, and apply `.claude/skills/tech-writer/references/anti-patterns.md` while writing (release-diff drafting is especially prone to changelog framing).
 
 5. Build an **impact map**, a table with these columns:
 
