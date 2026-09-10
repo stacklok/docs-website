@@ -285,6 +285,18 @@ registration mechanism. ToolHive continues to accept Dynamic Client Registration
 (DCR) requests. DCR remains available as a fallback for clients that support it
 but do not use CIMD. Client-side DCR does not require configuration.
 
+### Choose a way to get a token
+
+The embedded authorization server supports four ways a caller can get a
+ToolHive-issued token, each suited to a different trust relationship:
+
+| Pattern                                                               | Who authenticates                                        | Result                                                                       |
+| --------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [Confidential DCR](#allow-confidential-dcr-clients)                   | A client self-registers and gets a `client_secret`       | The client acts as itself; no delegation                                     |
+| [Backend token exchange](../concepts/backend-auth.mdx#token-exchange) | A client presents its own token to a backend IdP         | The client's own identity, re-scoped to a backend audience                   |
+| [RFC 8693 delegate-client exchange](./delegate-agent-identity.mdx)    | A pre-provisioned client presents a user's subject token | A token naming the user, with the agent recorded as the acting party (`act`) |
+| [RFC 7523 JWT-bearer grant](./accept-workload-assertions.mdx)         | No client at all; the assertion itself is the credential | A token naming the workload; no delegation, no pre-registered client         |
+
 ### Enable CIMD for zero-registration clients
 
 Add `cimd` under `spec.authServerConfig`:
@@ -338,25 +350,34 @@ see
 
 To pre-provision a confidential client that performs RFC 8693 token exchange
 against the vMCP embedded auth server (typically a backend service you control),
-add a `delegateClients` entry:
+add an `inboundGrants.tokenExchange.delegateClients` entry:
 
 ```yaml title="VirtualMCPServer: delegate clients"
 spec:
   authServerConfig:
-    delegateClients:
-      - clientId: backend-exchange
-        clientSecretRef:
-          name: backend-exchange-client-secret
-          key: client-secret
-        audiences:
-          - https://backend.example.com
-        scopes:
-          - backend-api:read
+    inboundGrants:
+      tokenExchange:
+        delegateClients:
+          - clientId: backend-exchange
+            clientSecretRef:
+              name: backend-exchange-client-secret
+              key: client-secret
+            audiences:
+              - https://backend.example.com
+            scopes:
+              - backend-api:read
 ```
 
 All four fields are required. Delegate clients are independent of
-`allowConfidentialClientRegistration`. The issuer must use `https://`; delegate
-clients are rejected at admission when the issuer is plaintext HTTP.
+`allowConfidentialClientRegistration`. Use an `https://` issuer for a delegate
+client. For local development, a plain-HTTP loopback issuer also works when you
+set `insecureAllowConfidentialOverLoopbackHTTP: true`; ToolHive rejects a
+plain-HTTP non-loopback issuer.
+
+To accept subject tokens minted by an external OIDC issuer, pair this with an
+`inboundGrants.tokenExchange.issuerPolicies` entry. For why delegation exists,
+the consent policy options, and a worked exchange, see
+[Delegate agent identity with token exchange](./delegate-agent-identity.mdx).
 
 ### Enable baseline scopes for DCR clients
 
