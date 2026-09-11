@@ -676,8 +676,8 @@ this section to adapt that upstream connection:
 
 - Use `oauth2Config` instead of `oidcConfig` when the upstream provider does not
   support OIDC discovery.
-- Within `oauth2Config`, set either pre-provisioned client credentials or
-  `dcrConfig`, not both.
+- Within `oidcConfig` or `oauth2Config`, set either pre-provisioned client
+  credentials or `dcrConfig`, not both.
 - Add identity mapping, authorization parameters, and an explicit callback URL
   as the upstream provider requires.
 
@@ -759,6 +759,42 @@ For OAuth 2.0 servers that return identity in the token response itself, see
 
 :::
 
+#### Select the token endpoint auth method
+
+When a client secret is configured, the embedded auth server sends the client
+credentials to the upstream token endpoint using HTTP Basic auth
+(`client_secret_basic`). This matches the RFC 7591 default for confidential
+clients and covers most providers. Public clients without a secret use the
+`none` method.
+
+Set `tokenEndpointAuthMethod: client_secret_post` on `oauth2Config` for
+providers that require credentials in the request body instead of the
+`Authorization` header:
+
+```yaml title="MCPExternalAuthConfig: token endpoint auth method"
+oauth2Config:
+  authorizationEndpoint: 'https://example.com/oauth/authorize'
+  tokenEndpoint: 'https://example.com/oauth/token'
+  clientId: '<CLIENT_ID>'
+  clientSecretRef:
+    name: upstream-idp-secret
+    key: client-secret
+  # highlight-next-line
+  tokenEndpointAuthMethod: client_secret_post
+```
+
+Allowed values are `none`, `client_secret_basic`, and `client_secret_post`. DCR
+clients continue to use the method negotiated at registration time.
+
+:::info[Changed in v0.48.0]
+
+Pre-registered OAuth 2.0 upstream clients with a configured secret previously
+sent credentials in the request body. They now default to `client_secret_basic`.
+If your provider rejects Basic auth on the token endpoint (rare), set
+`tokenEndpointAuthMethod: client_secret_post` to restore the previous behavior.
+
+:::
+
 ### Trust a private CA for the upstream provider
 
 If the upstream identity provider serves its endpoints with a certificate signed
@@ -817,8 +853,8 @@ the two references configure trust for different network hops.
 
 ### Use dynamic client registration with an upstream provider
 
-Some OAuth 2.0 providers register clients dynamically instead of requiring you
-to create an application in a provider dashboard. Add `dcrConfig` to an
+Some providers register clients dynamically instead of requiring you to create
+an application in a provider dashboard. Add `dcrConfig` to an `oidcConfig` or
 `oauth2Config` upstream to have the embedded authorization server register
 itself at runtime using RFC 7591.
 
@@ -827,8 +863,39 @@ This is separate from MCP clients registering with ToolHive's embedded
 authorization server in
 [Configure MCP client registration](#configure-mcp-client-registration).
 
-This example uses an RFC 8414 discovery document. ToolHive reads the
-`registration_endpoint` and other provider metadata from `discoveryUrl`:
+#### DCR with an OIDC upstream
+
+For an OIDC upstream, an empty `dcrConfig: {}` is enough: the embedded auth
+server derives the discovery URL from
+`issuerUrl + /.well-known/openid-configuration` and reads the registration
+endpoint from the document.
+
+```yaml title="MCPExternalAuthConfig: OIDC upstream with DCR"
+spec:
+  type: embeddedAuthServer
+  embeddedAuthServer:
+    issuer: 'https://toolhive.example.com'
+    upstreamProviders:
+      - name: keycloak
+        type: oidc
+        oidcConfig:
+          issuerUrl: 'https://keycloak.example.com/realms/main'
+          # highlight-start
+          dcrConfig: {}
+          # highlight-end
+```
+
+Set `dcrConfig.discoveryUrl` explicitly when the upstream publishes discovery at
+a non-standard path, or `dcrConfig.registrationEndpoint` to bypass discovery
+entirely.
+
+Don't set `clientId` or `clientSecretRef` when you set `dcrConfig`. ToolHive
+obtains the client ID and client secret from the DCR response.
+
+#### DCR with an OAuth 2.0 upstream
+
+For an OAuth 2.0 upstream, use an RFC 8414 discovery document. ToolHive reads
+the `registration_endpoint` and other provider metadata from `discoveryUrl`:
 
 ```yaml title="embedded-auth-config-dcr.yaml"
 apiVersion: toolhive.stacklok.dev/v1beta1
@@ -884,12 +951,9 @@ upstreamProviders:
       # highlight-end
 ```
 
-Set exactly one of `discoveryUrl` or `registrationEndpoint`. A direct
+Set at most one of `discoveryUrl` or `registrationEndpoint`. A direct
 registration endpoint bypasses discovery, so specify the authorization and token
 endpoints and the scopes that ToolHive should request.
-
-Don't set `clientId` or `clientSecretRef` when you set `dcrConfig`. ToolHive
-obtains the client ID and client secret from the DCR response.
 
 #### Authorize registration with an initial access token
 
