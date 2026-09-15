@@ -13,7 +13,9 @@ Stacklok Enterprise implements SCIM 2.0
 provider.
 
 SCIM records display their source in the console. Update these records in the
-identity provider.
+identity provider. To provision users from Okta without exposing an inbound SCIM
+endpoint, see
+[Provision Okta users without a public SCIM endpoint](./okta-directory-sync.mdx).
 
 ## Declare the issuer first
 
@@ -110,6 +112,102 @@ structure in your provider arrives as
 
 Start with a small test group to validate mappings before a full sync.
 
+## Create groups from user attributes
+
+Stacklok Enterprise can create directory groups from attributes stored in SCIM
+user profiles, independent of your identity provider. Use this when properties
+such as `department` or `costCenter` define groups for connector access,
+budgets, or reporting.
+
+Configure your identity provider's application profile mapping to include each
+attribute as a JSON string. Then add its SCIM attribute path to the existing
+issuer's `group_variables` list:
+
+```yaml title="values.yaml" {13-15}
+directory:
+  scimExternalBaseURL: 'https://<PLATFORM_HOST>'
+  issuers:
+    - id: 'okta-prod'
+      issuer_url: 'https://<TENANT>.okta.com'
+      audience: 'enterprise-manager'
+      binding_claim: 'uid'
+      scim_bearer_token_ref:
+        namespace: '<NAMESPACE>'
+        name: 'directory-scim-token-okta'
+        key: 'token'
+      group_variables:
+        - 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department'
+        - 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:costCenter'
+```
+
+Use the path where the attribute appears in the stored SCIM user document, not
+the source profile property's display name. In your identity provider, inspect
+the application's profile mapping to find the target SCIM attribute. For Okta,
+open the application's **Provisioning > To App** mappings or inspect its
+`okta_profile_mapping` Terraform resource.
+
+A top-level core attribute uses its attribute name. For example, this SCIM
+content uses `userName`:
+
+```json title="Core user attribute"
+{
+  "userName": "alex@example.com"
+}
+```
+
+An extension attribute uses its complete schema URN and attribute name. Standard
+organizational properties such as `department` and `costCenter` commonly appear
+in the enterprise user extension:
+
+```json title="Enterprise extension attribute"
+{
+  "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+    "department": "Marketing"
+  }
+}
+```
+
+The corresponding path is
+`urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department`. Paths
+are case-sensitive and must match the keys stored in the SCIM user profile.
+
+The variable-group reconciler does not provide a discovery log for attribute
+paths. Its skip logs identify only paths that are already present in
+`group_variables`. For an inbound SCIM issuer, query a representative user and
+inspect the returned document:
+
+```bash title="Inspect a stored SCIM user"
+curl --fail --silent --get \
+  --header 'Authorization: Bearer <SCIM_BEARER_TOKEN>' \
+  --data-urlencode 'filter=userName eq "<USER_NAME>"' \
+  'https://<PLATFORM_HOST>/scim/<ISSUER_ID>/v2/Users'
+```
+
+For an issuer that uses the outbound Okta reconciler, inspect the target
+application's profile mapping in Okta because that issuer has no public SCIM
+bearer token. `logRawOktaAPIData` can expose upstream Okta profile responses,
+but it does not reliably identify the final stored SCIM path and includes
+sensitive identity data.
+
+The Enterprise Manager reconciles these groups hourly. For every distinct,
+non-empty string value on an active user, it creates a group and maintains its
+membership. It trims surrounding whitespace and folds letter case, so
+`Marketing`, `marketing`, and `Marketing ` produce one group. Missing, null,
+empty, non-string, and longer-than-256-byte values produce no membership.
+
+Choose attributes with a bounded set of organizational values. A per-user
+attribute such as `userName` creates one group per user. Administrators can use
+derived groups like other directory groups but cannot edit their names or
+membership directly.
+
+When a value disappears or you remove a variable from configuration, the group
+is emptied. Empty groups remain for 90 days before deletion, preserving their
+stable identity and governance references during the grace period.
+
+After upgrading the platform release, wait for the next hourly reconciliation.
+Open **User management** in the console and confirm that each expected value has
+a group containing the active users with that profile value.
+
 ## After provisioning
 
 Connector grants and budgets reference the provisioned directory groups. Define
@@ -145,9 +243,18 @@ release includes your updated values.
 </details>
 
 <details>
-<summary>Users are provisioned but groups are missing</summary>
+<summary>Groups provisioned by the identity provider are missing</summary>
 
 Enable group provisioning after the initial user sync.
+
+</details>
+
+<details>
+<summary>Groups from user attributes are missing</summary>
+
+Confirm that `group_variables` is on the correct issuer and that the Enterprise
+Manager restarted after the configuration change. Verify that an active user's
+SCIM profile contains a non-empty string at the configured, case-sensitive path.
 
 </details>
 

@@ -387,6 +387,7 @@ const platformSidebar: SidebarsConfig[string] = [
     items: [
       'platform/enterprise-directory/users-and-groups',
       'platform/enterprise-directory/scim-provisioning',
+      'platform/enterprise-directory/okta-directory-sync',
       'platform/enterprise-directory/identity-providers',
       'platform/enterprise-directory/managed-secrets',
       'platform/enterprise-directory/virtual-api-keys',
