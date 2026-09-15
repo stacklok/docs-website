@@ -119,7 +119,7 @@ export default function Home(): ReactNode {
           </ProductCard>
         </ProductGrid>
 
-        <ProductGrid layout='fixed-2'>
+        <ProductGrid layout='fixed-3'>
           <ProductCard
             contentType='logo'
             href='/toolhive'
@@ -142,6 +142,22 @@ export default function Home(): ReactNode {
           </ProductCard>
           <ProductCard
             contentType='text'
+            href='https://mecatl.dev'
+            title='Mecatl'
+            linkText='Go to project'
+            icon={{
+              src: '/img/logos/mecatl-mascot.png',
+              alt: 'Mecatito',
+              width: '90px',
+              style: { marginLeft: '1.5rem' },
+            }}
+          >
+            Mecatl is the open source, cloud-native harness for running AI
+            agents at scale on your infrastructure, with built-in identity,
+            auditability, and freedom from vendor lock-in.
+          </ProductCard>
+          <ProductCard
+            contentType='text'
             href='/ai-gateway'
             title='AI Gateway'
             linkText='Control LLM access'
@@ -157,6 +173,9 @@ export default function Home(): ReactNode {
             providers your teams use, with identity-bound budgets, data
             guardrails, and a full audit trail. Self-hosted in your environment.
           </ProductCard>
+        </ProductGrid>
+
+        <ProductGrid layout='fixed-2'>
           <ProductCard
             contentType='text'
             href='/platform/enterprise-platform'
