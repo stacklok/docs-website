@@ -1,0 +1,288 @@
+---
+title: Provision Okta users without a public SCIM endpoint
+sidebar_label: Okta without public SCIM
+description:
+  Provision Okta users and groups without exposing a public SCIM endpoint to the
+  internet.
+---
+
+The Okta directory reconciler is an alternative to running the Okta On-Premises
+Provisioning agent. The Enterprise Manager calls the Okta Management API over an
+outbound connection and updates the directory through its internal SCIM
+interface, so your deployment does not need a publicly accessible SCIM endpoint.
+
+The Okta application's assigned users define the directory population. You can
+also select Okta groups to synchronize.
+
+## Prerequisites
+
+Deploy the Enterprise Manager directory before configuring the reconciler. The
+directory requires PostgreSQL and a dedicated Kubernetes service account. See
+[Enterprise Manager database](../enterprise-platform/deployment.mdx#enterprise-manager-database)
+for the base configuration.
+
+Then prepare these Okta resources:
+
+- A target application with the users that you want to synchronize assigned to
+  it. Configure its profile mappings so the application user profile contains
+  every attribute that you want in the directory.
+- An OAuth 2.0 service application that uses `private_key_jwt` client
+  authentication and the client credentials grant. Register its public JSON Web
+  Key (JWK), and retain the corresponding private key and key ID.
+- The `okta.apps.read`, `okta.groups.read`, `okta.schemas.read`, and
+  `okta.users.read` Okta API scopes granted to the service application.
+- An Okta admin role assigned to the service application. For least-privilege
+  access, use a custom role and resource set that permit reads of the target
+  application, each selected group, and each selected group's users collection.
+
+Okta service applications require an assigned admin role in addition to API
+scope grants. See
+[Implement OAuth for Okta with a service app](https://developer.okta.com/docs/guides/implement-oauth-for-okta-serviceapp/main/)
+and the Okta Terraform provider documentation for
+[`okta_app_oauth`](https://registry.terraform.io/providers/okta/okta/latest/docs/resources/app_oauth),
+[`okta_app_oauth_api_scope`](https://registry.terraform.io/providers/okta/okta/latest/docs/resources/app_oauth_api_scope),
+and
+[`okta_app_oauth_role_assignment`](https://registry.terraform.io/providers/okta/okta/latest/docs/resources/app_oauth_role_assignment).
+
+The target application and service application are separate Okta applications.
+The target application's assignments define who is synchronized. The service
+application gives the reconciler access to the Okta Management API.
+
+Collect these values before editing the platform configuration:
+
+| Value                         | Source and how to get it                                                                                                                                                                                                                                       |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Okta organization URL         | The bare origin for your Okta tenant, such as `https://<TENANT>.okta.com`. Use the organization domain shown in Okta, without an authorization-server path. If the Admin Console address contains `-admin`, use the corresponding organization domain instead. |
+| Target application ID         | The ID of the Okta application whose assigned users you want to synchronize. In the Okta Admin Console, open the application under **Applications** and copy the `0oa...` value from its URL. With Terraform, use the application resource's `id` attribute.   |
+| Service application client ID | The client ID of the API Services application created for the reconciler. Copy it from the application's **General** tab in Okta or use the `client_id` attribute from its `okta_app_oauth` Terraform resource.                                                |
+| Private key and key ID        | The private key that corresponds to the public JWK registered on the service application, and that JWK's `kid`. You generate these credentials while configuring the Okta service application, then store them in Kubernetes in the next step.                 |
+| Selected group IDs and names  | The Okta groups you want to synchronize in addition to application users. See [Find Okta group IDs](#find-okta-group-ids).                                                                                                                                     |
+| Issuer ID, URL, and audience  | The issuer ID is a short Stacklok configuration name that you choose. The issuer URL and audience must match the Okta authorization server that issues runtime tokens. They are separate from the organization URL used for Management API calls.              |
+
+## Store the service application key
+
+Create a Kubernetes Secret containing the private key in PEM format and its key
+ID. Store both values in one Secret so you can rotate them together.
+
+```bash title="Create the private key Secret"
+kubectl create secret generic directory-okta-reconciler-credentials \
+  --namespace <NAMESPACE> \
+  --from-file=private-key.pem=<PATH_TO_PRIVATE_KEY> \
+  --from-literal=key-id='<KEY_ID>'
+```
+
+The chart grants the Enterprise Manager service account read access to this
+specific Secret when it creates RBAC resources.
+
+## Configure the reconciler
+
+Add an issuer and reconciler under `enterprise-manager.directory` in the
+platform values file:
+
+```yaml title="values.yaml"
+enterprise-manager:
+  directory:
+    enabled: true
+    issuers:
+      - id: 'okta-prod'
+        issuer_url: 'https://<TENANT>.okta.com/oauth2/default'
+        audience: '<AUDIENCE>'
+        binding_claim: 'uid'
+        provisioning_attribute: 'externalId'
+    oktaReconcilers:
+      - enabled: true
+        issuerID: 'okta-prod'
+        orgURL: 'https://<TENANT>.okta.com'
+        appID: '<TARGET_APPLICATION_ID>'
+        clientID: '<SERVICE_APPLICATION_CLIENT_ID>'
+        maxDeactivationRatio: 0.10
+        allowEmptyPopulation: false
+        privateKeySecretRef:
+          namespace: '<NAMESPACE>'
+          name: 'directory-okta-reconciler-credentials'
+          privateKeyKey: 'private-key.pem'
+          keyIDKey: 'key-id'
+        selectedGroups:
+          - id: '<OKTA_GROUP_ID>'
+            expectedName: '<OKTA_GROUP_NAME>'
+```
+
+`issuerID` must match the issuer's `id`. The issuer must use `uid` as its
+binding claim and `externalId` as its provisioning attribute. These values map
+the immutable Okta user ID in runtime tokens to the user synchronized into the
+directory.
+
+The reconciler replaces inbound SCIM provisioning for this issuer. Omit
+`scim_bearer_token_ref` from the issuer. Stacklok Enterprise accepts internal
+SCIM writes for this issuer only from the reconciler's loopback connection.
+
+`orgURL` is the bare HTTPS origin for the Okta Management API. The `issuer_url`
+can include the path to the authorization server that issues your runtime
+tokens.
+
+Each entry in `selectedGroups` accepts either a stable group `id` or an exact,
+case-sensitive `name`. Prefer an ID so synchronization continues after a group
+rename. Add `expectedName` to an ID selector when you want the cycle to stop if
+the group name changes. Only members who are also assigned to the target
+application are synchronized.
+
+`maxDeactivationRatio` and `allowEmptyPopulation` are optional reconciler
+settings. When omitted, they default to `0.10` and `false`. The ratio safeguard
+applies only when a cycle would deactivate at least 10 users; this threshold is
+fixed and is not configurable.
+
+## Find Okta group IDs
+
+Use one of these methods to find the ID for each `selectedGroups` entry:
+
+- In the Okta Admin Console, open **Directory > Groups**, select the group, and
+  copy the `00g...` value from the browser URL.
+- Call the Okta Groups API with `GET /api/v1/groups?q=<GROUP_NAME>` and copy the
+  matching object's `id` value.
+- If Terraform manages the group, use the `id` attribute from its `okta_group`
+  resource.
+
+Pair an ID with `expectedName` in the values file to make the configured group
+recognizable and stop reconciliation if that Okta group is renamed.
+
+Upgrade the platform release after updating the values file. The first cycle
+starts after the Enterprise Manager becomes ready. Users and selected groups
+reconcile every 15 minutes by default.
+
+## Verify synchronization
+
+Wait for a reconciliation cycle, then open **User management** in the console.
+Confirm that:
+
+- Users assigned to the target Okta application appear with a SCIM source.
+- Selected Okta groups contain only assigned application users.
+
+User profile, assignment, and selected-group membership changes should appear
+after the next 15-minute reconciliation.
+
+## Next steps
+
+- [Users and groups](./users-and-groups.mdx) to apply synchronized groups to
+  connector access and budgets.
+- [Create groups from user attributes](./scim-provisioning.mdx#create-groups-from-user-attributes)
+  to maintain groups from profile values with any SCIM identity provider.
+- [Directory groups and OIDC claim groups](../concepts/two-group-models.mdx) to
+  understand which group model each platform control uses.
+
+## Troubleshooting
+
+Start with the Enterprise Manager pod logs:
+
+```bash title="Read recent Enterprise Manager logs"
+kubectl logs --namespace <NAMESPACE> <ENTERPRISE_MANAGER_POD> --since=30m
+```
+
+A failed cycle logs `okta reconciliation cycle failed` with its `issuer_id` and
+error. A successful cycle that applies changes logs
+`okta reconciliation applied changes` with user, group, and membership counts. A
+successful cycle with no changes does not log a message.
+
+For monitoring, use the
+`stacklok.enterprise_manager.directory.okta.last_success.age` metric to see how
+long it has been since the last successful cycle. The
+`stacklok.enterprise_manager.directory.okta.cycles` counter records outcomes and
+failure reasons.
+
+<details>
+<summary>Increase logging detail</summary>
+
+Set the Enterprise Manager log level to debug:
+
+```yaml title="values.yaml"
+enterprise-manager:
+  appConfig:
+    logLevel: debug
+```
+
+Then set `logRawOktaAPIData: true` on the existing
+`enterprise-manager.directory.oktaReconcilers` entry. Edit that list entry in
+place so you retain its application IDs, credentials, groups, and safety
+settings. `logRawOktaAPIData` has no effect unless the process log level is
+`debug`. Raw responses contain user identities and profile attributes. Enable
+this setting only while actively troubleshooting, restrict access to the logs,
+and disable it afterward.
+
+</details>
+
+<details>
+<summary>The Enterprise Manager does not start</summary>
+
+An enabled reconciler and `scim_bearer_token_ref` cannot appear on the same
+issuer. Confirm that the issuer omits `scim_bearer_token_ref`, uses
+`binding_claim: uid`, and uses `externalId` as its provisioning attribute.
+
+Also check for duplicate or missing `issuerID` values, a malformed `orgURL`,
+duplicate group selectors, an incomplete `privateKeySecretRef`, and a
+`maxDeactivationRatio` outside the range `0` through `1`. Startup validation
+reports the affected issuer and field in the pod logs.
+
+</details>
+
+<details>
+<summary>No users are synchronized</summary>
+
+Confirm that users are assigned to the target application, either directly or
+through an Okta assignment group. The target application ID must identify this
+application, not the API Services application used by the reconciler.
+
+Check that the service application has all four API scope grants and an admin
+role whose resource set includes the target application. A recurring Okta `4xx`
+response other than `429` indicates a configuration problem such as a missing
+scope, insufficient resource access, an incorrect application ID, or a revoked
+credential. The reconciler does not retry these responses. Transport failures
+and Okta `5xx` responses make up to three attempts automatically.
+
+If the error contains `read okta private key` or `read okta private key id`,
+confirm that the Secret namespace, name, and data keys match
+`privateKeySecretRef`. When the chart creates RBAC resources, it grants access
+only to the Secret named there.
+
+</details>
+
+<details>
+<summary>A specific user is missing</summary>
+
+Search the logs for `okta reconciler: application user held back` and match its
+`okta_user_id` or `login` field to the missing user. The `reason` and `err`
+fields identify profile data that the target application's schema cannot map or
+a login that collides with another user's `userName`.
+
+Correct the application profile mapping or login in Okta. A held-back user is
+not treated as absent for deactivation, and the reconciler retries that user on
+the next cycle.
+
+</details>
+
+<details>
+<summary>A selected group is missing</summary>
+
+Confirm that the service application's resource set includes the group and its
+users collection. Check the group ID, and confirm that its members are also
+assigned to the target application.
+
+When a selector includes `expectedName`, an Okta rename causes the entire cycle
+to fail rather than synchronizing under an unexpected name. Update
+`expectedName` after verifying the renamed group in Okta.
+
+</details>
+
+<details>
+<summary>A cycle refuses a large set of deactivations</summary>
+
+Look for `okta reconciliation plan rejected` in the logs. The `reason` field is
+`empty_desired_population` or `deactivation_ratio_exceeded`, and the log
+includes `planned_deactivations` and `active_owned` counts.
+
+Check the target application assignments and the service application's resource
+set before changing the safety settings. The default `maxDeactivationRatio` is
+`0.10`, and the ratio check applies when a cycle would deactivate at least 10
+users. Set a different ratio from `0` through `1` only after confirming that the
+reduced population is intentional. An intentional full deactivation requires
+`maxDeactivationRatio: 1` and `allowEmptyPopulation: true`.
+
+</details>
