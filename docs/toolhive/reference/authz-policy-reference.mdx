@@ -26,6 +26,7 @@ automatically.
 | `Tool`        | `Tool::"<tool_name>"`         | A tool resource (used for `tools/call`)                                                                                                                                                |
 | `Prompt`      | `Prompt::"<prompt_name>"`     | A prompt resource (used for `prompts/get`)                                                                                                                                             |
 | `Resource`    | `Resource::"<sanitized_uri>"` | A data resource (used for `resources/read`). The URI is [sanitized](#resource-uri-sanitization) for Cedar compatibility                                                                |
+| `Skill`       | `Skill::"<skill_uri>"`        | A skill resource (used for `skills/get`). The exact skill URI is used verbatim as the entity ID                                                                                        |
 | `FeatureType` | `FeatureType::"<feature>"`    | A feature category entity. Values: `tool`, `prompt`, `resource`. Not currently used for authorization; list operations are handled via [response filtering](#list-operation-filtering) |
 | `THVGroup`    | `THVGroup::"<group_name>"`    | A group membership entity. Used with Cedar's `in` operator for [group-based policies](#group-membership)                                                                               |
 
@@ -43,15 +44,16 @@ These actions are evaluated against your Cedar policies:
 | `Action::"call_tool"`     | `tools/call`     | Call a specific tool          |
 | `Action::"get_prompt"`    | `prompts/get`    | Retrieve a specific prompt    |
 | `Action::"read_resource"` | `resources/read` | Read a specific data resource |
+| `Action::"get_skill"`     | `skills/get`     | Retrieve a specific skill     |
 
 ### List operations
 
-List methods (`tools/list`, `prompts/list`, `resources/list`, and
-`resources/templates/list`) bypass request-level authorization entirely.
-ToolHive allows the list request through and filters the response to include
-only items the caller is authorized to access using the individual-access
-actions above. See [List operation filtering](#list-operation-filtering) for
-details.
+List methods (`tools/list`, `prompts/list`, `resources/list`,
+`resources/templates/list`, and `skills/list`) bypass request-level
+authorization entirely. ToolHive allows the list request through and filters the
+response to include only items the caller is authorized to access using the
+individual-access actions above. See
+[List operation filtering](#list-operation-filtering) for details.
 
 ### Always-allowed MCP methods
 
@@ -223,6 +225,21 @@ these attributes:
 | `operation` | String | Always `"read"`                           |
 | `feature`   | String | Always `"resource"`                       |
 | `arg_<key>` | Varies | Request argument values                   |
+
+### Skill get attributes (`skills/get`)
+
+When a client retrieves a skill, the resource entity (`Skill::`) has these
+attributes:
+
+| Attribute   | Type   | Description                    |
+| ----------- | ------ | ------------------------------ |
+| `name`      | String | The skill URI                  |
+| `uri`       | String | The skill URI (same as `name`) |
+| `operation` | String | Always `"get"`                 |
+| `feature`   | String | Always `"skill"`               |
+
+A `skills/get` request with a missing, empty, or non-string `uri` parameter, or
+with duplicate `uri` members, is rejected before it reaches an authorizer.
 
 ### Feature list attributes (list operations)
 
@@ -470,10 +487,11 @@ permit(
 
 ## List operation filtering
 
-List operations (`tools/list`, `prompts/list`, `resources/list`, and
-`resources/templates/list`) bypass request-level authorization entirely.
-ToolHive forwards the list request to the MCP server, then filters the response
-to include only items the caller is authorized to access.
+List operations (`tools/list`, `prompts/list`, `resources/list`,
+`resources/templates/list`, and `skills/list`) bypass request-level
+authorization entirely. ToolHive forwards the list request to the MCP server,
+then filters the response to include only items the caller is authorized to
+access.
 
 For each item in the list response, ToolHive runs a policy check using the
 corresponding individual-access action:
@@ -484,12 +502,14 @@ corresponding individual-access action:
 | `prompts/list`             | `Action::"get_prompt"` against each `Prompt::"<name>"`                                           |
 | `resources/list`           | `Action::"read_resource"` against each `Resource::"<sanitized_uri>"`                             |
 | `resources/templates/list` | `Action::"read_resource"` against each `Resource::"<sanitized_uri>"` built from the URI template |
+| `skills/list`              | `Action::"get_skill"` against each `Skill::"<skill_uri>"`                                        |
 
 This means you don't need separate list policies. Your `call_tool`,
-`get_prompt`, and `read_resource` policies automatically control what appears in
-list responses. For resources and resource templates, the per-item check uses
-the [sanitized](#resource-uri-sanitization) entity ID, while the original URI
-(or URI template) remains available via the `resource.uri` attribute.
+`get_prompt`, `read_resource`, and `get_skill` policies automatically control
+what appears in list responses. For resources and resource templates, the
+per-item check uses the [sanitized](#resource-uri-sanitization) entity ID, while
+the original URI (or URI template) remains available via the `resource.uri`
+attribute. Skill URIs are used verbatim as the entity ID.
 
 Filtered resource template responses are served with
 `Cache-Control: private, no-store` so a shared HTTP cache cannot replay one
@@ -497,11 +517,12 @@ caller's filtered view to a different caller.
 
 :::note
 
-Because list responses are filtered using `call_tool`, `get_prompt`, and
-`read_resource` policies, an item only appears in a list response when the
-corresponding individual-access policy permits it. For example, if no
-`call_tool` policy permits a given tool, that tool won't appear in `tools/list`
-responses.
+Because list responses are filtered using `call_tool`, `get_prompt`,
+`read_resource`, and `get_skill` policies, an item only appears in a list
+response when the corresponding individual-access policy permits it. For
+example, if no `call_tool` policy permits a given tool, that tool won't appear
+in `tools/list` responses. A `skills/list` response with no matching `get_skill`
+permit returns an empty list rather than a 403.
 
 :::
 
