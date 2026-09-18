@@ -1,0 +1,82 @@
+name: PR Screenshot Summary
+
+# workflow_run always loads this workflow from the default branch. That makes
+# it a trusted follow-up to the read-only PR workflow even though this job can
+# update pull request descriptions.
+# The privileged job checks out only the API-resolved base SHA and treats the
+# PR head as inert Git data. Zizmor cannot infer that cross-step trust boundary.
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows: ['On PR']
+    types: [completed]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.pull_requests[0].number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  update-description:
+    name: Update PR description with screenshot summary
+    if: |
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.pull_requests[0] != null
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Resolve current PR context
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          REPO: ${{ github.repository }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          PR_JSON="$(gh api "repos/$REPO/pulls/$PR_NUMBER")"
+          BASE_SHA="$(echo "$PR_JSON" | jq -r '.base.sha')"
+          HEAD_SHA="$(echo "$PR_JSON" | jq -r '.head.sha')"
+          if [ "$HEAD_SHA" != "$RUN_HEAD_SHA" ]; then
+            echo "The PR advanced after this run; its newer run will update the summary."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "current=true"
+            echo "base_sha=$BASE_SHA"
+            echo "head_sha=$HEAD_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout trusted base revision
+        if: steps.pr.outputs.current == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pr.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch PR head for read-only inspection
+        if: steps.pr.outputs.current == 'true'
+        env:
+          EXPECTED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          git fetch --no-tags origin \
+            "+refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr/$PR_NUMBER/head"
+          ACTUAL_HEAD_SHA="$(git rev-parse "refs/remotes/origin/pr/$PR_NUMBER/head")"
+          if [ "$ACTUAL_HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]; then
+            echo "::error::PR head changed while preparing the summary; retry against the current head."
+            exit 1
+          fi
+
+      - name: Update PR description with screenshot summary
+        if: steps.pr.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        # This script comes from the checked-out base revision, never the PR.
+        run: node scripts/update-pr-screenshot-summary.mjs
