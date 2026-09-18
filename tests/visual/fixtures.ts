@@ -95,6 +95,7 @@ export async function captureColorScheme(
     fullPage: true,
     scale: 'device',
     mask: options.mask,
+    maskColor: scheme === 'dark' ? '#282a36' : '#f6f8fa',
   });
   const after = await fileMtimeMs(pngPath);
   if (after !== before) {
@@ -116,5 +117,28 @@ export async function captureBothThemes(
 ): Promise<void> {
   await captureColorScheme(page, testInfo, name, 'light', options);
   await captureColorScheme(page, testInfo, name, 'dark', options);
+  await page.emulateMedia({ colorScheme: 'light' });
+}
+
+export async function captureElementBothThemes(
+  page: Page,
+  element: Locator,
+  testInfo: TestInfo,
+  name: string
+): Promise<void> {
+  for (const scheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await waitForVisualStability(page);
+
+    const pngName = `${slugifySnapshotName(name)}-${scheme}.png`;
+    const pngPath = testInfo.snapshotPath(pngName);
+    const before = await fileMtimeMs(pngPath);
+    await expect(element).toHaveScreenshot(pngName, { scale: 'device' });
+    const after = await fileMtimeMs(pngPath);
+    if (after !== before) {
+      await writeSnapshotMetadata(page, testInfo, pngName);
+    }
+  }
+
   await page.emulateMedia({ colorScheme: 'light' });
 }

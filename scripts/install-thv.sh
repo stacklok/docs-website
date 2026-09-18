@@ -13,7 +13,11 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 1
 fi
 
-API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive/releases/latest"
+if [[ -n "${TOOLHIVE_VERSION:-}" ]]; then
+    API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive/releases/tags/v${TOOLHIVE_VERSION#v}"
+else
+    API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive/releases/latest"
+fi
 
 # Fetch release information
 RELEASE_JSON=$(curl -sf "$API_ENDPOINT" || {

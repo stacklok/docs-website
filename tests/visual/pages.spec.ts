@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test, type Page } from '@playwright/test';
-import { captureBothThemes } from './fixtures';
+import { captureBothThemes, captureElementBothThemes } from './fixtures';
 
 /**
  * The documented representative-page matrix for issue #1163. Keep this
@@ -44,8 +44,14 @@ test('theme preview page', async ({ page }, testInfo) => {
 for (const { section, path } of NAV_PAGES) {
   test(`nav page - ${section}`, async ({ page }, testInfo) => {
     await gotoSuccessful(page, path);
-    await expect(page.locator('body')).toBeVisible();
-    await captureBothThemes(page, testInfo, `Nav page - ${section}`);
+    const sidebarViewport = page.locator('.theme-doc-sidebar-container > div');
+    await expect(sidebarViewport).toBeVisible();
+    await captureElementBothThemes(
+      page,
+      sidebarViewport,
+      testInfo,
+      `Nav page - ${section}`
+    );
   });
 }
 
