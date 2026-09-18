@@ -959,7 +959,7 @@
                         "description": "ConfigMapRef references a ConfigMap containing the CA certificate bundle.\nThe ConfigMap key is required by the API. If omitted in a stored object, it\ndefaults to \"ca.crt\" for backwards compatibility.",
                         "properties": {
                           "key": {
-                            "description": "The key to select.",
+                            "description": "The key to select from the ConfigMap's Data field.\nKeys in the BinaryData field are not currently propagated to container env vars.",
                             "type": "string"
                           },
                           "name": {
@@ -1146,6 +1146,14 @@
                         "maxProperties": 16,
                         "type": "object"
                       },
+                      "additionalTokenParams": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "AdditionalTokenParams are extra form-body parameters to include in\ntoken requests (authorization code exchange and refresh) sent to the\nupstream provider's token endpoint.\nThis is useful for providers that enforce RFC 8707 resource indicators\non token requests, where the resource parameter must accompany the code\nexchange and refresh, not only the authorization request.\nFramework-managed parameters (grant_type, code, redirect_uri, client_id,\nclient_secret, code_verifier, refresh_token, scope) are not allowed.",
+                        "maxProperties": 16,
+                        "type": "object"
+                      },
                       "allowPrivateIPs": {
                         "description": "AllowPrivateIPs permits the upstream provider's HTTP client to connect to\nprivate IP ranges (RFC-1918, link-local). Use only when the upstream is\nhosted inside the same cluster and has no public endpoint. HTTP-scheme\nrestrictions are unchanged — HTTPS is still required for non-localhost\nhosts unless InsecureAllowHTTP is set. Defaults to false.",
                         "type": "boolean"
@@ -1162,7 +1170,7 @@
                             "description": "ConfigMapRef references a ConfigMap containing the CA certificate bundle.\nThe ConfigMap key is required by the API. If omitted in a stored object, it\ndefaults to \"ca.crt\" for backwards compatibility.",
                             "properties": {
                               "key": {
-                                "description": "The key to select.",
+                                "description": "The key to select from the ConfigMap's Data field.\nKeys in the BinaryData field are not currently propagated to container env vars.",
                                 "type": "string"
                               },
                               "name": {
@@ -1438,6 +1446,14 @@
                         "maxProperties": 16,
                         "type": "object"
                       },
+                      "additionalTokenParams": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "description": "AdditionalTokenParams are extra form-body parameters to include in\ntoken requests (authorization code exchange and refresh) sent to the\nupstream provider's token endpoint.\nThis is useful for providers that enforce RFC 8707 resource indicators\non token requests, where the resource parameter must accompany the code\nexchange and refresh, not only the authorization request.\nFramework-managed parameters (grant_type, code, redirect_uri, client_id,\nclient_secret, code_verifier, refresh_token, scope) are not allowed.",
+                        "maxProperties": 16,
+                        "type": "object"
+                      },
                       "allowPrivateIPs": {
                         "description": "AllowPrivateIPs permits the upstream provider's HTTP client to connect to\nprivate IP ranges (RFC-1918, link-local). Use only when the upstream is\nhosted inside the same cluster and has no public endpoint.",
                         "type": "boolean"
@@ -1449,7 +1465,7 @@
                             "description": "ConfigMapRef references a ConfigMap containing the CA certificate bundle.\nThe ConfigMap key is required by the API. If omitted in a stored object, it\ndefaults to \"ca.crt\" for backwards compatibility.",
                             "properties": {
                               "key": {
-                                "description": "The key to select.",
+                                "description": "The key to select from the ConfigMap's Data field.\nKeys in the BinaryData field are not currently propagated to container env vars.",
                                 "type": "string"
                               },
                               "name": {
@@ -2526,6 +2542,24 @@
                   },
                   "type": "object"
                 },
+                "listChanged": {
+                  "description": "ListChanged configures live list_changed propagation from backends.",
+                  "properties": {
+                    "disabledWorkloads": {
+                      "description": "DisabledWorkloads names backends to exclude while leaving the rest\nsubscribed. Prefer this over Enabled when a single backend misbehaves.",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array",
+                      "x-kubernetes-list-type": "set"
+                    },
+                    "enabled": {
+                      "description": "Enabled turns propagation on or off for every backend. Defaults to true.",
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
                 "logLevel": {
                   "description": "LogLevel sets the logging level for the Virtual MCP server.\nThe only valid value is \"debug\" to enable debug logging.\nWhen omitted or empty, the server uses info level logging.",
                   "enum": [
@@ -2536,6 +2570,11 @@
                 "timeouts": {
                   "description": "Timeouts configures timeout settings.",
                   "properties": {
+                    "backendInit": {
+                      "description": "BackendInit caps how long session initialization waits for a single\nbackend to connect and hand back its capabilities. Unlike Default, which\nonly ever extends that deadline, an explicit BackendInit is authoritative:\nit bounds session init even when a workload's request timeout is longer.\n\nLeave it unset unless a backend can stall the handshake. It exists for\nbackends that neither answer nor fail promptly: a stateless MCP server\nthat requires per-user auth cannot be classified by the unauthenticated\nhealth probe, so vMCP opens the persistent connection its Modern skip\npath would otherwise avoid, and that connection can hang until the\ndeadline. Clients with their own connect timeout give up first, and\nbecause they never complete a call, the revision cache never warms and\nthe next session repeats it. A few seconds here lets session init fail\nfast, which partialFailureMode: best_effort turns into a usable session.",
+                      "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
                     "default": {
                       "default": "30s",
                       "description": "Default is the default timeout for backend requests.",
