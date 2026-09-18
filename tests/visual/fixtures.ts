@@ -3,7 +3,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, type Page, type TestInfo } from '@playwright/test';
+import {
+  expect,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from '@playwright/test';
 
 /**
  * Waits out generic sources of false-positive visual diffs: in-flight
@@ -27,7 +32,7 @@ function slugifySnapshotName(name: string): string {
 /**
  * Writes a `<name>.json` next to each baseline PNG: which spec produced
  * it and the page URL, plus a ready-to-paste repro command. Not debug
- * fluff — `scripts/pr-screenshot-summary.ts` reads this to label and link
+ * fluff — `scripts/pr-screenshot-summary.mjs` reads this to label and link
  * each screenshot in the PR description.
  */
 async function writeSnapshotMetadata(
@@ -44,7 +49,6 @@ async function writeSnapshotMetadata(
     jsonPath,
     `${JSON.stringify(
       {
-        generatedAt: new Date().toISOString(),
         titlePath: testInfo.titlePath,
         testFile,
         url: {
@@ -71,7 +75,8 @@ export async function captureColorScheme(
   page: Page,
   testInfo: TestInfo,
   name: string,
-  scheme: 'light' | 'dark'
+  scheme: 'light' | 'dark',
+  options: { mask?: Locator[] } = {}
 ): Promise<void> {
   await page.emulateMedia({ colorScheme: scheme });
   await waitForVisualStability(page);
@@ -89,6 +94,7 @@ export async function captureColorScheme(
   await expect(page).toHaveScreenshot(pngName, {
     fullPage: true,
     scale: 'device',
+    mask: options.mask,
   });
   const after = await fileMtimeMs(pngPath);
   if (after !== before) {
@@ -105,9 +111,10 @@ export async function captureColorScheme(
 export async function captureBothThemes(
   page: Page,
   testInfo: TestInfo,
-  name: string
+  name: string,
+  options: { mask?: Locator[] } = {}
 ): Promise<void> {
-  await captureColorScheme(page, testInfo, name, 'light');
-  await captureColorScheme(page, testInfo, name, 'dark');
+  await captureColorScheme(page, testInfo, name, 'light', options);
+  await captureColorScheme(page, testInfo, name, 'dark', options);
   await page.emulateMedia({ colorScheme: 'light' });
 }

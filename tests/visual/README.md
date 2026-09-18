@@ -15,42 +15,28 @@ npm run test:visual:update   # regenerate them
 This builds the site and serves it in production mode before running the suite
 (see `playwright.config.ts`'s `webServer`).
 
-**Local baselines won't match CI.** `toHaveScreenshot()` compares byte-for-byte,
-and font rendering differs by host OS/GPU even on the same Chromium build. CI
-runs inside a pinned `mcr.microsoft.com/playwright` image for exactly this
-reason — a locally-generated PNG committed by hand will just fail again on the
-next CI run. Use `npm run test:visual:update` locally only to sanity-check that
-a scenario renders correctly (the metadata panel opens, the mobile menu doesn't
-overflow, mermaid diagrams finish rendering) — never to produce the baseline you
-commit.
+**Local baselines won't match CI.** `toHaveScreenshot()` compares rendered
+pixels, and font rendering differs by host OS/GPU even on the same Chromium
+build. CI runs inside a pinned `mcr.microsoft.com/playwright` image for exactly
+this reason — a locally-generated PNG committed by hand will just fail again on
+the next CI run. Use `npm run test:visual:update` locally only to sanity-check
+that a scenario renders correctly (the metadata panel opens, the mobile menu
+doesn't overflow, mermaid diagrams finish rendering) — never to produce the
+baseline you commit.
 
 ## Updating baselines
 
-**When the check fails on a PR from a branch in this repo (not a fork), this
-happens automatically.** A follow-up job regenerates the baselines inside the
-same pinned container the check uses and pushes the result as a new commit on
-the PR branch — no action needed. **Review that commit's diff before trusting
-it** (the PR description's screenshot summary, added automatically, is the
-fastest way to do that) — a passing check only proves the render is _consistent_
-with the new baseline, not that it's _correct_. It won't retry indefinitely: if
-the last commit on the branch was already a baseline update and it's still
-failing, that's left for a human to look at rather than chaining another
-auto-commit on top.
+When a visual difference is intentional, comment **`/update-snapshots`** on the
+pull request. Any repository collaborator with write access can trigger it. The
+workflow regenerates the baselines inside the same pinned container used by the
+check and pushes them to the pull request branch. Review the resulting
+before-and-after screenshot summary before merging. A passing check only proves
+that the render is consistent with the approved baseline, not that it is
+correct.
 
-On a fork PR (GitHub withholds write secrets from fork `pull_request` runs, so
-auto-fix can't push there) or to trigger it manually, comment
-**`/update-snapshots`** on the pull request instead. Any repo collaborator with
-write access can trigger it; it refuses to run on forked-repo PRs, which it
-can't push to either — in that case, regenerate locally
-(`npm run test:visual:update`) and push the changed files yourself.
-
-**Known gap:** GitHub currently requires manual "Approve and run" for a check
-run triggered by a `github-actions[bot]`/`GITHUB_TOKEN`-authored push, even on a
-same-repo branch — so the auto-fix commit's own check needs one manual approval
-click before it runs. A follow-up human-authored push (even a trivial one) isn't
-subject to that gate and runs normally. Fixing this for good means pushing via a
-GitHub App installation token or a PAT instead of `GITHUB_TOKEN` — not done here
-to avoid a new secret/app for a first cut of this suite.
+The command refuses to run on forked pull requests because it cannot push to
+their branches. For a fork, regenerate locally with
+`npm run test:visual:update`, then push the changed snapshot files yourself.
 
 ## Adding a new case
 

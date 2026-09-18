@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { captureBothThemes } from './fixtures';
 
 /**
@@ -12,26 +12,26 @@ import { captureBothThemes } from './fixtures';
  * covers.
  */
 const NAV_PAGES: Array<{ section: string; path: string }> = [
-  { section: 'ToolHive UI', path: '/toolhive/guides-ui' },
-  { section: 'ToolHive CLI', path: '/toolhive/guides-cli' },
-  { section: 'Kubernetes Operator', path: '/toolhive/guides-k8s' },
-  { section: 'Virtual MCP Server', path: '/toolhive/guides-vmcp' },
-  { section: 'Registry Server', path: '/toolhive/guides-registry' },
-  { section: 'Integrations', path: '/toolhive/integrations' },
-  { section: 'Concepts', path: '/toolhive/concepts' },
-  { section: 'MCP server guides', path: '/toolhive/guides-mcp' },
-  { section: 'Reference', path: '/toolhive/reference' },
-  { section: 'Tutorials', path: '/toolhive/tutorials' },
+  { section: 'Stacklok Platform', path: '/platform' },
+  { section: 'ToolHive', path: '/toolhive' },
+  { section: 'AI Gateway', path: '/ai-gateway' },
+  { section: 'Connector Gateway', path: '/connector-gateway' },
+  { section: 'Resources', path: '/toolhive/concepts' },
 ];
 
+async function gotoSuccessful(page: Page, path: string) {
+  const response = await page.goto(path);
+  expect(response?.ok()).toBe(true);
+}
+
 test('home page', async ({ page }, testInfo) => {
-  await page.goto('/');
+  await gotoSuccessful(page, '/');
   await expect(page.locator('body')).toBeVisible();
   await captureBothThemes(page, testInfo, 'Home page');
 });
 
 test('theme preview page', async ({ page }, testInfo) => {
-  await page.goto('/theme-preview');
+  await gotoSuccessful(page, '/theme-preview');
   // Mermaid diagrams render client-side and asynchronously — wait for
   // both of the page's diagrams to finish before capturing, or the
   // snapshot flakes between "still rendering" and "done".
@@ -43,14 +43,14 @@ test('theme preview page', async ({ page }, testInfo) => {
 
 for (const { section, path } of NAV_PAGES) {
   test(`nav page - ${section}`, async ({ page }, testInfo) => {
-    await page.goto(path);
+    await gotoSuccessful(page, path);
     await expect(page.locator('body')).toBeVisible();
     await captureBothThemes(page, testInfo, `Nav page - ${section}`);
   });
 }
 
 test('MCP guide - context7 metadata expanded', async ({ page }, testInfo) => {
-  await page.goto('/toolhive/guides-mcp/context7');
+  await gotoSuccessful(page, '/toolhive/guides-mcp/context7');
 
   const summary = page.getByText("Expand to view the MCP server's metadata");
   await summary.click();
@@ -67,6 +67,7 @@ test('MCP guide - context7 metadata expanded', async ({ page }, testInfo) => {
   await captureBothThemes(
     page,
     testInfo,
-    'MCP guide - context7 metadata expanded'
+    'MCP guide - context7 metadata expanded',
+    { mask: [codeBlock] }
   );
 });

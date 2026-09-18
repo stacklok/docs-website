@@ -5,19 +5,9 @@
 # Regenerates visual baselines against whatever is currently checked out
 # and, if anything changed, commits and pushes onto <head-ref>.
 #
-# Always fetches and switches to <head-ref> before committing — a no-op
-# when the caller already has that branch checked out (the manual
-# /update-snapshots path), but load-bearing for the automatic on-failure
-# path: that caller inherits the pull_request event's default checkout,
-# which is the MERGE commit (branch + base's current tip), not the
-# branch's own tip. Regenerating against that merged tree is correct (view
-# it as "does this branch's own tip, once merged, still validate images
-# rendered correctly?"), but the branch itself isn't pushable to at that
-# ref — so the regenerated PNGs are saved as raw bytes, the branch tip is
-# checked out for real, and just those files are restored onto it before
-# committing. This keeps the regeneration accurate against the merged
-# tree while keeping the pushed commit free of any of main's other
-# changes.
+# Always fetches and switches to <head-ref> before committing. This is a
+# no-op when the caller already has that branch checked out, but it keeps
+# the pushed commit tied to the current pull request branch.
 #
 # Deliberately much simpler than a stateful-app equivalent might need:
 # no project sharding, no orphan pruning, no functional-vs-visual
