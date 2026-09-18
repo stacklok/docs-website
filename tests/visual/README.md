@@ -44,6 +44,14 @@ write access can trigger it; it refuses to run on forked-repo PRs, which it
 can't push to either — in that case, regenerate locally
 (`npm run test:visual:update`) and push the changed files yourself.
 
+**Known gap:** GitHub currently requires manual "Approve and run" for a check
+run triggered by a `github-actions[bot]`/`GITHUB_TOKEN`-authored push, even on a
+same-repo branch — so the auto-fix commit's own check needs one manual approval
+click before it runs. A follow-up human-authored push (even a trivial one) isn't
+subject to that gate and runs normally. Fixing this for good means pushing via a
+GitHub App installation token or a PAT instead of `GITHUB_TOKEN` — not done here
+to avoid a new secret/app for a first cut of this suite.
+
 ## Adding a new case
 
 Add to the existing `NAV_PAGES` array or as its own `test(...)` in
