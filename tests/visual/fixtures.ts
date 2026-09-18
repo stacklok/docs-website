@@ -79,7 +79,17 @@ export async function captureColorScheme(
   const pngName = `${slugifySnapshotName(name)}-${scheme}.png`;
   const pngPath = testInfo.snapshotPath(pngName);
   const before = await fileMtimeMs(pngPath);
-  await expect(page).toHaveScreenshot(pngName, { fullPage: true });
+  // scale: 'device' — toHaveScreenshot() defaults to 'css' (downsamples
+  // back to CSS pixel dimensions regardless of deviceScaleFactor). The
+  // whole point of the project config's deviceScaleFactor: 2 is a real
+  // higher-resolution PNG, since these get embedded in the PR
+  // description at whatever width GitHub's body happens to be (usually
+  // well under 1280px) — 'css' would throw away exactly the extra
+  // resolution that downscale needs to stay crisp.
+  await expect(page).toHaveScreenshot(pngName, {
+    fullPage: true,
+    scale: 'device',
+  });
   const after = await fileMtimeMs(pngPath);
   if (after !== before) {
     await writeSnapshotMetadata(page, testInfo, pngName);

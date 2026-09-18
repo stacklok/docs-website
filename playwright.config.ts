@@ -27,6 +27,14 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1280, height: 800 },
+        // The PR screenshot summary embeds these at whatever width
+        // GitHub's PR body happens to be (~700-900px, well under 1280) —
+        // capturing at 2x means that downscale is supersampling real
+        // extra resolution rather than stretching a 1x image, which is
+        // the difference between crisp and visibly soft body text for a
+        // page this text-dense. Doubles PNG size; still small enough not
+        // to matter for a doc site's screenshot count.
+        deviceScaleFactor: 2,
       },
       testIgnore: /mobile\.spec\.ts$/,
     },
@@ -38,6 +46,9 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 390, height: 844 },
+        // Real mobile hardware is almost universally >1x DPR too — same
+        // supersampling reasoning as the desktop project above.
+        deviceScaleFactor: 2,
       },
       testMatch: /mobile\.spec\.ts$/,
     },
