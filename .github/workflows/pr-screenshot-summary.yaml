@@ -1,28 +1,17 @@
 name: PR Screenshot Summary
 
-on:
-  pull_request:
-    # `edited` (title/body/base changed) makes this self-healing: if a
-    # human or agent overwrites the whole PR body and wipes the fenced
-    # section, the next body edit regenerates it. Safe by construction
-    # against a rewrite loop — this job's own `gh pr edit` runs on
-    # GITHUB_TOKEN, and GitHub Actions never lets a GITHUB_TOKEN write
-    # re-trigger a workflow, only a real actor's own token does.
-    types: [opened, synchronize, edited]
-    paths:
-      - 'tests/visual/**'
-  # Manual escape hatch — e.g. to (re)generate the summary on a PR that
-  # already has the snapshot changes but hasn't had a new push since this
-  # workflow was added.
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: 'PR number to update'
-        required: true
-        type: number
+# workflow_run always loads this workflow from the default branch. That makes
+# it a trusted follow-up to the read-only PR workflow even though this job can
+# update pull request descriptions.
+# The privileged job checks out only the API-resolved base SHA and treats the
+# PR head as inert Git data. Zizmor cannot infer that cross-step trust boundary.
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows: ['On PR']
+    types: [completed]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr_number }}
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.pull_requests[0].number }}
   cancel-in-progress: true
 
 permissions: {}
@@ -30,64 +19,64 @@ permissions: {}
 jobs:
   update-description:
     name: Update PR description with screenshot summary
+    if: |
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.pull_requests[0] != null
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
     steps:
-      # pull_request events already carry number/base/head in the event
-      # payload; workflow_dispatch only has the pr_number input, so look
-      # the rest up via the API — one source of truth for both triggers
-      # from here on.
-      - name: Resolve PR context
+      - name: Resolve current PR context
         id: pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
           REPO: ${{ github.repository }}
-          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
-          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          DISPATCH_PR_NUMBER: ${{ inputs.pr_number }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          if [ -n "$EVENT_PR_NUMBER" ]; then
-            {
-              echo "number=$EVENT_PR_NUMBER"
-              echo "base_ref=$EVENT_BASE_REF"
-              echo "head_sha=$EVENT_HEAD_SHA"
-            } >> "$GITHUB_OUTPUT"
-          else
-            PR_NUMBER="$DISPATCH_PR_NUMBER"
-            BASE_REF="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json baseRefName -q .baseRefName)"
-            HEAD_SHA="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid -q .headRefOid)"
-            {
-              echo "number=$PR_NUMBER"
-              echo "base_ref=$BASE_REF"
-              echo "head_sha=$HEAD_SHA"
-            } >> "$GITHUB_OUTPUT"
+          PR_JSON="$(gh api "repos/$REPO/pulls/$PR_NUMBER")"
+          BASE_SHA="$(echo "$PR_JSON" | jq -r '.base.sha')"
+          HEAD_SHA="$(echo "$PR_JSON" | jq -r '.head.sha')"
+          if [ "$HEAD_SHA" != "$RUN_HEAD_SHA" ]; then
+            echo "The PR advanced after this run; its newer run will update the summary."
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          {
+            echo "current=true"
+            echo "base_sha=$BASE_SHA"
+            echo "head_sha=$HEAD_SHA"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Checkout
+      - name: Checkout trusted base revision
+        if: steps.pr.outputs.current == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.pr.outputs.head_sha }}
+          ref: ${{ steps.pr.outputs.base_sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      # scripts/pr-screenshot-summary.mjs diffs against origin/<base ref>.
-      # fetch-depth: 0 above pulls full history for the checked-out PR
-      # head commit, but actions/checkout's fetch refspec doesn't
-      # necessarily update refs/remotes/origin/* for other branches — the
-      # explicit destination refspec here guarantees origin/<base ref>
-      # resolves regardless of trigger type.
-      - name: Fetch base ref
+      - name: Fetch PR head for read-only inspection
+        if: steps.pr.outputs.current == 'true'
         env:
-          BASE_REF: ${{ steps.pr.outputs.base_ref }}
-        run: git fetch origin "+$BASE_REF:refs/remotes/origin/$BASE_REF"
+          EXPECTED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          git fetch --no-tags origin \
+            "+refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr/$PR_NUMBER/head"
+          ACTUAL_HEAD_SHA="$(git rev-parse "refs/remotes/origin/pr/$PR_NUMBER/head")"
+          if [ "$ACTUAL_HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]; then
+            echo "::error::PR head changed while preparing the summary; retry against the current head."
+            exit 1
+          fi
 
       - name: Update PR description with screenshot summary
+        if: steps.pr.outputs.current == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
-          BASE_REF: ${{ steps.pr.outputs.base_ref }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        # This script comes from the checked-out base revision, never the PR.
         run: node scripts/update-pr-screenshot-summary.mjs

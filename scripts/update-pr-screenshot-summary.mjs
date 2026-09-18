@@ -9,7 +9,7 @@
 // leaving the rest of the description exactly as the author wrote it.
 //
 // Requires GH_TOKEN (or GITHUB_TOKEN) with pull-requests: write, plus
-// PR_NUMBER / BASE_REF / HEAD_SHA in the environment — see
+// PR_NUMBER / BASE_SHA / HEAD_SHA in the environment — see
 // .github/workflows/pr-screenshot-summary.yaml, the only intended caller.
 
 import { execFileSync } from 'node:child_process';
@@ -61,18 +61,12 @@ function removeFencedSection(body) {
 
 function main() {
   const prNumber = requiredEnv('PR_NUMBER');
-  const baseRef = requiredEnv('BASE_REF');
+  const baseSha = requiredEnv('BASE_SHA');
   const headSha = requiredEnv('HEAD_SHA');
 
   const summary = execFileSync(
     'node',
-    [
-      'scripts/pr-screenshot-summary.mjs',
-      '--base',
-      `origin/${baseRef}`,
-      '--head',
-      headSha,
-    ],
+    ['scripts/pr-screenshot-summary.mjs', '--base', baseSha, '--head', headSha],
     { encoding: 'utf-8' }
   ).trim();
 
