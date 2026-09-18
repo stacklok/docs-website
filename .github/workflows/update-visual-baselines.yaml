@@ -1,0 +1,145 @@
+name: Update visual baselines
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Runs on the plain ubuntu-latest runner, NOT the pinned Playwright
+  # container: this needs `gh` and `jq`, which the minimal Playwright
+  # image doesn't ship, and it must run before any checkout of the PR
+  # branch happens.
+  authorize:
+    name: Authorize the request
+    # github.event.issue.pull_request is only set when the comment is on
+    # a PR, not a plain issue (issue_comment fires for both). Anyone can
+    # comment, so real authorization happens inside the job (see "Check
+    # commenter has write access" below) — this condition only narrows
+    # *which* comments are worth spending a job dispatch on.
+    if: |
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/update-snapshots')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      head_ref: ${{ steps.pr.outputs.head_ref }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+    steps:
+      # Anyone can post a comment — this must run before anything that
+      # touches the repo's contents or CI minutes.
+      - name: Check commenter has write access
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+        run: |
+          PERMISSION="$(gh api "repos/${{ github.repository }}/collaborators/$COMMENTER/permission" --jq '.permission')"
+          if [[ "$PERMISSION" != "admin" && "$PERMISSION" != "write" ]]; then
+            echo "::error::@$COMMENTER does not have write access to this repo — refusing to run."
+            exit 1
+          fi
+
+      - name: Resolve PR head
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          PR_JSON="$(gh api "repos/${{ github.repository }}/pulls/$ISSUE_NUMBER")"
+          {
+            echo "head_ref=$(echo "$PR_JSON" | jq -r '.head.ref')"
+            echo "head_sha=$(echo "$PR_JSON" | jq -r '.head.sha')"
+            echo "head_repo=$(echo "$PR_JSON" | jq -r '.head.repo.full_name')"
+          } >> "$GITHUB_OUTPUT"
+
+      # This workflow pushes a commit directly onto the PR's own branch —
+      # only possible when that branch lives in this repo, not a fork.
+      - name: Refuse forked PRs
+        if: steps.pr.outputs.head_repo != github.repository
+        env:
+          HEAD_REPO: ${{ steps.pr.outputs.head_repo }}
+        run: |
+          echo "::error::This PR's head is in ${HEAD_REPO}, not ${{ github.repository }} — this workflow can only push to branches within this repo. Regenerate locally instead: npm run test:visual:update"
+          exit 1
+
+  update-snapshots:
+    name: Regenerate visual baselines on request
+    needs: authorize
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      updated: ${{ steps.regen.outputs.updated }}
+    # Same pinned image as _visual-regression.yaml, for the same reason:
+    # byte-exact pixel comparison needs the exact browser build the
+    # committed baselines were generated against. Keep the digest in
+    # sync with that file.
+    container:
+      image: mcr.microsoft.com/playwright@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27 # v1.63.0-noble
+      options: --ipc=host
+    timeout-minutes: 15
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.head_ref }}
+          persist-credentials: true
+
+      # The Playwright image is minimal — see the same step's comment in
+      # _visual-regression.yaml.
+      - name: Install jq
+        run: |
+          curl -sSL -o /usr/local/bin/jq https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64
+          echo "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f  /usr/local/bin/jq" | sha256sum -c -
+          chmod +x /usr/local/bin/jq
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install ToolHive CLI
+        run: ./scripts/install-thv.sh
+
+      - name: Build site
+        run: npm run build
+
+      - name: Regenerate and push baselines
+        id: regen
+        env:
+          HEAD_SHA: ${{ needs.authorize.outputs.head_sha }}
+        run: ./scripts/update-visual-baselines.sh "${HEAD_SHA}"
+
+  comment-result:
+    name: Comment result
+    needs: [authorize, update-snapshots]
+    if: always() && needs.authorize.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment success or no-op
+        if: needs.update-snapshots.result == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          UPDATED: ${{ needs.update-snapshots.outputs.updated }}
+        run: |
+          if [ "${UPDATED}" == "true" ]; then
+            BODY="📸 Regenerated visual baselines per your \`/update-snapshots\` request — pushed a new commit."
+          else
+            BODY="No snapshot diff reproduced against this branch's current state — nothing to update. If a visual check is still red, it may be a real, non-snapshot failure; see the job log for details."
+          fi
+          gh pr comment "$ISSUE_NUMBER" --body "$BODY"
+
+      - name: Comment failure
+        if: needs.update-snapshots.result != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh pr comment "$ISSUE_NUMBER" --body "❌ \`/update-snapshots\` failed before it could push anything — see the run log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
