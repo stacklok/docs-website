@@ -148,7 +148,11 @@ jobs:
   auto-fix:
     name: Auto-update baselines on failure
     needs: [visual-regression, check-auto-fix-eligibility]
-    if: needs.check-auto-fix-eligibility.outputs.eligible == 'true'
+    # always(): needed because one of this job's own `needs`
+    # (visual-regression) failed — without it, GitHub's implicit
+    # "every dependency must succeed" gate skips this job regardless of
+    # the eligible check below.
+    if: always() && needs.check-auto-fix-eligibility.outputs.eligible == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -223,4 +227,4 @@ jobs:
           else
             BODY="❌ No baseline auto-fix could be pushed. Either regenerating reproduced no diff (consistent with a real, non-snapshot failure — no baseline change will fix that) or the auto-fix step itself failed. See the failing-tests list in the Visual regression job for what actually broke."
           fi
-          gh pr comment "$PR_NUMBER" --edit-last --create-if-none --body "$BODY"
+          gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" --edit-last --create-if-none --body "$BODY"
