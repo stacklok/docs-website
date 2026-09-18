@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Generates an HTML-table summary of visual-regression screenshot changes
-// (tests/visual/**/*.spec.ts-snapshots/*.png) between two git refs, for
+// (tests/visual/*.spec.ts-snapshots/*.png) between two git refs, for
 // pasting into a PR description. Grouped into New / Changed / Deleted
 // (git's A/M/D status), one HTML table per snapshot group (a light/dark
 // pair, or a singleton when only one scheme changed) so each group reads
@@ -50,7 +50,7 @@ function repoSlug() {
   return match[1];
 }
 
-const SNAPSHOT_GLOB = 'tests/visual/**/*.spec.ts-snapshots/*.png';
+const SNAPSHOT_GLOB = 'tests/visual/*.spec.ts-snapshots/*.png';
 const SCHEME_RE = /-(light|dark)-(?:desktop|mobile)-linux\.png$/;
 
 /** @typedef {{ path: string, status: 'A'|'M'|'D', sha: string }} Entry */

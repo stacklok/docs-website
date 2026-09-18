@@ -26,12 +26,23 @@ commit.
 
 ## Updating baselines
 
-Comment **`/update-snapshots`** on the pull request. A CI workflow (any repo
-collaborator with write access can trigger it; it refuses to run on forked-repo
-PRs, which it can't push to) regenerates the baselines inside the same pinned
-container the check uses and pushes the result as a new commit on the PR branch.
-The PR description then gets a screenshot summary (new/changed/deleted,
-before/after for changes) added automatically.
+**When the check fails on a PR from a branch in this repo (not a fork), this
+happens automatically.** A follow-up job regenerates the baselines inside the
+same pinned container the check uses and pushes the result as a new commit on
+the PR branch — no action needed. **Review that commit's diff before trusting
+it** (the PR description's screenshot summary, added automatically, is the
+fastest way to do that) — a passing check only proves the render is _consistent_
+with the new baseline, not that it's _correct_. It won't retry indefinitely: if
+the last commit on the branch was already a baseline update and it's still
+failing, that's left for a human to look at rather than chaining another
+auto-commit on top.
+
+On a fork PR (GitHub withholds write secrets from fork `pull_request` runs, so
+auto-fix can't push there) or to trigger it manually, comment
+**`/update-snapshots`** on the pull request instead. Any repo collaborator with
+write access can trigger it; it refuses to run on forked-repo PRs, which it
+can't push to either — in that case, regenerate locally
+(`npm run test:visual:update`) and push the changed files yourself.
 
 ## Adding a new case
 
