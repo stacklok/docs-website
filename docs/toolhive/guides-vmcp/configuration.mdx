@@ -269,7 +269,26 @@ spec:
         perWorkload:
           slow-backend: 60s
           fast-backend: 10s
+
+        # Optional cap on how long session initialization waits for a single
+        # backend to connect and hand back its capabilities. Unset by default.
+        backendInit: 5s
 ```
+
+`backendInit` bounds session initialization independently of request timeouts.
+An explicit value is authoritative: it applies even when a workload's request
+timeout is longer, so a heavy query wanting a 60s budget doesn't also grant 60s
+to the handshake. Leave it unset unless a backend can stall the handshake.
+
+Set it when a backend accepts the persistent notification-stream subscription
+that vMCP opens during `initialize` and then never services it. That case
+typically arises with a stateless backend that requires per-user auth, where
+vMCP's unauthenticated health probe can't classify the backend and falls back to
+the persistent-connection path. A short value here lets session init fail fast,
+which `partialFailureMode: best_effort` turns into a usable session. Pair it
+with
+[`operational.listChanged.disabledWorkloads`](#exclude-backends-from-live-list_changed-propagation)
+to also skip subscribing to that backend's notification stream.
 
 :::info[Changed in v0.45.0]
 
@@ -320,6 +339,33 @@ spec:
 For detailed backend health monitoring, see
 [Verify backend status](./backend-discovery.mdx#verify-backend-status) in the
 Backend discovery guide.
+
+### Exclude backends from live list_changed propagation
+
+vMCP subscribes to every backend's `list_changed` notification stream during
+session initialization so tool, prompt, and resource list changes propagate
+live. A backend that accepts the subscribe and then never services it stalls the
+handshake, and clients with their own connect timeout give up first. Configure
+`operational.listChanged` when a specific backend behaves this way so its
+notification stream can be skipped while the rest stay subscribed:
+
+```yaml
+spec:
+  config:
+    operational:
+      listChanged:
+        # Turn propagation on or off for every backend. Defaults to true.
+        enabled: true
+        # Backends to exclude while leaving the rest subscribed.
+        disabledWorkloads:
+          - grafana-cloud-mcp
+```
+
+An excluded backend loses live propagation only: its tools remain aggregated and
+callable, and its list refreshes on the next session. Prefer `disabledWorkloads`
+over setting `enabled: false` when a single backend misbehaves. Combine this
+with [`operational.timeouts.backendInit`](#timeouts) so session initialization
+also fails fast if the same backend stalls the handshake.
 
 ## Forward client headers to backends
 
