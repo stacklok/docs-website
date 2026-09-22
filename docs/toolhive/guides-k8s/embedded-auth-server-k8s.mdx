@@ -1081,6 +1081,47 @@ refresh-token state), add `prompt: 'consent'` alongside
 `access_type: 'offline'`. Google then shows the consent screen on every login
 and re-issues a refresh token each time.
 
+### Upstream-specific token-request parameters
+
+Some upstream authorization servers enforce
+[RFC 8707 resource indicators](https://datatracker.ietf.org/doc/html/rfc8707) on
+token requests, not only on authorization requests: the code exchange and
+refresh are rejected with `invalid_target` unless the `resource` parameter is
+also present in the token endpoint's POST form body.
+`additionalAuthorizationParams` only reaches the authorize URL, so against such
+a provider the embedded auth server passes authorization and then fails at the
+code exchange.
+
+Set `additionalTokenParams` on the same `oidcConfig` or `oauth2Config` to add
+form-body parameters to every token request (both the authorization-code
+exchange and refresh):
+
+```yaml title="MCPExternalAuthConfig: token-request resource indicator"
+upstreamProviders:
+  - name: mcp-authz
+    type: oauth2
+    oauth2Config:
+      authorizationEndpoint: 'https://as.example.com/oauth/authorize'
+      tokenEndpoint: 'https://as.example.com/oauth/token'
+      clientId: '<YOUR_CLIENT_ID>'
+      clientSecretRef:
+        name: upstream-idp-secret
+        key: client-secret
+      scopes:
+        - openid
+      additionalAuthorizationParams:
+        resource: 'https://api.example.com'
+      additionalTokenParams:
+        resource: 'https://api.example.com'
+```
+
+The following framework-managed parameters are reserved and rejected at
+admission: `grant_type`, `code`, `redirect_uri`, `client_id`, `client_secret`,
+`code_verifier`, `refresh_token`, `scope`, `client_assertion`, and
+`client_assertion_type`. A `resource` entry is additionally validated as an
+absolute URI with no fragment component so a malformed value fails at admission
+rather than at first login. The map is capped at 16 entries.
+
 ### Default callback URL for upstream providers
 
 When you omit `redirectUri` from an upstream provider's `oidcConfig` or
