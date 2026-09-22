@@ -1,0 +1,97 @@
+name: Visual regression
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  visual-regression:
+    name: Playwright visual snapshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Pinned to the exact @playwright/test version in package.json — the
+    # image and npm package must match exactly, or browser launch breaks.
+    # Screenshot comparison is sensitive to font rendering and software
+    # rasterization, which differ by host OS/GPU — running inside this
+    # exact image keeps this job and the /update-snapshots regeneration
+    # job (update-visual-baselines.yaml, same digest) pixel-consistent
+    # with each other regardless of which runner picks up the job.
+    container:
+      image: mcr.microsoft.com/playwright@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27 # v1.63.0-noble
+      options: --ipc=host
+    env:
+      # Keep in sync with the image tag in the comment above — the
+      # "Verify Playwright version" step below checks the installed
+      # @playwright/test against this, so a dependency bump without a
+      # matching image bump fails loud and named instead of as a
+      # confusing browser-launch error on an unrelated PR.
+      PLAYWRIGHT_IMAGE_VERSION: '1.63.0'
+      # Keep the build-time MCP metadata format stable. The regular site
+      # build still validates the current ToolHive release independently.
+      TOOLHIVE_VERSION: '0.49.0'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # actions/checkout marks the repo safe in the RUNNER's git config,
+      # but a run: step inside `container:` executes via `docker exec`
+      # into a separate environment that never got that exception —
+      # without this, Docusaurus's last-update-date git log call (and
+      # anything else here shelling out to git) fails with "detected
+      # dubious ownership in repository".
+      - name: Mark workspace as a safe git directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # The Playwright image is minimal — it ships neither jq, which
+      # scripts/install-thv.sh requires, nor a Node version manager, since
+      # it already bundles the Node build this image's Chromium was
+      # tested against. A pinned static binary (checksum-verified) avoids
+      # `apt-get update`, which syncs the full Ubuntu archive index just
+      # to install one small tool.
+      - name: Install jq
+        run: |
+          curl -sSL -o /usr/local/bin/jq https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64
+          echo "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f  /usr/local/bin/jq" | sha256sum -c -
+          chmod +x /usr/local/bin/jq
+
+      - name: Cache dependencies
+        id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ./node_modules
+          key: modules-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Verify Playwright version matches pinned image
+        run: |
+          installed="$(npx playwright --version | sed -n 's/^Version \([0-9.]*\)$/\1/p')"
+          if [ "$installed" != "$PLAYWRIGHT_IMAGE_VERSION" ]; then
+            echo "::error::@playwright/test resolved to $installed but the pinned image is for $PLAYWRIGHT_IMAGE_VERSION — bump the image digest (see container.image comment) to match."
+            exit 1
+          fi
+
+      - name: Install ToolHive CLI
+        run: ./scripts/install-thv.sh
+
+      - name: Build site
+        run: npm run build
+
+      - name: Run visual regression tests
+        run: npm run test:visual
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7

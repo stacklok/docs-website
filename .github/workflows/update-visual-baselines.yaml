@@ -1,0 +1,244 @@
+name: Update visual baselines
+
+# issue_comment workflows always come from the default branch. Keep all write
+# operations in jobs that execute only this trusted workflow code; the PR job
+# receives no write token and communicates solely through a validated artifact.
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Must match _visual-regression.yaml so baseline generation and comparison
+  # use the same build-time MCP metadata format.
+  TOOLHIVE_VERSION: '0.49.0'
+
+jobs:
+  authorize:
+    name: Authorize the request
+    if: |
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/update-snapshots')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      head_ref: ${{ steps.pr.outputs.head_ref }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+    steps:
+      - name: Check commenter has write access
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+        run: |
+          PERMISSION="$(gh api "repos/${{ github.repository }}/collaborators/$COMMENTER/permission" --jq '.permission')"
+          if [[ "$PERMISSION" != "admin" && "$PERMISSION" != "write" ]]; then
+            echo "::error::@$COMMENTER does not have write access to this repo - refusing to run."
+            exit 1
+          fi
+
+      - name: Resolve PR head
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          PR_JSON="$(gh api "repos/${{ github.repository }}/pulls/$ISSUE_NUMBER")"
+          HEAD_REF="$(echo "$PR_JSON" | jq -r '.head.ref')"
+          HEAD_SHA="$(echo "$PR_JSON" | jq -r '.head.sha')"
+          HEAD_REPO="$(echo "$PR_JSON" | jq -r '.head.repo.full_name')"
+          if [ "$HEAD_REPO" != "${{ github.repository }}" ]; then
+            echo "::error::This workflow can update only branches in ${{ github.repository }}."
+            exit 1
+          fi
+          {
+            echo "head_ref=$HEAD_REF"
+            echo "head_sha=$HEAD_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+  generate:
+    name: Generate baselines without write access
+    needs: authorize
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    container:
+      image: mcr.microsoft.com/playwright@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27 # v1.63.0-noble
+      options: --ipc=host
+    timeout-minutes: 15
+    steps:
+      - name: Checkout the untrusted PR revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.head_sha }}
+          persist-credentials: false
+
+      - name: Mark workspace as a safe git directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install jq
+        run: |
+          curl -sSL -o /usr/local/bin/jq https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64
+          echo "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f  /usr/local/bin/jq" | sha256sum -c -
+          chmod +x /usr/local/bin/jq
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install ToolHive CLI
+        run: ./scripts/install-thv.sh
+
+      - name: Build site
+        run: npm run build
+
+      - name: Regenerate baselines
+        # A functional assertion may fail before one screenshot is reached.
+        # Preserve any other regenerated baselines for review, as before.
+        run: npm run test:visual:update || true
+
+      - name: Upload untrusted baseline data
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: visual-baselines-${{ needs.authorize.outputs.head_sha }}
+          path: |
+            tests/visual/*.spec.ts-snapshots/*.json
+            tests/visual/*.spec.ts-snapshots/*.png
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Validate and commit baselines
+    needs: [authorize, generate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      updated: ${{ steps.commit.outputs.updated }}
+    steps:
+      - name: Download untrusted baseline data
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: visual-baselines-${{ needs.authorize.outputs.head_sha }}
+          path: ${{ runner.temp }}/visual-baselines
+
+      - name: Validate artifact paths and formats
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/visual-baselines
+        run: |
+          if find "$ARTIFACT_DIR" -type l -print -quit | grep -q .; then
+            echo "::error::Baseline artifact contains a symbolic link."
+            exit 1
+          fi
+
+          FILE_COUNT="$(find "$ARTIFACT_DIR" -type f | wc -l)"
+          TOTAL_BYTES="$(du -sb "$ARTIFACT_DIR" | cut -f1)"
+          if [ "$FILE_COUNT" -eq 0 ] || [ "$FILE_COUNT" -gt 200 ]; then
+            echo "::error::Unexpected baseline file count: $FILE_COUNT"
+            exit 1
+          fi
+          if [ "$TOTAL_BYTES" -gt 104857600 ]; then
+            echo "::error::Baseline artifact exceeds 100 MiB."
+            exit 1
+          fi
+
+          while IFS= read -r -d '' FILE; do
+            RELATIVE="${FILE#"$ARTIFACT_DIR"/}"
+            if [[ ! "$RELATIVE" =~ ^[^/]+\.spec\.ts-snapshots/[^/]+\.(json|png)$ ]]; then
+              echo "::error::Unexpected artifact path: $RELATIVE"
+              exit 1
+            fi
+            case "$FILE" in
+              *.json)
+                jq -e '
+                  type == "object" and
+                  (.titlePath | type == "array") and
+                  (.testFile | type == "string") and
+                  (.url.path | type == "string")
+                ' "$FILE" >/dev/null
+                ;;
+              *.png)
+                SIGNATURE="$(head -c 8 "$FILE" | od -An -tx1 | tr -d ' \n')"
+                if [ "$SIGNATURE" != "89504e470d0a1a0a" ]; then
+                  echo "::error::Invalid PNG signature: $RELATIVE"
+                  exit 1
+                fi
+                ;;
+            esac
+          done < <(find "$ARTIFACT_DIR" -type f -print0)
+
+      - name: Checkout exact PR revision for publishing
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Commit validated baseline data
+        id: commit
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/visual-baselines
+          HEAD_REF: ${{ needs.authorize.outputs.head_ref }}
+          HEAD_SHA: ${{ needs.authorize.outputs.head_sha }}
+        run: |
+          if [ -L tests ] || [ -L tests/visual ] || \
+            find tests/visual -type l -print -quit | grep -q .; then
+            echo "::error::PR snapshot paths must not contain symbolic links."
+            exit 1
+          fi
+
+          while IFS= read -r -d '' FILE; do
+            RELATIVE="${FILE#"$ARTIFACT_DIR"/}"
+            DESTINATION="tests/visual/$RELATIVE"
+            mkdir -p "$(dirname "$DESTINATION")"
+            cp "$FILE" "$DESTINATION"
+          done < <(find "$ARTIFACT_DIR" -type f -print0)
+
+          git add -- 'tests/visual/*.spec.ts-snapshots/*.json' \
+            'tests/visual/*.spec.ts-snapshots/*.png'
+          if git diff --cached --quiet; then
+            echo "No snapshot diff reproduced against this branch."
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local core.hooksPath /dev/null
+          git commit --no-verify -m "Update visual baselines for ${HEAD_SHA:0:12}"
+          git push origin "HEAD:$HEAD_REF"
+          echo "updated=true" >> "$GITHUB_OUTPUT"
+
+  comment-result:
+    name: Comment result
+    needs: [authorize, generate, publish]
+    if: always() && needs.authorize.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment success or no-op
+        if: needs.publish.result == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          UPDATED: ${{ needs.publish.outputs.updated }}
+        run: |
+          if [ "$UPDATED" == "true" ]; then
+            BODY="📸 Regenerated visual baselines per your \`/update-snapshots\` request and pushed a new commit."
+          else
+            BODY="No snapshot diff reproduced against this branch's current state. If the visual check is red, inspect the job log for a functional failure."
+          fi
+          gh pr comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" --body "$BODY"
+
+      - name: Comment failure
+        if: needs.publish.result != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh pr comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" --body "❌ \`/update-snapshots\` failed before it could push anything. See the run log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
