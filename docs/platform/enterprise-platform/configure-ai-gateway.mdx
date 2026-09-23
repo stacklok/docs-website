@@ -39,17 +39,44 @@ This installs the AI Gateway operator and custom resource definitions. Apply an
 
 Complete the following sequence before sending production traffic:
 
-1. **Apply an `AIGateway` resource** with at least one provider and one route.
-   See [Connect model providers](../../ai-gateway/providers-and-models.mdx).
-
-2. **Create an `AIPolicy` that targets it.** The operator adds budget
-   enforcement only to gateways with a matching policy. The policy can omit
-   screening controls when you only need budget enforcement.
-
-3. **Create budgets for every user or group that will send traffic**, before you
-   point the gateway at the budget service. A caller with no applicable budget
-   is refused. See
+1. **Create budgets that cover every caller**, before you enable the budget
+   webhook target. Set an organization default for resolved directory users, or
+   create budgets for individual users and groups. A caller with no applicable
+   budget is refused. See
    [Budgets and pricing](../../ai-gateway/budgets-and-pricing.mdx).
+
+2. **Enable gateway-level budget webhooks.** Add the webhook target and its
+   receiver configuration to your platform values, then upgrade the release:
+
+   ```yaml title="values.yaml"
+   global:
+     webhooks:
+       issuerRef:
+         name: <WEBHOOK_CLUSTER_ISSUER>
+         kind: ClusterIssuer
+       caBundleSecret: <WEBHOOK_CA_BUNDLE_SECRET>
+
+   enterprise-manager:
+     webhookTLS:
+       enabled: true
+       port: 443
+     webhookAuth:
+       audience: <BUDGET_WEBHOOK_AUDIENCE>
+
+   enterprise-ai-gateway-operator:
+     upstream:
+       budgetsWebhook:
+         serviceName: <ENTERPRISE_MANAGER_SERVICE>
+         port: 443
+         audience: <BUDGET_WEBHOOK_AUDIENCE>
+   ```
+
+   Set `serviceName` to the Enterprise Manager Service in the same namespace as
+   the gateway. The two `audience` values must match exactly. The operator adds
+   admission and usage webhooks to every OIDC-enabled gateway it manages.
+
+3. **Apply an `AIGateway` resource** with at least one provider and one route.
+   See [Connect model providers](../../ai-gateway/providers-and-models.mdx).
 
 4. **Verify.** Confirm the gateway reports its providers ready and that budget
    enforcement probed successfully:
