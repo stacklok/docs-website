@@ -1,0 +1,231 @@
+---
+title: Collect gateway telemetry
+sidebar_label: Telemetry
+description:
+  Export AI Gateway traces and metrics to an OpenTelemetry collector and
+  attribute model traffic to the users and groups that sent it.
+---
+
+The AI Gateway exports OpenTelemetry traces and metrics to a collector you
+configure under `spec.monitoring` on the `AIGateway` resource. This guide covers
+connecting the collector, counting token usage, and adding request and identity
+context to spans so you can break traffic down by project, team, or department.
+
+## Export traces and metrics to a collector
+
+Set `otelCollector.endpoint` to your collector's OpenTelemetry Protocol (OTLP)
+receiver. The gateway sends both traces and metrics there:
+
+```yaml title="aigateway.yaml"
+spec:
+  monitoring:
+    otelCollector:
+      endpoint: 'otel-collector.observability.svc:4317'
+      protocol: grpc
+```
+
+The default `protocol` is `grpc`. Set it to `http/protobuf` for a collector that
+accepts OTLP only over HTTP, usually on port 4318. An endpoint without a scheme
+is treated as `http://`.
+
+Each model request produces a span carrying attributes from the OpenTelemetry
+generative AI semantic conventions, such as `gen_ai.request.model` and
+`gen_ai.provider.name`. When the provider's response reports token usage, the
+span also carries `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens`,
+and when the gateway knows the caller's identity, it sets `enduser.id`.
+
+The gateway's pods run under a default-deny egress network policy. If the
+collector runs outside the cluster, list its IP ranges in `egressCIDRs` (up to
+eight).
+
+To tag all exported telemetry with your own context, such as
+`deployment.environment`, add up to 20 key-value pairs under
+`resourceAttributes`.
+
+### Send traces to a separate destination
+
+Some cost and usage platforms ingest these spans directly at a fixed URL. Set
+`tracesEndpoint` to send traces there while `endpoint` keeps receiving metrics.
+The gateway uses the URL exactly as written, without appending `/v1/traces`.
+
+If the destination requires an API key, store the OTLP headers string (for
+example, `Authorization=<API_KEY>`) under the `headers` key of a Secret, name
+that Secret in `tracesHeadersSecretRef`, and use an `https://` address for
+`tracesEndpoint`.
+
+The gateway allows egress to `tracesEndpoint` only through `egressCIDRs`, so
+list the destination's IP ranges there even when it runs inside the cluster.
+
+## Record token usage
+
+Enable `tokenMetrics` to count the tokens each request consumes:
+
+```yaml title="aigateway.yaml"
+spec:
+  monitoring:
+    tokenMetrics:
+      enabled: true
+      labels:
+        - header: x-ai-eg-model
+          attribute: model
+```
+
+The gateway records the `aigw.token.usage` counter, labeled with `token_type`
+(`input` or `output`) plus any headers you map under `labels`. The gateway sets
+the `x-ai-eg-model` header to the routed model, including after a budget
+fallback, so the mapping above adds a `model` label for a per-model breakdown.
+Map up to ten headers.
+
+The counter goes to the OTLP collector when `endpoint` is set. The gateway's
+main processor pod also serves a Prometheus `/metrics` endpoint on port 9090
+(change it with `prometheusAddr`) and carries `prometheus.io/scrape`
+annotations, so a Prometheus server that discovers targets by annotation picks
+it up automatically. In Prometheus, the counter appears as
+`aigw_token_usage_total`. For example, this query returns tokens per second by
+model:
+
+```text
+sum by (model, token_type) (rate(aigw_token_usage_total[5m]))
+```
+
+Map only headers whose values come from a small, fixed set. Every distinct value
+creates another metric series, so per-user or per-request identifiers belong on
+spans instead.
+
+Request rate, latency, and status codes come from the gateway's Envoy proxy,
+which exposes the standard Envoy metrics such as
+`envoy_http_downstream_rq_total`.
+
+## Add request headers to spans
+
+For per-request context that has too many distinct values for a metric label,
+such as a project or ticket ID, `spanAttributes` copies a header the caller
+sends onto that request's span:
+
+```yaml title="aigateway.yaml"
+spec:
+  monitoring:
+    spanAttributes:
+      - header: x-project-id
+        attribute: project.id
+```
+
+You can configure up to 20 entries. A request that omits the header gets no
+attribute, and values longer than 256 bytes are truncated.
+
+Attribute names are lowercase and dot-separated. Names the gateway already sets
+are reserved: anything under `gen_ai.`, `stacklok.`, or `budget.`, plus
+`enduser.id` and `user_email`. To keep secrets out of your traces, the gateway
+rejects credential and forwarding headers such as `authorization`, `cookie`,
+`x-api-key`, and `x-forwarded-for`.
+
+## Attribute traffic to organizational groups
+
+The gateway can look up each caller in the directory and add their `department`,
+`cost_center`, and `team` group labels to request spans, audit records, and
+journal records. You can then break activity down by department or cost center
+without changing any client. You define these labels on derived groups in the
+directory; see
+[Label derived groups](../platform/enterprise-directory/scim-provisioning.mdx#label-derived-groups).
+
+The lookup uses the caller's authenticated identity, so the `AIGateway` must
+authenticate callers with OIDC under `spec.auth.oidc` (see
+[Configure platform identity](../platform/enterprise-platform/configure-identity.mdx)).
+A request that uses a virtual API key resolves through the key's owner.
+
+To turn on the lookup, set the directory's gRPC address in your platform values
+and allow the gateway's ServiceAccount to call it:
+
+```yaml title="values.yaml"
+global:
+  stacklok:
+    directoryGrpcEndpoint: 'stacklok-enterprise-manager.<NAMESPACE>.svc:9091'
+
+enterprise-manager:
+  grpc:
+    callerAuth:
+      saSubjectAllowlist:
+        - 'system:serviceaccount:<NAMESPACE>:<AIGATEWAY_NAME>-main-processor'
+```
+
+Replace `<AIGATEWAY_NAME>` with the `metadata.name` of your `AIGateway`, and add
+one allowlist entry for each gateway. Include the port in
+`directoryGrpcEndpoint`, because the gateway builds its egress rule from it.
+
+The directory accepts gRPC calls from pods in the Enterprise Manager's
+namespace. Deploy the gateway into that namespace, or adjust the directory's
+network policy to admit the gateway's namespace.
+
+### How labels appear
+
+Labels appear as attributes on request spans, under `subjects` on audit records,
+and under `labels` on journal records. They're kept off metrics because
+per-caller values would multiply metric series. A label never replaces the
+resolved user or virtual key.
+
+The gateway reads only `department`, `cost_center`, and `team`. To use a
+different directory attribute for one of these, give it one of those label names
+in the directory configuration.
+
+The gateway looks up every request, without caching, and waits up to two seconds
+for the directory to answer.
+
+### Confirm labels are arriving
+
+The lookup fails open: if the directory refuses the call or doesn't answer, the
+request still succeeds, without labels. To confirm labels are arriving, check a
+recent request span or audit record for them.
+
+To monitor the lookup over time, watch the
+`stacklok.ai_gateway.group_label.resolves` counter
+(`stacklok_ai_gateway_group_label_resolves_total` in Prometheus). Its `outcome`
+label is `success` or `error`. A steady stream of errors usually means the main
+processor's ServiceAccount is missing from `saSubjectAllowlist`.
+
+## Next steps
+
+- [Forward audit logs](./forward-audit-logs.mdx) to send these records, group
+  labels included, to your security information and event management (SIEM)
+  system.
+- [Budgets and pricing](./budgets-and-pricing.mdx) to turn attributed usage into
+  enforced spend limits.
+
+## Related information
+
+- [Collect telemetry for MCP workloads](../toolhive/integrations/opentelemetry.mdx)
+  covers standing up the collector, Prometheus, and Grafana.
+
+## Troubleshooting
+
+<details>
+<summary>No traces or metrics reach the collector</summary>
+
+Confirm the gateway has a destination for each signal: metrics go only to
+`otelCollector.endpoint`, and traces go to `tracesEndpoint` when set, otherwise
+to `endpoint`. Check that `protocol` matches the port: `grpc` for 4317 and
+`http/protobuf` for 4318. A collector outside the cluster also needs its IP
+ranges in `egressCIDRs`.
+
+</details>
+
+<details>
+<summary>Spans carry no group labels</summary>
+
+If the `stacklok.ai_gateway.group_label.resolves` counter never increments, the
+gateway has no identity to look up. Check that the `AIGateway` sets
+`spec.auth.oidc`.
+
+If the counter shows `outcome="error"`, confirm that `directoryGrpcEndpoint`
+includes a port and that `saSubjectAllowlist` contains the main processor's
+ServiceAccount with the gateway's name.
+
+</details>
+
+<details>
+<summary>One label is missing while the others appear</summary>
+
+When a caller belongs to two derived groups with different values for the same
+label, the gateway omits that label and the main processor logs a warning naming
+it. Check the caller's group memberships in the console.
+
+</details>
