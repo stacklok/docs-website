@@ -481,6 +481,7 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
   'ai-gateway/prompt-injection-screening',
   'ai-gateway/pci-pii-controls',
   'ai-gateway/forward-audit-logs',
+  'ai-gateway/telemetry',
 ];
 
 const resourcesSidebar: SidebarsConfig[string] = [
