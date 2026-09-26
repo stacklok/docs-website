@@ -46,6 +46,74 @@ These actions are evaluated against your Cedar policies:
 | `Action::"read_resource"` | `resources/read` | Read a specific data resource |
 | `Action::"get_skill"`     | `skills/get`     | Retrieve a specific skill     |
 
+Several other MCP methods act on a capability that the actions above already
+govern. They are authorized against that capability rather than through actions
+of their own, so one policy covers the direct method and every method that
+references it:
+
+| MCP method                                     | Authorized as                                                             |
+| ---------------------------------------------- | ------------------------------------------------------------------------- |
+| `resources/subscribe`, `resources/unsubscribe` | `read_resource` on the URI in the request                                 |
+| `completion/complete` with a `ref/prompt`      | `get_prompt` on the referenced prompt name                                |
+| `completion/complete` with a `ref/resource`    | `read_resource` on the referenced URI or URI template                     |
+| `subscriptions/listen`                         | `read_resource` on **every** URI in `notifications.resourceSubscriptions` |
+
+For a resource template, the entity ID is the template string itself. A policy
+naming only concrete URIs does not cover completion for the template:
+
+```text
+// Allows reading the resource, but NOT completions on the template.
+permit(
+  principal,
+  action == Action::"read_resource",
+  resource == Resource::"secrets://tenant/admin"
+);
+
+// Required as well, to allow completing the template's {name} variable.
+permit(
+  principal,
+  action == Action::"read_resource",
+  resource == Resource::"secrets://tenant/{name}"
+);
+```
+
+Requests whose authorization target cannot be established are denied rather than
+authorized on an empty identifier. `completion/complete` requests with a
+missing, malformed, or unknown `ref`, or with both a `name` and a `uri`, are
+rejected; the legacy bare-string form (`"ref": "prompt-name"`) is also rejected
+because it does not say whether it names a prompt or a resource.
+
+A `subscriptions/listen` request is authorized as a whole: if the policy denies
+any URI, the entire request is refused rather than narrowed to the permitted
+subset, so the backend never registers a set that differs from the one
+authorized. At most 50 URIs may be named in a single request (duplicates count
+individually toward the limit but are only evaluated once), and every URI check
+shares a single 30-second budget.
+
+A `notifications` object carrying a member outside `toolsListChanged`,
+`promptsListChanged`, `resourcesListChanged`, and `resourceSubscriptions` is
+refused. An explicit JSON `null` for either `notifications` or
+`resourceSubscriptions` is also refused: an omitted member or empty array
+unambiguously names no resource and passes with zero checks, but `null` would
+force ToolHive and the backend to guess at its meaning.
+
+Policies conditioned on `arg_*` attributes do not match these derived methods. A
+completion or subscription request supplies no arguments to the operation being
+authorized, so a rule like `when { context.arg_env == "dev" }` denies these
+methods rather than matching them. Grant them with a rule that does not test
+arguments.
+
+:::info[Changed in v0.51.0]
+
+Before v0.51.0, `completion/complete` and `subscriptions/listen` were
+always-allowed and bypassed the authorizer entirely. Existing `get_prompt` and
+`read_resource` policies now govern completion and subscription access as well.
+If your deployment relied on the previous behavior, review policies for prompts
+and resources whose completions or subscriptions should stay reachable, and add
+a rule for each resource-template URI that clients complete against.
+
+:::
+
 ### List operations
 
 List methods (`tools/list`, `prompts/list`, `resources/list`,
@@ -60,15 +128,14 @@ individual-access actions above. See
 These MCP methods bypass authorization entirely. You cannot write policies to
 restrict them:
 
-| MCP method            | Purpose                            |
-| --------------------- | ---------------------------------- |
-| `initialize`          | Protocol initialization handshake  |
-| `ping`                | Health check                       |
-| `features/list`       | Capability discovery               |
-| `roots/list`          | Root directory discovery           |
-| `logging/setLevel`    | Client logging preference          |
-| `completion/complete` | Argument auto-completion           |
-| `notifications/*`     | All server-to-client notifications |
+| MCP method         | Purpose                            |
+| ------------------ | ---------------------------------- |
+| `initialize`       | Protocol initialization handshake  |
+| `ping`             | Health check                       |
+| `features/list`    | Capability discovery               |
+| `roots/list`       | Root directory discovery           |
+| `logging/setLevel` | Client logging preference          |
+| `notifications/*`  | All server-to-client notifications |
 
 ### Denied-by-default MCP methods
 
