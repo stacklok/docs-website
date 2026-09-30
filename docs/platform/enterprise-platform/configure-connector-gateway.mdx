@@ -2,15 +2,14 @@
 title: Configure the Connector Gateway
 sidebar_label: Configure the Connector Gateway
 description:
-  Enable the Connector Gateway in the platform chart with its auth server, Redis
-  storage, keys, and a secure connection to the directory.
+  Enable the Connector Gateway so each user gets one MCP endpoint that serves
+  only the connectors they're granted, signed in with their own identity.
 ---
 
 The Connector Gateway provides an identity-aware MCP endpoint and brokers
 upstream OAuth for connectors. Enable it through the Stacklok Enterprise
-platform chart. Every install runs the gateway's embedded authorization server,
-so enabling it takes more than a single flag: you also supply Redis storage, key
-material, and a connection to the directory.
+platform chart. Enabling it takes more than a single flag, because the gateway
+signs users in and stores their connector credentials itself.
 
 This page uses the `stacklok-enterprise` release name and the `stacklok-system`
 namespace from [Deploy the platform](./deployment.mdx). Several values below
@@ -21,18 +20,19 @@ embed those names, so adjust them if yours differ.
 - **A corporate identity provider** at `global.stacklok.primaryIdp`. The gateway
   resolves every caller to a directory user before it decides what they can see.
   See [Configure identity](./configure-identity.mdx).
-- **The Enterprise Manager with its directory service enabled**, which the
-  gateway reaches over gRPC for identity, connector configuration, and access
-  policy. The directory needs its PostgreSQL database, set up as described in
+- **The Enterprise Manager, with `enterprise-manager.directory.enabled: true`**.
+  The gateway gets each caller's identity, connector grants, and connector
+  configuration from it. It needs its PostgreSQL database, set up as described
+  in
   [the Enterprise Manager database](./deployment.mdx#enterprise-manager-database).
   To administer connectors across users in the console, also create the
   `BYPASSRLS` admin database role described there.
-- **The directory's key-encryption key, gRPC TLS, and NetworkPolicy**,
+- **The Enterprise Manager's key-encryption key, gRPC TLS, and NetworkPolicy**,
   configured as described in
   [Encrypting stored credentials](./deployment.mdx#encrypting-stored-credentials).
-  The directory encrypts connector credentials and the identity provider's
-  client secret with this key, and returns them to the gateway only over TLS.
-  That section's NetworkPolicy example already admits pods labeled
+  The Enterprise Manager encrypts connector credentials and the identity
+  provider's client secret with this key, and returns them to the gateway only
+  over TLS. That section's NetworkPolicy example already admits pods labeled
   `app.kubernetes.io/name: connector-gateway`.
 - **Redis or Valkey**, reachable from the cluster. The embedded authorization
   server stores its sessions only in Redis, at every replica count, and the
@@ -47,8 +47,8 @@ The gateway needs three Secrets in the release namespace. Create them before you
 install or upgrade.
 
 **Key-encryption key (KEK).** The gateway seals the upstream OAuth tokens and
-client registrations it stores with this key. It is separate from the
-directory's KEK. The Secret holds 32 random bytes under the key `kek`:
+client registrations it stores with this key. It is separate from the Enterprise
+Manager's KEK. The Secret holds 32 random bytes under the key `kek`:
 
 ```bash
 openssl rand 32 > kek
@@ -84,11 +84,11 @@ those workflows.
 
 :::
 
-**Directory CA bundle.** The gateway verifies the directory's gRPC serving
-certificate against a CA bundle. Put only the CA certificate in this Secret. If
-cert-manager issues the Enterprise Manager's certificate, copy `ca.crt` out of
-its Secret rather than referencing that Secret, which also holds the private
-key:
+**Enterprise Manager CA bundle.** The gateway verifies the Enterprise Manager's
+gRPC serving certificate against a CA bundle. Put only the CA certificate in
+this Secret. If cert-manager issues the Enterprise Manager's certificate, copy
+`ca.crt` out of its Secret rather than referencing that Secret, which also holds
+the private key:
 
 ```bash
 kubectl create secret generic enterprise-manager-grpc-ca \
@@ -144,21 +144,21 @@ connector-gateway:
 | Value                                      | Purpose                                                                                   |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------- |
 | `global.stacklok.connectorGateway.enabled` | Deploy the Connector Gateway                                                              |
-| `global.stacklok.connectorGatewayId`       | Identify this gateway to the directory and console                                        |
+| `global.stacklok.connectorGatewayId`       | Identify this gateway to the Enterprise Manager and console                               |
 | `global.stacklok.authServerIssuer`         | Set the gateway's public authorization server URL                                         |
 | `vmcpConfig.incomingAuth`                  | Require tokens from the gateway's own authorization server on the MCP endpoint            |
 | `enterpriseConfig.authServer`              | Configure the embedded authorization server and its Redis storage                         |
-| `enterpriseConfig.directory.addr`          | Point the gateway at the directory's TLS gRPC port                                        |
-| `directoryTLS`                             | Mount the directory CA bundle and a ServiceAccount token for the directory                |
+| `enterpriseConfig.directory.addr`          | Point the gateway at the Enterprise Manager's TLS gRPC port                               |
+| `directoryTLS`                             | Mount the Enterprise Manager CA bundle and the gateway's ServiceAccount token             |
 | `kek`, `authServerKeys`                    | Reference the Secrets from [Prepare the gateway's secrets](#prepare-the-gateways-secrets) |
 
 ### Choose the gateway ID and issuer
 
 Choose a stable `connectorGatewayId` such as `prod-eu` or `platform-staging`,
 and give every install its own value. The gateway registers this ID with the
-directory, so two installs sharing one ID act as a single gateway. The value
-cannot be empty or contain a colon. Changing it creates a new gateway identity
-and changes the prefix used for stored per-user tokens.
+Enterprise Manager, so two installs sharing one ID act as a single gateway. The
+value cannot be empty or contain a colon. Changing it creates a new gateway
+identity and changes the prefix used for stored per-user tokens.
 
 Set `authServerIssuer` to the HTTPS URL that clients use to reach this
 deployment. The gateway derives connector OAuth callbacks as
@@ -185,11 +185,11 @@ loads its identity providers from the Enterprise Manager: your corporate
 identity provider from `global.stacklok.primaryIdp`, plus the connector identity
 providers that admins register in the Enterprise Manager.
 
-By default, the directory identifies users by the `sub` claim in your corporate
-identity provider's tokens. If your provider identifies users with a different
-claim, such as `uid` in Okta, add an `enterprise-manager.directory.issuers`
-entry whose `issuer_url` matches `global.stacklok.primaryIdp.issuer` exactly,
-and set `binding_claim`:
+By default, the Enterprise Manager identifies users by the `sub` claim in your
+corporate identity provider's tokens. If your provider identifies users with a
+different claim, such as `uid` in Okta, add an
+`enterprise-manager.directory.issuers` entry whose `issuer_url` matches
+`global.stacklok.primaryIdp.issuer` exactly, and set `binding_claim`:
 
 ```yaml title="values.yaml"
 enterprise-manager:
@@ -204,7 +204,7 @@ enterprise-manager:
 The same entry configures SCIM provisioning for that provider. See
 [SCIM identity providers](./deployment.mdx#scim-identity-providers).
 
-## Connect the gateway to the directory
+## Connect the gateway to the Enterprise Manager
 
 `enterpriseConfig.directory.addr` requires exactly one transport. With
 `directoryTLS.enabled: true`, the gateway dials the Enterprise Manager's TLS
@@ -240,14 +240,14 @@ this command prints:
 kubectl get --raw /.well-known/openid-configuration | jq -r .issuer
 ```
 
-Each allowlist covers different directory calls. `saSubjectAllowlist` covers
-identity resolution and per-user connector configuration.
+Each allowlist covers different calls from the gateway. `saSubjectAllowlist`
+covers identity resolution and per-user connector configuration.
 `gatewaySaSubjectAllowlist` covers the gateway's startup registration and its
 catalog reads. `credentialSaSubjectAllowlist` covers credential resolution,
 which the gateway needs for the identity provider's client secret. The subject
 is `system:serviceaccount:<NAMESPACE>:<RELEASE_NAME>-connector-gateway`. If the
-AI Gateway also calls the directory, keep its entries on `saSubjectAllowlist`
-alongside this one.
+AI Gateway also calls the Enterprise Manager, keep its entries on
+`saSubjectAllowlist` alongside this one.
 
 For a development cluster without TLS, set
 `connector-gateway.enterpriseConfig.directory.insecure: true` in place of
@@ -293,7 +293,7 @@ the same ConfigMap or Secret, restart the gateway with
 flowchart LR
   Client["MCP client<br/>(editor, agent, CLI)"]
   MCPGW["Connector Gateway"]
-  Dir["Directory service"]
+  Dir["Enterprise Manager"]
   Backends["MCP servers<br/>(ToolHive workloads, remote servers)"]
 
   Client -->|"one endpoint, user's own identity"| MCPGW
@@ -301,18 +301,17 @@ flowchart LR
   MCPGW -->|"only the connectors they are entitled to"| Backends
 ```
 
-The gateway asks the directory to resolve each caller and return their connector
-grants. Directory group membership determines the MCP servers exposed to the
-client. The directory tracks this membership separately from the OIDC claim
-groups that cluster authorization policy matches. See
+The gateway asks the Enterprise Manager to resolve each caller and return their
+connector grants. Directory group membership determines the MCP servers exposed
+to the client, and is tracked separately from the OIDC claim groups that cluster
+authorization policy matches. See
 [Directory groups and OIDC claim groups](../concepts/two-group-models.mdx).
 
 ## After enabling
 
-1. Confirm the gateway pod is ready. It registers with the directory at startup
-   and becomes ready once its first connector catalog read from the directory
-   succeeds. The admin **Connectors** view in the console then appears for the
-   ID you set.
+1. Confirm the gateway pod is ready. It registers with the Enterprise Manager at
+   startup and becomes ready once its first connector catalog read succeeds. The
+   admin **Connectors** view in the console then appears for the ID you set.
 2. Add connectors and grant them to groups, either in the console under
    [Connectors](../../connector-gateway/connectors.mdx) or through the
    [Enterprise Manager API](./api-reference.mdx#enterprise-manager), which
@@ -333,8 +332,8 @@ groups that cluster authorization policy matches. See
 <summary>The gateway pod stays unready or restarts</summary>
 
 The readiness probe fails until the gateway's first connector catalog read from
-the directory succeeds, so an unready pod means the gateway can't complete its
-directory calls. Check the pod's logs:
+the Enterprise Manager succeeds, so an unready pod means the gateway can't
+complete its calls to the Enterprise Manager. Check the pod's logs:
 
 ```bash
 kubectl logs deployment/stacklok-enterprise-connector-gateway -n stacklok-system
@@ -344,15 +343,16 @@ kubectl logs deployment/stacklok-enterprise-connector-gateway -n stacklok-system
   gateway's ServiceAccount subject is missing from
   `enterprise-manager.grpc.callerAuth.gatewaySaSubjectAllowlist`. Add it as
   shown in
-  [Connect the gateway to the directory](#connect-the-gateway-to-the-directory).
-- **`Unauthenticated` on every directory call.** The directory rejected the
-  gateway's ServiceAccount token. Check that `clusterOidcIssuer` matches the
-  issuer your cluster reports.
+  [Connect the gateway to the Enterprise Manager](#connect-the-gateway-to-the-enterprise-manager).
+- **`Unauthenticated` on every call to the Enterprise Manager.** The Enterprise
+  Manager rejected the gateway's ServiceAccount token. Check that
+  `clusterOidcIssuer` matches the issuer your cluster reports.
 - **TLS handshake errors.** Check that `enterprise-manager-grpc-ca` holds the CA
   that signed the Enterprise Manager's gRPC certificate, and that `addr` uses
   port `9443` and a hostname on that certificate. After you rotate the CA,
   restart the gateway; it reads the bundle only at startup.
-- **Connection timeouts.** Check that the directory's NetworkPolicy admits the
-  gateway pods, and that the gateway can reach the Redis or Valkey host.
+- **Connection timeouts.** Check that the Enterprise Manager's gRPC
+  NetworkPolicy admits the gateway pods, and that the gateway can reach the
+  Redis or Valkey host.
 
 </details>
