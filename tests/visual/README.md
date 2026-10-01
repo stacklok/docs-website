@@ -24,6 +24,11 @@ that a scenario renders correctly (the metadata panel opens, the mobile menu
 doesn't overflow, mermaid diagrams finish rendering) — never to produce the
 baseline you commit.
 
+When a committed baseline differs from the current render, CI maintains one
+compact comment on the pull request. The comment groups light and dark changes
+for each screen, reports the changed-pixel count, and links to the complete
+Playwright report. CI removes the comment after the visual check passes.
+
 ## Updating baselines
 
 When a visual difference is intentional, comment **`/update-snapshots`** on the
