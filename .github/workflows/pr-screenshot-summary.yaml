@@ -23,6 +23,7 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.pull_requests[0] != null
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       actions: read
       contents: read
@@ -81,24 +82,34 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           JOBS_FILE="$RUNNER_TEMP/jobs.json"
+          ARTIFACTS_FILE="$RUNNER_TEMP/artifacts.json"
           gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > "$JOBS_FILE"
+          gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" > "$ARTIFACTS_FILE"
           CONCLUSION="$(jq -r '[.jobs[] | select(.name == "Visual regression / Playwright visual snapshots")][0].conclusion // "missing"' "$JOBS_FILE")"
           JOB_URL="$(jq -r '[.jobs[] | select(.name == "Visual regression / Playwright visual snapshots")][0].html_url // ""' "$JOBS_FILE")"
+          ARTIFACT_ID="$(jq -r '[.artifacts[] | select(.name == "playwright-report" and .expired == false)][0].id // ""' "$ARTIFACTS_FILE")"
+          ARTIFACT_SIZE="$(jq -r '[.artifacts[] | select(.name == "playwright-report" and .expired == false)][0].size_in_bytes // "0"' "$ARTIFACTS_FILE")"
           {
             echo "conclusion=$CONCLUSION"
             echo "job_url=$JOB_URL"
+            echo "artifact_id=$ARTIFACT_ID"
+            echo "artifact_size=$ARTIFACT_SIZE"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Download failed visual regression report
-        if: steps.pr.outputs.current == 'true' && steps.visual.outputs.conclusion == 'failure'
-        id: download-report
+      - name: Download failed visual regression report archive
+        if: steps.pr.outputs.current == 'true' && steps.visual.outputs.conclusion == 'failure' && steps.visual.outputs.artifact_id != ''
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: playwright-report
-          path: ${{ runner.temp }}/playwright-report
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
+        env:
+          ARTIFACT_ID: ${{ steps.visual.outputs.artifact_id }}
+          ARTIFACT_SIZE: ${{ steps.visual.outputs.artifact_size }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$ARTIFACT_SIZE" -gt 26214400 ]; then
+            echo "::warning::Playwright artifact is larger than the 25 MiB download limit."
+            exit 0
+          fi
+          gh api "repos/$REPO/actions/artifacts/$ARTIFACT_ID/zip" > "$RUNNER_TEMP/playwright-report.zip"
 
       - name: Update PR description with screenshot summary
         if: steps.pr.outputs.current == 'true'
@@ -120,6 +131,6 @@ jobs:
           RUN_URL: ${{ github.event.workflow_run.html_url }}
           VISUAL_CONCLUSION: ${{ steps.visual.outputs.conclusion }}
           VISUAL_JOB_URL: ${{ steps.visual.outputs.job_url }}
-          ARTIFACT_DIR: ${{ runner.temp }}/playwright-report
+          ARTIFACT_PATH: ${{ runner.temp }}/playwright-report.zip
         # This script comes from the checked-out base revision, never the PR.
         run: python3 .github/scripts/update_visual_failure_comment.py

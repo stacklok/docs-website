@@ -6,20 +6,25 @@
 
 from __future__ import annotations
 
+import fnmatch
 import html
 import json
 import os
 import re
+import stat
 import subprocess
+import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 MARKER = "<!-- visual-regression-failure-summary -->"
 BOT_LOGIN = "github-actions[bot]"
 MAX_ARTIFACT_FILES = 5_000
 MAX_ARTIFACT_BYTES = 100 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 25 * 1024 * 1024
 MAX_DETAIL_BYTES = 1024 * 1024
+MAX_METADATA_BYTES = 64 * 1024
 MAX_SUMMARY_ROWS = 10
 
 TEST_NAME_RE = re.compile(r"^- Name: (.+)$", re.MULTILINE)
@@ -78,23 +83,25 @@ def table_cell(value: str) -> str:
     return escaped
 
 
-def validate_artifact(root: Path) -> None:
-    if not root.is_dir() or root.is_symlink():
-        raise ArtifactValidationError("the Playwright artifact is unavailable")
+def validate_archive_member(info: zipfile.ZipInfo) -> None:
+    name = info.filename
+    member_path = PurePosixPath(name)
+    if (
+        not name
+        or "\\" in name
+        or member_path.is_absolute()
+        or ".." in member_path.parts
+    ):
+        raise ArtifactValidationError("the Playwright artifact has an unsafe path")
+    if info.flag_bits & 0x1:
+        raise ArtifactValidationError("the Playwright artifact has an encrypted file")
 
-    file_count = 0
-    total_bytes = 0
-    for path in root.rglob("*"):
-        if path.is_symlink():
-            raise ArtifactValidationError("the Playwright artifact contains a symlink")
-        if not path.is_file():
-            continue
-        file_count += 1
-        total_bytes += path.stat().st_size
-        if file_count > MAX_ARTIFACT_FILES:
-            raise ArtifactValidationError("the Playwright artifact has too many files")
-        if total_bytes > MAX_ARTIFACT_BYTES:
-            raise ArtifactValidationError("the Playwright artifact is too large")
+    mode = info.external_attr >> 16
+    file_type = stat.S_IFMT(mode)
+    if file_type == stat.S_IFLNK:
+        raise ArtifactValidationError("the Playwright artifact contains a symlink")
+    if file_type not in (0, stat.S_IFREG, stat.S_IFDIR):
+        raise ArtifactValidationError("the Playwright artifact has a special file")
 
 
 def parse_failure_detail(text: str) -> Failure | None:
@@ -128,51 +135,141 @@ def parse_failure_detail(text: str) -> Failure | None:
     )
 
 
-def load_failures(artifact_root: Path) -> list[Failure]:
-    validate_artifact(artifact_root)
-    data_dir = artifact_root / "playwright-report" / "data"
-    if not data_dir.is_dir() or data_dir.is_symlink():
-        return []
+def load_failures(artifact_path: Path) -> list[Failure]:
+    if (
+        not artifact_path.is_file()
+        or artifact_path.is_symlink()
+        or artifact_path.stat().st_size > MAX_ARCHIVE_BYTES
+    ):
+        raise ArtifactValidationError("the Playwright artifact is unavailable")
 
-    failures: list[Failure] = []
-    seen: set[Failure] = set()
-    for detail_path in sorted(data_dir.glob("*.md")):
-        if detail_path.stat().st_size > MAX_DETAIL_BYTES:
-            raise ArtifactValidationError("a Playwright failure detail is too large")
-        try:
-            detail = detail_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as error:
-            raise ArtifactValidationError(
-                "a Playwright failure detail could not be read safely"
-            ) from error
-        failure = parse_failure_detail(detail)
-        if failure and failure not in seen:
-            failures.append(failure)
-            seen.add(failure)
-    return failures
+    try:
+        with zipfile.ZipFile(artifact_path) as archive:
+            members = archive.infolist()
+            if len(members) > MAX_ARTIFACT_FILES:
+                raise ArtifactValidationError(
+                    "the Playwright artifact has too many files"
+                )
+
+            total_bytes = 0
+            detail_members: list[zipfile.ZipInfo] = []
+            seen_names: set[str] = set()
+            for info in members:
+                validate_archive_member(info)
+                if info.filename in seen_names:
+                    raise ArtifactValidationError(
+                        "the Playwright artifact has duplicate paths"
+                    )
+                seen_names.add(info.filename)
+                total_bytes += info.file_size
+                if total_bytes > MAX_ARTIFACT_BYTES:
+                    raise ArtifactValidationError(
+                        "the Playwright artifact is too large"
+                    )
+                if re.fullmatch(
+                    r"playwright-report/data/[^/]+\.md", info.filename
+                ):
+                    if info.file_size > MAX_DETAIL_BYTES:
+                        raise ArtifactValidationError(
+                            "a Playwright failure detail is too large"
+                        )
+                    detail_members.append(info)
+
+            failures: list[Failure] = []
+            seen_failures: set[Failure] = set()
+            for info in sorted(detail_members, key=lambda item: item.filename):
+                try:
+                    detail = archive.read(info).decode("utf-8")
+                except (OSError, RuntimeError, UnicodeDecodeError) as error:
+                    raise ArtifactValidationError(
+                        "a Playwright failure detail could not be read safely"
+                    ) from error
+                failure = parse_failure_detail(detail)
+                if failure and failure not in seen_failures:
+                    failures.append(failure)
+                    seen_failures.add(failure)
+            return failures
+    except ArtifactValidationError:
+        raise
+    except (OSError, zipfile.BadZipFile) as error:
+        raise ArtifactValidationError(
+            "the Playwright artifact is not a valid ZIP archive"
+        ) from error
 
 
-def metadata_for_snapshot(snapshot: str, repository: Path) -> tuple[str, str]:
+def git_output(repository: Path, *arguments: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repository), *arguments],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+    ).stdout
+
+
+def metadata_for_snapshot(
+    snapshot: str, repository: Path, revision: str | None = None
+) -> tuple[str, str]:
     snapshot_stem = snapshot.removesuffix(".png")
-    pattern = f"*.spec.ts-snapshots/{snapshot_stem}-*-linux.json"
-    matches = sorted((repository / "tests" / "visual").glob(pattern))
+    relative_pattern = (
+        f"tests/visual/*.spec.ts-snapshots/{snapshot_stem}-*-linux.json"
+    )
+    try:
+        if revision:
+            paths = git_output(
+                repository,
+                "ls-tree",
+                "-r",
+                "--name-only",
+                revision,
+                "--",
+                "tests/visual",
+            ).splitlines()
+            matches = sorted(
+                path for path in paths if fnmatch.fnmatch(path, relative_pattern)
+            )
+        else:
+            matches = sorted(
+                str(path.relative_to(repository))
+                for path in (repository / "tests" / "visual").glob(
+                    relative_pattern.removeprefix("tests/visual/")
+                )
+            )
+    except (OSError, subprocess.CalledProcessError, UnicodeDecodeError):
+        return "(unknown route)", "Unknown"
     if len(matches) != 1:
         return "(unknown route)", "Unknown"
 
     metadata_path = matches[0]
-    viewport_match = VIEWPORT_RE.search(metadata_path.name)
+    viewport_match = VIEWPORT_RE.search(metadata_path)
     viewport = viewport_match.group(1).title() if viewport_match else "Unknown"
     try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if revision:
+            raw_metadata = git_output(
+                repository, "show", f"{revision}:{metadata_path}"
+            )
+        else:
+            raw_metadata = (repository / metadata_path).read_text(encoding="utf-8")
+        if len(raw_metadata.encode("utf-8")) > MAX_METADATA_BYTES:
+            raise ValueError
+        metadata = json.loads(raw_metadata)
         route = metadata["url"]["path"]
         if not isinstance(route, str):
             raise TypeError
-    except (KeyError, TypeError, json.JSONDecodeError):
+    except (
+        KeyError,
+        OSError,
+        TypeError,
+        UnicodeDecodeError,
+        ValueError,
+        subprocess.CalledProcessError,
+    ):
         route = "(unknown route)"
     return clean_text(route), viewport
 
 
-def snapshot_details(failure: Failure, repository: Path) -> SnapshotDetails | None:
+def snapshot_details(
+    failure: Failure, repository: Path, metadata_ref: str | None = None
+) -> SnapshotDetails | None:
     if (
         failure.snapshot is None
         or failure.pixels is None
@@ -183,7 +280,9 @@ def snapshot_details(failure: Failure, repository: Path) -> SnapshotDetails | No
     scheme_match = SCHEME_RE.search(failure.snapshot)
     if not scheme_match:
         return None
-    route, viewport = metadata_for_snapshot(failure.snapshot, repository)
+    route, viewport = metadata_for_snapshot(
+        failure.snapshot, repository, metadata_ref
+    )
     return SnapshotDetails(
         title=clean_text(failure.test_name.split(" >> ")[-1]),
         logical_name=SCHEME_RE.sub("", failure.snapshot),
@@ -202,11 +301,14 @@ def render_comment(
     run_url: str,
     job_url: str,
     artifact_error: str | None = None,
+    metadata_ref: str | None = None,
 ) -> str:
     snapshots = [
         details
         for failure in failures
-        if (details := snapshot_details(failure, repository)) is not None
+        if (
+            details := snapshot_details(failure, repository, metadata_ref)
+        ) is not None
     ]
     functional = [failure for failure in failures if failure.snapshot is None]
 
@@ -353,21 +455,23 @@ def main() -> None:
         print(f"Visual regression conclusion is {conclusion}; leaving comments unchanged.")
         return
 
-    artifact_root = Path(required_env("ARTIFACT_DIR"))
+    artifact_path = Path(required_env("ARTIFACT_PATH"))
     artifact_error = None
     try:
-        failures = load_failures(artifact_root)
+        failures = load_failures(artifact_path)
     except ArtifactValidationError as error:
         failures = []
         artifact_error = str(error)
 
+    head_sha = required_env("RUN_HEAD_SHA")
     body = render_comment(
         failures=failures,
         repository=Path.cwd(),
-        head_sha=required_env("RUN_HEAD_SHA"),
+        head_sha=head_sha,
         run_url=required_env("RUN_URL"),
         job_url=os.environ.get("VISUAL_JOB_URL", ""),
         artifact_error=artifact_error,
+        metadata_ref=head_sha,
     )
     update_comment(repo, pr_number, body)
 
