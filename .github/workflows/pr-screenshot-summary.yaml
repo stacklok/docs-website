@@ -24,6 +24,7 @@ jobs:
       github.event.workflow_run.pull_requests[0] != null
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
       pull-requests: write
     steps:
@@ -71,6 +72,34 @@ jobs:
             exit 1
           fi
 
+      - name: Resolve visual regression job
+        if: steps.pr.outputs.current == 'true'
+        id: visual
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          JOBS_FILE="$RUNNER_TEMP/jobs.json"
+          gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > "$JOBS_FILE"
+          CONCLUSION="$(jq -r '[.jobs[] | select(.name == "Visual regression / Playwright visual snapshots")][0].conclusion // "missing"' "$JOBS_FILE")"
+          JOB_URL="$(jq -r '[.jobs[] | select(.name == "Visual regression / Playwright visual snapshots")][0].html_url // ""' "$JOBS_FILE")"
+          {
+            echo "conclusion=$CONCLUSION"
+            echo "job_url=$JOB_URL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download failed visual regression report
+        if: steps.pr.outputs.current == 'true' && steps.visual.outputs.conclusion == 'failure'
+        id: download-report
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: playwright-report
+          path: ${{ runner.temp }}/playwright-report
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
       - name: Update PR description with screenshot summary
         if: steps.pr.outputs.current == 'true'
         env:
@@ -80,3 +109,17 @@ jobs:
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
         # This script comes from the checked-out base revision, never the PR.
         run: node scripts/update-pr-screenshot-summary.mjs
+
+      - name: Update visual failure comment
+        if: always() && steps.pr.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          REPO: ${{ github.repository }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          VISUAL_CONCLUSION: ${{ steps.visual.outputs.conclusion }}
+          VISUAL_JOB_URL: ${{ steps.visual.outputs.job_url }}
+          ARTIFACT_DIR: ${{ runner.temp }}/playwright-report
+        # This script comes from the checked-out base revision, never the PR.
+        run: python3 .github/scripts/update_visual_failure_comment.py
