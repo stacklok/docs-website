@@ -101,14 +101,14 @@ mutating:
 
 ### Webhook fields
 
-| Field             | Required | Description                                                                                                                                        |
-| ----------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`            | Yes      | Unique identifier for this webhook. Used for deduplication when merging multiple config files.                                                     |
-| `url`             | Yes      | HTTPS endpoint to call. Plain HTTP is accepted for in-cluster or development use (see `insecure_skip_verify` below).                               |
-| `failure_policy`  | Yes      | `fail` (deny the request on webhook error) or `ignore` (allow through on error).                                                                   |
-| `timeout`         | No       | Maximum wait time for a response. Accepts duration strings like `5s` or `30s`. Minimum: `1s`, maximum: `30s`. Default: `10s`.                      |
-| `tls_config`      | No       | TLS options for the webhook HTTP client (see below).                                                                                               |
-| `hmac_secret_ref` | No       | Environment variable name containing an HMAC secret for payload signing. **Not yet implemented** - accepted in config but currently has no effect. |
+| Field             | Required | Description                                                                                                                                                     |
+| ----------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`            | Yes      | Unique identifier for this webhook. Used for deduplication when merging multiple config files.                                                                  |
+| `url`             | Yes      | HTTPS endpoint to call. Plain HTTP is accepted for in-cluster or development use (see `insecure_skip_verify` below).                                            |
+| `failure_policy`  | Yes      | `fail` (deny the request on webhook error) or `ignore` (allow through on error).                                                                                |
+| `timeout`         | No       | Maximum wait time for a response. Accepts duration strings like `5s` or `30s`. Minimum: `1s`, maximum: `30s`. Default: `10s`.                                   |
+| `tls_config`      | No       | TLS options for the webhook HTTP client (see below).                                                                                                            |
+| `hmac_secret_ref` | No       | Absolute path to a file containing an HMAC secret, or a secret name resolved by your configured secrets provider. ToolHive signs each payload with HMAC-SHA256. |
 
 ### TLS configuration
 
@@ -171,6 +171,56 @@ thv run fetch \
 
 ToolHive validates all webhook configurations at startup and exits with an error
 if any are invalid, so configuration problems surface before the server starts.
+
+## Example: check selected fetch URLs before execution
+
+The external
+[IsMalicious gateway filter](https://github.com/hexablob/ismalicious-gateway-filters)
+implements the validating webhook contract. It checks the original HTTP(S) URL
+argument of selected fetch tools before the tool call reaches the MCP server.
+Use this example when you want an external URL-reputation policy to decide
+whether to execute a fetch.
+
+1. Deploy the service behind a TLS endpoint reachable from ToolHive. Supply
+   `ISMALICIOUS_API_KEY` and `ISMALICIOUS_API_SECRET` through your secret
+   manager. Set `ISMALICIOUS_FETCH_TOOLS` to a JSON map of tool names to their
+   URL argument, such as `{"fetch":"url"}`. Match the actual tool name and
+   argument.
+1. Set `ISMALICIOUS_WEBHOOK_SECRET` on the service. Mount the same secret as a
+   file readable by ToolHive. The receiver verifies the signature and rejects
+   timestamps outside a five-minute window.
+1. Save this validating webhook configuration:
+
+```yaml title="ismalicious-webhooks.yaml"
+validating:
+  - name: ismalicious-fetch-preflight
+    url: https://<FILTER_HOST>/toolhive
+    failure_policy: fail
+    timeout: 20s
+    hmac_secret_ref: /etc/toolhive/ismalicious-webhook-secret
+```
+
+4. Run the fetch server with the configuration:
+
+```bash
+thv run <FETCH_SERVER_IMAGE> --webhook-config ismalicious-webhooks.yaml
+```
+
+The service echoes the request's `uid` and `version`, admits a valid `allow`
+decision, and denies `warn`, `block`, an invalid decision, or an API failure.
+Unselected tools are admitted without a reputation check. Configure
+`failure_policy: fail` so connection failures to the service also deny the
+request. Keep TLS verification enabled; use `ca_bundle_path` for a private CA.
+
+This example checks request arguments. It does not inspect returned tool
+content, streamed responses, or tool descriptions. A URL-reputation `allow`
+decision can include unknown reputation and does not prove the destination
+benign. The reputation service checks the URL without fetching it.
+
+The external repository includes tests with ToolHive's signing client and
+validating middleware. Synthetic decisions verify that denied requests do not
+reach the next handler; they do not measure reputation accuracy. Test the
+selected fetch tool and your deployed webhook configuration before use.
 
 ## Failure policies
 
