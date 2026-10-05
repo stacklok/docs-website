@@ -11,9 +11,8 @@ description:
 The official [Grafana MCP server](https://github.com/grafana/mcp-grafana)
 provides comprehensive access to your Grafana instance and its surrounding
 ecosystem. With support for dashboards, datasource queries (Prometheus, Loki,
-Pyroscope), alerting, incident management, Grafana OnCall, and Sift
-investigations, this server enables AI agents to interact with your entire
-observability stack.
+Pyroscope), alerting, incident management, and Grafana OnCall, this server
+enables AI agents to interact with your entire observability stack.
 
 The server works with both local Grafana instances and Grafana Cloud, making it
 ideal for tasks like troubleshooting production issues, analyzing metrics and
@@ -197,6 +196,8 @@ spec:
   env:
     - name: GRAFANA_URL
       value: 'http://grafana.observability.svc.cluster.local:3000'
+    - name: GRAFANA_USAGE_STATS
+      value: 'disabled'
   secrets:
     - name: grafana-token
       key: token
@@ -213,6 +214,9 @@ accept those requests. This is safe because the server runs behind the ToolHive
 proxy with its network access isolated.
 
 :::
+
+Setting `GRAFANA_USAGE_STATS` to `disabled` opts out of the anonymous usage
+statistics the server reports to Grafana Labs.
 
 Apply the manifest to your Kubernetes cluster:
 
@@ -237,6 +241,8 @@ spec:
   env:
     - name: GRAFANA_URL
       value: 'http://grafana.observability.svc.cluster.local:3000'
+    - name: GRAFANA_USAGE_STATS
+      value: 'disabled'
     - name: GRAFANA_ORG_ID
       value: '2'
 ```
@@ -260,7 +266,6 @@ server:
   severity critical"
 - "Show me the panel queries from the 'API Performance' dashboard"
 - "Get label values for the `namespace` label from the Loki datasource"
-- "List all Sift investigations from the past week"
 
 ## Recommended practices
 
@@ -268,11 +273,13 @@ server:
   RBAC scopes to limit access to only the datasources, dashboards, and features
   required for your specific use case.
 - For read-only use cases like querying metrics, viewing dashboards, or triaging
-  incidents, pass the `--disable-write` argument to block mutating tools (such
-  as creating incidents, updating dashboards, and managing alert rules) while
-  keeping all read operations available. The MCP server enforces this as defense
-  in depth, so pair it with a read-only service account token rather than
-  relying on it alone.
+  incidents, pass the `--disable-write` argument to block mutating tools such as
+  creating incidents, updating dashboards, and managing alert rules. Read-only
+  mode also removes the raw SQL query tools (`query_sql` and `query_influxdb`),
+  since they can run write statements; add `--enable-query` to keep them when
+  your datasource credentials are read-only. The MCP server enforces this as
+  defense in depth, so pair it with a read-only service account token rather
+  than relying on it alone.
 - Regularly rotate service account tokens and update the secrets in ToolHive.
 - Customize the network isolation permission profile to restrict the server's
   outbound network access to your Grafana instance domain only, since the
