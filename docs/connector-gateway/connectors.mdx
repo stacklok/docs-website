@@ -2,108 +2,221 @@
 title: Manage connectors
 sidebar_label: Connectors
 description:
-  Register connectors from your registry, cluster, or by hand, and configure
-  their transport and private network access.
+  Add connectors from your registry, cluster, or by hand, then verify them,
+  grant access, review activity, and edit or delete them in the console.
 ---
 
 A _connector_ is an MCP server available through the Connector Gateway. Manage
-connectors in the console under **Connectors**. After registering a connector,
-configure its authentication and grant access to it through its connector
-policy.
+connectors in the console under **Connectors**. The list shows each connector's
+**Name**, **Verification** state, **Endpoint**, **Transport**, **Groups with
+access**, and **Created** date. Search by name or description, or filter by
+**Verification** state.
 
-## Connector sources
+To make a connector available to users, add it, confirm it passes verification,
+set up its authentication, and grant access to at least one directory group.
 
-Select **Add connector** and choose a source:
+## Add a connector
 
-- **Import from registry** adds remote MCP servers that your curated MCP
-  registry publishes.
-- **Discover in Kubernetes** lists the `MCPServer` resources running in your
-  cluster. Select the ones you want and choose **Add to catalog**. Each one
-  becomes a draft connector.
-- **Configure manually** registers any MCP server by name, endpoint, and
-  transport.
-
-## Connector settings
-
-A connector's **Configuration** tab holds its name, endpoint, transport, and
-authentication. See
-[Configure connector authentication](./connector-authentication.mdx) for the
-authentication types.
-
-### Verification and connector states
-
-Saving a connector verifies it: the Enterprise Manager checks that the
-connector's identity provider, if any, is active and opens a connection to its
-endpoint. The result sets the connector's state:
-
-| State        | Meaning                                                                |
-| ------------ | ---------------------------------------------------------------------- |
-| **Verified** | Verification passed. The gateway serves the connector.                 |
-| **Draft**    | Registered from discovery and not yet saved. The gateway withholds it. |
-| **Broken**   | Verification failed. The gateway withholds it.                         |
-
-Verification runs only when you save. For a draft or broken connector, the
-button reads **Save and verify**. A verified connector re-verifies when you
-change its endpoint, authentication, or **Allow private IPs** setting. A
-connector stays verified when its backend later goes down; check the backend
-itself if calls start failing.
-
-### Transport
+Select **Add connector**, then choose how to add it: **Import from registry**,
+**Discover in Kubernetes**, or **Configure manually**. Each method leaves the
+connector in a different state, described in its section.
 
 The Connector Gateway serves connectors that use the `streamable-http` or `sse`
 transport. SSE is a deprecated MCP transport, so choose **Streamable HTTP**
-unless the backend supports only SSE. If a connector's stored transport isn't
-one of these, the gateway withholds the connector and the console asks you to
-choose a transport before you can save.
+unless the backend supports only SSE.
 
-### Private network endpoints
+### Import from registry
+
+Import adds remote MCP servers that your curated MCP registry publishes. The
+dialog lists remote servers only; container-only servers don't appear.
+
+1. Select **Add connector**, then **Import from registry**.
+2. Choose a **Registry**, then select the servers to add.
+3. If the registry doesn't report a server's transport, choose one for it.
+4. Select **Add to Connectors**.
+
+Imported connectors publish immediately with no authentication, so the console
+verifies each one as soon as it's added. For a server that needs credentials,
+[set up its authentication](#set-up-authentication) next.
+
+### Discover in Kubernetes
+
+Discovery lists the `MCPServer` resources running in your cluster.
+
+1. Select **Add connector**, then **Discover in Kubernetes**.
+2. Select the servers to add. If a server's transport is unknown, choose one for
+   it.
+3. Select **Add to catalog**.
+
+Discovered servers arrive as drafts, and the gateway withholds them until you
+publish them. Each draft opens on its **Configuration** tab with a **Setup
+required** banner. Review its settings, then
+[verify and publish it](#verify-and-publish-a-connector).
+
+Discovery turns on **Allow private IPs** for a server whose endpoint is a
+Service in the server's own namespace. See
+[Connect to in-cluster endpoints](#connect-to-in-cluster-endpoints).
+
+### Configure manually
+
+Configure any running MCP server by hand.
+
+1. Select **Add connector**, then **Configure manually**.
+2. Enter a name, the endpoint, and the transport. For an in-cluster endpoint,
+   turn on **Allow private IPs**.
+3. Choose an authentication type and fill in its fields. See
+   [Configure connector authentication](./connector-authentication.mdx).
+4. Select **Add connector**.
+
+A manually configured connector publishes on create, and the console verifies it
+right away.
+
+## Verify and publish a connector
+
+Verification checks that the connector's identity provider, if it has one, is
+active and that the Enterprise Manager can open a connection to the endpoint.
+The result sets the connector's **Verification** state:
+
+| State         | Meaning                                                              |
+| ------------- | -------------------------------------------------------------------- |
+| **Draft**     | Added through discovery and not yet saved. The gateway withholds it. |
+| **Verifying** | Verification is running.                                             |
+| **Verified**  | Verification passed. The gateway serves the connector.               |
+| **Broken**    | Verification failed. The gateway withholds it.                       |
+
+To publish a draft, or to retry a broken connector:
+
+1. Open the connector and select the **Configuration** tab.
+2. Review the endpoint, transport, and authentication settings, and fix anything
+   that caused a failure.
+3. Select **Save and verify**.
+
+A verified connector re-verifies when you change its endpoint, authentication,
+or **Allow private IPs** setting. Verification runs only when you save, so a
+connector stays **Verified** if its backend later goes down. If calls start
+failing, check the backend itself.
+
+The console doesn't show why verification failed. See
+[A connector shows Broken](#troubleshooting) to find the error.
+
+### Connect to in-cluster endpoints
 
 By default, a connector endpoint must use HTTPS (plain HTTP is allowed only for
 `localhost`), and the gateway refuses to connect to an address in a private,
-loopback, or link-local range. In-cluster endpoints resolve to private
-addresses, so a connector that points at a Kubernetes Service needs **Allow
-private IPs** turned on (`allow_private_ips` in the API). The setting also
-permits plain HTTP. The gateway never connects to link-local addresses such as
-the cloud metadata endpoint, even with this setting on.
+loopback, or link-local range. An endpoint that points at a Kubernetes Service
+resolves to a private address, so it needs two settings:
 
-Discovery turns on **Allow private IPs** for a candidate whose endpoint is a
-Service in the candidate's own namespace. For a connector you add manually or
-import, turn it on yourself when the endpoint is in-cluster.
+1. On the connector's **Configuration** tab, turn on **Allow private IPs**
+   (`allow_private_ips` in the API). The setting also permits plain HTTP.
+   Discovery turns it on for you when the endpoint is a Service in the server's
+   own namespace.
 
-Verification applies its own private-range check, independent of **Allow private
-IPs**, so an in-cluster connector also needs its address range on the Enterprise
-Manager's verification allowlist. Add the narrowest range that covers your
-in-cluster MCP servers, such as your cluster's Service CIDR:
+2. Add the endpoint's address range to the Enterprise Manager's verification
+   allowlist. Verification applies its own private-range check, independent of
+   **Allow private IPs**. Add the narrowest range that covers your in-cluster
+   MCP servers, such as your cluster's Service CIDR:
 
-```yaml title="values.yaml"
-enterprise-manager:
-  directory:
-    connectorVerification:
-      allowedPrivateRanges:
-        - '10.96.0.0/12'
-```
+   ```yaml title="values.yaml"
+   enterprise-manager:
+     directory:
+       connectorVerification:
+         allowedPrivateRanges:
+           - '10.96.0.0/12'
+   ```
 
-The Enterprise Manager refuses to start with a link-local or cloud metadata
-range in this list. Leave loopback ranges out too, since they reach the
-Enterprise Manager pod's own listeners.
+The gateway never connects to link-local addresses such as the cloud metadata
+endpoint, even with **Allow private IPs** on. The Enterprise Manager refuses to
+start with a link-local or cloud metadata range in the allowlist. Leave loopback
+ranges out too, since they reach the Enterprise Manager pod's own listeners.
 
-## Access and authentication
+## Set up authentication
 
-Each connector's [connector policy](./connector-policies.mdx) decides who can
-reach it, either through directory group grants on the **Access** tab or through
-a Cedar policy document. The connector's
-[authentication type](./connector-authentication.mdx) decides the credential the
-gateway sends to the backend, including per-user OAuth through an identity
-provider.
+A connector's authentication type sets the credential the gateway sends to its
+backend: none, a static secret, or a credential derived from the calling user's
+identity, such as their own OAuth token. Set it on the connector's
+**Configuration** tab and save to re-verify.
+
+Some types reference a
+[managed secret](../platform/enterprise-directory/managed-secrets.mdx) or a
+[connector identity provider](../platform/enterprise-directory/identity-providers.mdx),
+which must exist before you save. See
+[Configure connector authentication](./connector-authentication.mdx) for each
+type and the order to create its prerequisites.
+
+## Grant and revoke access
+
+Access is default-deny: a connector with no groups is unreachable. To grant
+access:
+
+1. Open the connector and select the **Access** tab.
+2. Select **Add groups**, choose one or more groups, and select **Grant
+   access**.
+
+Membership is inherited, so granting to a parent group reaches every subgroup
+beneath it. See
+[Users and groups](../platform/enterprise-directory/users-and-groups.mdx).
+
+To revoke a group's access, open the group's actions menu on the **Access** tab
+and select **Revoke access**. Revoking the last group makes the connector
+unreachable.
+
+A connector whose policy is in Cedar mode shows a warning on the **Access** tab,
+and the console disables group editing. See
+[Manage connector policies](./connector-policies.mdx) for Cedar mode.
+
+## Review activity
+
+A connector's **Activity** tab lists its recent tool calls, with the **Tool**,
+**User**, **Time**, and **Outcome** (**Allowed** or **Denied**) of each one.
+
+- Filter by **Outcome** to show only allowed or denied calls.
+- Choose the period: the last 24 hours, 7 days, or 30 days, or a **Custom**
+  range.
+- Select a user to show only that user's calls, and **Clear user filter** to
+  return to everyone's.
+
+The **Activity** tab is a best-effort view, not an audit log: calls can be
+delayed, sampled, or missing. For a complete per-request record, see
+[Forward audit logs](./forward-audit-logs.mdx). The tab reads the same records
+as the **Tool Usage** screen, so it stays empty until you turn on
+[tool call recording](./tool-usage.mdx#record-tool-calls).
+
+## Edit or delete a connector
+
+To edit a connector, change its settings on the **Configuration** tab and save.
+Changes to the endpoint, authentication, or **Allow private IPs** setting
+re-verify the connector.
+
+To delete a connector, open it, select **Delete**, and confirm. Deleting is
+permanent and revokes every group's access to the connector.
+
+## When changes take effect
+
+Each kind of change reaches users on a different schedule:
+
+- **Access changes** apply on the user's next request. The gateway checks access
+  with the Enterprise Manager on every request, and denies the request if it
+  can't reach the Enterprise Manager.
+- **New and edited connectors** reach the gateway within about 30 seconds, when
+  it next refreshes its connector catalog.
+- **Rotated credentials** in a managed secret reach the gateway within the
+  credential refresh interval, 15 minutes by default. Set it with
+  `connector-gateway.enterpriseConfig.directory.credentialRefreshInterval` in
+  your Helm values.
+
+Most MCP clients keep the tool list from when they connected, so a user might
+need to refresh their client's tool list to see a change. See
+[When changes take effect](./manage-connections.mdx#when-changes-take-effect)
+for the user's side.
 
 ## Next steps
 
-- [Configure connector authentication](./connector-authentication.mdx) to set
-  the credential the gateway sends to each backend.
-- [Grant and revoke connector access](./connector-policies.mdx) to choose which
-  groups can use the connector.
-- [Configure the Connector Gateway](../platform/enterprise-platform/configure-connector-gateway.mdx)
-  for the install-time settings behind this screen.
+- [Register a connector identity provider](../platform/enterprise-directory/identity-providers.mdx)
+  for connectors that act as each user.
+- [Create managed secrets](../platform/enterprise-directory/managed-secrets.mdx)
+  for connectors that use a static credential.
+- [Roll out gateway clients](../platform/enterprise-platform/roll-out-gateway-clients.mdx)
+  to connect your users' MCP clients to the gateway.
 
 ## Troubleshooting
 
@@ -147,7 +260,7 @@ separate checks, and each has its own setting:
   `enterprise-manager.directory.connectorVerification.allowedPrivateRanges`.
 
 An in-cluster endpoint needs both settings. See
-[Private network endpoints](#private-network-endpoints).
+[Connect to in-cluster endpoints](#connect-to-in-cluster-endpoints).
 
 If saving fails with "Could not resolve this endpoint's hostname", the
 Enterprise Manager can't resolve the host at all. Check the hostname and the
@@ -184,7 +297,7 @@ A user's MCP clients get a connector's tools only when all of these hold:
 2. The connector policy grants the user access. In structured mode, the user
    must belong to a granted group or one of its subgroups. A connector with no
    grants is unreachable. See
-   [Manage connector policies](./connector-policies.mdx).
+   [Grant and revoke access](#grant-and-revoke-access).
 3. The user has connected to the connector and hasn't paused it. See
    [Support users' connector access](./support-connector-access.mdx).
 
@@ -194,7 +307,7 @@ the claim in the tokens it issues.
 
 Policy and connection changes apply on the user's next request, though the
 user's client can keep showing its earlier tool list. See
-[When changes take effect](./support-connector-access.mdx#when-changes-take-effect).
+[When changes take effect](#when-changes-take-effect).
 
 </details>
 
