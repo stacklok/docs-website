@@ -17,9 +17,7 @@ A connector policy has two authoring modes:
 | **Structured** | Directory group membership                                                   | Console or API |
 | **Cedar**      | A Cedar policy document that matches directory groups, token claims, or both | API only       |
 
-Every connector starts in structured mode. Use Cedar mode when access depends on
-something other than group membership, such as a department or region claim that
-your identity provider puts in the user's token.
+Every connector starts in structured mode.
 
 ## Grant access to directory groups
 
@@ -34,98 +32,8 @@ beneath it. Directory groups are separate from the OpenID Connect (OIDC) claim
 groups that cluster authorization policy matches. See
 [Directory groups and OIDC claim groups](../platform/concepts/two-group-models.mdx).
 
-To manage grants through the
-[Enterprise Manager API](../platform/enterprise-platform/api-reference.mdx#enterprise-manager),
-send the complete list of group IDs as `group_ids` to
-`PUT /v1/connectors/{id}/policy/groups`, or revoke one group with
-`DELETE /v1/connectors/{id}/policy/groups/{group_id}`. The `PUT` route requires
-an `If-Match` header with the `ETag` from `GET /v1/connectors/{id}/policy`, so
-it can't overwrite a change you haven't seen.
-
-## Switch a connector to Cedar mode
-
-The console has no Cedar editor or mode switch. Use the API:
-
-```bash
-curl -X PUT https://<ENTERPRISE_MANAGER_API>/v1/connectors/<CONNECTOR_ID>/policy/cedar-mode \
-  -H "Authorization: Bearer <ADMIN_TOKEN>"
-```
-
-Switching to Cedar mode converts the existing group grants into an equivalent
-Cedar document, so access doesn't change at the moment of the switch. Read the
-document back with `GET /v1/connectors/{id}/policy`; the response includes the
-`mode` and the `document`.
-
-To return to structured mode, send `DELETE` to the same route. This discards the
-Cedar document and leaves the connector with no group grants, so no one can
-reach it until you grant access again. Nothing in the document is converted back
-to groups.
-
-After the switch, the console shows a notice on the connector's **Access** tab
-and disables group editing.
-
-## Write a Cedar policy document
-
-Replace a Cedar-mode connector's document with
-`PUT /v1/connectors/{id}/policy/document`:
-
-```bash
-curl -X PUT https://<ENTERPRISE_MANAGER_API>/v1/connectors/<CONNECTOR_ID>/policy/document \
-  -H "Authorization: Bearer <ADMIN_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d @policy.json
-```
-
-The request body is a JSON object with the Cedar text in its `document` field.
-The connector must already be in Cedar mode; a document write to a
-structured-mode connector returns `409 Conflict`.
-
-### Example: permit a directory group
-
-A policy matches directory group membership with `UserGroup`. The group
-identifier is the group's `name`, the same value that `GET /v1/groups` returns,
-which can differ from the display name.
-
-```cedar title="Permit the platform-engineering group"
-permit (principal in UserGroup::"platform-engineering", action, resource);
-```
-
-### Example: permit by a token claim
-
-A policy reads a claim from the caller's token as `principal.claim_<NAME>`.
-Guard every claim read with a `has` check so the policy handles users whose
-token lacks the claim:
-
-```cedar title="Permit users whose department claim is sre"
-permit (principal, action, resource)
-when { principal has claim_department && principal.claim_department == "sre" };
-```
-
-You can combine both patterns in one document. For more on Cedar syntax, see the
-[Cedar policy language reference](https://docs.cedarpolicy.com/).
-
-### Rules the API enforces
-
-The API rejects a document with `422 Unprocessable Entity` and an error naming
-the problem when the document:
-
-- Reads a claim without a `has` guard.
-- Has `permit` statements that all target something below the connector, such as
-  a specific tool. Include at least one `permit` that applies to the connector
-  itself, like the examples above. A document with no `permit` at all is
-  accepted, and blocks every user.
-- Reads a reserved claim. The policy never receives these registered token
-  claims, because their meaning differs between access tokens and ID tokens:
-  `at_hash`, `nonce`, `sid`, `azp`, `iss`, `sub`, `aud`, `exp`, `iat`, `nbf`,
-  `jti`, `auth_time`, `ver`, `scp`, `scope`, `client_id`, and `cid`. To select
-  individual users, use group membership or a custom claim.
-- Names a different connector.
-
-The API also rejects a document larger than 16 KiB with
-`413 Request Entity Too Large`.
-
-To block access to a Cedar-mode connector while you review its policy, replace
-the document with one that contains no `permit`.
+For a Cedar-mode connector, the console shows a notice on the **Access** tab and
+disables group editing.
 
 ## Next steps
 
