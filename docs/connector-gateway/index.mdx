@@ -23,31 +23,88 @@ It is the counterpart to the [AI Gateway](../ai-gateway/index.mdx). The AI
 Gateway governs the **models** your agents can call; the Connector Gateway
 governs the **tools** they can use.
 
+## How it works
+
+A _connector_ is an MCP server registered with the gateway. Every user points
+their MCP client at the same gateway endpoint and signs in with their corporate
+identity. The gateway then serves that user only the connectors they're granted
+and connected to.
+
+```mermaid
+flowchart LR
+  Client["MCP client<br/>(Claude Code, Cursor, VS Code)"]
+  GW["Connector Gateway"]
+  EM["Enterprise Manager<br/>(directory and connector policies)"]
+  Backends["Connector backends<br/>(MCP servers)"]
+
+  Client -->|"one endpoint, user's own identity"| GW
+  GW -->|"which connectors may this user reach?"| EM
+  GW -->|"tool calls, with each connector's credential"| Backends
+```
+
+On each request, the gateway asks the Enterprise Manager who the caller is and
+which connectors their [connector policies](./connector-policies.mdx) allow. For
+each tool call, it attaches the credential that the connector's
+[authentication type](./connector-authentication.mdx) defines and forwards the
+call to the connector's backend.
+
+Two roles share the work:
+
+- **Administrators** register connectors, configure how the gateway
+  authenticates to each backend, and grant connectors to directory groups. See
+  [Manage connectors](./connectors.mdx).
+- **Users** connect their MCP client to the gateway endpoint, connect to the
+  connectors they're granted, and choose which tools stay on. A connector that
+  acts as the user asks them to sign in to its provider once, when they connect.
+  See [Manage your connections](./manage-connections.mdx).
+
+## What you administer
+
+The console groups Connector Gateway administration under **Connectors**:
+
+| Console area           | What you do there                                                                                                                                                            |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Connectors**         | [Register connectors](./connectors.mdx), configure [connector authentication](./connector-authentication.mdx), and grant access through [policies](./connector-policies.mdx) |
+| **Identity Providers** | Register the [connector identity providers](../platform/enterprise-directory/identity-providers.mdx) that OAuth and token exchange connectors authenticate against           |
+| **Managed Secrets**    | Store the [API keys, tokens, and client secrets](../platform/enterprise-directory/managed-secrets.mdx) that connectors and identity providers reference                      |
+| **Tool Usage**         | [Review tool calls](./tool-usage.mdx) by connector and tool                                                                                                                  |
+
+Outside the console, you configure tool call recording,
+[telemetry](./telemetry.mdx), and [audit logs](./forward-audit-logs.mdx) in the
+platform's Helm values.
+
 ## Connector Gateway and vMCP
 
-Use the Connector Gateway to provide people with a group-scoped set of
-connectors that administrators manage in the console. Use a
-[Virtual MCP Server (vMCP)](../toolhive/guides-vmcp/index.mdx) for applications
-and agents with a predefined toolset. A vMCP supports static backend selection,
-tool filtering and renaming, multiple authentication methods, and
-`ToolhiveAuthorizationPolicy` resources.
+The Connector Gateway and a
+[Virtual MCP Server (vMCP)](../toolhive/guides-vmcp/index.mdx) both aggregate
+MCP servers behind one endpoint. They differ in who decides what each caller
+sees.
+
+|                         | Connector Gateway                                                                        | vMCP                                                                                                                                                                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Built for**           | People using their own MCP clients                                                       | Applications and agents with a predefined toolset                                                                                                                                                                     |
+| **Who picks the tools** | Administrators grant connectors in the console; each user connects to the ones they want | A fixed set of backends in the `VirtualMCPServer` configuration                                                                                                                                                       |
+| **Authorization**       | A per-connector [policy](./connector-policies.mdx) evaluated for each user               | [Cedar policies](../toolhive/guides-vmcp/authentication.mdx#authorize-requests) on the vMCP, plus [`ToolhiveAuthorizationPolicy`](../platform/reference/crds/toolhiveauthorizationpolicy.mdx) on `MCPServer` backends |
+| **Tool filtering**      | Each user turns off the tools they don't want                                            | Administrators [filter and rename tools](../toolhive/guides-vmcp/tool-aggregation.mdx) for every caller                                                                                                               |
+
+Connector policies grant access to directory groups, which are separate from the
+OpenID Connect (OIDC) claim groups that cluster authorization policies match.
+See
+[Directory groups and OIDC claim groups](../platform/concepts/two-group-models.mdx).
 
 You can run the Connector Gateway and multiple vMCP instances in the same
 cluster.
 
-## What you administer here
+## Prerequisites
 
-- Register MCP servers as connectors.
-- Configure how the gateway authenticates to each connector's backend.
-- Grant connector access to directory groups or through Cedar policies.
-- Let users connect to the connectors they're granted and choose their tools.
-- Review tool calls by connector and tool, and export telemetry and audit
-  events.
+- **A deployed Connector Gateway.** See
+  [Configure the Connector Gateway](../platform/enterprise-platform/configure-connector-gateway.mdx).
+- **At least one directory group** to grant connectors to. See
+  [Users and groups](../platform/enterprise-directory/users-and-groups.mdx).
+- **Managed secrets or identity providers** for connectors whose backends need
+  credentials. See
+  [Set up the prerequisites in order](./connector-authentication.mdx#set-up-the-prerequisites-in-order).
 
-## Before you start
-
-Deploy and configure the Connector Gateway before administering connectors. See
-[Configure the Connector Gateway](../platform/enterprise-platform/configure-connector-gateway.mdx).
 To try the gateway end to end first, follow the
 [Connector Gateway quickstart](./quickstart.mdx).
 

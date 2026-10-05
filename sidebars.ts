@@ -467,6 +467,16 @@ const connectorGatewaySidebar: SidebarsConfig[string] = [
   'connector-gateway/quickstart',
   'connector-gateway/connectors',
   'connector-gateway/connector-authentication',
+  {
+    type: 'link',
+    label: 'Managed secrets',
+    href: '/platform/enterprise-directory/managed-secrets',
+  },
+  {
+    type: 'link',
+    label: 'Identity providers',
+    href: '/platform/enterprise-directory/identity-providers',
+  },
   'connector-gateway/connector-policies',
   'connector-gateway/support-connector-access',
   'connector-gateway/tool-usage',
