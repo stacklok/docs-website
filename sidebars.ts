@@ -464,10 +464,14 @@ const connectorGatewaySidebar: SidebarsConfig[string] = [
     id: 'connector-gateway/index',
     className: 'enterprise-only enterprise-only--tooltip-below',
   },
+  'connector-gateway/quickstart',
   'connector-gateway/connectors',
   'connector-gateway/connector-authentication',
   'connector-gateway/connector-policies',
+  'connector-gateway/manage-connections',
   'connector-gateway/tool-usage',
+  'connector-gateway/telemetry',
+  'connector-gateway/forward-audit-logs',
 ];
 
 const aiGatewaySidebar: SidebarsConfig[string] = [
