@@ -465,6 +465,8 @@ const connectorGatewaySidebar: SidebarsConfig[string] = [
     className: 'enterprise-only enterprise-only--tooltip-below',
   },
   'connector-gateway/connectors',
+  'connector-gateway/connector-authentication',
+  'connector-gateway/connector-policies',
   'connector-gateway/tool-usage',
 ];
 

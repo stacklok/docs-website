@@ -1,0 +1,238 @@
+---
+title: Configure connector authentication
+sidebar_label: Connector authentication
+description:
+  Choose how the Connector Gateway authenticates to each connector's backend,
+  from static secrets to per-user OAuth and token exchange flows.
+---
+
+Connector authentication sets the credential the Connector Gateway sends to a
+connector's backend MCP server. Callers authenticate to the gateway with their
+own identity, and the gateway attaches the outbound credential that the
+connector's authentication type defines.
+
+## Choose an authentication type
+
+Every connector has exactly one authentication type. The console supports the
+five most common types. Three federation types are available only through the
+[Enterprise Manager API](../platform/enterprise-platform/api-reference.mdx#enterprise-manager).
+
+| Console label                  | API `type`        | What the gateway sends                                                                     | Needs                                      |
+| ------------------------------ | ----------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------ |
+| **None**                       | `none`            | No credential                                                                              | Nothing                                    |
+| **Bearer token**               | `bearerToken`     | A static token in the `Authorization` header                                               | A secret                                   |
+| **Header injection**           | `headerInjection` | A static value in a header you name                                                        | A secret                                   |
+| **Upstream identity provider** | `upstreamInject`  | The calling user's own OAuth token, collected through a per-user consent flow              | A connector identity provider              |
+| **Token exchange (RFC 8693)**  | `tokenExchange`   | A token obtained by exchanging the caller's token at call time                             | A token endpoint; a secret is optional     |
+| API only                       | `awsSts`          | AWS SigV4-signed requests using temporary credentials from AWS STS web-identity federation | An identity provider; no secret            |
+| API only                       | `obo`             | A Microsoft Entra ID token from the On-Behalf-Of (OBO) flow                                | An identity provider and a secret          |
+| API only                       | `xaa`             | A token from the cross-app access (ID-JAG) flow                                            | An identity provider; secrets are optional |
+
+Use these guidelines to pick a type:
+
+- Use **None** for a backend that needs no credential, such as an internal MCP
+  server that's reachable only inside your cluster.
+- Use **Bearer token** or **Header injection** when the backend accepts one
+  shared API key for every caller. Every user reaches the backend with the same
+  identity.
+- Use **Upstream identity provider** when the backend should act as each user,
+  for example a SaaS MCP server that requires the user's own OAuth grant.
+- Use **Token exchange (RFC 8693)**, `obo`, `xaa`, or `awsSts` when the backend
+  trusts your identity provider and accepts a token derived from the caller's
+  identity.
+
+## Set up the prerequisites in order
+
+Each authentication type references objects that must exist before you save the
+connector. Create them in this order:
+
+1. **Secrets.** Create a
+   [managed secret](../platform/enterprise-directory/managed-secrets.mdx) for
+   each static credential or client secret the type needs.
+2. **Identity provider.** Register a
+   [connector identity provider](../platform/enterprise-directory/identity-providers.mdx)
+   for types that need one. The provider's client secret is itself a managed
+   secret, which is why secrets come first.
+3. **Connector authentication.** Configure the connector's authentication type,
+   referencing the secrets and provider.
+4. **Access.** Grant access to the connector through its
+   [connector policy](./connector-policies.mdx).
+
+## Configure authentication in the console
+
+1. In the console, open the connector and select the **Configuration** tab.
+2. Under **Authentication**, choose a **Backend auth** type and fill in its
+   fields:
+   - **Bearer token**: under **Secret reference**, choose the managed secret
+     that holds the token.
+   - **Header injection**: enter the **Header name**, for example `X-API-Key`,
+     and choose the managed secret that holds its value.
+   - **Upstream identity provider**: choose the connector identity provider that
+     users authorize against.
+   - **Token exchange (RFC 8693)**: enter the **Token URL** and **Client ID**,
+     and optionally an audience, scopes, and a **Client secret reference**.
+3. Select **Save**. For a draft connector, select **Save and verify**, which
+   checks the endpoint and authentication before publishing it.
+
+When a connector uses `awsSts`, `obo`, or `xaa`, the console shows a warning and
+locks the connector's configuration form so that a save can't remove the
+authentication. Change these connectors through the API.
+
+## Configure authentication through the API
+
+Set authentication in the `auth` object of a connector create or update request:
+`POST /v1/gateways/{gateway_id}/connectors` or
+`PUT /v1/gateways/{gateway_id}/connectors/{id}`. The update route replaces the
+whole connector, so send every field you want to keep. The `type` field selects
+the authentication type, and a sibling object with the snake_case form of the
+type carries its fields.
+
+This example signs requests to an AWS backend with credentials from AWS STS:
+
+```json title="Connector auth object"
+{
+  "auth": {
+    "type": "awsSts",
+    "aws_sts": {
+      "provider_id": "<IDENTITY_PROVIDER_ID>",
+      "region": "us-east-1",
+      "service": "aws-mcp",
+      "role_mappings": [
+        {
+          "claim": "s3-readers",
+          "role_arn": "arn:aws:iam::<ACCOUNT_ID>:role/s3-read-only",
+          "priority": 1
+        }
+      ],
+      "fallback_role_arn": "arn:aws:iam::<ACCOUNT_ID>:role/default-mcp"
+    }
+  }
+}
+```
+
+A secret reference is an object with either a `managed_secret_id` or a
+`kubernetes_secret` with `name`, `namespace`, and `key`. A `provider_id` is the
+ID of an identity provider from `GET /v1/connector-identity-providers`.
+
+### Authentication type fields
+
+The tables below list each type's fields. The full schema is
+`ConnectorAuthRequest` in the
+[Enterprise Manager API reference](../platform/enterprise-platform/api-reference.mdx#enterprise-manager).
+
+**`bearer_token`**
+
+| Field   | Required | Description                            |
+| ------- | -------- | -------------------------------------- |
+| `token` | Yes      | Secret reference that holds the token. |
+
+**`header_injection`**
+
+| Field         | Required | Description                                   |
+| ------------- | -------- | --------------------------------------------- |
+| `header_name` | Yes      | Header to set on each request to the backend. |
+| `value`       | Yes      | Secret reference that holds the header value. |
+
+**`upstream_inject`**
+
+| Field         | Required | Description                                                 |
+| ------------- | -------- | ----------------------------------------------------------- |
+| `provider_id` | Yes      | Identity provider whose user token the gateway sends along. |
+
+**`token_exchange`**
+
+| Field                        | Required | Description                                                                                       |
+| ---------------------------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `token_url`                  | No       | Token endpoint that performs the exchange.                                                        |
+| `client_id`                  | No       | Client ID for the token endpoint.                                                                 |
+| `client_secret`              | No       | Secret reference for the client secret.                                                           |
+| `audience`                   | No       | Audience to request for the exchanged token.                                                      |
+| `scopes`                     | No       | Scopes to request for the exchanged token.                                                        |
+| `subject_token_type`         | No       | Token type of the caller's token sent for exchange.                                               |
+| `provider_id`                | No       | Identity provider whose collected user token is exchanged.                                        |
+| `external_token_header_name` | No       | Custom header for the exchanged token. When unset, the token replaces the `Authorization` header. |
+
+**`aws_sts`**
+
+| Field                | Required | Description                                                                                                                          |
+| -------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `provider_id`        | Yes      | Identity provider whose user token the gateway presents to AWS STS.                                                                  |
+| `region`             | Yes      | AWS region for STS and request signing.                                                                                              |
+| `role_mappings`      | See note | Rules that map a claim value (`claim`) or a CEL expression (`matcher`) to a `role_arn`. Lower `priority` values are evaluated first. |
+| `fallback_role_arn`  | See note | Role to assume when no mapping matches.                                                                                              |
+| `role_claim`         | No       | Token claim that `role_mappings` entries match against.                                                                              |
+| `service`            | No       | SigV4 service name.                                                                                                                  |
+| `session_duration`   | No       | Session length in seconds, from 900 to 43200.                                                                                        |
+| `session_name_claim` | No       | Token claim used as the STS session name.                                                                                            |
+
+Set at least one of `role_mappings` or `fallback_role_arn`. The fields mirror
+ToolHive's AWS STS configuration; see
+[AWS STS authentication](../toolhive/integrations/aws-sts.mdx) for setting up
+the IAM side.
+
+**`obo`**
+
+| Field           | Required | Description                                                   |
+| --------------- | -------- | ------------------------------------------------------------- |
+| `provider_id`   | Yes      | Identity provider whose user token the gateway exchanges.     |
+| `tenant_id`     | Yes      | Entra ID tenant.                                              |
+| `client_id`     | Yes      | Client ID of the app registration that performs the exchange. |
+| `client_secret` | Yes      | Secret reference for that app registration's client secret.   |
+| `audience`      | See note | Audience of the downstream token.                             |
+| `scopes`        | See note | Scopes of the downstream token.                               |
+| `authority`     | No       | HTTPS authority URL that overrides the default.               |
+| `cache_skew`    | No       | Duration, such as `5m`, to refresh cached tokens early.       |
+
+Set at least one of `audience` or `scopes`.
+
+**`xaa`**
+
+| Field                       | Required | Description                                                                   |
+| --------------------------- | -------- | ----------------------------------------------------------------------------- |
+| `provider_id`               | Yes      | Identity provider whose user ID token starts the exchange.                    |
+| `idp_token_url`             | Yes      | Identity provider token endpoint that issues the identity assertion (ID-JAG). |
+| `target_token_url`          | Yes      | Backend authorization server token endpoint that accepts the assertion.       |
+| `target_audience`           | Yes      | Audience of the identity assertion.                                           |
+| `idp_client_id`             | No       | Client ID at the identity provider.                                           |
+| `idp_client_secret`         | No       | Secret reference for the identity provider client secret.                     |
+| `target_client_id`          | No       | Client ID at the backend authorization server.                                |
+| `target_client_secret`      | No       | Secret reference for the backend client secret.                               |
+| `target_resource`           | No       | Resource indicator for the backend token.                                     |
+| `scopes`                    | No       | Scopes to request for the backend token.                                      |
+| `subject_token_type`        | No       | Must be the ID token type when set.                                           |
+| `insecure_target_token_url` | No       | Allows plain `http://` token URLs. Credentials then travel in cleartext.      |
+
+For background on these federation flows, see
+[Backend authentication](../toolhive/guides-vmcp/authentication.mdx#backend-authentication)
+in the vMCP documentation, which uses the same strategies.
+
+## How users authorize connectors
+
+For an **Upstream identity provider** connector, each user completes consent in
+**Your workspace** or during client connection. The Connector Gateway stores the
+authorization and prompts the user to **Re-authenticate** after it expires.
+
+Each stored authorization is bound to the identity provider configuration that
+issued it. Changing any of these settings makes every user of that provider
+authorize again on their next connection:
+
+- The provider's issuer, OAuth endpoints, or client ID
+- The requested scopes or additional authorization parameters
+- The redirect URI, which derives from the Connector Gateway issuer
+
+The gateway keeps the stored authorizations. If you revert the change, users'
+existing authorizations work again without another consent step.
+
+## Next steps
+
+- [Manage connector policies](./connector-policies.mdx) to grant access to the
+  connector.
+- [Tool usage](./tool-usage.mdx) to confirm that users are calling the
+  connector's tools.
+
+## Related information
+
+- [Identity providers](../platform/enterprise-directory/identity-providers.mdx) -
+  register the providers that per-user and federation types reference
+- [Managed secrets](../platform/enterprise-directory/managed-secrets.mdx) -
+  store the credentials that static types reference

@@ -2,12 +2,13 @@
 title: Manage connectors
 sidebar_label: Connectors
 description:
-  Register connectors, import them from your registry, grant access to groups,
-  and understand the draft, available, and failure states.
+  Register connectors from your registry, cluster, or by hand, and configure
+  their transport, network access, and the tool names clients see.
 ---
 
 A _connector_ is an MCP server available through the Connector Gateway. After
-registering a connector, grant access to it through its connector policy.
+registering a connector, configure its authentication and grant access to it
+through its connector policy.
 
 ## The connector list
 
@@ -48,44 +49,93 @@ review its configuration, then save it to publish the connector.
 triggers an endpoint check. A valid MCP endpoint becomes **Available**; an
 invalid or unreachable endpoint enters **Failure**.
 
-## Granting access
+## Connector settings
 
-Each connector has a connector policy that decides who can use it. The policy
-has two authoring modes:
+A connector's **Configuration** tab holds its name, endpoint, transport, and
+authentication. See
+[Configure connector authentication](./connector-authentication.mdx) for the
+authentication types.
 
-- **Structured** mode grants access to directory groups. This is the mode the
-  console manages.
-- **Cedar** mode uses a Cedar policy document. A document can match directory
-  group (`UserGroup`) membership, custom claims from the caller's token such as
-  `principal.claim_department`, or both.
+### Transport
 
-To grant access in structured mode, open a connector and use **Grant access** to
-add one or more groups. Membership is inherited, so granting to a parent group
-reaches every subgroup beneath it. Directory groups are separate from the OIDC
-claim groups that cluster authorization policy matches. See
-[Directory groups and OIDC claim groups](../platform/concepts/two-group-models.mdx).
+The Connector Gateway serves connectors that use the `streamable-http` or `sse`
+transport. SSE is a deprecated MCP transport, so choose **Streamable HTTP**
+unless the backend supports only SSE. If a connector's stored transport isn't
+one of these, the gateway withholds the connector and the console asks you to
+choose a transport before you can save.
 
-The console doesn't edit Cedar-mode policies. For a Cedar-mode connector, it
-shows a notice and disables group editing. Switch modes and write Cedar
-documents through the connector policy routes of the
-[Enterprise Manager API](../platform/enterprise-platform/api-reference.mdx#enterprise-manager).
+### Private network endpoints
 
-The Connector Gateway evaluates access on every request, so changes take effect
-on the next request.
+By default, a connector endpoint must use HTTPS (plain HTTP is allowed only for
+`localhost`), and the gateway refuses to connect to an address in a private,
+loopback, or link-local range. In-cluster endpoints resolve to private
+addresses, so a connector that points at a Kubernetes Service needs **Allow
+private IPs** turned on (`allow_private_ips` in the API). The setting also
+permits plain HTTP. The gateway never connects to link-local addresses such as
+the cloud metadata endpoint, even with this setting on.
 
-## Connector authentication
+Discovery turns on **Allow private IPs** for a candidate whose endpoint is a
+Service in the candidate's own namespace. For a connector you add manually or
+import, turn it on yourself when the endpoint is in-cluster.
 
-A connector can broker OAuth through an
-[identity provider](../platform/enterprise-directory/identity-providers.mdx)
-when it needs user authorization for its backend.
+### API-only fields
 
-Users complete consent in **Your workspace** or during client connection. The
-Connector Gateway stores the authorization and prompts the user to
-**Re-authenticate** after it expires.
+These connector fields are available only through the
+[Enterprise Manager API](../platform/enterprise-platform/api-reference.mdx#enterprise-manager):
+
+| Field            | Description                                                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `icon_url`       | Absolute HTTP or HTTPS URL of the connector's icon.                                                                                         |
+| `repository_url` | Absolute HTTP or HTTPS URL of the connector's source code.                                                                                  |
+| `support_url`    | Absolute HTTP or HTTPS URL of the connector's support or home page.                                                                         |
+| `version`        | Free-text version string.                                                                                                                   |
+| `draft`          | `true` withholds the connector from the gateway, and `false` publishes it.                                                                  |
+| `origin`         | Where the connector came from: `manual` (the default), `kubernetes_cluster`, `custom_registry`, or `stacklok_registry`. Set on create only. |
+
+The connector update route, `PUT /v1/gateways/{gateway_id}/connectors/{id}`,
+replaces the whole connector. Send every field you want to keep, including
+`draft`.
+
+## Tool names that clients see
+
+The Connector Gateway prefixes every tool with its connector's name and a short
+hash, so tools from different connectors never collide. A tool's advertised name
+has this form:
+
+```text
+<CONNECTOR_NAME>_<HASH>_<TOOL_NAME>
+```
+
+The connector name has every character outside `a-z`, `A-Z`, `0-9`, `_`, and `-`
+replaced with `_`. The hash is eight characters derived from the connector's ID,
+so it stays the same when other connectors are added or removed. For example,
+the `list_channels` tool on a connector named `Slack` appears as
+`Slack_a3f2b1c9_list_channels`. If the full name exceeds 128 characters, the
+gateway shortens the connector name segment first.
+
+:::warning[Renaming a connector renames its tools]
+
+A tool name includes the connector name, so renaming a connector changes the
+name of every tool it advertises. MCP clients and agents that saved the old tool
+names stop finding those tools. The console doesn't warn about this when you
+rename a connector.
+
+:::
+
+## Access and authentication
+
+Each connector's [connector policy](./connector-policies.mdx) decides who can
+reach it, either through directory group grants on the **Access** tab or through
+a Cedar policy document. The connector's
+[authentication type](./connector-authentication.mdx) decides the credential the
+gateway sends to the backend, including per-user OAuth through an identity
+provider.
 
 ## Next steps
 
-- [Tool usage](./tool-usage.mdx) to see which connectors are actually being
-  called.
+- [Configure connector authentication](./connector-authentication.mdx) to set
+  the credential the gateway sends to each backend.
+- [Manage connector policies](./connector-policies.mdx) to grant access to the
+  connector.
 - [Configure the Connector Gateway](../platform/enterprise-platform/configure-connector-gateway.mdx)
   for the install-time settings behind this screen.
