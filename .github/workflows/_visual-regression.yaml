@@ -22,12 +22,6 @@ jobs:
       image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27 # v1.63.0-noble
       options: --ipc=host
     env:
-      # Keep in sync with the image tag in the comment above — the
-      # "Verify Playwright version" step below checks the installed
-      # @playwright/test against this, so a dependency bump without a
-      # matching image bump fails loud and named instead of as a
-      # confusing browser-launch error on an unrelated PR.
-      PLAYWRIGHT_IMAGE_VERSION: '1.63.0'
       # Keep the build-time MCP metadata format stable. The regular site
       # build still validates the current ToolHive release independently.
       TOOLHIVE_VERSION: '0.49.0'
@@ -69,11 +63,12 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: npm ci
 
-      - name: Verify Playwright version matches pinned image
+      - name: Verify Playwright version matches container
         run: |
           installed="$(npx playwright --version | sed -n 's/^Version \([0-9.]*\)$/\1/p')"
-          if [ "$installed" != "$PLAYWRIGHT_IMAGE_VERSION" ]; then
-            echo "::error::@playwright/test resolved to $installed but the pinned image is for $PLAYWRIGHT_IMAGE_VERSION — bump the image digest (see container.image comment) to match."
+          image_version="$(jq -er '.driverVersion' /ms-playwright/.docker-info)"
+          if [ "$installed" != "$image_version" ]; then
+            echo "::error::@playwright/test resolved to $installed but the container has Playwright $image_version. Update the package and both workflow images together."
             exit 1
           fi
 
