@@ -427,11 +427,11 @@ a common noun rather than a product name. Not "Enterprise Cloud UI", "Cloud UI",
 or "Enterprise UI".
 
 The console has two experiences, **Administration** and **User**, and
-administrators switch between them under **Experience** in the account menu.
-Bold the labels when telling the reader to select them. In running prose, write
-"the Administration experience" and "the User experience", capitalized to match
-the labels. Don't call the User experience "Your workspace" or "the end-user
-UI".
+administrators switch between them under **Experience** in the account menu. Use
+the exact, bolded UI labels in selection instructions, such as "select
+**Administration**" or "select **User**." In running prose, write "the
+administration experience" and "the user experience." Avoid "Your workspace,"
+which is not a console label.
 
 This is a different product from the open source ToolHive Cloud UI, which is
 retired and keeps its own name on the page that records the retirement.
