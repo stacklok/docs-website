@@ -1,27 +1,93 @@
 ---
-title: Tool usage
+title: Review tool usage
 sidebar_label: Tool usage
 description:
-  Review Connector Gateway traffic by time range, connector, and tool.
+  Review Connector Gateway tool calls by time range, connector, and tool, and
+  turn on tool call recording to populate the screen.
 ---
 
-The **Tool usage** screen summarizes calls through the Connector Gateway.
+The **Tool Usage** screen in the console summarizes tool calls through the
+Connector Gateway. It shows data only after you turn on tool call recording,
+which is off by default.
 
-## What it shows
+## Record tool calls
 
-Select a time range to view **Tool calls**, **Active connectors**, **Top
-connector**, and the tool call trend.
+After returning each tool result, the gateway queues a record of the call in
+Redis or Valkey. A background sender then delivers the queued records to the
+Enterprise Manager, which stores them for the **Tool Usage** screen. Turn on the
+queue and the token the sender authenticates with:
 
-Use **By connector** to compare traffic across integrations. Use **By tool** to
-identify the capabilities receiving traffic.
+```yaml title="values.yaml"
+connector-gateway:
+  enterpriseConfig:
+    outbox:
+      enabled: true
+  meteringTokenProjection:
+    enabled: true
+```
 
-The screen reports tool calls only. Review model traffic in the AI Gateway.
+The sender reuses the gateway's Enterprise Manager connection from
+`enterpriseConfig.directory`, and the queue uses the Redis or Valkey instance
+the gateway already needs. The platform chart adds the gateway's ServiceAccount
+to the Enterprise Manager's metering allowlist, and the Enterprise Manager
+validates the token against the `clusterOidcIssuer` you set in
+[Connect the gateway to the Enterprise Manager](../platform/enterprise-platform/configure-connector-gateway.mdx#connect-the-gateway-to-the-enterprise-manager).
 
-If a registered connector does not appear, check its state and group grants on
-the [Connectors](./connectors.mdx) screen. Then confirm that clients can reach
-the Connector Gateway.
+Queued records survive gateway restarts only if your Redis or Valkey instance
+does, so use a Redis or Valkey deployment with persistence and replication when
+you rely on these numbers. The chart refuses to render when `outbox.enabled` is
+`true` and `meteringTokenProjection.enabled` is `false`.
+
+## What the screen shows
+
+Choose **Last 24h**, **Last 7d**, or **Last 30d** to set the period for the
+**Tool calls**, **Active connectors**, and **Top connector** tiles. The **Tool
+calls trend** chart always covers the last three months.
+
+Below the chart, **By connector** compares traffic across connectors, and **By
+tool** ranks individual tools with the connector that serves each one. Both tabs
+show each row's share of total calls in the period.
+
+The screen reports tool calls only. To review model traffic, see the
+[AI Gateway](../ai-gateway/index.mdx). Users see a summary of their own calls on
+the **Usage** tab under **Gateways** > **Connectors**. See
+[Support users' connector access](./support-connector-access.mdx#check-a-users-access).
 
 ## Next steps
 
-- [Connectors](./connectors.mdx) to change which connectors exist and who may
-  reach them.
+- [Forward audit logs](./forward-audit-logs.mdx) for a per-request record of
+  each tool call in your SIEM.
+- [Collect Connector Gateway telemetry](./telemetry.mdx) to trace tool calls
+  through the gateway.
+
+## Troubleshooting
+
+<details>
+<summary>The screen shows "No tool calls in this window"</summary>
+
+Check that tool call recording is on, as described in
+[Record tool calls](#record-tool-calls). The gateway records only calls made
+after you turn it on.
+
+If recording is on, check the gateway's logs for errors delivering records to
+the Enterprise Manager:
+
+```bash
+kubectl logs deployment/stacklok-enterprise-connector-gateway -n stacklok-system
+```
+
+An `Unauthenticated` error means the Enterprise Manager can't validate the
+gateway's token. Check that
+`enterprise-manager.grpc.callerAuth.clusterOidcIssuer` matches the issuer your
+cluster reports.
+
+</details>
+
+<details>
+<summary>A connector that users call doesn't appear</summary>
+
+The screen lists only connectors with recorded calls in the selected period. If
+users can't call the connector at all, see
+[Troubleshooting](./connectors.mdx#troubleshooting) on the connectors page.
+
+</details>

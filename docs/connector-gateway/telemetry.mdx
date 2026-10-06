@@ -1,0 +1,137 @@
+---
+title: Collect Connector Gateway telemetry
+sidebar_label: Telemetry
+description:
+  Export Connector Gateway traces, metrics, and logs to an OpenTelemetry
+  collector, or scrape Prometheus metrics from a dedicated listener.
+---
+
+The Connector Gateway exports OpenTelemetry metrics, traces, and logs to a
+collector, and can serve Prometheus metrics for scraping. Every exporter is off
+by default. Configure them under the `connector-gateway.telemetry` key in the
+values file you use for the platform chart.
+
+## Export to an OpenTelemetry collector
+
+Point the gateway at your collector's OpenTelemetry Protocol (OTLP) receiver and
+choose which signals to send:
+
+```yaml title="values.yaml"
+connector-gateway:
+  telemetry:
+    otlp:
+      endpoint: 'otel-collector.observability.svc:4318'
+      insecure: true
+      # Metrics
+      enabled: true
+      # Traces
+      tracingEnabled: true
+      # Logs
+      loggingEnabled: true
+```
+
+The gateway sends OTLP over HTTP with protobuf encoding, so use your collector's
+HTTP receiver, usually on port `4318`. Set `insecure: true` only for a collector
+on a trusted, cluster-local network; otherwise leave it `false` so the
+connection uses TLS. The chart refuses to render when any of the three signals
+is on and `endpoint` is empty.
+
+If you set fleet-wide defaults under `global.stacklok.telemetry.otlp`, the
+gateway inherits them. A local `endpoint` overrides the global one. A signal
+that the global settings turn on stays on, even if you set it to `false`
+locally.
+
+Exported logs carry the same text the gateway writes to standard error, with
+`trace_id` and `span_id` attached when a span is active.
+
+### What traces contain
+
+The gateway samples every request and reports the service name
+`connector-gateway`. The gateway is built on ToolHive's Virtual MCP Server
+(vMCP), so its spans use the `vmcp.` prefix. Each tool call produces a
+`vmcp.call_tool` span with these attributes:
+
+| Attribute               | Value                                                 |
+| ----------------------- | ----------------------------------------------------- |
+| `gen_ai.operation.name` | `execute_tool`                                        |
+| `gen_ai.tool.name`      | The tool's name                                       |
+| `gen_ai.tool.call.id`   | An ID that also identifies the call in **Tool Usage** |
+| `enduser.id`            | The caller's platform user ID                         |
+| `mcp_server`            | The connector that served the call                    |
+
+A failed call, or a tool result that reports an error, sets the span's status to
+error. Child spans cover the call to the connector's backend
+(`backend.call_tool`) and any token exchange (`token_exchange.authenticate`).
+The gateway propagates W3C `traceparent` and `baggage` headers to backends, so a
+backend that also exports traces joins the same trace.
+
+## Scrape Prometheus metrics
+
+To expose a `/metrics` endpoint instead of, or in addition to, pushing metrics:
+
+```yaml title="values.yaml"
+connector-gateway:
+  telemetry:
+    prometheus:
+      enabled: true
+    metrics:
+      port: 9464
+```
+
+The endpoint runs on its own listener at the `metrics.port` value (default
+`9464`), separate from the control-plane port. The chart adds a `metrics`
+container port, a NetworkPolicy ingress rule for it, and these pod annotations:
+
+```yaml
+prometheus.io/scrape: 'true'
+prometheus.io/port: '9464'
+prometheus.io/path: /metrics
+```
+
+A Prometheus instance configured for annotation-based pod discovery picks up the
+gateway automatically. The chart creates no Service port or ServiceMonitor for
+metrics; if you use the Prometheus Operator, create a PodMonitor that selects
+the gateway pods and targets the `metrics` port.
+
+The endpoint exposes Go runtime and process metrics for the gateway. For
+per-tool call counts, use traces, [audit events](./forward-audit-logs.mdx), or
+the [Tool Usage](./tool-usage.mdx) screen.
+
+## Next steps
+
+- [Forward audit logs to your SIEM](./forward-audit-logs.mdx) to keep a record
+  of every tool call.
+- [Record tool calls](./tool-usage.mdx#record-tool-calls) to populate the **Tool
+  Usage** screen.
+
+## Related information
+
+- [Configure the Connector Gateway](../platform/enterprise-platform/configure-connector-gateway.mdx) -
+  the install-time values these settings sit alongside
+- [Collect AI Gateway telemetry](../ai-gateway/telemetry.mdx) - the equivalent
+  settings for model traffic
+
+## Troubleshooting
+
+<details>
+<summary>The chart fails to render with an OTLP error</summary>
+
+`otlp.enabled`, `tracingEnabled`, or `loggingEnabled` is `true` without an
+`endpoint`, either under `connector-gateway.telemetry.otlp` or inherited from
+`global.stacklok.telemetry.otlp`. Set `endpoint`, or turn off the signals you
+don't want.
+
+</details>
+
+<details>
+<summary>The collector receives nothing</summary>
+
+Check that `endpoint` points at the collector's OTLP/HTTP receiver rather than
+its gRPC receiver (usually `4317`). If the collector serves plain HTTP, set
+`insecure: true`. Then check the gateway's logs for export errors:
+
+```bash
+kubectl logs deployment/stacklok-enterprise-connector-gateway -n stacklok-system
+```
+
+</details>

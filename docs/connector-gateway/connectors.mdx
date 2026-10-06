@@ -30,11 +30,23 @@ authentication. See
 [Configure connector authentication](./connector-authentication.mdx) for the
 authentication types.
 
-### Draft, available, and failure
+### Verification and connector states
 
-**Draft** connectors are registered but inactive. Activating a connector
-triggers an endpoint check. A valid MCP endpoint becomes **Available**; an
-invalid or unreachable endpoint enters **Failure**.
+Saving a connector verifies it: the Enterprise Manager checks that the
+connector's identity provider, if any, is active and opens a connection to its
+endpoint. The result sets the connector's state:
+
+| State        | Meaning                                                                |
+| ------------ | ---------------------------------------------------------------------- |
+| **Verified** | Verification passed. The gateway serves the connector.                 |
+| **Draft**    | Registered from discovery and not yet saved. The gateway withholds it. |
+| **Broken**   | Verification failed. The gateway withholds it.                         |
+
+Verification runs only when you save. For a draft or broken connector, the
+button reads **Save and verify**. A verified connector re-verifies when you
+change its endpoint, authentication, or **Allow private IPs** setting. A
+connector stays verified when its backend later goes down; check the backend
+itself if calls start failing.
 
 ### Transport
 
@@ -58,6 +70,23 @@ Discovery turns on **Allow private IPs** for a candidate whose endpoint is a
 Service in the candidate's own namespace. For a connector you add manually or
 import, turn it on yourself when the endpoint is in-cluster.
 
+Verification applies its own private-range check, independent of **Allow private
+IPs**, so an in-cluster connector also needs its address range on the Enterprise
+Manager's verification allowlist. Add the narrowest range that covers your
+in-cluster MCP servers, such as your cluster's Service CIDR:
+
+```yaml title="values.yaml"
+enterprise-manager:
+  directory:
+    connectorVerification:
+      allowedPrivateRanges:
+        - '10.96.0.0/12'
+```
+
+The Enterprise Manager refuses to start with a link-local or cloud metadata
+range in this list. Leave loopback ranges out too, since they reach the
+Enterprise Manager pod's own listeners.
+
 ## Access and authentication
 
 Each connector's [connector policy](./connector-policies.mdx) decides who can
@@ -75,3 +104,109 @@ provider.
   groups can use the connector.
 - [Configure the Connector Gateway](../platform/enterprise-platform/configure-connector-gateway.mdx)
   for the install-time settings behind this screen.
+
+## Troubleshooting
+
+<details>
+<summary>A connector shows Broken</summary>
+
+The console doesn't display the verification error. Find it in the Enterprise
+Manager's logs, on a `connector write persisted as failure` line with the
+connector's ID and an `err` field:
+
+```bash
+kubectl logs deployment/stacklok-enterprise-enterprise-manager -n stacklok-system \
+  | grep 'connector write persisted as failure'
+```
+
+Common causes:
+
+- **The endpoint is unreachable from the Enterprise Manager pod.** Check the
+  URL, DNS, and any egress NetworkPolicy or proxy between the Enterprise Manager
+  and the backend.
+- **The endpoint is in-cluster.** The error reads
+  `resolves to a disallowed IP range`. See the next entry.
+- **The connector's identity provider isn't active.** Check the provider on the
+  [Identity providers](../platform/enterprise-directory/identity-providers.mdx)
+  screen.
+
+After you fix the cause, open the connector and select **Save and verify**. A
+broken connector stays broken until it's saved again.
+
+</details>
+
+<details>
+<summary>An in-cluster or internal endpoint is refused</summary>
+
+An endpoint that resolves to a private, loopback, or reserved address passes two
+separate checks, and each has its own setting:
+
+- If saving fails with "This endpoint resolves to a disallowed (private or
+  reserved) IP range", turn on **Allow private IPs** for the connector.
+- If the connector saves but shows **Broken**, and the Enterprise Manager log
+  reads `resolves to a disallowed IP range`, add the address range to
+  `enterprise-manager.directory.connectorVerification.allowedPrivateRanges`.
+
+An in-cluster endpoint needs both settings. See
+[Private network endpoints](#private-network-endpoints).
+
+If saving fails with "Could not resolve this endpoint's hostname", the
+Enterprise Manager can't resolve the host at all. Check the hostname and the
+Enterprise Manager pod's DNS.
+
+</details>
+
+<details>
+<summary>A verified connector doesn't reach any users</summary>
+
+The gateway refreshes its connector catalog from the Enterprise Manager every 30
+seconds and withholds any connector it can't serve. Search the gateway's logs
+for the connector:
+
+```bash
+kubectl logs deployment/stacklok-enterprise-connector-gateway -n stacklok-system \
+  | grep 'connector withheld from the served generation'
+```
+
+Each line names the connector and gives a `reason`, plus a `remedy` for most
+reasons. The most common are `unresolved_credential`, where the managed secret
+the connector references can't be read, and `dangling_provider_reference`, where
+the connector's identity provider failed to load. Fix the secret or provider;
+the gateway picks up the change on its next refresh.
+
+</details>
+
+<details>
+<summary>A user can't see a connector</summary>
+
+A user's MCP clients get a connector's tools only when all of these hold:
+
+1. The connector is **Verified**.
+2. The connector policy grants the user access. In structured mode, the user
+   must belong to a granted group or one of its subgroups. A connector with no
+   grants is unreachable. See
+   [Manage connector policies](./connector-policies.mdx).
+3. The user has connected to the connector and hasn't paused it. See
+   [Support users' connector access](./support-connector-access.mdx).
+
+For a Cedar-mode connector, a policy that reads a token claim the caller's token
+doesn't carry denies that connector. Check that your identity provider includes
+the claim in the tokens it issues.
+
+Policy and connection changes apply on the user's next request, though the
+user's client can keep showing its earlier tool list. See
+[When changes take effect](./support-connector-access.mdx#when-changes-take-effect).
+
+</details>
+
+<details>
+<summary>Tool calls fail with "dial refused"</summary>
+
+The gateway refuses to connect to private and loopback addresses unless the
+connector has **Allow private IPs** turned on. A gateway log line reading
+`dial refused: private or loopback address` names the address; turn on the
+setting for that connector. A line reading `address is never dialable` means the
+endpoint resolves to a link-local or cloud metadata address, which the gateway
+never connects to; point the connector at a different address.
+
+</details>

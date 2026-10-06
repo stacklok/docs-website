@@ -1,0 +1,241 @@
+---
+title: Forward Connector Gateway audit logs
+sidebar_label: Audit logs
+description:
+  Record a structured audit event for every MCP request through the Connector
+  Gateway, then ship the events to Splunk, Elastic, or Loki.
+---
+
+The Connector Gateway can write a structured JSON audit event for each MCP
+request it handles: who called, which connector and tool, and the outcome.
+Events go to the pod's standard output, where your log pipeline collects them.
+
+Audit events are separate from the [Tool Usage](./tool-usage.mdx) screen. The
+screen summarizes call counts in the console; audit events give your security
+information and event management (SIEM) system a per-request record.
+
+## Enable audit events
+
+Audit logging is off by default. Turn it on under
+`connector-gateway.vmcpConfig.audit` in the values file you use for the platform
+chart:
+
+```yaml title="values.yaml"
+connector-gateway:
+  vmcpConfig:
+    audit:
+      enabled: true
+```
+
+The gateway records every event type unless you filter them, and sets
+`component` to `connector-gateway` on each event. These optional fields adjust
+what it records:
+
+| Field                 | Default | Purpose                                                         |
+| --------------------- | ------- | --------------------------------------------------------------- |
+| `includeRequestData`  | `false` | Add the MCP request body to each event under `data.request`     |
+| `includeResponseData` | `false` | Add the MCP response body to each event under `data.response`   |
+| `maxDataSize`         | `1024`  | Maximum bytes of request or response data to record per event   |
+| `eventTypes`          | All     | Record only the listed event types                              |
+| `excludeEventTypes`   | None    | Skip the listed event types; takes precedence over `eventTypes` |
+
+Request and response bodies contain tool arguments and results, which can
+include sensitive data. Turn them on only when your SIEM controls justify it.
+
+The gateway reads a strict configuration file, so a misspelled key under `audit`
+stops the pod from starting. Check the pod's logs if it enters
+`CrashLoopBackOff` after you change these settings.
+
+If you leave `connector-gateway.vmcpConfig.audit` unset, the gateway uses the
+fleet-wide defaults under `global.stacklok.audit`. A local `audit` block
+replaces the global one entirely.
+
+## What gets captured
+
+The most common event types are:
+
+| Event type           | Fires when                     |
+| -------------------- | ------------------------------ |
+| `mcp_tool_call`      | A client calls a tool          |
+| `mcp_tools_list`     | A client lists tools           |
+| `mcp_initialize`     | A client starts an MCP session |
+| `mcp_resource_read`  | A client reads a resource      |
+| `mcp_resources_list` | A client lists resources       |
+| `mcp_prompt_get`     | A client gets a prompt         |
+| `mcp_prompts_list`   | A client lists prompts         |
+
+Other MCP methods, such as `ping` and notifications, produce their own
+`mcp_`-prefixed types.
+
+Each event's `outcome` is one of:
+
+| Outcome             | Meaning                                                     |
+| ------------------- | ----------------------------------------------------------- |
+| `success`           | The request succeeded                                       |
+| `application_error` | The request returned a JSON-RPC error inside a 2xx response |
+| `denied`            | The gateway refused the request with a 401 or 403 response  |
+| `failure`           | The request failed with another 4xx response                |
+| `error`             | The request failed with a 5xx response                      |
+
+## Event schema
+
+Each event is one line of JSON. This example shows a tool call, formatted for
+readability:
+
+```json
+{
+  "time": "2026-10-05T14:22:31.418Z",
+  "level": "AUDIT",
+  "msg": "audit_event",
+  "audit_id": "b3d4f7a2-8c11-4f6e-9b0a-1c2d3e4f5a6b",
+  "type": "mcp_tool_call",
+  "logged_at": "2026-10-05T14:22:31.417Z",
+  "outcome": "success",
+  "component": "connector-gateway",
+  "source": {
+    "type": "network",
+    "value": "10.42.0.17",
+    "extra": { "user_agent": "claude-code/2.1.0" }
+  },
+  "subjects": {
+    "user": "Alice Smith",
+    "user_id": "00u1abcd2EFGH3ijk4x7"
+  },
+  "target": {
+    "endpoint": "/gw/mcp",
+    "method": "tools/call",
+    "name": "create_issue",
+    "type": "tool"
+  },
+  "metadata": {
+    "extra": {
+      "backend_name": "github",
+      "duration_ms": 412,
+      "transport": "http",
+      "response_size_bytes": 1873
+    }
+  }
+}
+```
+
+| Field                        | Contents                                                                                      |
+| ---------------------------- | --------------------------------------------------------------------------------------------- |
+| `source.value`               | The client IP, from `X-Forwarded-For`, then `X-Real-IP`, then the connection's remote address |
+| `source.extra`               | The client's `user_agent`, and `request_id` when the client sends `X-Request-ID`              |
+| `subjects.user_id`           | The `sub` claim from the caller's token                                                       |
+| `subjects.user`              | The caller's name, falling back to their preferred username, then email                       |
+| `target.method`              | The MCP method, such as `tools/call`                                                          |
+| `target.name`, `target.type` | The tool, resource, or prompt the request named, and which of those it is                     |
+| `metadata.extra`             | `backend_name` (the connector), `duration_ms`, `transport`, and `response_size_bytes`         |
+
+## Separate audit records from application logs
+
+Audit events go to standard output with `"level":"AUDIT"` and
+`"msg":"audit_event"`. The gateway's application logs go to standard error as
+plain text. Filter on that pair of keys so only audit records reach your SIEM.
+
+## Ship audit events to your SIEM
+
+Each example below filters on those two keys. Adapt hostnames, credentials, and
+the `stacklok-system` namespace for your environment.
+
+### Fluent Bit to Splunk
+
+```conf
+[INPUT]
+    Name              tail
+    Path              /var/log/containers/*connector-gateway*_stacklok-system_*.log
+    Parser            docker
+    Tag               kube.cgw-audit.*
+    Refresh_Interval  5
+
+[FILTER]
+    Name    grep
+    Match   kube.cgw-audit.*
+    Regex   log .*"level":"AUDIT".*"msg":"audit_event".*
+
+[FILTER]
+    Name          parser
+    Match         kube.cgw-audit.*
+    Key_Name      log
+    Parser        json
+    Reserve_Data  On
+
+[OUTPUT]
+    Name          splunk
+    Match         kube.cgw-audit.*
+    Host          <SPLUNK_HEC_HOST>
+    Port          8088
+    Splunk_Token  ${SPLUNK_HEC_TOKEN}
+    TLS           On
+    event_source  connector-gateway-audit
+    event_index   connector_gateway_audit
+```
+
+### Fluent Bit to Elastic
+
+Keep the input and both filters from the Splunk example, which tag records
+`kube.cgw-audit.*`, and swap the output. The `Match` value must be that same
+tag:
+
+```conf
+[OUTPUT]
+    Name             es
+    Match            kube.cgw-audit.*
+    Host             <ELASTIC_HOST>
+    Port             9200
+    HTTP_User        <ELASTIC_USER>
+    HTTP_Passwd      ${ELASTIC_PASSWORD}
+    tls              On
+    Index            connector-gateway-audit
+    Suppress_Type_Name On
+```
+
+### Promtail to Loki
+
+```yaml
+scrape_configs:
+  - job_name: connector-gateway-audit
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace]
+        regex: stacklok-system
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        regex: connector-gateway
+        action: keep
+      - target_label: job
+        replacement: connector-gateway-audit
+    pipeline_stages:
+      - match:
+          selector:
+            '{job="connector-gateway-audit"} !~
+            `"level":"AUDIT".*"msg":"audit_event"`'
+          action: drop
+      - json:
+          expressions:
+            type: type
+            outcome: outcome
+      - labels:
+          type:
+          outcome:
+```
+
+## Retention and privacy
+
+The gateway doesn't store or replay audit events after writing them. Configure
+retention, tamper evidence, and field-level redaction in your log pipeline and
+storage, especially if you turn on request or response data.
+
+## Next steps
+
+- [Collect Connector Gateway telemetry](./telemetry.mdx) to export traces and
+  metrics alongside these events.
+- [Record tool calls](./tool-usage.mdx#record-tool-calls) to populate the **Tool
+  Usage** screen.
+
+## Related information
+
+- [Forward AI Gateway audit logs](../ai-gateway/forward-audit-logs.mdx) - the
+  equivalent events for model traffic, with more shipping examples
