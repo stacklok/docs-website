@@ -53,8 +53,10 @@ their branches. For a fork, regenerate locally with
 ## Adding a new case
 
 Add product route checks to `NAV_PAGES`. Add screenshot cases as `test(...)` in
-`pages.spec.ts`/`mobile.spec.ts`, calling `captureColorScheme` (single theme) or
-`captureBothThemes` (light + dark) from `fixtures.ts` once the test has already
-asserted the state being snapshotted. Keep the matrix small — a new entry should
+`pages.spec.ts`/`mobile.spec.ts`. Use `captureElementBothThemes` from
+`fixtures.ts` to compare one component in light and dark mode without including
+unrelated page content. Use `captureBothThemes` for full-page comparisons or
+`captureColorScheme` for a single theme. Assert the state being snapshotted
+before calling the capture helper. Keep the matrix small — a new entry should
 exercise shared layout/theme/nav that nothing else here already covers, not add
 per-page content coverage (that's what regular review is for, not this suite).
