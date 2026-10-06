@@ -1,8 +1,13 @@
 # Visual regression tests
 
 Playwright screenshot tests covering docs-website's shared layout, theme, and
-navigation — see `pages.spec.ts` and `mobile.spec.ts` for the exact
-page/viewport matrix (issue
+navigation. The theme-preview page has a fixed sidebar rendered by the same
+Docusaurus components as the product sidebars. Screenshots cover its expanded
+and collapsed categories, active links, and enterprise badge. Product routes
+retain checks for successful responses and visible navigation; sidebar additions
+and renames do not require baseline updates. The MCP guide screenshot captures
+the main content with volatile metadata masked. See `pages.spec.ts` and
+`mobile.spec.ts` for the exact page/viewport matrix (issue
 [#1163](https://github.com/stacklok/docs-website/issues/1163)).
 
 ## Running locally
@@ -13,7 +18,9 @@ npm run test:visual:update   # regenerate them
 ```
 
 This builds the site and serves it in production mode before running the suite
-(see `playwright.config.ts`'s `webServer`).
+(see `playwright.config.ts`'s `webServer`). CI builds in a separate step and
+sets `PLAYWRIGHT_SKIP_BUILD=1` so Playwright serves that build without
+rebuilding.
 
 **Local baselines won't match CI.** `toHaveScreenshot()` compares rendered
 pixels, and font rendering differs by host OS/GPU even on the same Chromium
@@ -45,7 +52,7 @@ their branches. For a fork, regenerate locally with
 
 ## Adding a new case
 
-Add to the existing `NAV_PAGES` array or as its own `test(...)` in
+Add product route checks to `NAV_PAGES`. Add screenshot cases as `test(...)` in
 `pages.spec.ts`/`mobile.spec.ts`, calling `captureColorScheme` (single theme) or
 `captureBothThemes` (light + dark) from `fixtures.ts` once the test has already
 asserted the state being snapshotted. Keep the matrix small — a new entry should

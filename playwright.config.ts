@@ -57,7 +57,7 @@ export default defineConfig({
     // Production build, not the dev server: matches what's actually
     // deployed (Vercel serves the build) and avoids dev-mode HMR/overlay
     // noise in the screenshots.
-    command: `npm run build && npm run serve -- --port ${PORT} --no-open`,
+    command: `${process.env.PLAYWRIGHT_SKIP_BUILD === '1' ? '' : 'npm run build && '}npm run serve -- --port ${PORT} --no-open`,
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
