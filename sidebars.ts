@@ -463,12 +463,33 @@ const connectorGatewaySidebar: SidebarsConfig[string] = [
     className: 'enterprise-only enterprise-only--tooltip-below',
   },
   'connector-gateway/quickstart',
+
+  {
+    type: 'html',
+    value: 'Configure and secure',
+    className: 'sidebar-title',
+    defaultStyle: false,
+  },
   'connector-gateway/connectors',
-  'connector-gateway/connector-authentication',
   'connector-gateway/managed-secrets',
   'connector-gateway/identity-providers',
+  'connector-gateway/connector-authentication',
   'connector-gateway/connector-policies',
+
+  {
+    type: 'html',
+    value: 'Roll out and support',
+    className: 'sidebar-title',
+    defaultStyle: false,
+  },
   'connector-gateway/support-connector-access',
+
+  {
+    type: 'html',
+    value: 'Operate',
+    className: 'sidebar-title',
+    defaultStyle: false,
+  },
   'connector-gateway/tool-usage',
   'connector-gateway/telemetry',
   'connector-gateway/forward-audit-logs',
