@@ -367,6 +367,7 @@ const platformSidebar: SidebarsConfig[string] = [
       'platform/enterprise-platform/configure-connector-gateway',
       'platform/enterprise-platform/roll-out-gateway-clients',
       'platform/enterprise-platform/api-reference',
+      'platform/enterprise-platform/enterprise-manager-api',
     ],
   },
 
@@ -493,6 +494,13 @@ const connectorGatewaySidebar: SidebarsConfig[string] = [
   'connector-gateway/tool-usage',
   'connector-gateway/telemetry',
   'connector-gateway/forward-audit-logs',
+
+  {
+    type: 'category',
+    label: 'Reference',
+    collapsed: false,
+    items: ['connector-gateway/api-reference'],
+  },
 ];
 
 const aiGatewaySidebar: SidebarsConfig[string] = [
@@ -509,6 +517,13 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
   'ai-gateway/pci-pii-controls',
   'ai-gateway/forward-audit-logs',
   'ai-gateway/telemetry',
+
+  {
+    type: 'category',
+    label: 'Reference',
+    collapsed: false,
+    items: ['ai-gateway/api-reference'],
+  },
 ];
 
 const resourcesSidebar: SidebarsConfig[string] = [
