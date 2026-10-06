@@ -1,0 +1,107 @@
+---
+title: Configure connector authentication
+sidebar_label: Connector authentication
+description:
+  Choose how the Connector Gateway authenticates to each connector's backend,
+  from static secrets to per-user OAuth and token exchange flows.
+---
+
+Connector authentication sets the credential the Connector Gateway sends to a
+connector's backend MCP server. Callers authenticate to the gateway with their
+own identity, and the gateway attaches the outbound credential that the
+connector's authentication type defines.
+
+## Choose an authentication type
+
+Every connector has exactly one authentication type. The console supports the
+first five types in the table below. Configure `awsSts`, `obo`, and `xaa`
+through the
+[Enterprise Manager API](../platform/enterprise-platform/api-reference.mdx#enterprise-manager).
+
+| Console label                  | API `type`        | What the gateway sends                                                                     | Needs                                      |
+| ------------------------------ | ----------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------ |
+| **None**                       | `none`            | No credential                                                                              | Nothing                                    |
+| **Bearer token**               | `bearerToken`     | A static token in the `Authorization` header                                               | A secret                                   |
+| **Header injection**           | `headerInjection` | A static value in a header you name                                                        | A secret                                   |
+| **Upstream identity provider** | `upstreamInject`  | The calling user's own OAuth token, collected through a per-user consent flow              | A connector identity provider              |
+| **Token exchange (RFC 8693)**  | `tokenExchange`   | A token obtained by exchanging the caller's token at call time                             | A token endpoint; a secret is optional     |
+| API only                       | `awsSts`          | AWS SigV4-signed requests using temporary credentials from AWS STS web-identity federation | An identity provider; no secret            |
+| API only                       | `obo`             | A Microsoft Entra ID token from the On-Behalf-Of (OBO) flow                                | An identity provider and a secret          |
+| API only                       | `xaa`             | A token from the cross-app access (ID-JAG) flow                                            | An identity provider; secrets are optional |
+
+Use these guidelines to pick a type:
+
+- Use **None** for a backend that needs no credential, such as an internal MCP
+  server that's reachable only inside your cluster.
+- Use **Bearer token** or **Header injection** when the backend accepts one
+  shared API key for every caller. Every user reaches the backend with the same
+  identity.
+- Use **Upstream identity provider** when the backend should act as each user,
+  for example a SaaS MCP server that requires the user's own OAuth grant.
+- Use **Token exchange (RFC 8693)**, `obo`, `xaa`, or `awsSts` when the backend
+  trusts your identity provider and accepts a token derived from the caller's
+  identity.
+
+## Set up the prerequisites in order
+
+Each authentication type references objects that must exist before you save the
+connector. Create them in this order:
+
+1. **Secrets.** Create a
+   [managed secret](../platform/enterprise-directory/managed-secrets.mdx) for
+   each static credential or client secret the type needs.
+2. **Identity provider.** Register a
+   [connector identity provider](../platform/enterprise-directory/identity-providers.mdx)
+   for types that need one. The provider's client secret is itself a managed
+   secret, which is why secrets come first.
+3. **Connector authentication.** Configure the connector's authentication type,
+   referencing the secrets and provider.
+4. **Access.** Grant access to the connector through its
+   [connector policy](./connector-policies.mdx).
+
+## Configure authentication in the console
+
+1. In the console, open the connector and select the **Configuration** tab.
+2. Under **Authentication**, choose a **Backend auth** type and fill in its
+   fields:
+   - **Bearer token**: under **Secret reference**, choose the managed secret
+     that holds the token.
+   - **Header injection**: enter the **Header name**, for example `X-API-Key`,
+     and choose the managed secret that holds its value.
+   - **Upstream identity provider**: choose the connector identity provider that
+     users authorize against.
+   - **Token exchange (RFC 8693)**: enter the **Token URL** and **Client ID**,
+     and optionally an audience, scopes, and a **Client secret reference**.
+3. Select **Save**. For a draft connector, select **Save and verify**, which
+   checks the endpoint and authentication before publishing it.
+
+## How users authorize connectors
+
+For an **Upstream identity provider** connector, each user completes consent in
+**Your workspace** or during client connection. The Connector Gateway stores the
+authorization and prompts the user to **Re-authenticate** after it expires.
+
+Each stored authorization is bound to the identity provider configuration that
+issued it. Changing any of these settings makes every user of that provider
+authorize again on their next connection:
+
+- The provider's issuer, OAuth endpoints, or client ID
+- The requested scopes or additional authorization parameters
+- The redirect URI, which derives from the Connector Gateway issuer
+
+The gateway keeps the stored authorizations. If you revert the change, users'
+existing authorizations work again without another consent step.
+
+## Next steps
+
+- [Grant and revoke connector access](./connector-policies.mdx) to choose which
+  groups can use the connector.
+- [Tool usage](./tool-usage.mdx) to confirm that users are calling the
+  connector's tools.
+
+## Related information
+
+- [Identity providers](../platform/enterprise-directory/identity-providers.mdx) -
+  register the providers that per-user and federation types reference
+- [Managed secrets](../platform/enterprise-directory/managed-secrets.mdx) -
+  store the credentials that static types reference

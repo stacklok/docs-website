@@ -2,90 +2,76 @@
 title: Manage connectors
 sidebar_label: Connectors
 description:
-  Register connectors, import them from your registry, grant access to groups,
-  and understand the draft, available, and failure states.
+  Register connectors from your registry, cluster, or by hand, and configure
+  their transport and private network access.
 ---
 
-A _connector_ is an MCP server available through the Connector Gateway. After
-registering a connector, grant access to it through its connector policy.
+A _connector_ is an MCP server available through the Connector Gateway. Manage
+connectors in the console under **Connectors**. After registering a connector,
+configure its authentication and grant access to it through its connector
+policy.
 
-## The connector list
+## Connector sources
 
-The **Connectors** screen lists every registered connector with its endpoint,
-transport, state, the number of groups that have access, and when it was
-created.
+Select **Add connector** and choose a source:
 
-## Where connectors come from
+- **Import from registry** adds remote MCP servers that your curated MCP
+  registry publishes.
+- **Discover in Kubernetes** lists the `MCPServer` resources running in your
+  cluster. Select the ones you want and choose **Add to catalog**. Each one
+  becomes a draft connector.
+- **Configure manually** registers any MCP server by name, endpoint, and
+  transport.
 
-Select **Add connector** and choose how to register the connector:
+## Connector settings
 
-- **Import from registry** adds remote servers that your curated MCP registry
-  publishes.
-- **Discover in Kubernetes** scans your cluster for running MCP servers and lets
-  you choose which ones to add.
-- **Configure manually** registers a server by name, endpoint, and transport.
+A connector's **Configuration** tab holds its name, endpoint, transport, and
+authentication. See
+[Configure connector authentication](./connector-authentication.mdx) for the
+authentication types.
 
-### Add MCP servers from your cluster
-
-Discovery lists every `MCPServer` resource in your cluster, across all
-namespaces, as a candidate. Nothing is registered until you select candidates
-and choose **Add to catalog**.
-
-Each candidate shows its namespace, transport, and endpoint. If an existing
-connector already uses a candidate's endpoint, the candidate shows **Already
-added as** and the connector's name. A candidate that belongs to an MCP server
-group shows that group, because a vMCP might already aggregate it and adding it
-separately would expose its tools twice. If discovery can't determine a
-candidate's transport, choose one before adding it.
-
-Each server you add becomes a **Draft** connector with no backend authentication
-and a description naming the namespace it came from. Open the connector to
-review its configuration, then save it to publish the connector.
-
-## Draft, available, and failure
+### Draft, available, and failure
 
 **Draft** connectors are registered but inactive. Activating a connector
 triggers an endpoint check. A valid MCP endpoint becomes **Available**; an
 invalid or unreachable endpoint enters **Failure**.
 
-## Granting access
+### Transport
 
-Each connector has a connector policy that decides who can use it. The policy
-has two authoring modes:
+The Connector Gateway serves connectors that use the `streamable-http` or `sse`
+transport. SSE is a deprecated MCP transport, so choose **Streamable HTTP**
+unless the backend supports only SSE. If a connector's stored transport isn't
+one of these, the gateway withholds the connector and the console asks you to
+choose a transport before you can save.
 
-- **Structured** mode grants access to directory groups. This is the mode the
-  console manages.
-- **Cedar** mode uses a Cedar policy document. A document can match directory
-  group (`UserGroup`) membership, custom claims from the caller's token such as
-  `principal.claim_department`, or both.
+### Private network endpoints
 
-To grant access in structured mode, open a connector and use **Grant access** to
-add one or more groups. Membership is inherited, so granting to a parent group
-reaches every subgroup beneath it. Directory groups are separate from the OIDC
-claim groups that cluster authorization policy matches. See
-[Directory groups and OIDC claim groups](../platform/concepts/two-group-models.mdx).
+By default, a connector endpoint must use HTTPS (plain HTTP is allowed only for
+`localhost`), and the gateway refuses to connect to an address in a private,
+loopback, or link-local range. In-cluster endpoints resolve to private
+addresses, so a connector that points at a Kubernetes Service needs **Allow
+private IPs** turned on (`allow_private_ips` in the API). The setting also
+permits plain HTTP. The gateway never connects to link-local addresses such as
+the cloud metadata endpoint, even with this setting on.
 
-The console doesn't edit Cedar-mode policies. For a Cedar-mode connector, it
-shows a notice and disables group editing. Switch modes and write Cedar
-documents through the connector policy routes of the
-[Enterprise Manager API](../platform/enterprise-platform/api-reference.mdx#enterprise-manager).
+Discovery turns on **Allow private IPs** for a candidate whose endpoint is a
+Service in the candidate's own namespace. For a connector you add manually or
+import, turn it on yourself when the endpoint is in-cluster.
 
-The Connector Gateway evaluates access on every request, so changes take effect
-on the next request.
+## Access and authentication
 
-## Connector authentication
-
-A connector can broker OAuth through an
-[identity provider](../platform/enterprise-directory/identity-providers.mdx)
-when it needs user authorization for its backend.
-
-Users complete consent in **Your workspace** or during client connection. The
-Connector Gateway stores the authorization and prompts the user to
-**Re-authenticate** after it expires.
+Each connector's [connector policy](./connector-policies.mdx) decides who can
+reach it, either through directory group grants on the **Access** tab or through
+a Cedar policy document. The connector's
+[authentication type](./connector-authentication.mdx) decides the credential the
+gateway sends to the backend, including per-user OAuth through an identity
+provider.
 
 ## Next steps
 
-- [Tool usage](./tool-usage.mdx) to see which connectors are actually being
-  called.
+- [Configure connector authentication](./connector-authentication.mdx) to set
+  the credential the gateway sends to each backend.
+- [Grant and revoke connector access](./connector-policies.mdx) to choose which
+  groups can use the connector.
 - [Configure the Connector Gateway](../platform/enterprise-platform/configure-connector-gateway.mdx)
   for the install-time settings behind this screen.
