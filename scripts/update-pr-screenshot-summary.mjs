@@ -5,8 +5,8 @@
 // CI-only: regenerates the visual-regression screenshot summary (see
 // pr-screenshot-summary.mjs) and folds it into the pull request's
 // description, inside a fenced marker block. Replaces just that block if
-// one already exists (e.g. from a previous push); otherwise prepends it,
-// leaving the rest of the description exactly as the author wrote it.
+// one already exists (e.g. from a previous push), and appends the summary
+// after the author's description.
 //
 // Requires GH_TOKEN (or GITHUB_TOKEN) with pull-requests: write, plus
 // PR_NUMBER / BASE_SHA / HEAD_SHA in the environment — see
@@ -33,30 +33,25 @@ function gh(args) {
   return execFileSync('gh', args, { encoding: 'utf-8' });
 }
 
-/** Splices `fenced` into `body`: replaces an existing fenced block in
- * place, or prepends one if none is present yet. */
+/** Appends the summary after the author's description, moving an existing
+ * summary block to the end if an earlier run placed it elsewhere. */
 function withFencedSection(body, fenced) {
-  const startIdx = body.indexOf(FENCE_START);
-  const endIdx = body.indexOf(FENCE_END);
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    return (
-      body.slice(0, startIdx) + fenced + body.slice(endIdx + FENCE_END.length)
-    );
-  }
-  return body.trim().length > 0 ? `${fenced}\n\n${body}` : fenced;
+  const description = removeFencedSection(body).trimEnd();
+  return description.trim().length > 0 ? `${description}\n\n${fenced}` : fenced;
 }
 
-/** Reverses `withFencedSection`'s prepend: drops an existing fenced block
- * (and the blank line that used to separate it from the rest) so a push
- * that removes all snapshot changes (e.g. a rebase or revert) doesn't
- * leave a stale summary behind. No-op if there's no fenced block. */
+/** Drops an existing summary and its separator when snapshot changes disappear.
+ * Supports both the old leading placement and the appended placement. */
 function removeFencedSection(body) {
   const startIdx = body.indexOf(FENCE_START);
   const endIdx = body.indexOf(FENCE_END);
   if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) return body;
   const before = body.slice(0, startIdx);
-  const after = body.slice(endIdx + FENCE_END.length).replace(/^\n+/, '');
-  return before + after;
+  const after = body.slice(endIdx + FENCE_END.length);
+  if (after.trim().length === 0) {
+    return before.replace(/\n{1,2}$/, '');
+  }
+  return before + after.replace(/^\n+/, '');
 }
 
 function main() {

@@ -594,7 +594,42 @@ const resourcesSidebar: SidebarsConfig[string] = [
   'toolhive/support',
 ];
 
+// Stable examples rendered by the real sidebar component for visual tests.
+// Product navigation changes should not require screenshot baseline updates.
+const themePreviewSidebar: SidebarsConfig[string] = [
+  { type: 'doc', id: 'theme-preview', label: 'Theme preview' },
+  {
+    type: 'category',
+    label: 'Expanded category',
+    collapsed: false,
+    items: [
+      {
+        type: 'link',
+        label: 'Code blocks',
+        href: '/theme-preview#code-blocks',
+      },
+      {
+        type: 'link',
+        label: 'Admonitions',
+        href: '/theme-preview#admonitions',
+      },
+    ],
+  },
+  {
+    type: 'category',
+    label: 'Collapsed category',
+    items: [{ type: 'link', label: 'Tables', href: '/theme-preview#tables' }],
+  },
+  {
+    type: 'link',
+    label: 'Enterprise example',
+    href: '/theme-preview#enterprise-constructs',
+    className: 'enterprise-only',
+  },
+];
+
 const sidebars: SidebarsConfig = {
+  themePreviewSidebar,
   platformSidebar,
   mcpSidebar,
   aiGatewaySidebar,
