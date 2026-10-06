@@ -172,55 +172,174 @@ thv run fetch \
 ToolHive validates all webhook configurations at startup and exits with an error
 if any are invalid, so configuration problems surface before the server starts.
 
-## Example: check selected fetch URLs before execution
+## Example: allow fetch requests to specific hosts
 
-The external
-[IsMalicious gateway filter](https://github.com/hexablob/ismalicious-gateway-filters)
-implements the validating webhook contract. It checks the original HTTP(S) URL
-argument of selected fetch tools before the tool call reaches the MCP server.
-Use this example when you want an external URL-reputation policy to decide
-whether to execute a fetch.
+This self-contained example allows the `fetch` tool to request HTTP(S) URLs on
+`example.com`. It denies other hosts, other tools, URLs with credentials or
+non-default ports, and malformed requests. The webhook checks the requested URL
+without fetching it.
 
-1. Deploy the service behind a TLS endpoint reachable from ToolHive. Supply
-   `ISMALICIOUS_API_KEY` and `ISMALICIOUS_API_SECRET` through your secret
-   manager. Set `ISMALICIOUS_FETCH_TOOLS` to a JSON map of tool names to their
-   URL argument, such as `{"fetch":"url"}`. Match the actual tool name and
-   argument.
-1. Set `ISMALICIOUS_WEBHOOK_SECRET` on the service. Mount the same secret as a
-   file readable by ToolHive. The receiver verifies the signature and rejects
-   timestamps outside a five-minute window.
-1. Save this validating webhook configuration:
+You need Python 3.10 or later, OpenSSL, and a container runtime supported by
+ToolHive. Run the commands in the same directory on your host machine.
 
-```yaml title="ismalicious-webhooks.yaml"
-validating:
-  - name: ismalicious-fetch-preflight
-    url: https://<FILTER_HOST>/toolhive
-    failure_policy: fail
-    timeout: 20s
-    hmac_secret_ref: /etc/toolhive/ismalicious-webhook-secret
+### Create the webhook service
+
+Save this Python standard-library service as `url_allowlist.py`:
+
+```python title="url_allowlist.py"
+import json
+import ssl
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
+
+ALLOWED_HOSTS = {"example.com"}
+# These methods let an MCP client initialize and discover the fetch tool.
+ALLOWED_METHODS = {"initialize", "notifications/initialized", "ping", "tools/list"}
+
+
+def allow_request(request):
+    if request.get("jsonrpc") != "2.0":
+        return False
+    method = request.get("method")
+    if method in ALLOWED_METHODS:
+        return True
+    if method != "tools/call":
+        return False
+    params = request.get("params")
+    if not isinstance(params, dict) or params.get("name") != "fetch":
+        return False
+    arguments = params.get("arguments")
+    if not isinstance(arguments, dict):
+        return False
+    url = arguments.get("url")
+    if not isinstance(url, str) or any(c.isspace() for c in url) or "\\" in url:
+        return False
+    try:
+        parsed = urlsplit(url)
+        return (
+            parsed.scheme in {"http", "https"}
+            and parsed.hostname in ALLOWED_HOSTS
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.port in {None, {"http": 80, "https": 443}[parsed.scheme]}
+        )
+    except ValueError:
+        return False
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path != "/validate":
+            self.send_error(404)
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= 1024 * 1024:
+                raise ValueError("Invalid body size")
+            payload = json.loads(self.rfile.read(size))
+            if (
+                not isinstance(payload, dict)
+                or payload.get("version") != "v0.1.0"
+                or not isinstance(payload.get("uid"), str)
+                or not payload["uid"]
+                or not isinstance(payload.get("mcp_request"), dict)
+            ):
+                raise ValueError("Invalid webhook request")
+            allowed = allow_request(payload["mcp_request"])
+        except (ValueError, TypeError):
+            self.send_error(422)
+            return
+        response = {
+            "version": payload["version"],
+            "uid": payload["uid"],
+            "allowed": allowed,
+        }
+        if not allowed:
+            response["reason"] = "url_allowlist_denied"
+        body = json.dumps(response).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+if __name__ == "__main__":
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain("webhook.crt", "webhook.key")
+    server = ThreadingHTTPServer(("127.0.0.1", 9443), Handler)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    server.serve_forever()
 ```
 
-4. Run the fetch server with the configuration:
+### Start the service with HTTPS
+
+Create a one-day certificate for the local webhook. ToolHive will trust this
+certificate only through the webhook's `ca_bundle_path`; you don't need to add
+it to your system's trust store.
 
 ```bash
-thv run <FETCH_SERVER_IMAGE> --webhook-config ismalicious-webhooks.yaml
+openssl req -x509 -newkey rsa:2048 -noenc -days 1 \
+  -keyout webhook.key -out webhook.crt \
+  -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1"
+python3 url_allowlist.py
 ```
 
-The service echoes the request's `uid` and `version`, admits a valid `allow`
-decision, and denies `warn`, `block`, an invalid decision, or an API failure.
-Unselected tools are admitted without a reputation check. Configure
-`failure_policy: fail` so connection failures to the service also deny the
-request. Keep TLS verification enabled; use `ca_bundle_path` for a private CA.
+Keep this terminal open. The service listens only on the host's loopback
+interface. For a shared deployment, use your own HTTPS endpoint and authenticate
+requests, for example with HMAC signing or mutual TLS.
 
-This example checks request arguments. It does not inspect returned tool
-content, streamed responses, or tool descriptions. A URL-reputation `allow`
-decision can include unknown reputation and does not prove the destination
-benign. The reputation service checks the URL without fetching it.
+### Connect ToolHive to the webhook
 
-The external repository includes tests with ToolHive's signing client and
-validating middleware. Synthetic decisions verify that denied requests do not
-reach the next handler; they do not measure reputation accuracy. Test the
-selected fetch tool and your deployed webhook configuration before use.
+In a second terminal in the same directory, create the webhook configuration.
+The absolute CA path lets the ToolHive proxy find the certificate when it runs
+in the background:
+
+```bash
+cat > allowlist-webhooks.yaml <<EOF
+validating:
+  - name: fetch-url-allowlist
+    url: https://127.0.0.1:9443/validate
+    failure_policy: fail
+    timeout: 5s
+    tls_config:
+      ca_bundle_path: ${PWD}/webhook.crt
+EOF
+thv run fetch --name allowlist-fetch --webhook-config allowlist-webhooks.yaml
+```
+
+`failure_policy: fail` also denies requests if the webhook becomes unavailable.
+TLS certificate verification remains enabled.
+
+### Try an allowed and a denied request
+
+Call the allowed host:
+
+```bash
+thv mcp call fetch --server allowlist-fetch \
+  --args '{"url":"https://example.com"}'
+```
+
+The fetch tool returns content from `example.com`. Call a host outside the
+allowlist:
+
+```bash
+thv mcp call fetch --server allowlist-fetch \
+  --args '{"url":"https://example.org"}'
+```
+
+ToolHive returns `Request denied by policy` and the command exits with a
+non-zero status. The denied call never reaches the fetch server. To allow
+additional hosts, add their exact names to `ALLOWED_HOSTS` and restart the
+Python service.
+
+The policy checks the initial URL argument. Redirect destinations, DNS changes,
+and returned content require separate controls, such as an egress policy on the
+fetch server. An allowed host is not a guarantee that its content is safe.
+
+When you're finished, run `thv rm allowlist-fetch` and stop the Python service
+with Ctrl+C. Delete the local certificate and private key if you no longer need
+them.
 
 ## Failure policies
 
