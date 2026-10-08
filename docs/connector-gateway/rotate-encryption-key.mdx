@@ -21,16 +21,47 @@ Adjust the names if yours differ.
 ## Prerequisites
 
 - **The KEK in a Secret you manage**, referenced by
-  `connector-gateway.kek.existingSecret`. If you set `kek.value` instead, put
-  the same version maps shown below, base64-encoded, into `kek.value`. If you
-  set `kek.generate: true`, the chart preserves whatever the
-  `stacklok-enterprise-connector-gateway-kek` Secret holds across upgrades, so
-  edit that Secret in place.
+  `connector-gateway.kek.existingSecret`. The procedures on this page edit that
+  Secret directly. If the chart manages the key instead, through `kek.value` or
+  `kek.generate`, first
+  [move it into your own Secret](#move-a-chart-managed-key-into-your-own-secret).
 - **`kubectl`, `helm`, `openssl`, and `jq`**, with access to the release
   namespace.
 - **A secure place to keep key material.** The commands below write keys to
   local files. Store them according to your secrets-handling policy and delete
   the local copies when you're done.
+
+### Move a chart-managed key into your own Secret
+
+The chart accepts exactly one key source, so switching to `existingSecret` means
+copying the key into a new Secret and removing the old setting in the same
+upgrade. The key bytes don't change, so stored credentials stay readable.
+
+1. Copy the key from the chart-managed Secret into a new Secret:
+
+   ```bash
+   kubectl get secret stacklok-enterprise-connector-gateway-kek \
+     --namespace stacklok-system \
+     --output jsonpath='{.data.kek}' | base64 -d > kek-current
+   kubectl create secret generic connector-gateway-kek \
+     --namespace stacklok-system \
+     --from-file=kek=./kek-current
+   ```
+
+2. In your values file, remove `kek.value`, `kek.generate`, and
+   `kek.allowGenerateOnUpgrade`, and reference the new Secret:
+
+   ```yaml title="values.yaml"
+   connector-gateway:
+     kek:
+       existingSecret: 'connector-gateway-kek'
+   ```
+
+3. Upgrade the release and wait for the rollout to complete, using the commands
+   in [Add the new version](#add-the-new-version).
+
+The chart leaves `stacklok-enterprise-connector-gateway-kek` in place. Once the
+rollout completes, delete it so the namespace holds a single copy of the key.
 
 ## How key versions work
 
@@ -179,11 +210,16 @@ the version keeps that wave small.
 1. **Confirm the version is inactive.** `activeVersion` names a newer version,
    and that rollout has completed on every replica.
 
-2. **Wait for stored tokens to turn over.** Every token refresh reseals the
-   credential under the active version, and a stored upstream token expires 30
-   days after its access token does. Waiting at least 30 days after the
-   activation rollout leaves only credentials with no expiry, such as clients
-   registered with a non-expiring client secret, under the old version.
+2. **Wait for stored credentials to turn over.** Every token refresh reseals the
+   credential under the active version. A stored upstream token that isn't
+   refreshed expires 30 days after its access token does, so a token whose
+   access token outlives the activation stays under the old version for longer
+   than 30 days. A dynamic client registration stays until its client secret
+   expires, and one with a non-expiring secret never does. Wait at least 30 days
+   after the activation rollout, and longer if your providers issue long-lived
+   access tokens or client secrets. Waiting reduces the reconnect wave but
+   doesn't guarantee every credential has moved, so expect some reconnects after
+   removal.
 
 3. **Remove the version.** Export the current version map as in
    [Add the new version](#add-the-new-version), delete the old entry, and apply
@@ -232,8 +268,10 @@ Treat the KEK Secret as append-only: add higher versions, never change the bytes
 of an existing version, and remove a version only through the retirement steps
 above. Several routine operations can break this rule without warning:
 
-- `helm rollback` to a revision whose values carried an older `kek.value` or
-  `activeVersion`.
+- `helm rollback` to a revision from before you moved to `existingSecret`, whose
+  `kek.value` carried older key material. Rolling back `activeVersion` alone is
+  safe, as described in [Roll back a rotation](#roll-back-a-rotation); reverting
+  the key material is what drops versions.
 - An Argo CD sync to an earlier Git revision of the Secret or of the
   `ExternalSecret` that populates it.
 - A Terraform apply of an earlier configuration, or any change that destroys and
@@ -287,10 +325,15 @@ backup. Restore the original bytes for that version. Don't delete the canary to
 get past the check, because the gateway would then accept the wrong key and fail
 to open every credential sealed under that version.
 
-If the error instead reads
-`kek canary: verified but could not advance to the current version`, the key is
-correct and the gateway couldn't write to Redis. Check Redis connectivity and
-permissions.
+</details>
+
+<details>
+<summary>Replicas log a `kek canary: verified but failed to advance` warning</summary>
+
+The replica verified every key version and started normally, but it couldn't
+write an updated canary to Redis after a rotation. The next startup retries the
+write. Check that the gateway can write to Redis: connectivity, the Redis user's
+permissions, and memory limits.
 
 </details>
 
