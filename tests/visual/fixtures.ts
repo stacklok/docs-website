@@ -124,7 +124,8 @@ export async function captureElementBothThemes(
   page: Page,
   element: Locator,
   testInfo: TestInfo,
-  name: string
+  name: string,
+  options: { mask?: Locator[] } = {}
 ): Promise<void> {
   for (const scheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme: scheme });
@@ -133,7 +134,11 @@ export async function captureElementBothThemes(
     const pngName = `${slugifySnapshotName(name)}-${scheme}.png`;
     const pngPath = testInfo.snapshotPath(pngName);
     const before = await fileMtimeMs(pngPath);
-    await expect(element).toHaveScreenshot(pngName, { scale: 'device' });
+    await expect(element).toHaveScreenshot(pngName, {
+      scale: 'device',
+      mask: options.mask,
+      maskColor: scheme === 'dark' ? '#282a36' : '#f6f8fa',
+    });
     const after = await fileMtimeMs(pngPath);
     if (after !== before) {
       await writeSnapshotMetadata(page, testInfo, pngName);

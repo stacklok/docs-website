@@ -22,6 +22,8 @@ const NAV_PAGES: Array<{ section: string; path: string }> = [
 async function gotoSuccessful(page: Page, path: string) {
   const response = await page.goto(path);
   expect(response?.ok()).toBe(true);
+  // Wait for hydration before interacting with React-controlled details.
+  await page.waitForLoadState('networkidle');
 }
 
 test('home page', async ({ page }, testInfo) => {
@@ -42,16 +44,11 @@ test('theme preview page', async ({ page }, testInfo) => {
 });
 
 for (const { section, path } of NAV_PAGES) {
-  test(`nav page - ${section}`, async ({ page }, testInfo) => {
+  test(`navigation loads - ${section}`, async ({ page }) => {
     await gotoSuccessful(page, path);
     const sidebarViewport = page.locator('.theme-doc-sidebar-container > div');
     await expect(sidebarViewport).toBeVisible();
-    await captureElementBothThemes(
-      page,
-      sidebarViewport,
-      testInfo,
-      `Nav page - ${section}`
-    );
+    await expect(sidebarViewport.getByRole('link').first()).toBeVisible();
   });
 }
 
@@ -70,8 +67,9 @@ test('MCP guide - context7 metadata expanded', async ({ page }, testInfo) => {
   await expect(codeBlock).not.toContainText('Error fetching data for');
   await expect(codeBlock).toContainText('Name: io.github.stacklok/context7');
 
-  await captureBothThemes(
+  await captureElementBothThemes(
     page,
+    page.locator('main'),
     testInfo,
     'MCP guide - context7 metadata expanded',
     { mask: [codeBlock] }

@@ -367,6 +367,7 @@ const platformSidebar: SidebarsConfig[string] = [
       'platform/enterprise-platform/configure-connector-gateway',
       'platform/enterprise-platform/roll-out-gateway-clients',
       'platform/enterprise-platform/api-reference',
+      'platform/enterprise-platform/enterprise-manager-api',
     ],
   },
 
@@ -494,6 +495,13 @@ const connectorGatewaySidebar: SidebarsConfig[string] = [
   'connector-gateway/telemetry',
   'connector-gateway/forward-audit-logs',
   'connector-gateway/rotate-encryption-key',
+
+  {
+    type: 'category',
+    label: 'Reference',
+    collapsed: false,
+    items: ['connector-gateway/api-reference'],
+  },
 ];
 
 const aiGatewaySidebar: SidebarsConfig[string] = [
@@ -510,6 +518,13 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
   'ai-gateway/pci-pii-controls',
   'ai-gateway/forward-audit-logs',
   'ai-gateway/telemetry',
+
+  {
+    type: 'category',
+    label: 'Reference',
+    collapsed: false,
+    items: ['ai-gateway/api-reference'],
+  },
 ];
 
 const resourcesSidebar: SidebarsConfig[string] = [
@@ -595,7 +610,42 @@ const resourcesSidebar: SidebarsConfig[string] = [
   'toolhive/support',
 ];
 
+// Stable examples rendered by the real sidebar component for visual tests.
+// Product navigation changes should not require screenshot baseline updates.
+const themePreviewSidebar: SidebarsConfig[string] = [
+  { type: 'doc', id: 'theme-preview', label: 'Theme preview' },
+  {
+    type: 'category',
+    label: 'Expanded category',
+    collapsed: false,
+    items: [
+      {
+        type: 'link',
+        label: 'Code blocks',
+        href: '/theme-preview#code-blocks',
+      },
+      {
+        type: 'link',
+        label: 'Admonitions',
+        href: '/theme-preview#admonitions',
+      },
+    ],
+  },
+  {
+    type: 'category',
+    label: 'Collapsed category',
+    items: [{ type: 'link', label: 'Tables', href: '/theme-preview#tables' }],
+  },
+  {
+    type: 'link',
+    label: 'Enterprise example',
+    href: '/theme-preview#enterprise-constructs',
+    className: 'enterprise-only',
+  },
+];
+
 const sidebars: SidebarsConfig = {
+  themePreviewSidebar,
   platformSidebar,
   mcpSidebar,
   aiGatewaySidebar,
