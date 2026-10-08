@@ -494,6 +494,7 @@ const connectorGatewaySidebar: SidebarsConfig[string] = [
   'connector-gateway/tool-usage',
   'connector-gateway/telemetry',
   'connector-gateway/forward-audit-logs',
+  'connector-gateway/rotate-encryption-key',
 
   {
     type: 'category',

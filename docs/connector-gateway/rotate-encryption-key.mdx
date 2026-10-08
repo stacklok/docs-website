@@ -1,0 +1,359 @@
+---
+title: Rotate the Connector Gateway encryption key
+sidebar_label: Key rotation
+description:
+  Rotate the key-encryption key that seals stored connector tokens without
+  forcing users to reconnect, then retire the old key version safely.
+---
+
+The Connector Gateway seals the upstream OAuth tokens and dynamic client
+registrations it stores in Redis with a key-encryption key (KEK). To rotate the
+KEK, you add a new key version to the KEK Secret, roll the gateway so every
+replica can read it, and then switch new writes to it. Old versions stay in the
+Secret, so credentials sealed under them remain readable and users don't have to
+reconnect their connectors.
+
+This page uses the `stacklok-enterprise` release name, the `stacklok-system`
+namespace, and the `connector-gateway-kek` Secret from
+[Configure the Connector Gateway](../platform/enterprise-platform/configure-connector-gateway.mdx).
+Adjust the names if yours differ.
+
+## Prerequisites
+
+- **The KEK in a Secret you manage**, referenced by
+  `connector-gateway.kek.existingSecret`. The procedures on this page edit that
+  Secret directly. If the chart manages the key instead, through `kek.value` or
+  `kek.generate`, first
+  [move it into your own Secret](#move-a-chart-managed-key-into-your-own-secret).
+- **`kubectl`, `helm`, `openssl`, and `jq`**, with access to the release
+  namespace.
+- **A secure place to keep key material.** The commands below write keys to
+  local files. Store them according to your secrets-handling policy and delete
+  the local copies when you're done.
+
+### Move a chart-managed key into your own Secret
+
+The chart accepts exactly one key source, so switching to `existingSecret` means
+copying the key into a new Secret and removing the old setting in the same
+upgrade. The key bytes don't change, so stored credentials stay readable.
+
+1. Copy the key from the chart-managed Secret into a new Secret:
+
+   ```bash
+   kubectl get secret stacklok-enterprise-connector-gateway-kek \
+     --namespace stacklok-system \
+     --output jsonpath='{.data.kek}' | base64 -d > kek-current
+   kubectl create secret generic connector-gateway-kek \
+     --namespace stacklok-system \
+     --from-file=kek=./kek-current
+   ```
+
+2. In your values file, remove `kek.value`, `kek.generate`, and
+   `kek.allowGenerateOnUpgrade`, and reference the new Secret:
+
+   ```yaml title="values.yaml"
+   connector-gateway:
+     kek:
+       existingSecret: 'connector-gateway-kek'
+   ```
+
+3. Upgrade the release and wait for the rollout to complete, using the commands
+   in [Add the new version](#add-the-new-version).
+
+The chart leaves `stacklok-enterprise-connector-gateway-kek` in place. Once the
+rollout completes, delete it so the namespace holds a single copy of the key.
+
+## How key versions work
+
+The KEK Secret's `kek` entry holds either a single 32-byte key, which the
+gateway treats as version 1, or a JSON _version map_ that maps positive integer
+versions to base64-encoded 32-byte keys:
+
+```json
+{ "1": "<BASE64_KEY_1>", "2": "<BASE64_KEY_2>" }
+```
+
+The gateway reads every version in the map and can open credentials sealed under
+any of them. It seals new credentials under the _active version_, which you pin
+with `connector-gateway.kek.activeVersion`. When the pin is unset, the active
+version is the highest version in the map.
+
+Each replica reads the Secret once at startup, so a change to the Secret or to
+`activeVersion` reaches a replica only when it restarts. Rotation therefore
+takes two rolling restarts: the first makes the new version readable on every
+replica, and the second makes it active. If you made the new version active in a
+single rollout, an updated replica could seal a credential that a replica still
+running the old keyring can't open.
+
+## Rotate the key
+
+### Add the new version
+
+1. Export the current key material:
+
+   ```bash
+   kubectl get secret connector-gateway-kek \
+     --namespace stacklok-system \
+     --output jsonpath='{.data.kek}' | base64 -d > kek-current
+   ```
+
+2. Build the current version map. If `wc -c < kek-current` prints `32`, the
+   Secret holds a single key; wrap it as version 1 without changing its bytes:
+
+   ```bash
+   jq -n --arg k "$(base64 < kek-current | tr -d '\n')" '{"1": $k}' > keyring.json
+   ```
+
+   Otherwise, the Secret already holds a version map:
+
+   ```bash
+   cp kek-current keyring.json
+   ```
+
+3. Add a new key one version higher than the current highest. For example, to
+   add version 2:
+
+   ```bash
+   jq --arg k "$(openssl rand -base64 32)" '. + {"2": $k}' keyring.json > keyring-new.json
+   ```
+
+4. Replace the Secret's contents with the new map:
+
+   ```bash
+   kubectl create secret generic connector-gateway-kek \
+     --namespace stacklok-system \
+     --from-file=kek=./keyring-new.json \
+     --dry-run=client --output yaml | kubectl apply -f -
+   ```
+
+   If External Secrets Operator or another tool syncs this Secret from a secrets
+   manager, write the new map to the source instead, and confirm the sync has
+   updated the Secret in the cluster before you continue.
+
+5. In your values file, pin the active version to the _current_ version, and set
+   `keyringGeneration` to a new value:
+
+   ```yaml title="values.yaml"
+   connector-gateway:
+     kek:
+       existingSecret: 'connector-gateway-kek'
+       # highlight-start
+       activeVersion: '1'
+       keyringGeneration: '2'
+       # highlight-end
+   ```
+
+   The pin keeps new writes on version 1 while replicas restart. Without it,
+   each restarted replica would seal under version 2 immediately. The chart
+   restarts the gateway only when a KEK-related value changes, and editing the
+   Secret changes none of them, so change `keyringGeneration` on every rotation
+   to force the rollout. Any new string works; using the new version number
+   keeps it easy to track.
+
+6. Upgrade the release and wait for the rollout to finish:
+
+   ```bash
+   helm upgrade stacklok-enterprise \
+     oci://oci.stacklok.com/stacklok-enterprise/<CHANNEL>/stacklok-enterprise-platform \
+     --version <VERSION> \
+     --namespace stacklok-system \
+     --values values.yaml
+
+   kubectl rollout status deployment/stacklok-enterprise-connector-gateway \
+     --namespace stacklok-system
+   ```
+
+   Continue only when the rollout completes and no pod from the previous
+   ReplicaSet is still running. On this rollout, the first replica to start logs
+   a `no KEK canary found` warning for version 2, which is expected. See
+   [Startup checks](#startup-checks).
+
+### Activate the new version
+
+Set `activeVersion` to the new version, then upgrade the release again and wait
+for the rollout:
+
+```yaml title="values.yaml"
+connector-gateway:
+  kek:
+    existingSecret: 'connector-gateway-kek'
+    # highlight-next-line
+    activeVersion: '2'
+    keyringGeneration: '2'
+```
+
+Changing `activeVersion` restarts the gateway on its own. Once the rollout
+completes, new credentials are sealed under version 2, and credentials sealed
+under version 1 stay readable. Keep `activeVersion` pinned explicitly from here
+on, rather than unsetting it.
+
+Keep version 1 in the Secret until you [retire it](#retire-an-old-version).
+Credentials move to version 2 gradually, as users sign in and the gateway
+refreshes their tokens.
+
+## Roll back a rotation
+
+To make an earlier version active again, set `activeVersion` back to it and
+upgrade the release. Because every version is still in the Secret, credentials
+sealed under either version stay readable and no one has to reconnect. This
+works only while the version you return to is still in the Secret, so don't
+retire a version you might need to roll back to.
+
+## Retire an old version
+
+Removing a version from the Secret makes every credential still sealed under it
+unreadable. The gateway treats those credentials as missing and recovers them:
+users reconnect the affected connectors, and the gateway re-registers clients
+for providers that use dynamic client registration. Waiting before you remove
+the version keeps that wave small.
+
+1. **Confirm the version is inactive.** `activeVersion` names a newer version,
+   and that rollout has completed on every replica.
+
+2. **Wait for stored credentials to turn over.** Every token refresh reseals the
+   credential under the active version. A stored upstream token that isn't
+   refreshed expires 30 days after its access token does, so a token whose
+   access token outlives the activation stays under the old version for longer
+   than 30 days. A dynamic client registration stays until its client secret
+   expires, and one with a non-expiring secret never does. Wait at least 30 days
+   after the activation rollout, and longer if your providers issue long-lived
+   access tokens or client secrets. Waiting reduces the reconnect wave but
+   doesn't guarantee every credential has moved, so expect some reconnects after
+   removal.
+
+3. **Remove the version.** Export the current version map as in
+   [Add the new version](#add-the-new-version), delete the old entry, and apply
+   the result. For example, to remove version 1:
+
+   ```bash
+   kubectl get secret connector-gateway-kek \
+     --namespace stacklok-system \
+     --output jsonpath='{.data.kek}' | base64 -d > keyring.json
+   jq 'del(."1")' keyring.json > keyring-retired.json
+   kubectl create secret generic connector-gateway-kek \
+     --namespace stacklok-system \
+     --from-file=kek=./keyring-retired.json \
+     --dry-run=client --output yaml | kubectl apply -f -
+   ```
+
+4. **Roll the gateway.** Change `keyringGeneration` to a new value, upgrade the
+   release, and wait for the rollout to complete. Replicas that haven't
+   restarted yet keep reading the removed version until they do.
+
+5. **Watch the recovery.** The `kek_unsealable_reads_total` counter increments
+   each time the gateway reads a credential sealed under a version that's no
+   longer in the Secret, labeled with that `version`. Its rate shows the
+   remaining reconnect wave draining. The counter tracks read events, so it
+   stays at zero while the version is still present and can't tell you in
+   advance how many credentials still use it. Export it with the gateway's
+   [metrics](./telemetry.mdx).
+
+When a removed version still seals a dynamic client registration, the gateway
+registers a new client with that provider on startup. This has two effects to
+plan for:
+
+- **Every user of that connector reconnects**, not only those whose tokens were
+  sealed under the removed version, because refresh tokens are bound to the
+  client they were issued to. Schedule the removal for a window where that's
+  acceptable.
+- **The old client stays registered at the provider.** The gateway logs a
+  warning with the `replaced_client_id` field so you can find and delete it.
+
+Replicas coordinate through Redis, so the gateway registers one new client per
+provider regardless of the replica count.
+
+## Keep the KEK Secret append-only
+
+Treat the KEK Secret as append-only: add higher versions, never change the bytes
+of an existing version, and remove a version only through the retirement steps
+above. Several routine operations can break this rule without warning:
+
+- `helm rollback` to a revision from before you moved to `existingSecret`, whose
+  `kek.value` carried older key material. Rolling back `activeVersion` alone is
+  safe, as described in [Roll back a rotation](#roll-back-a-rotation); reverting
+  the key material is what drops versions.
+- An Argo CD sync to an earlier Git revision of the Secret or of the
+  `ExternalSecret` that populates it.
+- A Terraform apply of an earlier configuration, or any change that destroys and
+  recreates the secret resource, such as `terraform taint`.
+
+If a rollback drops a version that still seals credentials, the gateway starts
+normally and those users reconnect, as in a retirement without the waiting
+period. If it drops the active version, every replica refuses to start. If you
+manage the key with Terraform, set `lifecycle.prevent_destroy` on the secret
+resource, and prevent in-place edits to the key value with
+`lifecycle.ignore_changes` or an equivalent write-once rule.
+
+## Startup checks
+
+The gateway verifies its keyring against a _canary_ in Redis before it serves
+traffic. For each key version, the first replica to start with that version
+seals a known value under it and stores the result. Every later startup opens
+those values to confirm each version still holds the same key.
+
+A replica logs `no KEK canary found; establishing a new baseline` at warning
+level when it seeds a canary. That's expected on a first install and on the
+first rollout after you add a version. On an install that has already stored
+credentials, an unexpected occurrence means the canary was deleted or evicted
+from Redis, so the gateway can no longer detect a wrong key for that version.
+Check your Redis eviction policy.
+
+## Next steps
+
+- [Collect Connector Gateway telemetry](./telemetry.mdx) to export
+  `kek_unsealable_reads_total` before you retire a version.
+- [Forward Connector Gateway audit logs](./forward-audit-logs.mdx) to keep a
+  record of every tool call.
+
+## Related information
+
+- [Configure the Connector Gateway](../platform/enterprise-platform/configure-connector-gateway.mdx) -
+  creating the KEK Secret and the other gateway secrets
+- [Connector authentication](./connector-authentication.mdx) - how users connect
+  to connectors that use OAuth
+
+## Troubleshooting
+
+<details>
+<summary>Replicas refuse to start with a `kek canary` error</summary>
+
+The error wraps
+`kek canary: cannot unwrap under the KEK version it is sealed under`. A version
+in the mounted Secret holds different bytes than the version that sealed its
+canary: the Secret was regenerated, overwritten, or restored from the wrong
+backup. Restore the original bytes for that version. Don't delete the canary to
+get past the check, because the gateway would then accept the wrong key and fail
+to open every credential sealed under that version.
+
+</details>
+
+<details>
+<summary>Replicas log a `kek canary: verified but failed to advance` warning</summary>
+
+The replica verified every key version and started normally, but it couldn't
+write an updated canary to Redis after a rotation. The next startup retries the
+write. Check that the gateway can write to Redis: connectivity, the Redis user's
+permissions, and memory limits.
+
+</details>
+
+<details>
+<summary>Replicas refuse to start with a `kek retirement guard` error</summary>
+
+`kek.activeVersion` names a version the mounted Secret doesn't hold, usually
+because the active version was removed or a rollback reverted the Secret. Either
+restore that version to the Secret, or set `activeVersion` to a version the
+Secret holds, then upgrade the release.
+
+</details>
+
+<details>
+<summary>Reads fail with a credential integrity error</summary>
+
+The credential's version is present in the Secret, but its key doesn't open the
+credential, which means that version's bytes changed. The gateway keeps the
+credential and doesn't prompt the user to reconnect. Restore the original bytes
+for that version to make every affected credential readable again. Removing the
+version would discard those credentials instead.
+
+</details>
