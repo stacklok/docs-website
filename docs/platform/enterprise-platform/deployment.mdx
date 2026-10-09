@@ -614,13 +614,30 @@ enterprise-manager:
           app.kubernetes.io/name: connector-gateway
 ```
 
+For GitOps, replace `generate: true` with `existingSecret` naming a Secret you
+create. The Secret's `kek` key holds a JSON map from version number to a
+base64-encoded 32-byte key, and the Enterprise Manager uses the highest version:
+
+```bash
+kubectl create secret generic enterprise-manager-kek \
+  --namespace stacklok-system \
+  --from-literal=kek="{\"1\":\"$(openssl rand -base64 32)\"}"
+```
+
 TLS is not optional here: the directory refuses a non-TLS peer at call time, so
 a key-encrypted install served over the cleartext port renders cleanly and then
-fails every credential resolution. Point callers at `grpc.tls.port`. If a
-service mesh or cluster-wide policy already restricts the gRPC ports, set
-`directory.kek.externallyManagedNetworkPolicy=true` to acknowledge that instead
-of defining a policy here; there is no equivalent escape for TLS, because a mesh
-terminates it in the sidecar and the peer still arrives without it.
+fails every credential resolution. Point callers at `grpc.tls.port`.
+
+With `directory.enabled: true`, the chart also renders a
+`<RELEASE_NAME>-enterprise-manager-directory` NetworkPolicy. It admits Connector
+Gateway pods from the release namespace on both gRPC ports, and the AI Gateway's
+API key service on the cleartext port. `grpc.networkPolicy` adds a second policy
+that restricts both gRPC ports to `allowedClientSelector`. If the directory
+policy, a service mesh, or a cluster-wide policy already restricts the gRPC
+ports, set `directory.kek.externallyManagedNetworkPolicy: true` to acknowledge
+that instead of enabling `grpc.networkPolicy`. There is no equivalent escape for
+TLS, because a mesh terminates it in the sidecar and the peer still arrives
+without it.
 
 #### SCIM identity providers
 
@@ -687,7 +704,11 @@ global:
     existingSecret: 'redis-auth'
     # Defaults to redis-password when omitted.
     existingSecretKey: 'redis-password'
+    # Optional ACL username. Omit it to authenticate with the password only.
+    username: '<REDIS_USERNAME>'
 ```
+
+The chart refuses to render when `username` is set without `existingSecret`.
 
 The ToolHive operator also accepts
 `toolhive-operator.upstream.operator.defaultRedis.existingSecret` and

@@ -39,7 +39,10 @@ embed those names, so adjust them if yours differ.
   chart doesn't deploy an instance. Configure it once under `global.redis`, as
   described in
   [Global Redis/Valkey defaults](./deployment.mdx#global-redisvalkey-defaults),
-  and the gateway inherits the host, port, and password Secret.
+  and the gateway inherits the host, port, username, password Secret, and TLS
+  setting. To connect as a least-privilege ACL user, set `global.redis.username`
+  and limit that user to keys matching `thv:auth:*` (authorization server
+  sessions) and `connector-gateway:*` (tool call recording and key checks).
 
 ## Prepare the gateway's secrets
 
@@ -98,6 +101,11 @@ kubectl create secret generic enterprise-manager-grpc-ca \
   --from-file=ca.crt=./ca.crt
 ```
 
+A copied Secret goes stale when cert-manager rotates the CA. For GitOps, keep
+the copy in sync automatically instead, for example with a trust-manager
+`Bundle` that targets a Secret, or issue the Enterprise Manager's certificate
+from a cert-manager `CA` Issuer whose CA you manage and distribute yourself.
+
 ## Enable the Connector Gateway
 
 Add the following to the values file you use for the platform. Merge the
@@ -119,6 +127,7 @@ global:
 
 connector-gateway:
   vmcpConfig:
+    groupRef: 'connector-gateway'
     incomingAuth:
       type: oidc
       oidc:
@@ -129,8 +138,16 @@ connector-gateway:
       schema_version: 'v0.1.0'
       allowed_audiences:
         - 'https://<GATEWAY_HOST>/gw/mcp'
+      baseline_client_scopes:
+        - openid
+        - offline_access
       storage:
         type: redis
+    controlPlane:
+      incomingAuth:
+        oidc:
+          issuer: 'https://idp.example.com'
+          audience: '<CONSOLE_TOKEN_AUDIENCE>'
     directory:
       addr: 'stacklok-enterprise-enterprise-manager.stacklok-system.svc.cluster.local:9443'
   directoryTLS:
@@ -148,8 +165,10 @@ connector-gateway:
 | `global.stacklok.connectorGateway.enabled` | Deploy the Connector Gateway                                                              |
 | `global.stacklok.connectorGatewayId`       | Identify this gateway to the Enterprise Manager and console                               |
 | `global.stacklok.authServerIssuer`         | Set the gateway's public authorization server URL                                         |
+| `vmcpConfig.groupRef`                      | Name the gateway in its status and logs. Required; any non-empty value works              |
 | `vmcpConfig.incomingAuth`                  | Require tokens from the gateway's own authorization server on the MCP endpoint            |
 | `enterpriseConfig.authServer`              | Configure the embedded authorization server and its Redis storage                         |
+| `enterpriseConfig.controlPlane`            | Accept the corporate tokens the console sends to the gateway's REST API                   |
 | `enterpriseConfig.directory.addr`          | Point the gateway at the Enterprise Manager's TLS gRPC port                               |
 | `directoryTLS`                             | Mount the Enterprise Manager CA bundle and the gateway's ServiceAccount token             |
 | `kek`, `authServerKeys`                    | Reference the Secrets from [Prepare the gateway's secrets](#prepare-the-gateways-secrets) |
@@ -173,6 +192,19 @@ and list the audience in `allowed_audiences` exactly as it appears in
 `incomingAuth.oidc.audience`. The gateway compares these strings exactly and
 refuses to start when they disagree.
 
+`vmcpConfig.groupRef` labels the gateway in its status and logs. The gateway
+refuses to start while it's empty. It reads its backends from the Enterprise
+Manager, so no `MCPGroup` by that name needs to exist.
+
+`baseline_client_scopes` adds `openid` and `offline_access` to every client that
+registers through dynamic client registration. MCP clients such as Claude Code,
+Cursor, and VS Code register with `openid` and then request `offline_access`
+when they sign in. Without the baseline, the authorization server rejects that
+request with `invalid_scope` and the client stays at "needs authentication."
+Each baseline scope must also be in the authorization server's supported scopes
+(`openid`, `profile`, `email`, and `offline_access` by default), or the gateway
+refuses to start.
+
 :::note[Two different issuers]
 
 `global.stacklok.primaryIdp.issuer` identifies the corporate identity provider.
@@ -187,13 +219,42 @@ loads its identity providers from the Enterprise Manager: your corporate
 identity provider from `global.stacklok.primaryIdp`, plus the connector identity
 providers that admins register in the Enterprise Manager.
 
-By default, the Enterprise Manager identifies users by the `sub` claim in your
-corporate identity provider's tokens. If your provider identifies users with a
-different claim, such as `uid` in Okta, add an
-`enterprise-manager.directory.issuers` entry whose `issuer_url` matches
-`global.stacklok.primaryIdp.issuer` exactly, and set `binding_claim`:
+### Accept console tokens on the REST API
+
+The console calls the gateway's REST API with the user's corporate identity
+provider access token. `enterpriseConfig.controlPlane.incomingAuth.oidc`
+configures the validator that accepts those tokens. Without it, the REST API
+accepts only tokens from the gateway's own authorization server, and the
+console's **Connectors** pages fail with `401`.
+
+Set `issuer` to `global.stacklok.primaryIdp.issuer`; the gateway refuses to
+start if it doesn't match an identity provider it signs users in with. Set
+`audience` to the exact `aud` value of the access tokens the console sends. To
+find it, decode a console token as shown in
+[Configure platform identity](./configure-identity.mdx). Prefer an audience that
+only Stacklok components accept over a shared default such as Okta's
+`api://default`, which would let tokens minted for unrelated applications reach
+the gateway. The token must be a JWT: opaque access tokens, such as those from
+Okta's org authorization server, are rejected with `401`. To fetch signing keys
+from a URL other than the issuer's discovery document, also set `jwksUrl`.
+
+### Identify users by a claim other than `sub`
+
+By default, the gateway and the Enterprise Manager identify users by the `sub`
+claim in your corporate identity provider's tokens. If your provider identifies
+users with a different claim, such as `uid` in Okta, configure it on both sides.
+Set `global.stacklok.primaryIdp.subjectClaim`, which the gateway uses at
+sign-in, and add an `enterprise-manager.directory.issuers` entry whose
+`issuer_url` matches `global.stacklok.primaryIdp.issuer` exactly, with the same
+claim in `binding_claim`:
 
 ```yaml title="values.yaml"
+global:
+  stacklok:
+    primaryIdp:
+      # issuer and client settings from "Configure identity" stay here.
+      subjectClaim: 'uid'
+
 enterprise-manager:
   directory:
     issuers:
@@ -203,7 +264,17 @@ enterprise-manager:
         binding_claim: 'uid'
 ```
 
-The same entry configures SCIM provisioning for that provider. See
+The two values must match. When they differ, identity resolution fails and every
+user is rejected with `401`.
+
+The gateway reads the claim from the **ID token**, and it must be a top-level
+string claim that also appears on refreshed ID tokens. Okta adds `uid` to access
+tokens from a custom authorization server, but not to ID tokens. In Okta, add a
+`uid` claim with the value `user.id` and the token type **ID Token**. Choose the
+claim before users sign in, because it becomes each user's stable identity in
+the directory.
+
+The same `issuers` entry configures SCIM provisioning for that provider. See
 [SCIM identity providers](./deployment.mdx#scim-identity-providers).
 
 ## Connect the gateway to the Enterprise Manager
@@ -242,14 +313,49 @@ this command prints:
 kubectl get --raw /.well-known/openid-configuration | jq -r .issuer
 ```
 
+The Enterprise Manager fetches the issuer's discovery document and signing keys
+directly from that URL, not through the Kubernetes API server. On managed
+clusters such as Amazon EKS, the issuer is a public URL, so allow egress to it
+from the Enterprise Manager pods. If the fetch fails, the Enterprise Manager
+rejects every gRPC caller.
+
 Each allowlist covers different calls from the gateway. `saSubjectAllowlist`
 covers identity resolution and per-user connector configuration.
 `gatewaySaSubjectAllowlist` covers the gateway's startup registration and its
 catalog reads. `credentialSaSubjectAllowlist` covers credential resolution,
 which the gateway needs for the identity provider's client secret. The subject
-is `system:serviceaccount:<NAMESPACE>:<RELEASE_NAME>-connector-gateway`. If the
-AI Gateway also calls the Enterprise Manager, keep its entries on
-`saSubjectAllowlist` alongside this one.
+is `system:serviceaccount:<NAMESPACE>:<RELEASE_NAME>-connector-gateway`. The
+chart fills in a fourth list, `meteringSaSubjectAllowlist`, from the same
+subject for
+[tool call recording](#turn-on-tool-call-recording-and-observability).
+
+### Keep the AI Gateway's access
+
+Caller authentication covers both the TLS and cleartext gRPC ports, so turning
+it on also gates the AI Gateway. Its API key service checks every virtual API
+key against the Enterprise Manager. If your platform also runs the AI Gateway
+with virtual API keys:
+
+- Add the API key service's subject to `saSubjectAllowlist`:
+  `system:serviceaccount:<AIGATEWAY_NAMESPACE>:<AIGATEWAY_NAME>-api-key-service`,
+  where `<AIGATEWAY_NAME>` is the name of your `AIGateway` resource.
+- Keep `spec.auth.virtualAPIKeys.directory.insecure` on the `AIGateway` at its
+  default, `false`, so the API key service presents its ServiceAccount token.
+
+Otherwise every virtual-key request fails with `503` and
+`key store temporarily unavailable`. The chart refuses to render while the AI
+Gateway is enabled and no subject ending in `-api-key-service` is on the list.
+
+### Name overrides
+
+The umbrella chart computes two values from the default gateway name,
+`<RELEASE_NAME>-connector-gateway`: `meteringSaSubjectAllowlist` and
+`toolhive-cloud-ui.connectorGatewayUrl`, the in-cluster REST API URL that
+enables the console's **Connectors** pages. If you set
+`connector-gateway.fullnameOverride` or `nameOverride`, or change the
+control-plane Service port, the render fails until you set both by hand. The
+error message prints the value to use. Also update the subjects in your three
+allowlists to match the new ServiceAccount name.
 
 For a development cluster without TLS, set
 `connector-gateway.enterpriseConfig.directory.insecure: true` in place of
@@ -267,6 +373,7 @@ addition to the issuer and client settings in
 | Key                      | Purpose                                                                                                                                                                                                        |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `clientClaim`            | Access-token claim that names the OAuth client. Empty reads `cid` or `client_id`. Allowed values are `cid`, `client_id`, `azp`, and `appid`; set `azp` for Dex, or `azp` or `appid` for Microsoft Entra ID     |
+| `subjectClaim`           | ID-token claim that identifies each user. Defaults to `sub`. Must match the Enterprise Manager's `binding_claim`; see [Identify users by a claim other than `sub`](#identify-users-by-a-claim-other-than-sub)  |
 | `clientClaimAllowUnsafe` | Boolean. Accepts a `clientClaim` outside the allowed values. A weaker claim can match tokens minted for a different client, and the gateway logs a warning at startup                                          |
 | `allowPrivateIps`        | Boolean. Lets discovery and token exchange reach an identity provider on a private or link-local address. HTTPS is still required for non-localhost hosts                                                      |
 | `caBundleRef`            | ConfigMap or Secret holding the PEM CA bundle for an identity provider served by a private CA. Set exactly one of `configMapRef` or `secretRef`, each with a `name`, plus an optional `key` (default `ca.crt`) |
