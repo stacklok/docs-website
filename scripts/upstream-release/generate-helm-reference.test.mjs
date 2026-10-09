@@ -3,13 +3,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { compile } from '@mdx-js/mdx';
-import { renderPage } from './generate-helm-reference.mjs';
+import yaml from 'yaml';
+import {
+  annotateValues,
+  sourceDescriptions,
+  renderPage,
+} from './generate-helm-reference.mjs';
 
 const chart = {
   source: 'deploy/charts/operator',
   title: 'Operator Helm values',
   description: 'Helm values for the operator.',
   intro: 'Configure the operator with these values.',
+  related: [
+    {
+      label: 'Deploy the operator',
+      href: '../../guides-k8s/deploy-operator.mdx',
+    },
+  ],
 };
 const metadata = { name: 'toolhive-operator', version: '1.0.0' };
 const render = (rows) =>
@@ -55,4 +66,72 @@ test('incomplete chart documentation fails instead of publishing empty reference
     () => render([{ Key: 'operator.image', Type: 'string', Default: '`""`' }]),
     /Missing description.*operator.image/
   );
+});
+
+test('raw continuation comments preserve paragraphs, YAML examples, and lists', async () => {
+  const source = `operator:
+  # -- Default Secrets for workloads.
+  #
+  # For example:
+  #   defaultImagePullSecrets:
+  #     - name: regcred
+  #
+  # - Names must match the Secret.
+  #   Create it in the workload namespace.
+  # - Use one Secret per registry.
+  defaultImagePullSecrets: []
+`;
+  const description = sourceDescriptions(source).get(
+    'operator.defaultImagePullSecrets'
+  );
+  assert.match(description, /workloads\.\n\nFor example:/);
+  const page = render([
+    {
+      Key: 'operator.defaultImagePullSecrets',
+      Type: 'list',
+      Default: '`[]`',
+      SourceDescription: description,
+      AutoDescription: 'flattened description',
+    },
+  ]);
+  const code = page.match(/```yaml\n([\s\S]*?)\n```/)[1];
+  assert.deepEqual(yaml.parse(code), {
+    defaultImagePullSecrets: [{ name: 'regcred' }],
+  });
+  assert.match(
+    page,
+    /- Names must match the Secret\.\n {2}Create it in the workload namespace\./
+  );
+  assert.doesNotMatch(page, /flattened description/);
+  await compile(page.replace(/^---\n[\s\S]*?\n---\n/, ''));
+});
+
+test('curated passthrough descriptions preserve values and fail for absent fields', () => {
+  const source = 'config:\n  database:\n    host: ""\n';
+  const annotated = annotateValues(source, {
+    config: 'Application configuration.\nSee the configuration guide.',
+  });
+  assert.deepEqual(yaml.parse(annotated), yaml.parse(source));
+  assert.equal(
+    sourceDescriptions(annotated).get('config'),
+    'Application configuration.\nSee the configuration guide.'
+  );
+  assert.throws(
+    () => annotateValues(source, { nonexistent: 'Description' }),
+    /absent value/
+  );
+});
+
+test('coverage language and product spelling remain accurate', () => {
+  const page = render([
+    {
+      Key: 'operator.image',
+      Type: 'string',
+      Default: '`"image"`',
+      AutoDescription: 'Image for Toolhive runners.',
+    },
+  ]);
+  assert.match(page, /Image for ToolHive runners/);
+  assert.match(page, /values declared in the chart's default/);
+  assert.match(page, /optional settings and inherited/);
 });
