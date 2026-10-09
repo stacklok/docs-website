@@ -17,6 +17,8 @@ embed those names, so adjust them if yours differ.
 
 ## Prerequisites
 
+- **Stacklok Enterprise platform chart v0.22.0 or later.** Earlier charts don't
+  pass the `global.redis` settings to the gateway.
 - **A corporate identity provider** at `global.stacklok.primaryIdp`. The gateway
   resolves every caller to a directory user before it decides what they can see.
   See [Configure identity](./configure-identity.mdx).
@@ -40,9 +42,25 @@ embed those names, so adjust them if yours differ.
   described in
   [Global Redis/Valkey defaults](./deployment.mdx#global-redisvalkey-defaults),
   and the gateway inherits the host, port, username, password Secret, and TLS
-  setting. To connect as a least-privilege ACL user, set `global.redis.username`
-  and limit that user to keys matching `thv:auth:*` (authorization server
-  sessions) and `connector-gateway:*` (tool call recording and key checks).
+  setting.
+
+If the Connector Gateway is the only component that uses `global.redis`, you can
+connect as a least-privilege ACL user. Set `global.redis.username` to that user,
+and apply this reference ACL to your Redis or Valkey instance with your own
+password. `global.redis.username` applies to every component that inherits
+`global.redis`, so don't restrict the user this way while other components share
+it.
+
+```text title="users.acl"
+user default reset off
+user cgw reset on ><REDIS_PASSWORD> resetchannels ~thv:auth:* ~connector-gateway:* +@read +@write +@connection +@transaction -@admin -@dangerous -@scripting -script -function -fcall -fcall_ro +eval +evalsha -config -acl -flushall -flushdb -swapdb -replicaof -slaveof -cluster -failover -save -bgsave -bgrewriteaof -debug -shutdown -monitor -client|tracking -keys -randomkey -dbsize -scan
+```
+
+The `thv:auth:*` keys hold authorization server sessions, and the
+`connector-gateway:*` keys hold the tool call recording queue, a check for the
+gateway's encryption key, and client registration locks. The first line disables
+the built-in `default` user, which otherwise grants full access to any
+connection that falls back to it.
 
 ## Prepare the gateway's secrets
 
@@ -146,7 +164,7 @@ connector-gateway:
     controlPlane:
       incomingAuth:
         oidc:
-          issuer: 'https://idp.example.com'
+          issuer: '<PRIMARY_IDP_ISSUER>' # same as global.stacklok.primaryIdp.issuer
           audience: '<CONSOLE_TOKEN_AUDIENCE>'
     directory:
       addr: 'stacklok-enterprise-enterprise-manager.stacklok-system.svc.cluster.local:9443'
@@ -229,10 +247,14 @@ console's **Connectors** pages fail with `401`.
 
 Set `issuer` to `global.stacklok.primaryIdp.issuer`; the gateway refuses to
 start if it doesn't match an identity provider it signs users in with. Set
-`audience` to the exact `aud` value of the access tokens the console sends. To
-find it, decode a console token as shown in
-[Configure platform identity](./configure-identity.mdx). Prefer an audience that
-only Stacklok components accept over a shared default such as Okta's
+`audience` to the exact `aud` value of the access tokens the console sends. The
+console sends the access token from its own sign-in, so this is the audience
+your identity provider assigns to tokens for the console's OAuth client, such as
+`cloud-ui` in the Okta example in
+[Configure platform identity](./configure-identity.mdx). To confirm it, decode
+an access token issued to that client as shown in
+[Verify a token](./configure-identity.mdx#verify-a-token). Prefer an audience
+that only Stacklok components accept over a shared default such as Okta's
 `api://default`, which would let tokens minted for unrelated applications reach
 the gateway. The token must be a JWT: opaque access tokens, such as those from
 Okta's org authorization server, are rejected with `401`. To fetch signing keys
@@ -273,6 +295,11 @@ tokens from a custom authorization server, but not to ID tokens. In Okta, add a
 `uid` claim with the value `user.id` and the token type **ID Token**. Choose the
 claim before users sign in, because it becomes each user's stable identity in
 the directory.
+
+The console's access tokens must carry the same top-level claim, because the
+REST API resolves users from them. Otherwise sign-in works but the console's
+**Connectors** pages fail with `401`. Okta's custom authorization servers add
+`uid` to access tokens by default.
 
 The same `issuers` entry configures SCIM provisioning for that provider. See
 [SCIM identity providers](./deployment.mdx#scim-identity-providers).
@@ -316,8 +343,9 @@ kubectl get --raw /.well-known/openid-configuration | jq -r .issuer
 The Enterprise Manager fetches the issuer's discovery document and signing keys
 directly from that URL, not through the Kubernetes API server. On managed
 clusters such as Amazon EKS, the issuer is a public URL, so allow egress to it
-from the Enterprise Manager pods. If the fetch fails, the Enterprise Manager
-rejects every gRPC caller.
+from the Enterprise Manager pods. If it can't fetch the discovery document at
+startup, the Enterprise Manager fails to start. If it later can't refresh the
+signing keys, it rejects every gRPC caller.
 
 Each allowlist covers different calls from the gateway. `saSubjectAllowlist`
 covers identity resolution and per-user connector configuration.
@@ -329,6 +357,17 @@ chart fills in a fourth list, `meteringSaSubjectAllowlist`, from the same
 subject for
 [tool call recording](#turn-on-tool-call-recording-and-observability).
 
+### Use a cleartext connection for development
+
+For a development cluster without TLS, set
+`connector-gateway.enterpriseConfig.directory.insecure: true` in place of
+`directoryTLS`, point `addr` at the cleartext port (`9091`), and set
+`enterprise-manager.grpc.insecure: true`. The chart requires both settings
+together. This transport carries credentials in cleartext with no caller
+authentication, so reserve it for local testing. The Enterprise Manager refuses
+to start with `grpc.insecure: true` while `directory.kek` is configured, so this
+transport works only on an install without the key-encryption key.
+
 ### Keep the AI Gateway's access
 
 Caller authentication covers both the TLS and cleartext gRPC ports, so turning
@@ -336,33 +375,48 @@ it on also gates the AI Gateway. Its API key service checks every virtual API
 key against the Enterprise Manager. If your platform also runs the AI Gateway
 with virtual API keys:
 
+- Create the `AIGateway` resource in the release namespace. The Enterprise
+  Manager's directory NetworkPolicy admits the API key service only from that
+  namespace.
 - Add the API key service's subject to `saSubjectAllowlist`:
-  `system:serviceaccount:<AIGATEWAY_NAMESPACE>:<AIGATEWAY_NAME>-api-key-service`,
+  `system:serviceaccount:stacklok-system:<AIGATEWAY_NAME>-api-key-service`,
   where `<AIGATEWAY_NAME>` is the name of your `AIGateway` resource.
 - Keep `spec.auth.virtualAPIKeys.directory.insecure` on the `AIGateway` at its
   default, `false`, so the API key service presents its ServiceAccount token.
+- Unset `enterprise-manager.grpc.insecure` if you set it for the AI Gateway. It
+  skips caller authentication, and the Enterprise Manager refuses to start with
+  it alongside a directory key-encryption key.
 
 Otherwise every virtual-key request fails with `503` and
-`key store temporarily unavailable`. The chart refuses to render while the AI
-Gateway is enabled and no subject ending in `-api-key-service` is on the list.
+`key store temporarily unavailable`.
 
-### Name overrides
+The chart refuses to render while the AI Gateway is enabled and no subject
+ending in `-api-key-service` is on the list, even if you don't use virtual API
+keys. In that case, set
+`enterprise-manager.grpc.callerAuth.acknowledgeNoApiKeyServiceCaller: true`
+instead of adding a subject.
 
-The umbrella chart computes two values from the default gateway name,
-`<RELEASE_NAME>-connector-gateway`: `meteringSaSubjectAllowlist` and
-`toolhive-cloud-ui.connectorGatewayUrl`, the in-cluster REST API URL that
-enables the console's **Connectors** pages. If you set
-`connector-gateway.fullnameOverride` or `nameOverride`, or change the
-control-plane Service port, the render fails until you set both by hand. The
-error message prints the value to use. Also update the subjects in your three
-allowlists to match the new ServiceAccount name.
+If you set `global.stacklok.directoryGrpcEndpoint` to add group labels to AI
+Gateway telemetry, also add
+`system:serviceaccount:stacklok-system:<AIGATEWAY_NAME>-main-processor` to
+`saSubjectAllowlist`. Without it, the AI Gateway records telemetry without group
+labels and logs no error.
 
-For a development cluster without TLS, set
-`connector-gateway.enterpriseConfig.directory.insecure: true` in place of
-`directoryTLS`, point `addr` at the cleartext port (`9091`), and set
-`enterprise-manager.grpc.insecure: true`. The chart requires both settings
-together. This transport carries credentials in cleartext with no caller
-authentication, so reserve it for local testing.
+### Override the gateway's name
+
+The umbrella chart computes these `enterprise-manager.grpc.callerAuth` and
+console values from the default gateway name,
+`<RELEASE_NAME>-connector-gateway`. If you change that name, set each one by
+hand:
+
+| Value                                                                                                                | Render fails when                                                                                                                       |
+| -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `meteringSaSubjectAllowlist`                                                                                         | The gateway's ServiceAccount name changes: `fullnameOverride`, `nameOverride`, `serviceAccount.name`, or `serviceAccount.create: false` |
+| `toolhive-cloud-ui.connectorGatewayUrl`, the in-cluster REST API URL that enables the console's **Connectors** pages | The control-plane Service name or port changes, or `controlPlane.enabled` is `false`                                                    |
+| `httpSaSubjectAllowlist`, set only when `global.stacklok.enterpriseManager.url` is set                               | Never. The Enterprise Manager refuses the gateway's HTTP calls, and nothing warns you at render time                                    |
+
+When a render fails, the error message prints the value to use. Also update the
+subjects in your three allowlists to match the new ServiceAccount name.
 
 ## Corporate identity provider settings
 
@@ -370,13 +424,13 @@ The gateway reads these optional keys from `global.stacklok.primaryIdp`, in
 addition to the issuer and client settings in
 [Configure platform identity](./configure-identity.mdx):
 
-| Key                      | Purpose                                                                                                                                                                                                        |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `clientClaim`            | Access-token claim that names the OAuth client. Empty reads `cid` or `client_id`. Allowed values are `cid`, `client_id`, `azp`, and `appid`; set `azp` for Dex, or `azp` or `appid` for Microsoft Entra ID     |
-| `subjectClaim`           | ID-token claim that identifies each user. Defaults to `sub`. Must match the Enterprise Manager's `binding_claim`; see [Identify users by a claim other than `sub`](#identify-users-by-a-claim-other-than-sub)  |
-| `clientClaimAllowUnsafe` | Boolean. Accepts a `clientClaim` outside the allowed values. A weaker claim can match tokens minted for a different client, and the gateway logs a warning at startup                                          |
-| `allowPrivateIps`        | Boolean. Lets discovery and token exchange reach an identity provider on a private or link-local address. HTTPS is still required for non-localhost hosts                                                      |
-| `caBundleRef`            | ConfigMap or Secret holding the PEM CA bundle for an identity provider served by a private CA. Set exactly one of `configMapRef` or `secretRef`, each with a `name`, plus an optional `key` (default `ca.crt`) |
+| Key                      | Purpose                                                                                                                                                                                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clientClaim`            | Access-token claim that names the OAuth client. Empty reads `cid` or `client_id`. Allowed values are `cid`, `client_id`, `azp`, and `appid`; set `azp` for Dex, or `azp` or `appid` for Microsoft Entra ID                                                                |
+| `subjectClaim`           | Claim that identifies each user, read from ID tokens at sign-in and from the console's access tokens. Defaults to `sub`. Must match the Enterprise Manager's `binding_claim`; see [Identify users by a claim other than `sub`](#identify-users-by-a-claim-other-than-sub) |
+| `clientClaimAllowUnsafe` | Boolean. Accepts a `clientClaim` outside the allowed values. A weaker claim can match tokens minted for a different client, and the gateway logs a warning at startup                                                                                                     |
+| `allowPrivateIps`        | Boolean. Lets discovery and token exchange reach an identity provider on a private or link-local address. HTTPS is still required for non-localhost hosts                                                                                                                 |
+| `caBundleRef`            | ConfigMap or Secret holding the PEM CA bundle for an identity provider served by a private CA. Set exactly one of `configMapRef` or `secretRef`, each with a `name`, plus an optional `key` (default `ca.crt`)                                                            |
 
 Set the boolean keys as unquoted `true` or `false`. The chart refuses a quoted
 string, and `--set-string` produces one.
