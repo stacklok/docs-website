@@ -624,20 +624,43 @@ kubectl create secret generic enterprise-manager-kek \
   --from-literal=kek="{\"1\":\"$(openssl rand -base64 32)\"}"
 ```
 
+```yaml title="values.yaml"
+enterprise-manager:
+  directory:
+    kek:
+      enabled: true
+      existingSecret: 'enterprise-manager-kek'
+```
+
+Make this choice before the Enterprise Manager stores any credentials. A new key
+makes every credential encrypted with the old one permanently unreadable. To
+move an install that already ran with `generate: true`, copy the `kek` value
+from the chart-created `<RELEASE_NAME>-enterprise-manager-directory-kek` Secret
+into your own Secret instead of generating a new key. To rotate the key, add a
+higher-numbered entry to the map and keep the earlier ones.
+
 TLS is not optional here: the directory refuses a non-TLS peer at call time, so
 a key-encrypted install served over the cleartext port renders cleanly and then
 fails every credential resolution. Point callers at `grpc.tls.port`.
 
 With `directory.enabled: true`, the chart also renders a
-`<RELEASE_NAME>-enterprise-manager-directory` NetworkPolicy. It admits Connector
-Gateway pods from the release namespace on both gRPC ports, and the AI Gateway's
-API key service on the cleartext port. `grpc.networkPolicy` adds a second policy
-that restricts both gRPC ports to `allowedClientSelector`. If the directory
-policy, a service mesh, or a cluster-wide policy already restricts the gRPC
-ports, set `directory.kek.externallyManagedNetworkPolicy: true` to acknowledge
-that instead of enabling `grpc.networkPolicy`. There is no equivalent escape for
-TLS, because a mesh terminates it in the sidecar and the peer still arrives
-without it.
+`<RELEASE_NAME>-enterprise-manager-directory` NetworkPolicy that limits which
+pods reach the Enterprise Manager's gRPC ports. It admits these pods, all from
+the release namespace:
+
+- Connector Gateway pods, on both gRPC ports
+- The AI Gateway's API key service and main processor, on the cleartext port
+- The AI Gateway main processor and operator, on the webhook port, when
+  `webhookTLS.enabled` is `true`
+
+NetworkPolicies are additive, so the `grpc.networkPolicy` policy in the example
+can only admit more pods. It admits pods in the release namespace that match
+`allowedClientSelector`, on both gRPC ports. Keep the selector to the Connector
+Gateway's labels as shown. The chart requires either `grpc.networkPolicy` or,
+when a service mesh or cluster-wide policy already restricts the gRPC ports,
+`directory.kek.externallyManagedNetworkPolicy: true` to acknowledge it. There is
+no equivalent escape for TLS, because a mesh terminates it in the sidecar and
+the peer still arrives without it.
 
 #### SCIM identity providers
 
