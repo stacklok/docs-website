@@ -199,6 +199,14 @@ const mcpSidebar: SidebarsConfig[string] = [
       'toolhive/guides-k8s/telemetry-and-metrics',
       'toolhive/guides-k8s/logging',
       'toolhive/guides-k8s/migrate-to-v1beta1',
+      {
+        type: 'category',
+        label: 'Helm values reference',
+        items: [
+          'toolhive/reference/helm/operator',
+          'toolhive/reference/helm/operator-crds',
+        ],
+      },
       crdSidebar,
     ],
   },
@@ -288,8 +296,15 @@ const mcpSidebar: SidebarsConfig[string] = [
       'toolhive/guides-registry/authorization',
       'toolhive/guides-registry/audit-logging',
       'toolhive/guides-registry/telemetry-metrics',
-      'toolhive/reference/registry-api',
-      'toolhive/reference/registry-schema-upstream',
+      {
+        type: 'category',
+        label: 'Reference',
+        items: [
+          'toolhive/reference/helm/registry-server',
+          'toolhive/reference/registry-api',
+          'toolhive/reference/registry-schema-upstream',
+        ],
+      },
     ],
   },
 
