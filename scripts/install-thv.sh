@@ -52,7 +52,10 @@ else
     for profile in ~/.bashrc ~/.zshrc ~/.profile; do
         if [[ -f "$profile" ]]; then
             # Check if the PATH export already exists to avoid duplicates
+            # Keep the variables literal for the profile to expand at login.
+            # shellcheck disable=SC2016
             if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$profile" 2>/dev/null; then
+                # shellcheck disable=SC2016
                 echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$profile"
                 echo "Added ~/.local/bin to PATH in $profile"
             fi
@@ -63,13 +66,35 @@ else
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
-# Download the release tarball and extract the binary
+# Keep downloads isolated, and verify before extracting or executing the CLI.
+DOWNLOAD_DIR=$(mktemp -d)
+trap 'rm -rf "$DOWNLOAD_DIR"' EXIT
+
 echo "Downloading ToolHive CLI release $RELEASE_VERSION"
-curl -s -L "$RELEASE_TARBALL" -o /tmp/toolhive.tar.gz
-tar -xzf /tmp/toolhive.tar.gz -C /tmp thv
-chmod +x /tmp/thv
-cp /tmp/thv "$INSTALL_DIR/thv"
-rm -f /tmp/toolhive.tar.gz /tmp/thv
+curl -fsSL "$RELEASE_TARBALL" -o "$DOWNLOAD_DIR/toolhive.tar.gz"
+
+if [[ "${TOOLHIVE_VERIFY_SIGNATURE:-false}" == "true" ]]; then
+    command -v cosign >/dev/null 2>&1 || {
+        echo "Error: cosign is required for signature verification"
+        exit 1
+    }
+    BUNDLE_URL=$(echo "$RELEASE_JSON" | jq -r \
+        --arg version "$RELEASE_VERSION" \
+        '.assets[] | select(.name == "toolhive_" + $version + "_linux_amd64.tar.gz.sigstore.json") | .browser_download_url // empty')
+    if [[ -z "$BUNDLE_URL" ]]; then
+        echo "Error: signature bundle missing for release $RELEASE_VERSION"
+        exit 1
+    fi
+    curl -fsSL "$BUNDLE_URL" -o "$DOWNLOAD_DIR/toolhive.sigstore.json"
+    cosign verify-blob "$DOWNLOAD_DIR/toolhive.tar.gz" \
+        --bundle "$DOWNLOAD_DIR/toolhive.sigstore.json" \
+        --certificate-identity "https://github.com/stacklok/toolhive/.github/workflows/releaser.yml@refs/tags/v$RELEASE_VERSION" \
+        --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+fi
+
+tar -xzf "$DOWNLOAD_DIR/toolhive.tar.gz" -C "$DOWNLOAD_DIR" thv
+chmod +x "$DOWNLOAD_DIR/thv"
+cp "$DOWNLOAD_DIR/thv" "$INSTALL_DIR/thv"
 
 thv version || {
     echo "Installation failed: 'thv' command is not working."
