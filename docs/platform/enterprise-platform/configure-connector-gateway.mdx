@@ -289,6 +289,134 @@ The gateway reads the bundle once at startup. After you replace the contents of
 the same ConfigMap or Secret, restart the gateway with
 `kubectl rollout restart deployment/stacklok-enterprise-connector-gateway -n stacklok-system`.
 
+## Publish and verify the endpoints
+
+Publish the gateway at the HTTPS origin you set in `authServerIssuer`. The chart
+creates two HTTP Services in the release namespace:
+
+| Traffic                            | Default Service                                  | Port   |
+| ---------------------------------- | ------------------------------------------------ | ------ |
+| MCP calls and authorization server | `<RELEASE_NAME>-connector-gateway`               | `8443` |
+| Per-user REST API                  | `<RELEASE_NAME>-connector-gateway-control-plane` | `8090` |
+
+Confirm the installed names and ports, especially if you use Helm name or port
+overrides:
+
+```bash
+kubectl get svc -n stacklok-system
+kubectl get svc stacklok-enterprise-connector-gateway -n stacklok-system -o yaml
+```
+
+### Route the public hostname
+
+The following Gateway API example requires an existing Gateway with an HTTPS
+listener named `<HTTPS_LISTENER>`. Its certificate must cover `<GATEWAY_HOST>`,
+and its `allowedRoutes` must admit routes from `stacklok-system`. Use the
+Gateway and namespace managed by your ingress team. The controller must be able
+to reach the backend Service over HTTP, including through any NetworkPolicy.
+
+```yaml title="connector-gateway-route.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: connector-gateway
+  namespace: stacklok-system
+spec:
+  parentRefs:
+    - name: <EDGE_GATEWAY_NAME>
+      namespace: <EDGE_GATEWAY_NAMESPACE>
+      sectionName: <HTTPS_LISTENER>
+  hostnames:
+    - '<GATEWAY_HOST>'
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: stacklok-enterprise-connector-gateway
+          port: 8443
+```
+
+Replace the placeholders and adjust the backend name and port to match your
+Service. Apply the route, then inspect its parent conditions:
+
+```bash
+kubectl apply -f connector-gateway-route.yaml
+kubectl get httproute connector-gateway -n stacklok-system \
+  -o jsonpath='{.status.parents}' | jq .
+kubectl get gateway <EDGE_GATEWAY_NAME> -n <EDGE_GATEWAY_NAMESPACE> -o yaml
+```
+
+Wait for `Accepted` and `ResolvedRefs` to be `True` on the route and for the
+Gateway to be `Programmed`. Point `<GATEWAY_HOST>` in DNS at your edge Gateway's
+address. Terminate TLS there and preserve request paths and the `Authorization`
+header. Routing `/` preserves `/gw/mcp`, `/.well-known/*`, and `/oauth/*`,
+including the callback at `/oauth/callback`. Register that callback URL on the
+corporate identity provider's OAuth client.
+
+Configure your controller to pass streamed responses as they arrive and keep
+long-lived MCP connections open. Set its request and idle timeouts to
+accommodate your tool calls, and disable response buffering if your controller
+buffers by default.
+
+### Keep the REST API reachable by the console
+
+The console calls the control-plane Service from inside the cluster, so that
+Service can remain cluster-internal. For external API clients, create a separate
+HTTPS route to `stacklok-enterprise-connector-gateway-control-plane` on port
+`8090`. You can adapt the HTTPRoute above with a separate hostname and backend;
+preserve the `/v1` paths. See the
+[Connector Gateway API reference](../../connector-gateway/api-reference.mdx) for
+authentication and a port-forward alternative.
+
+### Verify each part of the connection
+
+1. Confirm the gateway is ready and registered. Check its pod and find your
+   `connectorGatewayId` in the console's administration experience under
+   **Connectors**:
+
+   ```bash
+   kubectl rollout status deployment/stacklok-enterprise-connector-gateway \
+     -n stacklok-system
+   ```
+
+2. Check DNS, TLS, and authorization-server routing from a client machine:
+
+   ```bash
+   curl --fail --silent --show-error \
+     https://<GATEWAY_HOST>/.well-known/openid-configuration | jq .
+   ```
+
+   The response's `issuer` must match `authServerIssuer`, and its authorization
+   and token endpoints must use the published gateway origin. For a private CA,
+   use `--cacert <CA_FILE>` and install that CA in your clients' trust stores.
+
+3. Check the REST API independently. Use the API reference's port-forward and a
+   corporate identity provider access token accepted by the gateway's
+   control-plane validator:
+
+   ```bash
+   curl --fail --silent --show-error \
+     http://localhost:8080/v1/users/me/gateway/connectors/status \
+     -H 'Authorization: Bearer <CORPORATE_ACCESS_TOKEN>' | jq .
+   ```
+
+   A successful JSON response confirms control-plane authentication and
+   directory access. It can be empty before you grant connectors. This API uses
+   corporate tokens; the MCP endpoint uses tokens from the gateway's own
+   authorization server.
+
+4. Complete the
+   [Connector Gateway quickstart](../../connector-gateway/quickstart.mdx) with a
+   test account to verify browser sign-in and an authenticated MCP tool call
+   through `https://<GATEWAY_HOST>/gw/mcp`.
+
+For discovered Kubernetes backends, also complete
+[Connect to in-cluster endpoints](../../connector-gateway/connectors.mdx#connect-to-in-cluster-endpoints)
+before testing their tools. Once these checks pass, follow
+[Roll out gateway clients](./roll-out-gateway-clients.mdx).
+
 ## How connector access works
 
 ```mermaid

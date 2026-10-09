@@ -121,8 +121,47 @@ resolves to a private address, so it needs two settings:
      directory:
        connectorVerification:
          allowedPrivateRanges:
-           - '10.96.0.0/12'
+           - '<SERVICE_CIDR>'
    ```
+
+Find the actual Service CIDR in the target cluster before replacing
+`<SERVICE_CIDR>`. In clusters that expose `ServiceCIDR` resources, list every
+configured range:
+
+```bash
+kubectl get servicecidrs -o json | jq -r '.items[].spec.cidrs[]'
+```
+
+If that resource is unavailable or your account cannot read it, get the Service
+ranges from your managed Kubernetes provider's cluster networking configuration
+or your cluster administrator. For a self-managed control plane, the API
+server's `--service-cluster-ip-range` setting identifies them. Use the Service
+ranges containing the discovered endpoints, including IPv6 ranges for a
+dual-stack cluster. Pod CIDRs describe a different address pool.
+
+Apply the changed values with a Helm upgrade, then open each failed connector's
+**Configuration** tab and select **Save and verify**. A Helm upgrade updates the
+allowlist; persisted connectors are reverified only when you save them. Confirm
+**Verified** in the list before granting access to directory groups.
+
+For API-based verification, use the
+[Enterprise Manager API](../platform/enterprise-platform/enterprise-manager-api.mdx#base-url)
+port-forward in a separate terminal, then list the connectors with an
+administrator access token:
+
+```bash
+curl --fail --silent --show-error \
+  http://localhost:8080/v1/gateways/<GATEWAY_ID>/connectors \
+  -H 'Authorization: Bearer <ADMIN_ACCESS_TOKEN>' \
+  | jq '.items[] | {id, name, endpoint, status}'
+```
+
+`available` corresponds to **Verified**, and `failure` to **Broken**. A
+successful create response alone does not establish availability. For `failure`,
+check the Enterprise Manager logs as described in
+[A connector shows Broken](#troubleshooting), fix the cause, and save again.
+Only available connectors enter the served catalog; their
+[connector policies](./connector-policies.mdx) still determine who can use them.
 
 The gateway never connects to link-local addresses such as the cloud metadata
 endpoint, even with **Allow private IPs** on. The Enterprise Manager refuses to
@@ -208,9 +247,10 @@ for the user's side.
 <details>
 <summary>A connector shows Broken</summary>
 
-The console doesn't display the verification error. Find it in the Enterprise
-Manager's logs, on a `connector write persisted as failure` line with the
-connector's ID and an `err` field:
+The console doesn't display the verification error. Find the failed write in the
+Enterprise Manager's logs, on a `connector write persisted as failure` line with
+the connector's ID and endpoint. When present, the `err` field gives the
+underlying cause:
 
 ```bash
 kubectl logs deployment/stacklok-enterprise-enterprise-manager -n stacklok-system \
@@ -222,8 +262,9 @@ Common causes:
 - **The endpoint is unreachable from the Enterprise Manager pod.** Check the
   URL, DNS, and any egress NetworkPolicy or proxy between the Enterprise Manager
   and the backend.
-- **The endpoint is in-cluster.** The error reads
-  `resolves to a disallowed IP range`. See the next entry.
+- **The endpoint is in-cluster.** Check that its address falls within the
+  verification allowlist, even when **Allow private IPs** is on. See the next
+  entry.
 - **The connector's identity provider isn't active.** Check the provider on the
   [Identity providers](./identity-providers.mdx) screen.
 
@@ -240,9 +281,10 @@ separate checks, and each has its own setting:
 
 - If saving fails with "This endpoint resolves to a disallowed (private or
   reserved) IP range", turn on **Allow private IPs** for the connector.
-- If the connector saves but shows **Broken**, and the Enterprise Manager log
-  reads `resolves to a disallowed IP range`, add the address range to
-  `enterprise-manager.directory.connectorVerification.allowedPrivateRanges`.
+- If the connector saves but shows **Broken**, check that its address range is
+  included in
+  `enterprise-manager.directory.connectorVerification.allowedPrivateRanges`. A
+  detailed log error, when available, reads `resolves to a disallowed IP range`.
 
 An in-cluster endpoint needs both settings. See
 [Connect to in-cluster endpoints](#connect-to-in-cluster-endpoints).
