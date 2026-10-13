@@ -277,6 +277,7 @@ const config: Config = {
     languageTabs: [
       { language: 'curl' },
       { language: 'javascript', variant: 'Fetch', variants: ['Fetch'] },
+      { language: 'nodejs', variant: 'Native', variants: ['Native'] },
       { language: 'python', variant: 'Requests', variants: ['Requests'] },
       { language: 'go' },
     ],
