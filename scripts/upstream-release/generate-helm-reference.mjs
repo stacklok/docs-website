@@ -138,7 +138,14 @@ function renderDefault(value) {
   return `<details>\n<summary>Default value</summary>\n\n${fence}yaml\n${content}\n${fence}\n\n</details>`;
 }
 
-export function renderPage(chart, metadata, rows, repo, tag) {
+export function renderPage(
+  chart,
+  metadata,
+  rows,
+  repo,
+  tag,
+  publicSources = true
+) {
   if (!Array.isArray(rows) || rows.length === 0) {
     throw new Error(`No Helm values found for ${chart.source}`);
   }
@@ -151,6 +158,9 @@ export function renderPage(chart, metadata, rows, repo, tag) {
     return `### \`${row.Key}\`\n\n**Type:** \`${row.Type}\`\n\n${renderDefault(row.Default || row.AutoDefault)}\n\n${renderDescription(description)}`;
   });
   const source = `https://github.com/${repo}/blob/${encodeURIComponent(tag)}/${chart.source}/values.yaml`;
+  const provenance = publicSources
+    ? `Source: [\`values.yaml\`](${source}) at \`${tag}\`.`
+    : `Generated from the platform source at \`${tag}\`.`;
   return `---
 ${yaml.stringify({ title: chart.title, description: chart.description }).trimEnd()}
 ---
@@ -163,7 +173,7 @@ This reference lists values declared in the chart's default \`values.yaml\`.
 Templates can also accept optional settings and inherited \`global\` values.
 
 Chart: \`${metadata.name}\`. Chart version: \`${metadata.version}\`.
-Source: [\`values.yaml\`](${source}) at \`${tag}\`.
+${provenance}
 
 ## Values
 
@@ -250,7 +260,8 @@ function main(argv) {
             SourceDescription: descriptions.get(row.Key),
           })),
           project.repo,
-          tag
+          tag,
+          project.public_sources !== false
         ),
       };
     });

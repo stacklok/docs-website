@@ -135,3 +135,30 @@ test('coverage language and product spelling remain accurate', () => {
   assert.match(page, /values declared in the chart's default/);
   assert.match(page, /optional settings and inherited/);
 });
+
+test('private sources retain provenance without inaccessible repository links', async () => {
+  const page = renderPage(
+    chart,
+    metadata,
+    [
+      {
+        Key: 'replicas',
+        Type: 'int',
+        Default: '`1`',
+        AutoDescription: 'Pod replicas.',
+      },
+    ],
+    'stacklok/stacklok-enterprise-platform',
+    '0123456789abcdef',
+    false
+  );
+  assert.match(
+    page,
+    /Generated from the platform source at `0123456789abcdef`/
+  );
+  assert.doesNotMatch(
+    page,
+    /github\.com\/stacklok\/stacklok-enterprise-platform/
+  );
+  await compile(page.replace(/^---\n[\s\S]*?\n---\n/, ''));
+});
