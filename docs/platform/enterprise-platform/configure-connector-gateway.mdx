@@ -42,25 +42,8 @@ embed those names, so adjust them if yours differ.
   described in
   [Global Redis/Valkey defaults](./deployment.mdx#global-redisvalkey-defaults),
   and the gateway inherits the host, port, username, password Secret, and TLS
-  setting.
-
-If the Connector Gateway is the only component that uses `global.redis`, you can
-connect as a least-privilege ACL user. Set `global.redis.username` to that user,
-and apply this reference ACL to your Redis or Valkey instance with your own
-password. `global.redis.username` applies to every component that inherits
-`global.redis`, so don't restrict the user this way while other components share
-it.
-
-```text title="users.acl"
-user default reset off
-user cgw reset on ><REDIS_PASSWORD> resetchannels ~thv:auth:* ~connector-gateway:* +@read +@write +@connection +@transaction -@admin -@dangerous -@scripting -script -function -fcall -fcall_ro +eval +evalsha -config -acl -flushall -flushdb -swapdb -replicaof -slaveof -cluster -failover -save -bgsave -bgrewriteaof -debug -shutdown -monitor -client|tracking -keys -randomkey -dbsize -scan
-```
-
-The `thv:auth:*` keys hold authorization server sessions, and the
-`connector-gateway:*` keys hold the tool call recording queue, a check for the
-gateway's encryption key, and client registration locks. The first line disables
-the built-in `default` user, which otherwise grants full access to any
-connection that falls back to it.
+  setting. To connect as a least-privilege ACL user, see
+  [Restrict the Redis user](#restrict-the-redis-user).
 
 ## Prepare the gateway's secrets
 
@@ -191,6 +174,14 @@ connector-gateway:
 | `directoryTLS`                             | Mount the Enterprise Manager CA bundle and the gateway's ServiceAccount token             |
 | `kek`, `authServerKeys`                    | Reference the Secrets from [Prepare the gateway's secrets](#prepare-the-gateways-secrets) |
 
+Set `vmcpConfig.groupRef` to any non-empty name; the gateway refuses to start
+while it's empty. The gateway reads its backends from the Enterprise Manager, so
+no `MCPGroup` by that name needs to exist.
+
+Set `baseline_client_scopes` to `openid` and `offline_access` so MCP clients
+that register through dynamic client registration, such as Claude Code, Cursor,
+and VS Code, can obtain refresh tokens.
+
 ### Choose the gateway ID and issuer
 
 Choose a stable `connectorGatewayId` such as `prod-eu` or `platform-staging`,
@@ -210,28 +201,6 @@ and list the audience in `allowed_audiences` exactly as it appears in
 `incomingAuth.oidc.audience`. The gateway compares these strings exactly and
 refuses to start when they disagree.
 
-`vmcpConfig.groupRef` labels the gateway in its status and logs. The gateway
-refuses to start while it's empty. It reads its backends from the Enterprise
-Manager, so no `MCPGroup` by that name needs to exist.
-
-`baseline_client_scopes` adds `openid` and `offline_access` to every client that
-registers through dynamic client registration. MCP clients such as Claude Code,
-Cursor, and VS Code register with `openid` and then request `offline_access`
-when they sign in. Without the baseline, the authorization server rejects that
-request with `invalid_scope` and the client stays at "needs authentication."
-Each baseline scope must also be in the authorization server's supported scopes
-(`openid`, `profile`, `email`, and `offline_access` by default), or the gateway
-refuses to start.
-
-:::note[Two different issuers]
-
-`global.stacklok.primaryIdp.issuer` identifies the corporate identity provider.
-`authServerIssuer` identifies the Connector Gateway's authorization server.
-Configure both values. See
-[Configure platform identity](./configure-identity.mdx).
-
-:::
-
 Omit `upstreams` from `enterpriseConfig.authServer`. The authorization server
 loads its identity providers from the Enterprise Manager: your corporate
 identity provider from `global.stacklok.primaryIdp`, plus the connector identity
@@ -241,9 +210,7 @@ providers that admins register in the Enterprise Manager.
 
 The console calls the gateway's REST API with the user's corporate identity
 provider access token. `enterpriseConfig.controlPlane.incomingAuth.oidc`
-configures the validator that accepts those tokens. Without it, the REST API
-accepts only tokens from the gateway's own authorization server, and the
-console's **Connectors** pages fail with `401`.
+configures the validator that accepts those tokens.
 
 Set `issuer` to `global.stacklok.primaryIdp.issuer`; the gateway refuses to
 start if it doesn't match an identity provider it signs users in with. Set
@@ -256,9 +223,9 @@ an access token issued to that client as shown in
 [Verify a token](./configure-identity.mdx#verify-a-token). Prefer an audience
 that only Stacklok components accept over a shared default such as Okta's
 `api://default`, which would let tokens minted for unrelated applications reach
-the gateway. The token must be a JWT: opaque access tokens, such as those from
-Okta's org authorization server, are rejected with `401`. To fetch signing keys
-from a URL other than the issuer's discovery document, also set `jwksUrl`.
+the gateway. The token must be a JWT, so use an authorization server that issues
+JWT access tokens rather than Okta's org authorization server. To fetch signing
+keys from a URL other than the issuer's discovery document, also set `jwksUrl`.
 
 ### Identify users by a claim other than `sub`
 
@@ -286,9 +253,6 @@ enterprise-manager:
         binding_claim: 'uid'
 ```
 
-The two values must match. When they differ, identity resolution fails and every
-user is rejected with `401`.
-
 The gateway reads the claim from the **ID token**, and it must be a top-level
 string claim that also appears on refreshed ID tokens. Okta adds `uid` to access
 tokens from a custom authorization server, but not to ID tokens. In Okta, add a
@@ -297,9 +261,8 @@ claim before users sign in, because it becomes each user's stable identity in
 the directory.
 
 The console's access tokens must carry the same top-level claim, because the
-REST API resolves users from them. Otherwise sign-in works but the console's
-**Connectors** pages fail with `401`. Okta's custom authorization servers add
-`uid` to access tokens by default.
+REST API resolves users from them. Okta's custom authorization servers add `uid`
+to access tokens by default.
 
 The same `issuers` entry configures SCIM provisioning for that provider. See
 [SCIM identity providers](./deployment.mdx#scim-identity-providers).
@@ -343,9 +306,7 @@ kubectl get --raw /.well-known/openid-configuration | jq -r .issuer
 The Enterprise Manager fetches the issuer's discovery document and signing keys
 directly from that URL, not through the Kubernetes API server. On managed
 clusters such as Amazon EKS, the issuer is a public URL, so allow egress to it
-from the Enterprise Manager pods. If it can't fetch the discovery document at
-startup, the Enterprise Manager fails to start. If it later can't refresh the
-signing keys, it rejects every gRPC caller.
+from the Enterprise Manager pods.
 
 Each allowlist covers different calls from the gateway. `saSubjectAllowlist`
 covers identity resolution and per-user connector configuration.
@@ -355,18 +316,11 @@ which the gateway needs for the identity provider's client secret. The subject
 is `system:serviceaccount:<NAMESPACE>:<RELEASE_NAME>-connector-gateway`. The
 chart fills in a fourth list, `meteringSaSubjectAllowlist`, from the same
 subject for
-[tool call recording](#turn-on-tool-call-recording-and-observability).
-
-### Use a cleartext connection for development
-
-For a development cluster without TLS, set
-`connector-gateway.enterpriseConfig.directory.insecure: true` in place of
-`directoryTLS`, point `addr` at the cleartext port (`9091`), and set
-`enterprise-manager.grpc.insecure: true`. The chart requires both settings
-together. This transport carries credentials in cleartext with no caller
-authentication, so reserve it for local testing. The Enterprise Manager refuses
-to start with `grpc.insecure: true` while `directory.kek` is configured, so this
-transport works only on an install without the key-encryption key.
+[tool call recording](#turn-on-tool-call-recording-and-observability). If you
+change the gateway's name, update these values as described in
+[Override the gateway's name](#override-the-gateways-name). For a development
+cluster without TLS, see
+[Use a cleartext connection for development](#use-a-cleartext-connection-for-development).
 
 ### Keep the AI Gateway's access
 
@@ -387,9 +341,6 @@ with virtual API keys:
   skips caller authentication, and the Enterprise Manager refuses to start with
   it alongside a directory key-encryption key.
 
-Otherwise every virtual-key request fails with `503` and
-`key store temporarily unavailable`.
-
 The chart refuses to render while the AI Gateway is enabled and no subject
 ending in `-api-key-service` is on the list, even if you don't use virtual API
 keys. In that case, set
@@ -399,24 +350,7 @@ instead of adding a subject.
 If you set `global.stacklok.directoryGrpcEndpoint` to add group labels to AI
 Gateway telemetry, also add
 `system:serviceaccount:stacklok-system:<AIGATEWAY_NAME>-main-processor` to
-`saSubjectAllowlist`. Without it, the AI Gateway records telemetry without group
-labels and logs no error.
-
-### Override the gateway's name
-
-The umbrella chart computes these `enterprise-manager.grpc.callerAuth` and
-console values from the default gateway name,
-`<RELEASE_NAME>-connector-gateway`. If you change that name, set each one by
-hand:
-
-| Value                                                                                                                | Render fails when                                                                                                                       |
-| -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `meteringSaSubjectAllowlist`                                                                                         | The gateway's ServiceAccount name changes: `fullnameOverride`, `nameOverride`, `serviceAccount.name`, or `serviceAccount.create: false` |
-| `toolhive-cloud-ui.connectorGatewayUrl`, the in-cluster REST API URL that enables the console's **Connectors** pages | The control-plane Service name or port changes, or `controlPlane.enabled` is `false`                                                    |
-| `httpSaSubjectAllowlist`, set only when `global.stacklok.enterpriseManager.url` is set                               | Never. The Enterprise Manager refuses the gateway's HTTP calls, and nothing warns you at render time                                    |
-
-When a render fails, the error message prints the value to use. Also update the
-subjects in your three allowlists to match the new ServiceAccount name.
+`saSubjectAllowlist`.
 
 ## Corporate identity provider settings
 
@@ -622,6 +556,68 @@ and
 3. Direct users to the deployment-specific instructions in the console. See
    [Roll out gateway clients](./roll-out-gateway-clients.mdx).
 
+## Advanced configuration
+
+These settings apply only to some installs. Configure them alongside the values
+above.
+
+### Restrict the Redis user
+
+If the Connector Gateway is the only component that uses `global.redis`, you can
+connect as a least-privilege ACL user. Set `global.redis.username` to that user,
+and apply this reference ACL to your Redis or Valkey instance with your own
+password. `global.redis.username` applies to every component that inherits
+`global.redis`, so don't restrict the user this way while other components share
+it.
+
+```text title="users.acl"
+user default reset off
+user cgw reset on ><REDIS_PASSWORD> resetchannels ~thv:auth:* ~connector-gateway:* +@read +@write +@connection +@transaction -@admin -@dangerous -@scripting -script -function -fcall -fcall_ro +eval +evalsha -config -acl -flushall -flushdb -swapdb -replicaof -slaveof -cluster -failover -save -bgsave -bgrewriteaof -debug -shutdown -monitor -client|tracking -keys -randomkey -dbsize -scan
+```
+
+The `thv:auth:*` keys hold authorization server sessions, and the
+`connector-gateway:*` keys hold the tool call recording queue, a check for the
+gateway's encryption key, and client registration locks. The first line disables
+the built-in `default` user, which otherwise grants full access to any
+connection that falls back to it.
+
+### Use a cleartext connection for development
+
+For a development cluster without TLS, set
+`connector-gateway.enterpriseConfig.directory.insecure: true` in place of
+`directoryTLS`, point `addr` at the cleartext port (`9091`), and set
+`enterprise-manager.grpc.insecure: true`. The chart requires both settings
+together. This transport carries credentials in cleartext with no caller
+authentication, so reserve it for local testing. The Enterprise Manager refuses
+to start with `grpc.insecure: true` while `directory.kek` is configured, so this
+transport works only on an install without the key-encryption key.
+
+### Override the gateway's name
+
+The umbrella chart computes several Enterprise Manager and console values from
+the gateway's default name, `<RELEASE_NAME>-connector-gateway`. If you set
+`connector-gateway.fullnameOverride`, `nameOverride`, `serviceAccount.name`, or
+`serviceAccount.create: false`, or change the control-plane Service, update
+these values to match:
+
+| Setting                                                                                                                                                | Replacement value                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `enterprise-manager.grpc.callerAuth.saSubjectAllowlist`, `gatewaySaSubjectAllowlist`, `credentialSaSubjectAllowlist`, and `meteringSaSubjectAllowlist` | `system:serviceaccount:<NAMESPACE>:<SERVICE_ACCOUNT_NAME>`           |
+| `enterprise-manager.grpc.callerAuth.httpSaSubjectAllowlist`, only when `global.stacklok.enterpriseManager.url` is set                                  | The same subject, alongside any AI Gateway entry already on the list |
+| `toolhive-cloud-ui.connectorGatewayUrl`, which enables the console's **Connectors** pages                                                              | `http://<CONTROL_PLANE_SERVICE>.<NAMESPACE>:<CONTROL_PLANE_PORT>`    |
+| `enterprise-manager.grpc.networkPolicy.allowedClientSelector`, only with `nameOverride`                                                                | `app.kubernetes.io/name: <NAME_OVERRIDE>`                            |
+
+To read the names, render the chart with `helm template` and find the gateway's
+ServiceAccount and its `-control-plane` Service. With `fullnameOverride`, the
+ServiceAccount and Services take the override as their name; with
+`nameOverride`, they become `<RELEASE_NAME>-<NAME_OVERRIDE>`.
+
+`nameOverride` also changes the pods' `app.kubernetes.io/name` label. The
+Enterprise Manager's directory NetworkPolicy admits only pods labeled
+`connector-gateway`, so renamed pods reach the gRPC ports only through
+`grpc.networkPolicy`. If you don't enable that policy, use `fullnameOverride`,
+which keeps the label.
+
 ## Next steps
 
 - [Connector Gateway quickstart](../../connector-gateway/quickstart.mdx) to
@@ -658,6 +654,72 @@ kubectl logs deployment/stacklok-enterprise-connector-gateway -n stacklok-system
   restart the gateway; it reads the bundle only at startup.
 - **Connection timeouts.** Check that the Enterprise Manager's gRPC
   NetworkPolicy admits the gateway pods, and that the gateway can reach the
-  Redis or Valkey host.
+  Redis or Valkey host. After a `nameOverride`, see
+  [Override the gateway's name](#override-the-gateways-name).
+
+</details>
+
+<details>
+<summary>The Enterprise Manager fails to start or rejects every gRPC caller</summary>
+
+The Enterprise Manager fetches the `clusterOidcIssuer` discovery document at
+startup. If it can't, it exits with `cluster OIDC bootstrap failed`. If it
+starts but later can't refresh the issuer's signing keys, it rejects every gRPC
+caller, including the gateway. In both cases, check that `clusterOidcIssuer`
+matches your cluster's issuer and that the Enterprise Manager pods can reach it.
+
+</details>
+
+<details>
+<summary>The console's Connectors pages return 401</summary>
+
+The gateway's REST API rejected the console's access token. Check these causes:
+
+- `enterpriseConfig.controlPlane.incomingAuth.oidc` is unset. Without it, the
+  REST API accepts only tokens from the gateway's own authorization server.
+- `audience` doesn't match the console token's `aud` claim, or the token is
+  opaque rather than a JWT. See
+  [Accept console tokens on the REST API](#accept-console-tokens-on-the-rest-api).
+- With a `subjectClaim` other than `sub`, the console's access token lacks that
+  claim, or `subjectClaim` and the Enterprise Manager's `binding_claim` differ.
+  When they differ, users can't be resolved and sign-in through MCP clients
+  fails too. See
+  [Identify users by a claim other than `sub`](#identify-users-by-a-claim-other-than-sub).
+
+</details>
+
+<details>
+<summary>MCP clients stay at "needs authentication"</summary>
+
+If the authorization server rejects the client's sign-in with `invalid_scope`,
+the client registered with `openid` and then requested `offline_access`. Set
+`enterpriseConfig.authServer.baseline_client_scopes` to `openid` and
+`offline_access` as shown in
+[Enable the Connector Gateway](#enable-the-connector-gateway).
+
+</details>
+
+<details>
+<summary>AI Gateway requests fail or lose group labels</summary>
+
+- **Every virtual-key request fails with `503` and
+  `key store temporarily unavailable`.** The Enterprise Manager refused the API
+  key service. Check its subject on `saSubjectAllowlist`, its namespace, and its
+  `directory.insecure` setting, as described in
+  [Keep the AI Gateway's access](#keep-the-ai-gateways-access).
+- **AI Gateway telemetry has no group labels, and no error is logged.** The main
+  processor's subject is missing from `saSubjectAllowlist`.
+
+</details>
+
+<details>
+<summary>The render fails or the gateway is refused after a name override</summary>
+
+The umbrella chart checks `meteringSaSubjectAllowlist` and
+`toolhive-cloud-ui.connectorGatewayUrl` against the gateway's actual names and
+fails the render when they differ. The error message prints the value to set. No
+check covers `httpSaSubjectAllowlist`, so a stale entry there shows up only as
+refused HTTP calls from the gateway to the Enterprise Manager. See
+[Override the gateway's name](#override-the-gateways-name).
 
 </details>
