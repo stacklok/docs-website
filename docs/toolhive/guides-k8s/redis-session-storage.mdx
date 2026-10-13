@@ -887,6 +887,61 @@ spec:
     type: anonymous
 ```
 
+### Enable TLS for session storage
+
+Without TLS, the Redis password and session data travel in plaintext between the
+proxy runner or vMCP pods and Redis. Add a `tls` block under
+`spec.sessionStorage` on `MCPServer`, `MCPRemoteProxy`, or `VirtualMCPServer` to
+encrypt the connection. When the resource also configures rate limiting, the
+rate limiter's connection to the same Redis uses these TLS settings too.
+
+- An empty `tls: {}` object enables TLS and verifies the Redis server
+  certificate against the system root CAs. Use this for managed Redis services
+  with publicly trusted certificates.
+- `caCertSecretRef` names a Secret key that holds a PEM-encoded CA bundle for a
+  private CA. The operator mounts it into the pod, and the bundle replaces the
+  system roots for verification. If the Secret or key doesn't exist, the pod
+  stays in `ContainerCreating` instead of connecting without verification.
+- `insecureSkipVerify: true` encrypts the connection but skips server
+  certificate and hostname verification. Use it for testing only. The CRD
+  rejects setting it together with `caCertSecretRef`.
+
+A failed TLS handshake never falls back to plaintext. Your Redis server must be
+configured to serve TLS; the standalone Redis example above doesn't.
+
+```yaml title="mcp-server-with-redis-tls.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: my-server
+  namespace: toolhive-system
+spec:
+  image: ghcr.io/example/my-mcp-server:latest
+  replicas: 2
+  sessionStorage:
+    provider: redis
+    address: redis.toolhive-system.svc.cluster.local:6379
+    passwordRef:
+      name: redis-password
+      key: password
+    # highlight-start
+    tls:
+      caCertSecretRef:
+        name: redis-ca-cert
+        key: ca.crt
+    # highlight-end
+```
+
+For a `VirtualMCPServer`, set TLS under `spec.sessionStorage.tls` the same way.
+The CRD rejects a `tls` block under `spec.config.sessionStorage`, because the
+operator generates that value from `spec.sessionStorage`.
+
+When Redis session storage runs without TLS, or with `insecureSkipVerify`
+enabled, the proxy runner and vMCP log a `WARN` message at startup, such as
+`Redis session storage sends its password and session data without TLS`. If you
+rely on another layer for encryption, such as a service mesh, expect this
+warning in your logs.
+
 ### Verify session storage is working
 
 After applying your configuration, check that ToolHive has connected to Redis
