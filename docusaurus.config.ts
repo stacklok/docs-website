@@ -22,6 +22,27 @@ const config: Config = {
   favicon: 'img/stacklok-favicon.svg',
   plugins: [
     [
+      'docusaurus-plugin-openapi-docs',
+      {
+        id: 'openapi',
+        docsPluginId: 'classic',
+        config: {
+          toolhive: {
+            specPath: '.openapi-inputs/toolhive.yaml',
+            outputDir: 'docs/toolhive/reference/api-endpoints',
+            downloadUrl: '/api-specs/toolhive-api.yaml',
+            sidebarOptions: { groupPathsBy: 'tag', sidebarCollapsed: true },
+          },
+          enterpriseManager: {
+            specPath: '.openapi-inputs/enterprise-manager.yaml',
+            outputDir: 'docs/platform/reference/enterprise-manager-api',
+            downloadUrl: '/api-specs/enterprise-manager-api.json',
+            sidebarOptions: { groupPathsBy: 'tag', sidebarCollapsed: true },
+          },
+        },
+      },
+    ],
+    [
       'vercel-analytics',
       {
         debug: false,
@@ -159,13 +180,18 @@ const config: Config = {
     },
   },
 
-  themes: ['@docusaurus/theme-mermaid', 'docusaurus-json-schema-plugin'],
+  themes: [
+    '@docusaurus/theme-mermaid',
+    'docusaurus-json-schema-plugin',
+    'docusaurus-theme-openapi-docs',
+  ],
 
   presets: [
     [
       'classic',
       {
         docs: {
+          docItemComponent: '@theme/ApiItem',
           routeBasePath: '/',
           sidebarPath: './sidebars.ts',
           // Remove this to remove the "edit this page" links.
@@ -212,20 +238,8 @@ const config: Config = {
       {
         specs: [
           {
-            id: 'toolhive-api',
-            spec: 'static/api-specs/toolhive-api.yaml',
-            url: '/api-specs/toolhive-api.yaml',
-            normalizeUrl: false,
-            config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
-          },
-          {
             id: 'toolhive-registry-api',
             spec: 'static/api-specs/toolhive-registry-api.yaml',
-            config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
-          },
-          {
-            id: 'enterprise-manager-api',
-            spec: 'static/api-specs/enterprise-manager-api.json',
             config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
           },
           {

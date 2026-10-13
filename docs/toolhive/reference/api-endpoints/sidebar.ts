@@ -1,0 +1,572 @@
+import type { SidebarsConfig } from "@docusaurus/plugin-content-docs";
+
+const sidebar: SidebarsConfig = {
+  apisidebar: [
+    {
+      type: "doc",
+      id: "toolhive/reference/api-endpoints/toolhive-api",
+    },
+    {
+      type: "category",
+      label: "system",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-open-api-specification",
+          label: "Get OpenAPI specification",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/health-check",
+          label: "Health check",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "clients",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-all-clients",
+          label: "List all clients",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/register-a-new-client",
+          label: "Register a new client",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/unregister-a-client",
+          label: "Unregister a client",
+          className: "api-method delete",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/unregister-a-client-from-a-specific-group",
+          label: "Unregister a client from a specific group",
+          className: "api-method delete",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/register-multiple-clients",
+          label: "Register multiple clients",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/unregister-multiple-clients",
+          label: "Unregister multiple clients",
+          className: "api-method post",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "discovery",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-all-clients-status",
+          label: "List all clients status",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "groups",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-all-groups",
+          label: "List all groups",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/create-a-new-group",
+          label: "Create a new group",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/delete-a-group",
+          label: "Delete a group",
+          className: "api-method delete",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-group-details",
+          label: "Get group details",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "plugins",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-all-installed-plugins",
+          label: "List all installed plugins",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/install-a-plugin",
+          label: "Install a plugin",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/uninstall-a-plugin",
+          label: "Uninstall a plugin",
+          className: "api-method delete",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-plugin-details",
+          label: "Get plugin details",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/build-a-plugin",
+          label: "Build a plugin",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-locally-built-plugin-artifacts",
+          label: "List locally-built plugin artifacts",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/delete-a-locally-built-plugin-artifact",
+          label: "Delete a locally-built plugin artifact",
+          className: "api-method delete",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-plugin-content",
+          label: "Get plugin content",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/push-a-plugin",
+          label: "Push a plugin",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/sync-project-plugins-from-the-lock-file",
+          label: "Sync project plugins from the lock file",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/upgrade-project-plugins",
+          label: "Upgrade project plugins",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/validate-a-plugin",
+          label: "Validate a plugin",
+          className: "api-method post",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "registry",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-registries",
+          label: "List registries",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/add-a-registry-unavailable",
+          label: "Add a registry (unavailable)",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/remove-a-registry",
+          label: "Remove a registry",
+          className: "api-method delete",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-a-registry",
+          label: "Get a registry",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/update-registry-configuration",
+          label: "Update registry configuration",
+          className: "api-method put",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/refresh-registry-cache",
+          label: "Refresh registry cache",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-servers-in-a-registry",
+          label: "List servers in a registry",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-a-server-from-a-registry",
+          label: "Get a server from a registry",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/registry-login",
+          label: "Registry login",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/registry-logout",
+          label: "Registry logout",
+          className: "api-method post",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "secrets",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/setup-or-reconfigure-secrets-provider",
+          label: "Setup or reconfigure secrets provider",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-secrets-provider-details",
+          label: "Get secrets provider details",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-secrets",
+          label: "List secrets",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/create-a-new-secret",
+          label: "Create a new secret",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/delete-a-secret",
+          label: "Delete a secret",
+          className: "api-method delete",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/update-a-secret",
+          label: "Update a secret",
+          className: "api-method put",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "skills",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-all-installed-skills",
+          label: "List all installed skills",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/install-a-skill",
+          label: "Install a skill",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/uninstall-a-skill",
+          label: "Uninstall a skill",
+          className: "api-method delete",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-skill-details",
+          label: "Get skill details",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/build-a-skill",
+          label: "Build a skill",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-locally-built-skill-artifacts",
+          label: "List locally-built skill artifacts",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/delete-a-locally-built-skill-artifact",
+          label: "Delete a locally-built skill artifact",
+          className: "api-method delete",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-skill-content",
+          label: "Get skill content",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/push-a-skill",
+          label: "Push a skill",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/sync-project-skills-from-the-lock-file",
+          label: "Sync project skills from the lock file",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/upgrade-project-skills",
+          label: "Upgrade project skills",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/validate-a-skill",
+          label: "Validate a skill",
+          className: "api-method post",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "version",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-server-version",
+          label: "Get server version",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "workloads",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-all-workloads",
+          label: "List all workloads",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/create-a-new-workload",
+          label: "Create a new workload",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/delete-a-workload",
+          label: "Delete a workload",
+          className: "api-method delete",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-workload-details",
+          label: "Get workload details",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/update-workload",
+          label: "Update workload",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/export-workload-configuration",
+          label: "Export workload configuration",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/restart-a-workload",
+          label: "Restart a workload",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-workload-status",
+          label: "Get workload status",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/stop-a-workload",
+          label: "Stop a workload",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/apply-an-available-upgrade-to-a-workload",
+          label: "Apply an available upgrade to a workload",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/check-a-workload-for-an-available-upgrade",
+          label: "Check a workload for an available upgrade",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/delete-workloads-in-bulk",
+          label: "Delete workloads in bulk",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/restart-workloads-in-bulk",
+          label: "Restart workloads in bulk",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/stop-workloads-in-bulk",
+          label: "Stop workloads in bulk",
+          className: "api-method post",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/check-workloads-for-available-upgrades",
+          label: "Check workloads for available upgrades",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "logs",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-logs-for-a-specific-workload",
+          label: "Get logs for a specific workload",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-proxy-logs-for-a-specific-workload",
+          label: "Get proxy logs for a specific workload",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "registry-servers",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-available-registry-servers",
+          label: "List available registry servers",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-a-registry-server",
+          label: "Get a registry server",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "registry-plugins",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-available-registry-plugins",
+          label: "List available registry plugins",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-a-registry-plugin",
+          label: "Get a registry plugin",
+          className: "api-method get",
+        },
+      ],
+    },
+    {
+      type: "category",
+      label: "registry-skills",
+      collapsed: true,
+      items: [
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/list-available-registry-skills",
+          label: "List available registry skills",
+          className: "api-method get",
+        },
+        {
+          type: "doc",
+          id: "toolhive/reference/api-endpoints/get-a-registry-skill",
+          label: "Get a registry skill",
+          className: "api-method get",
+        },
+      ],
+    },
+  ],
+};
+
+export default sidebar.apisidebar;

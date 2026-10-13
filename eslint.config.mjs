@@ -13,7 +13,13 @@ const gitignorePath = fileURLToPath(new URL('.gitignore', import.meta.url));
 export default [
   includeIgnoreFile(gitignorePath),
   // Auto-generated CLI docs (tracked in git but generated upstream)
-  { ignores: ['docs/toolhive/reference/cli/'] },
+  {
+    ignores: [
+      'docs/toolhive/reference/cli/',
+      'docs/toolhive/reference/api-endpoints/',
+      'docs/platform/reference/enterprise-manager-api/',
+    ],
+  },
   { files: ['**/*.{js,mjs,cjs,ts,jsx,tsx}'] },
   { languageOptions: { globals: globals.node } },
 

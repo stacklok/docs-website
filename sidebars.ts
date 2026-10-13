@@ -1,5 +1,7 @@
 import type { SidebarsConfig } from '@docusaurus/plugin-content-docs';
 import { buildCliReferenceSidebar } from './src/utils/buildHierarchicalSidebar';
+import toolhiveApiSidebar from './docs/toolhive/reference/api-endpoints/sidebar';
+import enterpriseManagerApiSidebar from './docs/platform/reference/enterprise-manager-api/sidebar';
 import { loadCrdSidebar } from './scripts/lib/crd-sets.mjs';
 
 type SidebarItemConfig = SidebarsConfig[string] extends (infer T)[] ? T : never;
@@ -146,7 +148,15 @@ const mcpSidebar: SidebarsConfig[string] = [
               type: 'doc',
               id: 'toolhive/guides-cli/api-server',
             },
-            items: ['toolhive/reference/api'],
+            items: [
+              {
+                type: 'category',
+                label: 'API reference',
+                collapsed: true,
+                link: { type: 'doc', id: 'toolhive/reference/api' },
+                items: toolhiveApiSidebar,
+              },
+            ],
           },
         ],
       },
@@ -399,7 +409,16 @@ const platformSidebar: SidebarsConfig[string] = [
         ],
       },
       'platform/enterprise-platform/api-reference',
-      'platform/enterprise-platform/enterprise-manager-api',
+      {
+        type: 'category',
+        label: 'Enterprise Manager API reference',
+        collapsed: true,
+        link: {
+          type: 'doc',
+          id: 'platform/enterprise-platform/enterprise-manager-api',
+        },
+        items: enterpriseManagerApiSidebar,
+      },
     ],
   },
 
