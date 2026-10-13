@@ -1296,6 +1296,34 @@
                 "redis"
               ],
               "type": "string"
+            },
+            "tls": {
+              "description": "TLS enables TLS for the Redis session storage connection and, when rate\nlimiting is configured, for the rate-limit connection to the same Redis.\nWhen omitted, the connections are plaintext and the Redis password and\nsession data cross the network unencrypted. An empty object enables TLS\nwith server certificate verification against the system root CAs; set\ncaCertSecretRef for a private CA. A failed handshake never falls back to\nplaintext. Only used when provider is redis.",
+              "properties": {
+                "caCertSecretRef": {
+                  "description": "CACertSecretRef references a Secret containing a PEM-encoded CA certificate\nfor verifying the server. When not specified, system root CAs are used.\nIf the Secret or key does not exist, the pod cannot start (it stays in\nContainerCreating) rather than connecting without verification.",
+                  "properties": {
+                    "key": {
+                      "description": "Key is the key within the secret",
+                      "type": "string"
+                    },
+                    "name": {
+                      "description": "Name is the name of the secret",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "insecureSkipVerify": {
+                  "description": "InsecureSkipVerify disables server certificate and hostname verification.\nThe connection is encrypted but not authenticated, so anyone able to\nimpersonate the server can read the credentials and data sent over it.\nIntended for testing only; for self-signed or private CAs set\ncaCertSecretRef instead.",
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
             }
           },
           "required": [
@@ -1306,6 +1334,18 @@
             {
               "message": "address is required",
               "rule": "self.provider == 'redis' ? has(self.address) : true"
+            },
+            {
+              "message": "tls is only supported when provider is redis",
+              "rule": "!has(self.tls) || self.provider == 'redis'"
+            },
+            {
+              "message": "tls.insecureSkipVerify disables certificate verification, so tls.caCertSecretRef would be ignored; set only one",
+              "rule": "!has(self.tls) || !has(self.tls.caCertSecretRef) || !has(self.tls.insecureSkipVerify) || !self.tls.insecureSkipVerify"
+            },
+            {
+              "message": "tls.caCertSecretRef requires a non-empty name and key",
+              "rule": "!has(self.tls) || !has(self.tls.caCertSecretRef) || (size(self.tls.caCertSecretRef.name) > 0 && size(self.tls.caCertSecretRef.key) > 0)"
             }
           ]
         },

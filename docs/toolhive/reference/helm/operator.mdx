@@ -10,9 +10,9 @@ Configure the ToolHive operator with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `toolhive-operator`. Chart version: `0.51.4`. Source:
-[`values.yaml`](https://github.com/stacklok/toolhive/blob/v0.51.4/deploy/charts/operator/values.yaml)
-at `v0.51.4`.
+Chart: `toolhive-operator`. Chart version: `0.52.0`. Source:
+[`values.yaml`](https://github.com/stacklok/toolhive/blob/v0.52.0/deploy/charts/operator/values.yaml)
+at `v0.52.0`.
 
 ## Values
 
@@ -22,7 +22,7 @@ at `v0.51.4`.
 
 **Default:** `""`
 
-Override the name of the chart
+Override the chart name used in resource labels and generated names.
 
 ### `fullnameOverride`
 
@@ -30,7 +30,7 @@ Override the name of the chart
 
 **Default:** `"toolhive-operator"`
 
-Provide a fully-qualified name override for resources
+Override the generated name of the operator Deployment and related resources.
 
 ### `operator`
 
@@ -68,7 +68,7 @@ features:
 gc:
   gogc: 75
   gomemlimit: 110MiB
-image: ghcr.io/stacklok/toolhive/operator:v0.51.4
+image: ghcr.io/stacklok/toolhive/operator:v0.52.0
 imageDiscovery:
   enabled: false
   resources: {}
@@ -153,15 +153,15 @@ serviceAccount:
   labels: {}
   name: toolhive-operator
 tolerations: []
-toolhiveRunnerImage: ghcr.io/stacklok/toolhive/proxyrunner:v0.51.4
-vmcpImage: ghcr.io/stacklok/toolhive/vmcp:v0.51.4
+toolhiveRunnerImage: ghcr.io/stacklok/toolhive/proxyrunner:v0.52.0
+vmcpImage: ghcr.io/stacklok/toolhive/vmcp:v0.52.0
 volumeMounts: []
 volumes: []
 ```
 
 </details>
 
-All values for the operator deployment and associated resources
+Settings for the operator Deployment and related resources.
 
 ### `operator.features.experimental`
 
@@ -169,7 +169,7 @@ All values for the operator deployment and associated resources
 
 **Default:** `false`
 
-Enable experimental features
+Enable experimental operator features.
 
 ### `operator.features.storageVersionMigrator`
 
@@ -177,14 +177,12 @@ Enable experimental features
 
 **Default:** `true`
 
-Enable the StorageVersionMigrator controller, which auto-cleans
-status.storedVersions on opted-in toolhive.stacklok.dev CRDs so a future release
-can drop deprecated versions (e.g. v1alpha1) without orphaning etcd objects in
-the cluster. Enabled by default; set to false to opt out and handle
-storage-version cleanup yourself. Sets TOOLHIVE_ENABLE_STORAGE_VERSION_MIGRATOR
-in the operator deployment. Requires `operator.rbac.scope=cluster` — the
-controller watches cluster-scoped CRDs and re-stores resources across all
-namespaces, so the chart rejects this being true when scope is namespace.
+Enable the storage version migration controller to rewrite resources in the
+current storage version and remove obsolete entries from CRD
+`status.storedVersions`. Applies to ToolHive CRDs with the
+`toolhive.stacklok.dev/auto-migrate-storage-version` label set to `"true"`.
+Requires `operator.rbac.scope=cluster`; set this to `false` for namespace-scoped
+installations.
 
 ### `operator.replicaCount`
 
@@ -192,7 +190,8 @@ namespaces, so the chart rejects this being true when scope is namespace.
 
 **Default:** `1`
 
-Number of replicas for the operator deployment
+Number of operator replicas when autoscaling is disabled. Leader election
+selects one active controller replica.
 
 ### `operator.imagePullSecrets`
 
@@ -200,7 +199,8 @@ Number of replicas for the operator deployment
 
 **Default:** `[]`
 
-List of image pull secrets to use
+Image pull Secrets for the operator pod, as objects with a `name` field. Secrets
+must exist in the release namespace.
 
 ### `operator.defaultImagePullSecrets`
 
@@ -208,24 +208,10 @@ List of image pull secrets to use
 
 **Default:** `[]`
 
-List of image pull secrets that the operator applies as defaults to every
-workload it spawns (proxy runners, vMCP servers, registry API, etc.). Per-CR
-`imagePullSecrets` take precedence on name collisions; chart-level entries are
-appended additively. The operator parses these once at startup from the
-TOOLHIVE_DEFAULT_IMAGE_PULL_SECRETS environment variable. The Secrets must exist
-in the namespace where each workload is created.
-
-Each entry may be either a plain string (the Secret name) or an object with a
-`name` field, e.g.:
-
-```yaml
-defaultImagePullSecrets:
-  - regcred
-  - name: otherscred
-```
-
-The two shapes are equivalent; the object form matches
-`operator.imagePullSecrets` above for convenience.
+Default image pull Secrets for workloads created by the operator. Accepts Secret
+names or objects with a `name` field. Entries are merged with each resource's
+`imagePullSecrets`, with resource-level entries taking precedence for duplicate
+names. Secrets must exist in each workload's namespace.
 
 ### `operator.defaultRedis`
 
@@ -233,22 +219,8 @@ The two shapes are equivalent; the object form matches
 
 **Default:** `{"addr":"","existingSecret":"","existingSecretKey":""}`
 
-Default Redis/Valkey address used by the operator when a workload CR has no
-sessionStorage configured. The operator injects this as
-TOOLHIVE_DEFAULT_REDIS_ADDR on pods it creates. When empty, no global Redis
-default is active. Override per-CR with spec.sessionStorage.
-
-global.redis.host (from a parent umbrella chart) is used as fallback when addr
-is empty here. Both express the same addr concept; addr takes precedence.
-
-For the password, reference a pre-existing Kubernetes Secret:
-
-```yaml
-defaultRedis:
-  addr: 'myredis.svc:6379'
-  existingSecret: 'redis-credentials'
-  existingSecretKey: 'password'
-```
+Default Redis or Valkey session storage settings for workloads without
+`spec.sessionStorage` configured.
 
 ### `operator.defaultRedis.addr`
 
@@ -256,7 +228,9 @@ defaultRedis:
 
 **Default:** `""`
 
-addr is the Redis/Valkey address (host:port).
+Redis or Valkey address in `host:port` format. When empty, uses
+`global.redis.host` and `global.redis.port` (default `6379`) from a parent
+chart. No default session storage is configured when neither address is set.
 
 ### `operator.defaultRedis.existingSecret`
 
@@ -264,7 +238,9 @@ addr is the Redis/Valkey address (host:port).
 
 **Default:** `""`
 
-existingSecret is the name of a Secret containing the Redis password.
+Name of an existing Secret containing the Redis password. When empty, uses
+`global.redis.existingSecret`. The Secret must exist in each workload's
+namespace. Used only when a Redis address is configured.
 
 ### `operator.defaultRedis.existingSecretKey`
 
@@ -272,16 +248,16 @@ existingSecret is the name of a Secret containing the Redis password.
 
 **Default:** `""`
 
-existingSecretKey is the key within existingSecret that holds the password.
-Empty means use global.redis.existingSecretKey or fall back to "redis-password".
+Key containing the password in `existingSecret`. When empty, uses
+`global.redis.existingSecretKey`, then `redis-password`.
 
 ### `operator.image`
 
 **Type:** `string`
 
-**Default:** `"ghcr.io/stacklok/toolhive/operator:v0.51.4"`
+**Default:** `"ghcr.io/stacklok/toolhive/operator:v0.52.0"`
 
-Container image for the operator
+Container image for the operator.
 
 ### `operator.imagePullPolicy`
 
@@ -289,23 +265,24 @@ Container image for the operator
 
 **Default:** `"IfNotPresent"`
 
-Image pull policy for the operator container
+Image pull policy for the operator container and image-discovery containers.
 
 ### `operator.toolhiveRunnerImage`
 
 **Type:** `string`
 
-**Default:** `"ghcr.io/stacklok/toolhive/proxyrunner:v0.51.4"`
+**Default:** `"ghcr.io/stacklok/toolhive/proxyrunner:v0.52.0"`
 
-Image to use for ToolHive runners
+Container image for ToolHive proxy runners created by the operator.
 
 ### `operator.vmcpImage`
 
 **Type:** `string`
 
-**Default:** `"ghcr.io/stacklok/toolhive/vmcp:v0.51.4"`
+**Default:** `"ghcr.io/stacklok/toolhive/vmcp:v0.52.0"`
 
-Image to use for Virtual MCP Server (vMCP) deployments
+Container image for Virtual MCP Server (vMCP) deployments created by the
+operator.
 
 ### `operator.imageDiscovery`
 
@@ -313,20 +290,8 @@ Image to use for Virtual MCP Server (vMCP) deployments
 
 **Default:** `{"enabled":false,"resources":{}}`
 
-Air-gap image-discovery aid. toolhiveRunnerImage, vmcpImage, and
-registryAPI.image are never rendered as chart `image:` keys — the operator only
-injects them into child workloads at runtime via env vars (TOOLHIVE_RUNNER_IMAGE
-/ VMCP_IMAGE / TOOLHIVE_REGISTRY_API_IMAGE). Static manifest scanners used by
-air-gap tooling (e.g. a vendor portal's image list generator) discover images by
-reading `image:` keys out of `helm template` output, so they miss these three
-and an air-gapped customer can hit ImagePullBackOff on the first MCPServer /
-VirtualMCPServer / MCPRegistry create.
-
-Enabling this renders a `replicas: 0` Deployment
-(`<release-name>-image-discovery`) whose pod template references all three
-images. A zero-replica Deployment never has Kubernetes schedule a pod from it,
-so the images are never pulled or run — this exists purely to put the refs in
-front of a static manifest scan.
+Image discovery settings for manifest scanners used to mirror images into
+air-gapped environments.
 
 ### `operator.imageDiscovery.enabled`
 
@@ -334,7 +299,10 @@ front of a static manifest scan.
 
 **Default:** `false`
 
-Render the zero-replica image-discovery Deployment described above.
+Render a zero-replica Deployment with `image:` entries for
+`operator.toolhiveRunnerImage`, `operator.vmcpImage`, and `registryAPI.image`.
+This lets manifest scanners discover images otherwise supplied to the operator
+through environment variables. The Deployment runs no pods.
 
 ### `operator.imageDiscovery.resources`
 
@@ -342,11 +310,8 @@ Render the zero-replica image-discovery Deployment described above.
 
 **Default:** `{}`
 
-Resource requests/limits for the image-discovery Deployment's containers.
-Admission control (a LimitRange, an OPA/Kyverno policy requiring explicit
-requests) validates these at CREATE time even though replicas: 0 means nothing
-ever actually runs, so this is exposed separately from operator.resources for
-clusters that need it set.
+Resource requests and limits for image-discovery containers. Admission policies
+can require these values even when the Deployment has zero replicas.
 
 ### `operator.proxyHost`
 
@@ -354,7 +319,8 @@ clusters that need it set.
 
 **Default:** `"0.0.0.0"`
 
-Host for the proxy deployed by the operator
+Bind address for proxy runners in managed MCPServer and MCPRemoteProxy
+workloads.
 
 ### `operator.env`
 
@@ -362,12 +328,10 @@ Host for the proxy deployed by the operator
 
 **Default:** `[]`
 
-Environment variables to set in the operator container. Supported
-toolhive-specific variables include:
-
-- TOOLHIVE_SKIP_UPDATE_CHECK: set to "true" to disable the operator's periodic
-  update check against the ToolHive update API. Also disables the usage-metrics
-  collection that is gated on the same check.
+Additional environment variables for the operator container. Chart-managed
+variables take precedence for duplicate names. Set `TOOLHIVE_SKIP_UPDATE_CHECK`
+to `"true"` to disable periodic update checks and the usage metrics collected
+with them.
 
 ### `operator.ports`
 
@@ -387,7 +351,8 @@ toolhive-specific variables include:
 
 </details>
 
-List of ports to expose from the operator container
+Ports declared on the operator container. The default `metrics` and `health`
+names identify the metrics and health-check ports.
 
 ### `operator.podAnnotations`
 
@@ -395,7 +360,7 @@ List of ports to expose from the operator container
 
 **Default:** `{}`
 
-Annotations to add to the operator pod
+Annotations to add to the operator pod.
 
 ### `operator.podLabels`
 
@@ -403,7 +368,7 @@ Annotations to add to the operator pod
 
 **Default:** `{}`
 
-Labels to add to the operator pod
+Labels to add to the operator pod.
 
 ### `operator.podSecurityContext`
 
@@ -411,7 +376,7 @@ Labels to add to the operator pod
 
 **Default:** `{"runAsNonRoot":true}`
 
-Pod security context settings
+Security context for the operator pod and image-discovery pod template.
 
 ### `operator.containerSecurityContext`
 
@@ -434,7 +399,7 @@ seccompProfile:
 
 </details>
 
-Container security context settings for the operator
+Security context for the operator container and image-discovery containers.
 
 ### `operator.livenessProbe`
 
@@ -443,7 +408,8 @@ Container security context settings for the operator
 **Default:**
 `{"httpGet":{"path":"/healthz","port":"health"},"initialDelaySeconds":15,"periodSeconds":20}`
 
-Liveness probe configuration for the operator
+Liveness probe for the operator container. The default probe uses the named
+`health` port.
 
 ### `operator.readinessProbe`
 
@@ -452,7 +418,8 @@ Liveness probe configuration for the operator
 **Default:**
 `{"httpGet":{"path":"/readyz","port":"health"},"initialDelaySeconds":5,"periodSeconds":10}`
 
-Readiness probe configuration for the operator
+Readiness probe for the operator container. The default probe uses the named
+`health` port.
 
 ### `operator.autoscaling`
 
@@ -461,7 +428,7 @@ Readiness probe configuration for the operator
 **Default:**
 `{"enabled":false,"maxReplicas":100,"minReplicas":1,"targetCPUUtilizationPercentage":80}`
 
-Configuration for horizontal pod autoscaling
+Horizontal Pod Autoscaler settings for the operator Deployment.
 
 ### `operator.autoscaling.enabled`
 
@@ -469,7 +436,8 @@ Configuration for horizontal pod autoscaling
 
 **Default:** `false`
 
-Enable autoscaling for the operator
+Create a Horizontal Pod Autoscaler for the operator Deployment. When enabled,
+the chart omits `replicaCount` from the Deployment.
 
 ### `operator.autoscaling.minReplicas`
 
@@ -477,7 +445,7 @@ Enable autoscaling for the operator
 
 **Default:** `1`
 
-Minimum number of replicas
+Minimum number of operator replicas when autoscaling is enabled.
 
 ### `operator.autoscaling.maxReplicas`
 
@@ -485,7 +453,7 @@ Minimum number of replicas
 
 **Default:** `100`
 
-Maximum number of replicas
+Maximum number of operator replicas when autoscaling is enabled.
 
 ### `operator.autoscaling.targetCPUUtilizationPercentage`
 
@@ -493,7 +461,7 @@ Maximum number of replicas
 
 **Default:** `80`
 
-Target CPU utilization percentage for autoscaling
+Target average CPU utilization as a percentage of requested CPU for autoscaling.
 
 ### `operator.resources`
 
@@ -502,7 +470,7 @@ Target CPU utilization percentage for autoscaling
 **Default:**
 `{"limits":{"cpu":"500m","memory":"128Mi"},"requests":{"cpu":"10m","memory":"64Mi"}}`
 
-Resource requests and limits for the operator container
+Resource requests and limits for the operator container.
 
 ### `operator.gc`
 
@@ -510,7 +478,7 @@ Resource requests and limits for the operator container
 
 **Default:** `{"gogc":75,"gomemlimit":"110MiB"}`
 
-Go memory limits and garbage collection percentage for the operator container
+Go runtime memory and garbage collection settings for the operator container.
 
 ### `operator.gc.gomemlimit`
 
@@ -518,7 +486,7 @@ Go memory limits and garbage collection percentage for the operator container
 
 **Default:** `"110MiB"`
 
-Go memory limits for the operator container
+Go runtime soft memory limit, supplied as `GOMEMLIMIT`.
 
 ### `operator.gc.gogc`
 
@@ -526,7 +494,8 @@ Go memory limits for the operator container
 
 **Default:** `75`
 
-Go garbage collection percentage for the operator container
+Target heap growth percentage between garbage collections, supplied as `GOGC`.
+The Go runtime default is `100`.
 
 ### `operator.rbac`
 
@@ -534,7 +503,7 @@ Go garbage collection percentage for the operator container
 
 **Default:** `{"allowedNamespaces":[],"scope":"cluster"}`
 
-RBAC configuration for the operator
+Role-based access control (RBAC) settings for the operator.
 
 ### `operator.rbac.scope`
 
@@ -542,13 +511,11 @@ RBAC configuration for the operator
 
 **Default:** `"cluster"`
 
-Scope of the RBAC configuration.
-
-- cluster: The operator will have cluster-wide permissions via ClusterRole and
-  ClusterRoleBinding.
-- namespace: The operator will have permissions to manage resources in the
-  namespaces specified in `allowedNamespaces`. The operator will have a
-  ClusterRole and RoleBinding for each namespace in `allowedNamespaces`.
+Permission scope for the operator. `cluster` creates a ClusterRoleBinding for
+cluster-wide access. `namespace` creates a RoleBinding to the operator
+ClusterRole in each entry of `allowedNamespaces` and limits watches to those
+namespaces. Namespace scope requires
+`operator.features.storageVersionMigrator=false`.
 
 ### `operator.rbac.allowedNamespaces`
 
@@ -556,8 +523,8 @@ Scope of the RBAC configuration.
 
 **Default:** `[]`
 
-List of namespaces that the operator is allowed to have permissions to manage.
-Only used if scope is set to "namespace".
+Namespaces to watch and manage when `scope` is `namespace`. Each namespace
+receives a RoleBinding to the operator ClusterRole.
 
 ### `operator.serviceAccount`
 
@@ -576,7 +543,7 @@ name: toolhive-operator
 
 </details>
 
-Service account configuration for the operator
+ServiceAccount settings for the operator.
 
 ### `operator.serviceAccount.create`
 
@@ -584,7 +551,7 @@ Service account configuration for the operator
 
 **Default:** `true`
 
-Specifies whether a service account should be created
+Create the operator ServiceAccount.
 
 ### `operator.serviceAccount.automountServiceAccountToken`
 
@@ -592,7 +559,8 @@ Specifies whether a service account should be created
 
 **Default:** `true`
 
-Automatically mount a ServiceAccount's API credentials
+Automatically mount Kubernetes API credentials for pods using the chart-created
+ServiceAccount. Used only when `create` is `true`.
 
 ### `operator.serviceAccount.annotations`
 
@@ -600,7 +568,7 @@ Automatically mount a ServiceAccount's API credentials
 
 **Default:** `{}`
 
-Annotations to add to the service account
+Annotations to add to the chart-created ServiceAccount.
 
 ### `operator.serviceAccount.labels`
 
@@ -608,7 +576,7 @@ Annotations to add to the service account
 
 **Default:** `{}`
 
-Labels to add to the service account
+Labels to add to the chart-created ServiceAccount.
 
 ### `operator.serviceAccount.name`
 
@@ -616,8 +584,9 @@ Labels to add to the service account
 
 **Default:** `"toolhive-operator"`
 
-The name of the service account to use. If not set and create is true, a name is
-generated.
+Name of the ServiceAccount used by the operator. When empty, uses the generated
+resource name if `create` is `true`, or the namespace's `default` ServiceAccount
+if `create` is `false`.
 
 ### `operator.leaderElectionRole`
 
@@ -666,7 +635,7 @@ rules:
 
 </details>
 
-Leader election role configuration
+Namespaced Role and RoleBinding settings for operator leader election.
 
 ### `operator.leaderElectionRole.name`
 
@@ -674,7 +643,7 @@ Leader election role configuration
 
 **Default:** `"toolhive-operator-leader-election-role"`
 
-Name of the role for leader election
+Name of the Role used for operator leader election.
 
 ### `operator.leaderElectionRole.binding.name`
 
@@ -682,7 +651,7 @@ Name of the role for leader election
 
 **Default:** `"toolhive-operator-leader-election-rolebinding"`
 
-Name of the role binding for leader election
+Name of the RoleBinding used for operator leader election.
 
 ### `operator.leaderElectionRole.rules`
 
@@ -727,7 +696,7 @@ Name of the role binding for leader election
 
 </details>
 
-Rules for the leader election role
+Permission rules for the operator leader election Role.
 
 ### `operator.volumes`
 
@@ -735,7 +704,7 @@ Rules for the leader election role
 
 **Default:** `[]`
 
-Additional volumes to mount on the operator pod
+Additional volumes for the operator pod.
 
 ### `operator.volumeMounts`
 
@@ -743,7 +712,7 @@ Additional volumes to mount on the operator pod
 
 **Default:** `[]`
 
-Additional volume mounts on the operator container
+Additional volume mounts for the operator container.
 
 ### `operator.nodeSelector`
 
@@ -751,7 +720,7 @@ Additional volume mounts on the operator container
 
 **Default:** `{}`
 
-Node selector for the operator pod
+Node selector for scheduling the operator pod.
 
 ### `operator.tolerations`
 
@@ -759,7 +728,7 @@ Node selector for the operator pod
 
 **Default:** `[]`
 
-Tolerations for the operator pod
+Tolerations for scheduling the operator pod.
 
 ### `operator.affinity`
 
@@ -767,7 +736,7 @@ Tolerations for the operator pod
 
 **Default:** `{}`
 
-Affinity settings for the operator pod
+Affinity rules for scheduling the operator pod.
 
 ### `registryAPI`
 
@@ -775,7 +744,7 @@ Affinity settings for the operator pod
 
 **Default:** `{"image":"ghcr.io/stacklok/thv-registry-api:v1.5.2"}`
 
-All values for the registry API deployment and associated resources
+Settings for the registry API workloads created by the operator.
 
 ### `registryAPI.image`
 
@@ -783,7 +752,7 @@ All values for the registry API deployment and associated resources
 
 **Default:** `"ghcr.io/stacklok/thv-registry-api:v1.5.2"`
 
-Container image for the registry API
+Container image for registry API workloads created by the operator.
 
 ## Related information
 
