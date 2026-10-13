@@ -30,7 +30,8 @@ are intended to be checked in; do not edit them by hand:
 - `docs/platform/reference/enterprise-manager-api/`
 
 The script normalizes copies of source specs into ignored `.openapi-inputs/`.
-It preserves the existing Redocusaurus localhost base URL convention without
+ToolHive retains its localhost base URL. Enterprise Manager offers an editable
+deployment URL variable and a labeled local port-forward server option, without
 editing release artifacts in `static/api-specs/`. Builds use the generated pages
 without running generation. The upstream release workflow invokes generation
 after refreshing ToolHive or Stacklok Enterprise Platform specifications.

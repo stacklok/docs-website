@@ -13,7 +13,24 @@ for (const [source, destination] of [
   ],
 ]) {
   const spec = YAML.parse(fs.readFileSync(source, 'utf8'));
-  spec.servers = [{ url: 'http://localhost:8080' }];
+  spec.servers = source.endsWith('enterprise-manager-api.json')
+    ? [
+        {
+          url: '{baseUrl}',
+          description: 'Your Enterprise Manager deployment URL',
+          variables: {
+            baseUrl: {
+              default: 'https://enterprise-manager.example.com',
+              description: 'Include any ingress path prefix.',
+            },
+          },
+        },
+        {
+          url: 'http://localhost:8080',
+          description: 'Local port-forward (8080:80)',
+        },
+      ]
+    : [{ url: 'http://localhost:8080' }];
   fs.writeFileSync(destination, YAML.stringify(spec));
 }
 const cli = 'node_modules/@docusaurus/core/bin/docusaurus.mjs';
