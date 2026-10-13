@@ -12,7 +12,7 @@ This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
 Chart: `toolhive-cloud-ui`. Chart version: `0.22.0`. Generated from the platform
-source at `31a9082995ecfcb33dc3cb34c6d92029a6223628`.
+source at `c55bf9ba10b16013a304910c0a1b8c884bb1b553`.
 
 ## Values
 
@@ -477,11 +477,11 @@ just can't reach it.
 
 ### `apiBaseUrl`
 
-**Type:** `required`
+**Type:** `string`
 
 **Default:** `""`
 
-Base URL of the Registry Server API
+Base URL of the Registry Server API. Required.
 
 ### `oidc`
 
@@ -489,26 +489,15 @@ Base URL of the Registry Server API
 
 **Default:** `{"additionalProviders":[]}`
 
-OIDC / OAuth configuration. The primary provider (issuer/client ID/client
-secret/scopes) is no longer configured here — per
-docs/design/platform-identity.md, it comes from global.stacklok.primaryIdp, the
-single source of truth shared with connector-gateway's default embedded-AS
-upstream and enterprise-manager's issuer trust. The old
-issuerUrl/clientId/clientSecret/existingSecret/ existingSecretKey/scopes fields
-were removed with no compat shim — setting any of them fails the render
-(toolhive-cloud-ui.rejectLegacyOidc).
-
-A primary IdP served by a PRIVATE CA additionally needs
-global.stacklok.primaryIdp.caBundleRef — exactly one of `secretRef: {name}` or
-`configMapRef: {name}`, plus `key` (default ca.crt) — per
-docs/design/platform-identity.md. This chart projects that key into the pod and
-sets NODE_EXTRA_CA_CERTS to it, which is ADDITIVE to Node's default roots, so
-server-side OIDC discovery (fetch(OIDC_DISCOVERY_URL)) trusts that IdP without
-this pod losing its trust in public CAs. Read at process start: rotating the
-source's CONTENTS in place needs a manual pod roll (changing the ref name or key
-changes the pod spec and rolls it automatically).
-global.stacklok.primaryIdp.allowPrivateIps is deliberately NOT read here —
-Node's fetch does not gate private addresses, so there is nothing to relax.
+OpenID Connect (OIDC) and OAuth configuration. The primary provider's issuer,
+client credentials, and scopes come from `global.stacklok.primaryIdp`, shared
+with Enterprise Manager and Connector Gateway. For an IdP served by a private
+certificate authority, set `global.stacklok.primaryIdp.caBundleRef` with exactly
+one of `secretRef` or `configMapRef`, plus `key` (default `ca.crt`). The chart
+mounts that certificate bundle and sets `NODE_EXTRA_CA_CERTS`, extending Node's
+default trusted roots. Restart the pods after changing the bundle's contents.
+Changing the reference name or key triggers a rollout automatically. The console
+permits private IdP addresses.
 
 ### `oidc.additionalProviders`
 
@@ -530,14 +519,13 @@ Better Auth session management
 
 ### `betterAuth.secret`
 
-**Type:** `required unless existingSecret is set`
+**Type:** `string`
 
 **Default:** `""`
 
-(required unless existingSecret is set) Token encryption secret (min 32 chars),
-as a plain value. Prefer existingSecret below; this is kept for backward
-compatibility with existing installs that already set it directly. Generate
-with: openssl rand -base64 32
+Token encryption secret as a plain value, at least 32 characters long. Required
+unless `existingSecret` is set. Prefer a Kubernetes Secret via `existingSecret`.
+Generate a value with `openssl rand -base64 32`.
 
 ### `betterAuth.existingSecret`
 
@@ -558,24 +546,23 @@ Key within existingSecret holding the token encryption secret.
 
 ### `betterAuth.url`
 
-**Type:** `required`
+**Type:** `string`
 
 **Default:** `""`
 
-(required) Public URL of the Cloud UI (used for auth callbacks). Must be
+Public URL of the console, used for authentication callbacks. Required. Must be
 externally reachable since the browser uses it during sign-in.
 
 ### `enterpriseManagerUrl`
 
-**Type:** `required for Administration pages`
+**Type:** `string`
 
 **Default:** `""`
 
-(required for Administration pages) Base URL of the enterprise-manager service —
-backs feature flags/config AND the directory API behind /administration/users,
-/administration/groups, etc. When unset, those pages fail at request time with
-"No enterprise-manager API URL configured." (see src/lib/directory-client.ts) —
-there is no fallback.
+Base URL of Enterprise Manager, required for the administration experience. The
+console uses it for feature flags, configuration, and directory operations. When
+empty, administration pages fail with "No enterprise-manager API URL
+configured." There is no fallback URL.
 
 ### `gatewayApiUrl`
 
@@ -678,11 +665,11 @@ redirect URI registered with your IdP; empty uses the CLI default of 8666.
 
 ### `redisUrl`
 
-**Type:** `optional`
+**Type:** `string`
 
 **Default:** `""`
 
-(optional) Redis connection URL for server-side caching (currently used to cache
+Optional Redis connection URL for server-side caching (currently used to cache
 SKILL.md previews pulled from OCI artifacts). External Redis only — the chart
 does not deploy a Redis instance. The SKILL.md preview is Redis-gated: when
 unset (or when Redis is unreachable) the cloud-ui hides the preview entirely
@@ -731,9 +718,9 @@ both are set, values from `config.json` win.
 
 **Default:** `{"enabled":false,"json":{}}`
 
-File-based branding. Mounted at /etc/branding/config.json and read by the
-cloud-ui on each request. See branding-examples/ for ready-to-use payloads
-(crimson, magenta, stacklok) and the full token reference.
+File-based branding configuration mounted at `/etc/branding/config.json` and
+read by the console on each request. Set `config.json` to a branding object with
+`app_name`, `logo_url`, `favicon_url`, and `design_tokens`.
 
 ### `branding.name`
 

@@ -13,7 +13,7 @@ This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
 Chart: `enterprise-manager`. Chart version: `0.22.0`. Generated from the
-platform source at `31a9082995ecfcb33dc3cb34c6d92029a6223628`.
+platform source at `c55bf9ba10b16013a304910c0a1b8c884bb1b553`.
 
 ## Values
 
@@ -504,17 +504,13 @@ activation CANNOT succeed without this grant. A gateway that reads no credential
 back needs no entry here, and naming it would grant the ability to read
 decrypted credential material back for nothing in return — omit it there.
 
-Whatever workload does land here reaches this gate only over grpc.tls
+Whatever workload does land here reaches this gate only over grpc.tls below:
+ResolveSecretRef refuses a non-TLS peer regardless of who the caller is (two
+independent gates).
 
-```yaml
-below: ResolveSecretRef refuses a non-TLS peer regardless of who the
-caller is (two independent gates).
-
-Left EMPTY on purpose. Empty is the fail-closed default, and naming a
-subject here grants a workload the ability to read decrypted credential
-material back — an operator decision about their install, not a chart
-default.
-```
+Left EMPTY on purpose. Empty is the fail-closed default, and naming a subject
+here grants a workload the ability to read decrypted credential material back —
+an operator decision about their install, not a chart default.
 
 ### `grpc.callerAuth.gatewaySaSubjectAllowlist`
 
@@ -539,21 +535,18 @@ register itself, so a caller-gated install needs its subject named HERE as well
 as on saSubjectAllowlist above — the two lists are separate sets and neither
 entry substitutes for the other.
 
-⚠️ With clusterOidcIssuer set, a missing entry here does NOT degrade one
+⚠️ With clusterOidcIssuer set, a missing entry here does NOT degrade one call:
+startup registration is refused PermissionDenied, which aborts the gateway's
+Run(), so connector-gateway fails to start.
 
-```yaml
-call: startup registration is refused PermissionDenied, which aborts the
-gateway's Run(), so connector-gateway fails to start.
+The subject to name is the same one saSubjectAllowlist above documents, derived
+the same way; read it off the cluster rather than assuming.
 
-The subject to name is the same one saSubjectAllowlist above documents,
-derived the same way; read it off the cluster rather than assuming.
-
-Still DEFAULTS EMPTY, even with a live caller: empty is the fail-closed
-default, and these RPCs return every Connector's auth strategy and every
-Provider's managed_secret_id across the install, so which workload may
-call them stays an operator decision about their install rather than a
-chart default. Documenting the subject above is not shipping it enabled.
-```
+Still DEFAULTS EMPTY, even with a live caller: empty is the fail-closed default,
+and these RPCs return every Connector's auth strategy and every Provider's
+managed_secret_id across the install, so which workload may call them stays an
+operator decision about their install rather than a chart default. Documenting
+the subject above is not shipping it enabled.
 
 ### `grpc.callerAuth.workloadTrustSaSubjectAllowlist`
 
@@ -689,14 +682,11 @@ operator's webhook CA trust, and this leaf's CA is what gRPC clients
 must be rotatable independently.
 
 Set this or existingSecret below (existingSecret wins if both are set, and no
-Certificate is rendered at all). The chart refuses to render with
-
-```yaml
-NEITHER: it never mints its own key material, because `lookup` makes no
-cluster call under `helm template`, so a GitOps sync would issue a fresh
-CA on every reconcile while every client still trusts the old one — the
-lesson learned on the directory KEK.
-```
+Certificate is rendered at all). The chart refuses to render with NEITHER: it
+never mints its own key material, because `lookup` makes no cluster call under
+`helm template`, so a GitOps sync would issue a fresh CA on every reconcile
+while every client still trusts the old one — the lesson learned on the
+directory KEK.
 
 ### `grpc.tls.issuerRef.kind`
 
@@ -916,14 +906,11 @@ rolesClaim: ''
 
 </details>
 
-IdP / OIDC configuration (projected into the ConfigMap). The issuer is no longer
-configured here (see docs/design/platform-identity.md), it comes from
-global.stacklok.primaryIdp.issuer, the single source of truth shared with
-toolhive-cloud-ui's OIDC provider and connector-gateway's default embedded-AS
-upstream. The old idpConfig.issuer field was removed with no compat shim —
-setting it fails the render (enterprise-manager.rejectLegacyIdpIssuer). audience
-(and every other field below) stays local: it is enterprise-manager's own
-token-audience trust boundary, not part of what "primary IdP" means.
+IdP and OIDC configuration projected into the application ConfigMap. The issuer
+comes from `global.stacklok.primaryIdp.issuer`, shared with the console and
+Connector Gateway. Configure Enterprise Manager's token audience with
+`idpConfig.audience`; the remaining settings below apply to Enterprise Manager
+independently of the primary IdP settings.
 
 ### `idpConfig.audience`
 
@@ -1067,73 +1054,71 @@ configFile.
 Each directive wraps a value with enforcement: "enforced" (mandatory) or
 "default" (advisory).
 
-enterpriseConfig:
-
-# Enforce a specific MCP registry API URL.
-
 ```yaml
-registry:
-  value:
-    api_url: 'https://api.registry.example.com/registry/toolhive' # registry API URL for ToolHive clients (thv CLI/desktop) — scoped to one registry
-    # server_api_url: "https://api.registry.example.com"          # registry-server API root for the cloud-UI web console (/v1 + /registry/{name}/v0.1 paths)
-    # allow_private_ip: true                                       # allow private IPs in registry responses
-  enforcement: 'enforced'
+enterpriseConfig:
+  # Enforce a specific MCP registry API URL.
+  registry:
+    value:
+      api_url: 'https://api.registry.example.com/registry/toolhive' # registry API URL for ToolHive clients (thv CLI/desktop) — scoped to one registry
+      # server_api_url: "https://api.registry.example.com"          # registry-server API root for the cloud-UI web console (/v1 + /registry/{name}/v0.1 paths)
+      # allow_private_ip: true                                       # allow private IPs in registry responses
+    enforcement: 'enforced'
 
-# OpenTelemetry settings.
-telemetry:
-  value:
-    otel_endpoint: 'https://otel.example.com'
-    sampling_rate: 0.1
-    tracing_enabled: true
-    metrics_enabled: true
-    # insecure: false
-    # headers:
-    #   x-tenant-id: "my-org"
-  enforcement: 'enforced'
+  # OpenTelemetry settings.
+  telemetry:
+    value:
+      otel_endpoint: 'https://otel.example.com'
+      sampling_rate: 0.1
+      tracing_enabled: true
+      metrics_enabled: true
+      # insecure: false
+      # headers:
+      #   x-tenant-id: "my-org"
+    enforcement: 'enforced'
 
-# Prevent clients from running MCP servers not listed in the registry.
-non_registry_servers:
-  value: false
-  enforcement: 'enforced'
+  # Prevent clients from running MCP servers not listed in the registry.
+  non_registry_servers:
+    value: false
+    enforcement: 'enforced'
 
-# Custom CA certificate (PEM inline or fetched from URL).
-ca_certificate:
-  value:
-    pem: |
-      -----BEGIN CERTIFICATE-----
-      ...
-      -----END CERTIFICATE-----
-    # url: "https://pki.example.com/ca.pem"   # alternative: fetch by URL
-  enforcement: 'enforced'
+  # Custom CA certificate (PEM inline or fetched from URL).
+  ca_certificate:
+    value:
+      pem: |
+        -----BEGIN CERTIFICATE-----
+        ...
+        -----END CERTIFICATE-----
+      # url: "https://pki.example.com/ca.pem"   # alternative: fetch by URL
+    enforcement: 'enforced'
 
-# Inject environment variables into every MCP server container.
-build_env:
-  value:
-    HTTP_PROXY: 'http://proxy.example.com:3128'
-    NO_PROXY: 'localhost,127.0.0.1'
-  enforcement: 'default'
+  # Inject environment variables into every MCP server container.
+  build_env:
+    value:
+      HTTP_PROXY: 'http://proxy.example.com:3128'
+      NO_PROXY: 'localhost,127.0.0.1'
+    enforcement: 'default'
 
-# Hide the help menu (?) in the desktop app.
-help_menu:
-  value: false
-  enforcement: 'enforced'
+  # Hide the help menu (?) in the desktop app.
+  help_menu:
+    value: false
+    enforcement: 'enforced'
 
-# Hide the built-in playground in the desktop app.
-playground:
-  value: false
-  enforcement: 'enforced'
+  # Hide the built-in playground in the desktop app.
+  playground:
+    value: false
+    enforcement: 'enforced'
 
-# Hide the built-in AI assistant in the cloud UI.
-assistant:
-  value: false
-  enforcement: 'enforced'
+  # Hide the built-in AI assistant in the cloud UI.
+  assistant:
+    value: false
+    enforcement: 'enforced'
 
-# Client behaviour when the config server is unreachable.
-# policy: "warn" | "block_new"
-degraded_mode:
-  policy: 'block_new'
-  grace_period: '24h'
-  message: 'Enterprise Manager unreachable — contact your administrator.'
+  # Client behaviour when the config server is unreachable.
+  # policy: "warn" | "block_new"
+  degraded_mode:
+    policy: 'block_new'
+    grace_period: '24h'
+    message: 'Enterprise Manager unreachable — contact your administrator.'
 ```
 
 ### `appConfig`
@@ -1149,20 +1134,19 @@ directory, grpc/webhookAuth/webhookTLS, resourceURL, clientID,
 defaultRoles.install) — keys set here always win on conflict. The merged result
 renders as YAML into a ConfigMap mounted at
 /etc/enterprise-manager/app-config/app-config.yaml, and
-ENTERPRISE*MANAGER_APP_CONFIG_FILE is set automatically — this is the binary's
-only configuration-loading path, it reads no other ENTERPRISE_MANAGER*\* env var
-for these settings. Secrets (database passwords, the signing key, the directory
-HMAC key) are never part of this value — they stay as discrete env vars/Secret
-mounts (database.existingSecret, signingConfig.existingSecret,
+`ENTERPRISE_MANAGER_APP_CONFIG_FILE` is set automatically — this is the binary's
+only configuration-loading path, it reads no other `ENTERPRISE_MANAGER_*` env
+var for these settings. Secrets (database passwords, the signing key, the
+directory HMAC key) are never part of this value — they stay as discrete env
+vars/Secret mounts (database.existingSecret, signingConfig.existingSecret,
 directory.hmac.existingSecret). Independent of enterpriseConfig above (that is
 customer-facing policy, served over HTTP; this is internal app wiring) — never
 merged into one document.
 
-appConfig:
-
 ```yaml
-logLevel: debug
-seedDefaultRoles: true
+appConfig:
+  logLevel: debug
+  seedDefaultRoles: true
 ```
 
 ### `database`
@@ -1256,13 +1240,13 @@ back to global.postgres.dynamicAuth when unset. Mutually exclusive with
 existingSecret in practice — set one or the other, not both. The same auth mode
 applies to the app, migration, and admin roles; each still needs
 `GRANT rds_iam TO <role>` and IAM policy access provisioned by the operator.
-awsRdsIam:
 
 ```yaml
-region:
-  'us-east-1' # prefer an explicit region: "detect" re-resolves
-  # via EC2 instance metadata on every token mint and
-  # makes IMDS reachability a hard boot dependency.
+awsRdsIam:
+  region:
+    'us-east-1' # prefer an explicit region: "detect" re-resolves
+    # via EC2 instance metadata on every token mint and
+    # makes IMDS reachability a hard boot dependency.
 ```
 
 ### `database.admin`
@@ -1378,9 +1362,12 @@ Deploy the bind-verb ValidatingAdmissionPolicy that blocks privilege escalation
 via PlatformRoleBindings: it requires the requester to hold the `bind` verb on
 each referenced ClusterPlatformRole. Requires Kubernetes 1.30+ — the manifests
 are additionally gated on the VAP v1 API being present, so on older clusters
-they render to nothing and the guard is NOT installed (the escalation hole
-remains open). See docs/customer/install-helm.md section 5b for how to grant
-`bind` on a ClusterPlatformRole.
+they render to nothing and the guard is NOT installed. To grant `bind`, create a
+Kubernetes ClusterRole with `apiGroups: [platform.enterprise.stacklok.com]`,
+`resources: [clusterplatformroles]`, `resourceNames: [<ROLE_NAME>]`, and
+`verbs: [bind]`. Assign it to the requester with a RoleBinding in the
+PlatformRoleBinding's namespace, or a ClusterRoleBinding for a
+ClusterPlatformRoleBinding.
 
 ### `budgets`
 
@@ -1637,22 +1624,20 @@ ahead of enablement surfaces immediately.
 Editing a label or a gloss changes the taxonomy digest, and every conversation
 classified afterward records the new one.
 
-taxonomy:
-
-- facet: discipline
-
 ```yaml
-  labels:
-    - name: backend
-      gloss: "Server-side application logic, APIs, business rules."
-    - name: unknown
-      gloss: "No discipline above fits, or the conversation gives no signal."
-- facet: cost_centre
-  labels:
-    - name: r_and_d
-      gloss: "Charged to research and development."
-    - name: unknown
-      gloss: "No cost centre above fits, or the conversation gives no signal."
+taxonomy:
+  - facet: discipline
+    labels:
+      - name: backend
+        gloss: 'Server-side application logic, APIs, business rules.'
+      - name: unknown
+        gloss: 'No discipline above fits, or the conversation gives no signal.'
+  - facet: cost_centre
+    labels:
+      - name: r_and_d
+        gloss: 'Charged to research and development.'
+      - name: unknown
+        gloss: 'No cost centre above fits, or the conversation gives no signal.'
 ```
 
 ### `directory`
@@ -1924,65 +1909,63 @@ Prerequisites in Okta, per reconciler:
 - A Kubernetes Secret in this cluster holding that service app's private key and
   key id. The chart renders a get-only Role pinned to it by name.
 
-oktaReconcilers:
-
-- enabled: true
-  # The directory.issuers[] entry this reconciler provisions into.
-
 ```yaml
-issuerID: 'okta-prod'
-# The Okta organization origin. HTTPS, no path — this is the one host
-# every Management API request is pinned to. Not necessarily the same
-# URL as the issuer, which may be a custom authorization server.
-orgURL: 'https://company.okta.com'
-# The application whose assigned users are the complete population.
-appID: '0oa1abcdEFGHijkl2m3n'
-# The service application's OAuth client id.
-clientID: '0oa9zyxwVUTSrqpo8n7m'
-# The Secret holding the private_key_jwt signing key and its key id.
-# Both keys live in one Secret so a rotation replaces them together.
-privateKeySecretRef:
-  namespace: 'stacklok'
-  name: 'directory-okta-reconciler-credentials'
-  privateKeyKey: 'private-key.pem'
-  keyIDKey: 'key-id'
-# How often a full reconciliation runs. Default 15m, minimum 1m.
-# Convergence is source-consistency delay plus cycle runtime, so this is
-# roughly the worst-case lag between an Okta change and the platform.
-interval: '15m'
-# The fraction of the currently active, reconciler-owned population one
-# cycle may deactivate before the whole plan is refused.
-#
-# DEFAULT 1 — off. A percentage cannot express "an unusual number of
-# departures" in a small tenant: a tenth of five users is less than one
-# person, so one ordinary departure would be refused, and a refusal
-# discards the whole plan, blocking unrelated creates and updates too.
-#
-# Set it below 1 only on a population large enough for a percentage to
-# mean something, and remember allowEmptyPopulation below already
-# refuses the catastrophic case on its own.
-maxDeactivationRatio: 1
-# Whether an empty desired population is valid while active users
-# exist. Default false. An intentional full deactivation needs BOTH
-# this true and maxDeactivationRatio 1.
-allowEmptyPopulation: false
-# Log raw Okta API response bodies. Default false, and effective only
-# when the process log level is also debug. THE OUTPUT CONTAINS
-# IDENTITY AND PROFILE DATA for your whole assigned population — this
-# is a short-lived diagnostic, not a setting to leave on.
-logRawOktaAPIData: false
-# The Okta groups to project into the directory as user groups. This is
-# explicit Stacklok configuration; it does not read or modify Okta
-# Group Push. A group's members are intersected with the application
-# population, so a member who is not assigned to the application is not
-# projected. Select by stable id (survives renames) or by exact,
-# case-sensitive name.
-selectedGroups:
-  - id: '00g1abcdEFGHijkl2m3n'
-    # Optional. Fails the cycle if the group has since been renamed,
-    # rather than silently projecting a group you no longer recognise.
-    expectedName: 'Platform Engineering'
-  - name: 'Data Science'
+oktaReconcilers:
+  - enabled: true
+    # The directory.issuers[] entry this reconciler provisions into.
+    issuerID: 'okta-prod'
+    # The Okta organization origin. HTTPS, no path — this is the one host
+    # every Management API request is pinned to. Not necessarily the same
+    # URL as the issuer, which may be a custom authorization server.
+    orgURL: 'https://company.okta.com'
+    # The application whose assigned users are the complete population.
+    appID: '0oa1abcdEFGHijkl2m3n'
+    # The service application's OAuth client id.
+    clientID: '0oa9zyxwVUTSrqpo8n7m'
+    # The Secret holding the private_key_jwt signing key and its key id.
+    # Both keys live in one Secret so a rotation replaces them together.
+    privateKeySecretRef:
+      namespace: 'stacklok'
+      name: 'directory-okta-reconciler-credentials'
+      privateKeyKey: 'private-key.pem'
+      keyIDKey: 'key-id'
+    # How often a full reconciliation runs. Default 15m, minimum 1m.
+    # Convergence is source-consistency delay plus cycle runtime, so this is
+    # roughly the worst-case lag between an Okta change and the platform.
+    interval: '15m'
+    # The fraction of the currently active, reconciler-owned population one
+    # cycle may deactivate before the whole plan is refused.
+    #
+    # DEFAULT 1 — off. A percentage cannot express "an unusual number of
+    # departures" in a small tenant: a tenth of five users is less than one
+    # person, so one ordinary departure would be refused, and a refusal
+    # discards the whole plan, blocking unrelated creates and updates too.
+    #
+    # Set it below 1 only on a population large enough for a percentage to
+    # mean something, and remember allowEmptyPopulation below already
+    # refuses the catastrophic case on its own.
+    maxDeactivationRatio: 1
+    # Whether an empty desired population is valid while active users
+    # exist. Default false. An intentional full deactivation needs BOTH
+    # this true and maxDeactivationRatio 1.
+    allowEmptyPopulation: false
+    # Log raw Okta API response bodies. Default false, and effective only
+    # when the process log level is also debug. THE OUTPUT CONTAINS
+    # IDENTITY AND PROFILE DATA for your whole assigned population — this
+    # is a short-lived diagnostic, not a setting to leave on.
+    logRawOktaAPIData: false
+    # The Okta groups to project into the directory as user groups. This is
+    # explicit Stacklok configuration; it does not read or modify Okta
+    # Group Push. A group's members are intersected with the application
+    # population, so a member who is not assigned to the application is not
+    # projected. Select by stable id (survives renames) or by exact,
+    # case-sensitive name.
+    selectedGroups:
+      - id: '00g1abcdEFGHijkl2m3n'
+        # Optional. Fails the cycle if the group has since been renamed,
+        # rather than silently projecting a group you no longer recognise.
+        expectedName: 'Platform Engineering'
+      - name: 'Data Science'
 ```
 
 ### `directory.hmac`
@@ -2203,16 +2186,15 @@ global.stacklok.primaryIdp.allowPrivateIps already reaches the directory
 module's synthesized V2 catalog primary through this chart's AppConfig, with
 nothing to set here.
 
-trustedCABundle:
-
 ```yaml
-configMapRef:
-  name: corporate-ca
-  key: ca.crt
-# OR:
-secretRef:
-  name: corporate-ca
-  key: ca.crt
+trustedCABundle:
+  configMapRef:
+    name: corporate-ca
+    key: ca.crt
+  # OR:
+  secretRef:
+    name: corporate-ca
+    key: ca.crt
 ```
 
 ### `extraVolumes`
@@ -2266,21 +2248,17 @@ global.webhooks.issuerRef.name=selfsigned-issuer).
 
 **Default:** `"ClusterIssuer"`
 
-"ClusterIssuer" (recommended) or "Issuer". `Issuer` is NOT a drop-in
-
-```yaml
-swap: a namespaced Issuer must live in every namespace that hosts a
-Certificate referencing it. That means the budgets receiver's
-namespace (Release.Namespace) AND — since this is the shared platform
-identity the ai-gateway operator reuses — every namespace hosting an
-AIGateway CR (the operator issues the main-processor and
-guardrails-adapter leaves into the CR's namespace). cert-manager
-cannot resolve an Issuer cross-namespace, so any out-of-namespace
-leaf hangs with only `status.webhooks[].probeSucceeded=false` as the
-signal. A single cluster-wide ClusterIssuer is the documented best
-practice for a shared trust chain — keep this default unless every
-such namespace has its own copy of the Issuer.
-```
+"ClusterIssuer" (recommended) or "Issuer". `Issuer` is NOT a drop-in swap: a
+namespaced Issuer must live in every namespace that hosts a Certificate
+referencing it. That means the budgets receiver's namespace (Release.Namespace)
+AND — since this is the shared platform identity the ai-gateway operator reuses
+— every namespace hosting an AIGateway CR (the operator issues the
+main-processor and guardrails-adapter leaves into the CR's namespace).
+cert-manager cannot resolve an Issuer cross-namespace, so any out-of-namespace
+leaf hangs with only `status.webhooks[].probeSucceeded=false` as the signal. A
+single cluster-wide ClusterIssuer is the documented best practice for a shared
+trust chain — keep this default unless every such namespace has its own copy of
+the Issuer.
 
 ## Related information
 

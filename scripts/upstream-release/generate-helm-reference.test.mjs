@@ -8,6 +8,7 @@ import {
   annotateValues,
   sourceDescriptions,
   renderPage,
+  renderDescription,
 } from './generate-helm-reference.mjs';
 
 const chart = {
@@ -161,4 +162,29 @@ test('private sources retain provenance without inaccessible repository links', 
     /github\.com\/stacklok\/stacklok-enterprise-platform/
   );
   await compile(page.replace(/^---\n[\s\S]*?\n---\n/, ''));
+});
+
+test('YAML examples retain unindented parents and leading comments', async () => {
+  for (const parent of ['appConfig', 'enterpriseConfig']) {
+    const rendered = renderDescription(
+      `Override configuration:\n\n# Example configuration\n${parent}:\n  logLevel: debug\n  settings:\n    enabled: true\n\nContinue with the deployment.`
+    );
+    const code = rendered.match(/```yaml\n([\s\S]*?)\n```/)[1];
+    assert.match(code, /^# Example configuration/);
+    assert.deepEqual(yaml.parse(code), {
+      [parent]: { logLevel: 'debug', settings: { enabled: true } },
+    });
+    assert.match(rendered, /Continue with the deployment\./);
+    await compile(rendered);
+  }
+});
+
+test('indented prose and heading-like phrases remain prose', () => {
+  for (const description of [
+    'TLS is configured\n   below: ResolveSecretRef refuses a non-TLS peer regardless of who the\n   caller is.',
+    'See the settings\n  below:\n    They apply to this workload.',
+  ]) {
+    assert.doesNotMatch(renderDescription(description), /```yaml/);
+    assert.equal(renderDescription(description), description);
+  }
 });

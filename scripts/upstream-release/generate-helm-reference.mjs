@@ -66,11 +66,56 @@ export function renderDescription(description) {
   const lines = description.split('\n');
   const output = [];
   for (let i = 0; i < lines.length; i++) {
-    if (/^ {2,}[\w.-]+:/.test(lines[i])) {
-      const block = [];
-      while (i < lines.length && (/^ {2,}/.test(lines[i]) || !lines[i].trim()))
-        block.push(lines[i++]);
-      i--;
+    const key = /^( *)([\w.-]+):(?:\s.*)?$/;
+    let first = i;
+    while (/^ *#/.test(lines[first] || '')) first++;
+    const match = key.exec(lines[first] || '');
+    const value = match
+      ? lines[first].slice(match[0].indexOf(':') + 1).trim()
+      : '';
+    const scalar =
+      /^(?:["'[{|>]|-?\d|true\b|false\b|null\b|[^\s]+(?:\s+#.*)?$)/;
+    if (match && (!value || (match[1].length >= 2 && scalar.test(value)))) {
+      const block = lines.slice(i, first);
+      const baseIndent = match[1].length;
+      let end = first;
+      while (end < lines.length) {
+        const line = lines[end];
+        if (!line.trim()) {
+          let next = end + 1;
+          while (next < lines.length && !lines[next].trim()) next++;
+          if (
+            next === lines.length ||
+            (!key.test(lines[next]) &&
+              !/^ *#/.test(lines[next]) &&
+              lines[next].match(/^ */)[0].length <= baseIndent)
+          )
+            break;
+        } else if (
+          line.match(/^ */)[0].length < baseIndent ||
+          (line.match(/^ */)[0].length === baseIndent &&
+            !key.test(line) &&
+            !/^ *#/.test(line))
+        )
+          break;
+        block.push(line);
+        end++;
+      }
+      const document = yaml.parseDocument(block.join('\n'));
+      const hasChildren =
+        yaml.isMap(document.contents) &&
+        document.contents.items.some(
+          (pair) => yaml.isMap(pair.value) || yaml.isSeq(pair.value)
+        );
+      if (
+        document.errors.length ||
+        !yaml.isMap(document.contents) ||
+        (!value && !hasChildren)
+      ) {
+        output.push(mdxText(lines[i]));
+        continue;
+      }
+      i = end - 1;
       const nonempty = block.filter((line) => line.trim());
       const indent = Math.min(
         ...nonempty.map((line) => line.match(/^ */)[0].length)
