@@ -39,8 +39,7 @@ function resolveNode(root: Schema, dottedPath: string): Schema | null {
   const parts = dottedPath.split('.');
   let node: Schema | undefined = root.properties?.[parts[0]];
   for (let i = 1; i < parts.length && node; i++) {
-    if (node.items?.properties) node = node.items;
-    node = node.properties?.[parts[i]];
+    node = childrenOfObject(node)?.[parts[i]];
   }
   return node ?? null;
 }
@@ -63,7 +62,9 @@ function requiredOf(node: Schema): Set<string> {
     ? node
     : node.items?.properties
       ? node.items
-      : null;
+      : typeof node.additionalProperties === 'object'
+        ? node.additionalProperties
+        : null;
   return new Set(carrier?.required ?? []);
 }
 
