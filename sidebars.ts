@@ -140,23 +140,13 @@ const mcpSidebar: SidebarsConfig[string] = [
           'toolhive/guides-cli/test-mcp-servers',
           'toolhive/guides-cli/build-containers',
           'toolhive/guides-cli/advanced-cicd',
+          'toolhive/guides-cli/api-server',
           {
             type: 'category',
-            label: 'API server',
-            description: 'How to set up and use the ToolHive API server',
-            link: {
-              type: 'doc',
-              id: 'toolhive/guides-cli/api-server',
-            },
-            items: [
-              {
-                type: 'category',
-                label: 'API reference',
-                collapsed: true,
-                link: { type: 'doc', id: 'toolhive/reference/api' },
-                items: toolhiveApiSidebar,
-              },
-            ],
+            label: 'API reference',
+            collapsed: true,
+            link: { type: 'doc', id: 'toolhive/reference/api' },
+            items: toolhiveApiSidebar,
           },
         ],
       },
