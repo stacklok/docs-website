@@ -44,8 +44,9 @@ after refreshing ToolHive or Stacklok Enterprise Platform specifications.
   panel still occupies a column on desktop and stacks below content on mobile.
 - Enterprise Manager's `directory` tag contains 58 endpoints. Consider finer
   resource grouping or a dedicated native API sidebar before adopting this.
-- Code samples default to C# with many language tabs. A curated language set
-  with curl first would be a useful follow-up.
+- Code samples are limited to curl, JavaScript (Fetch), Python (Requests), and
+  Go, in that order. The theme remembers a reader's selected language.
+- The dark-mode request button uses dark green text on its pale green background.
 - Endpoint details expand after client hydration; check any search/export
   requirements before replacing all API references.
 - Historical Redoc fragment links need a migration plan before adoption.

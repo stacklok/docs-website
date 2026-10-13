@@ -274,6 +274,12 @@ const config: Config = {
   ],
 
   themeConfig: {
+    languageTabs: [
+      { language: 'curl' },
+      { language: 'javascript', variant: 'Fetch', variants: ['Fetch'] },
+      { language: 'python', variant: 'Requests', variants: ['Requests'] },
+      { language: 'go' },
+    ],
     colorMode: {
       defaultMode: 'dark',
       disableSwitch: false,
