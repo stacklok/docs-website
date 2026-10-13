@@ -616,13 +616,31 @@ enterprise-manager:
 
 For GitOps, replace `generate: true` with `existingSecret` naming a Secret you
 create. The Secret's `kek` key holds a JSON map from version number to a
-base64-encoded 32-byte key, and the Enterprise Manager uses the highest version:
+base64-encoded 32-byte key, and the Enterprise Manager uses the highest version.
 
-```bash
-kubectl create secret generic enterprise-manager-kek \
-  --namespace stacklok-system \
-  --from-literal=kek="{\"1\":\"$(openssl rand -base64 32)\"}"
-```
+Replacing the key makes every credential encrypted with it permanently
+unreadable, so create the Secret the way that matches your install:
+
+- **New install, with no credentials stored yet.** Generate a key:
+
+  ```bash
+  kubectl create secret generic enterprise-manager-kek \
+    --namespace stacklok-system \
+    --from-literal=kek="{\"1\":\"$(openssl rand -base64 32)\"}"
+  ```
+
+- **Existing install that ran with `generate: true`.** Copy the current key from
+  the chart-created Secret instead of generating a new one:
+
+  ```bash
+  kubectl get secret stacklok-enterprise-enterprise-manager-directory-kek \
+    --namespace stacklok-system -o jsonpath='{.data.kek}' | base64 -d > kek.json
+  kubectl create secret generic enterprise-manager-kek \
+    --namespace stacklok-system \
+    --from-file=kek=./kek.json
+  ```
+
+Then reference the Secret in your values:
 
 ```yaml title="values.yaml"
 enterprise-manager:
@@ -632,12 +650,14 @@ enterprise-manager:
       existingSecret: 'enterprise-manager-kek'
 ```
 
-Make this choice before the Enterprise Manager stores any credentials. A new key
-makes every credential encrypted with the old one permanently unreadable. To
-move an install that already ran with `generate: true`, copy the `kek` value
-from the chart-created `<RELEASE_NAME>-enterprise-manager-directory-kek` Secret
-into your own Secret instead of generating a new key. To rotate the key, add a
-higher-numbered entry to the map and keep the earlier ones.
+To rotate the key, add a higher-numbered entry to the map and keep the earlier
+ones. The Enterprise Manager reads the Secret only at startup, so restart it to
+start using the new version:
+
+```bash
+kubectl rollout restart deployment/stacklok-enterprise-enterprise-manager \
+  --namespace stacklok-system
+```
 
 TLS is not optional here: the directory refuses a non-TLS peer at call time, so
 a key-encrypted install served over the cleartext port renders cleanly and then
