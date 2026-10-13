@@ -10,9 +10,9 @@ The Algolia application ID is `5VBG92C77M`. The crawler reads
 `https://docs.stacklok.com`, discovers pages through links and the sitemap, and
 extracts the server-rendered HTML with JavaScript rendering disabled.
 
-Scheduled crawls run weekly on Sunday nights. After a large documentation update
-is published, request a manual crawl from a maintainer with Algolia crawler
-console access to refresh search results sooner.
+Scheduled crawls run weekly on Sundays at 21:58 UTC. After a large documentation
+update is published, request a manual crawl from a maintainer with Algolia
+crawler console access to refresh search results sooner.
 
 | Index               | Purpose           | Extraction                                                                                                             |
 | ------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -57,9 +57,16 @@ curl --fail-with-body \
 
 ## Extraction limits and reference pages
 
-The crawler allows 750 records per page, and this setup has a 10 KB limit per
-record. These are separate from the total index record allowance. Each
-extractor's output must fit the limits, including metadata and hierarchy fields.
+The crawler allows 750 records per page. The main DocSearch index, `stacklok`,
+has a 10 KB limit per record; the CRD extractor checks the complete serialized
+record, including metadata and hierarchy fields, against that limit.
+
+The Ask AI markdown extractor uses `maxRecordBytes: 100000` to split content for
+`stacklok-markdown`. That index accepts larger records: a live-index check on
+October 13, 2026 found a VirtualMCPServer record with a 97,106-byte text field.
+Keep this markdown threshold separate from the main index's 10 KB limit. Record
+size and per-page extraction limits are also separate from the total index
+record allowance.
 
 API references contain nested JSON examples and large response descriptions. For
 the ToolHive API and Enterprise Manager API pages, the main index extracts

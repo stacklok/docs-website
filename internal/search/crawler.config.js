@@ -276,14 +276,6 @@ new Crawler({
         "content",
       ],
     },
-    "markdown-index": {
-      attributesForFaceting: ["lang", "language", "version", "docusaurus_tag"],
-      ignorePlurals: true,
-      minProximity: 4,
-      removeStopWords: false,
-      searchableAttributes: ["unordered(title)", "unordered(text)"],
-      removeWordsIfNoResults: "allOptional",
-    },
     "stacklok-markdown": {
       attributesForFaceting: ["lang", "language", "version", "docusaurus_tag"],
       ignorePlurals: true,
