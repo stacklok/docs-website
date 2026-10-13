@@ -245,6 +245,14 @@ const config: Config = {
           options: {
             sortTagsAlphabetically: true,
             sortOperationsAlphabetically: true,
+            theme: {
+              colors: {
+                responses: {
+                  success: { color: 'var(--api-response-success)' },
+                  error: { color: 'var(--api-response-error)' },
+                },
+              },
+            },
           },
         },
       },
