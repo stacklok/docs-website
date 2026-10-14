@@ -70,10 +70,12 @@ export default [
   // Config for _partials with JSX props
   {
     files: ['docs/**/_partials/*.mdx'],
+    languageOptions: {
+      globals: { props: 'readonly' },
+    },
     rules: {
       'no-unused-expressions': 'off',
       '@typescript-eslint/no-unused-expressions': 'off',
-      'no-undef': 'off',
     },
   },
 ];
