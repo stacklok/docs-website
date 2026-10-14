@@ -548,24 +548,17 @@ const connectorGatewaySidebar: SidebarsConfig[string] = [
 
   {
     type: 'category',
-    label: 'Reference',
-    collapsed: false,
-    items: [
-      {
-        type: 'category',
-        label: 'API reference',
-        collapsed: true,
-        link: { type: 'doc', id: 'connector-gateway/api-reference' },
-        // Keep this small API flat when the source omits operation tags.
-        items: connectorApiSidebar.flatMap((item) =>
-          typeof item === 'object' &&
-          item.type === 'category' &&
-          item.label === 'UNTAGGED'
-            ? item.items
-            : [item]
-        ),
-      },
-    ],
+    label: 'API reference',
+    collapsed: true,
+    link: { type: 'doc', id: 'connector-gateway/api-reference' },
+    // Keep this small API flat when the source omits operation tags.
+    items: connectorApiSidebar.flatMap((item) =>
+      typeof item === 'object' &&
+      item.type === 'category' &&
+      item.label === 'UNTAGGED'
+        ? item.items
+        : [item]
+    ),
   },
 ];
 
@@ -586,17 +579,10 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
 
   {
     type: 'category',
-    label: 'Reference',
-    collapsed: false,
-    items: [
-      {
-        type: 'category',
-        label: 'API reference',
-        collapsed: true,
-        link: { type: 'doc', id: 'ai-gateway/api-reference' },
-        items: aiGatewayApiSidebar,
-      },
-    ],
+    label: 'API reference',
+    collapsed: true,
+    link: { type: 'doc', id: 'ai-gateway/api-reference' },
+    items: aiGatewayApiSidebar,
   },
 ];
 
