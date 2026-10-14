@@ -14,6 +14,8 @@ export default [
   includeIgnoreFile(gitignorePath),
   // Auto-generated CLI docs (tracked in git but generated upstream)
   { ignores: ['docs/toolhive/reference/cli/'] },
+  // Configuration for Algolia's crawler runtime, maintained in its editor
+  { ignores: ['internal/search/crawler.config.js'] },
   { files: ['**/*.{js,mjs,cjs,ts,jsx,tsx}'] },
   { languageOptions: { globals: globals.node } },
 
