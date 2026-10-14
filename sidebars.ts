@@ -556,7 +556,14 @@ const connectorGatewaySidebar: SidebarsConfig[string] = [
         label: 'API reference',
         collapsed: true,
         link: { type: 'doc', id: 'connector-gateway/api-reference' },
-        items: connectorApiSidebar,
+        // Keep this small API flat when the source omits operation tags.
+        items: connectorApiSidebar.flatMap((item) =>
+          typeof item === 'object' &&
+          item.type === 'category' &&
+          item.label === 'UNTAGGED'
+            ? item.items
+            : [item]
+        ),
       },
     ],
   },
