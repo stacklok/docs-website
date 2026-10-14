@@ -7,6 +7,7 @@ import PrismLight from './src/utils/prismLight';
 import PrismDark from './src/utils/prismDark';
 import crdReferenceRemark from './plugins/crd-reference-remark/index.mjs';
 import { getCrdSets } from './scripts/lib/crd-sets.mjs';
+import { openapiConfig } from './scripts/lib/openapi-sets.mjs';
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
@@ -26,20 +27,7 @@ const config: Config = {
       {
         id: 'openapi',
         docsPluginId: 'classic',
-        config: {
-          toolhive: {
-            specPath: '.openapi-inputs/toolhive.yaml',
-            outputDir: 'docs/toolhive/reference/api-endpoints',
-            downloadUrl: '/api-specs/toolhive-api.yaml',
-            sidebarOptions: { groupPathsBy: 'tag', sidebarCollapsed: true },
-          },
-          enterpriseManager: {
-            specPath: '.openapi-inputs/enterprise-manager.yaml',
-            outputDir: 'docs/platform/reference/enterprise-manager-api',
-            downloadUrl: '/api-specs/enterprise-manager-api.json',
-            sidebarOptions: { groupPathsBy: 'tag', sidebarCollapsed: true },
-          },
-        },
+        config: openapiConfig,
       },
     ],
     [
@@ -169,7 +157,7 @@ const config: Config = {
       useCssCascadeLayers: true,
     },
     faster: {
-      swcJsLoader: false, // Disabled due to https://github.com/rohit-gohri/redocusaurus/issues/388
+      swcJsLoader: true,
       swcJsMinimizer: true,
       swcHtmlMinimizer: true,
       lightningCssMinimizer: true,
@@ -232,44 +220,6 @@ const config: Config = {
           customCss: [require.resolve('./src/css/custom.css')],
         },
       } satisfies Preset.Options,
-    ],
-    [
-      'redocusaurus',
-      {
-        specs: [
-          {
-            id: 'toolhive-registry-api',
-            spec: 'static/api-specs/toolhive-registry-api.yaml',
-            config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
-          },
-          {
-            id: 'connector-gateway-api',
-            spec: 'static/api-specs/connector-gateway-api.json',
-            config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
-          },
-          {
-            id: 'ai-gateway-management-api',
-            spec: 'static/api-specs/ai-gateway-management-api.yaml',
-            config: path.join(__dirname, 'src/redocly/redocly-toolhive.yaml'),
-          },
-        ],
-        theme: {
-          primaryColor: '#2d684b',
-          primaryColorDark: '#bddfc2',
-          options: {
-            sortTagsAlphabetically: true,
-            sortOperationsAlphabetically: true,
-            theme: {
-              colors: {
-                responses: {
-                  success: { color: 'var(--api-response-success)' },
-                  error: { color: 'var(--api-response-error)' },
-                },
-              },
-            },
-          },
-        },
-      },
     ],
   ],
 

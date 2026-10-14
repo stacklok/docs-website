@@ -2,6 +2,9 @@ import type { SidebarsConfig } from '@docusaurus/plugin-content-docs';
 import { buildCliReferenceSidebar } from './src/utils/buildHierarchicalSidebar';
 import toolhiveApiSidebar from './docs/toolhive/reference/api-endpoints/sidebar';
 import enterpriseManagerApiSidebar from './docs/platform/reference/enterprise-manager-api/sidebar';
+import registryApiSidebar from './docs/toolhive/reference/registry-api-endpoints/sidebar';
+import connectorApiSidebar from './docs/connector-gateway/reference/api-endpoints/sidebar';
+import aiGatewayApiSidebar from './docs/ai-gateway/reference/api-endpoints/sidebar';
 import { loadCrdSidebar } from './scripts/lib/crd-sets.mjs';
 
 type SidebarItemConfig = SidebarsConfig[string] extends (infer T)[] ? T : never;
@@ -301,7 +304,13 @@ const mcpSidebar: SidebarsConfig[string] = [
         label: 'Reference',
         items: [
           'toolhive/reference/helm/registry-server',
-          'toolhive/reference/registry-api',
+          {
+            type: 'category',
+            label: 'API reference',
+            collapsed: true,
+            link: { type: 'doc', id: 'toolhive/reference/registry-api' },
+            items: registryApiSidebar,
+          },
           'toolhive/reference/registry-schema-upstream',
         ],
       },
@@ -541,7 +550,15 @@ const connectorGatewaySidebar: SidebarsConfig[string] = [
     type: 'category',
     label: 'Reference',
     collapsed: false,
-    items: ['connector-gateway/api-reference'],
+    items: [
+      {
+        type: 'category',
+        label: 'API reference',
+        collapsed: true,
+        link: { type: 'doc', id: 'connector-gateway/api-reference' },
+        items: connectorApiSidebar,
+      },
+    ],
   },
 ];
 
@@ -564,7 +581,15 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
     type: 'category',
     label: 'Reference',
     collapsed: false,
-    items: ['ai-gateway/api-reference'],
+    items: [
+      {
+        type: 'category',
+        label: 'API reference',
+        collapsed: true,
+        link: { type: 'doc', id: 'ai-gateway/api-reference' },
+        items: aiGatewayApiSidebar,
+      },
+    ],
   },
 ];
 
