@@ -9,7 +9,8 @@ budget. Set it on the **Defaults** tab or through the API.
 **Create budgets individually.** Use the [bulk import](#import-in-bulk) for an
 existing user and group inventory.
 
-The organization default applies only to resolved directory users.
+The organization default applies only to resolved directory users, not to
+service accounts.
 
 ## Create budgets
 
@@ -17,9 +18,11 @@ Each budget has a USD limit and a daily, monthly, or yearly calendar period. The
 budgets endpoints are part of the
 [Enterprise Manager API](../../platform/enterprise-platform/enterprise-manager-api.mdx).
 
-The API identifies a budget by scope and subject. `scope` is `user` or `group`;
-`subject_id` is the OIDC subject for a user, or the directory group's UUID for a
-group. `limit_usd` is a decimal string and `period` is `day`, `month`, or
+The API identifies a budget by scope and subject. `scope` is `user`, `group`, or
+`service_account`. `subject_id` is the user's directory UUID, the directory
+group's UUID, or the directory service account's UUID. Find a user's UUID in the
+`id` field that `GET /v1/users` returns. That endpoint accepts an `email`
+filter. `limit_usd` is a decimal string and `period` is `day`, `month`, or
 `year`.
 
 ### Set an organization default
@@ -42,7 +45,7 @@ explicit budget preserves their current-period usage.
 Use the user or group endpoint to create or update one budget:
 
 ```bash
-curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets/users/<SUBJECT_ID> \
+curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets/users/<USER_UUID> \
   -H "Authorization: Bearer <ADMIN_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"limit_usd": "5.000000000", "period": "day"}'
@@ -56,6 +59,12 @@ curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets/groups/<GROUP_UUID> \
 Group budgets use 1-based `precedence`. The gateway charges an explicit user
 budget first.
 
+Workloads that call the gateway with a Kubernetes service account token are
+charged to a service account budget, set with
+`PUT /v1/budgets/service-accounts/<SERVICE_ACCOUNT_UUID>`. The organization
+default never covers a service account, so give each calling workload its own
+budget or a group budget.
+
 ### Import in bulk
 
 `PUT /v1/budgets` replaces the **entire** collection: budgets in the request are
@@ -68,13 +77,16 @@ curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets \
   -H "Content-Type: application/json" \
   -d '{
     "budgets": [
-      {"scope": "user",  "subject_id": "<SUBJECT_ID>", "limit_usd": "5.000000000",   "period": "day"},
+      {"scope": "user",  "subject_id": "<USER_UUID>", "limit_usd": "5.000000000",   "period": "day"},
       {"scope": "group", "subject_id": "<GROUP_UUID>", "limit_usd": "500.000000000", "period": "month"}
     ]
   }'
 ```
 
-Bulk replacement preserves spend counters.
+Bulk replacement preserves spend counters. A bulk import takes no `precedence`
+field. Group budgets are charged in the order their entries appear in the
+request, and the import renumbers every group, replacing any precedence you set
+through the per-group endpoint.
 
 `GET /v1/budgets` returns the collection with an `ETag`. Send it back as
 `If-Match` on your next write to detect a concurrent change; a `412` response

@@ -16,14 +16,15 @@ and `<NAMESPACE>` for your environment.
 [INPUT]
     Name              tail
     Path              /var/log/containers/*<NAMESPACE>*.log
-    Parser            docker
+    multiline.parser  docker, cri
     Tag               kube.audit.*
     Refresh_Interval  5
 
 [FILTER]
     Name    grep
     Match   kube.audit.*
-    Regex   log .*"logger":"audit".*"msg":"audit_event".*
+    Regex   log "logger":"audit"
+    Regex   log "msg":"audit_event"
 
 [FILTER]
     Name          parser
@@ -42,6 +43,9 @@ and `<NAMESPACE>` for your environment.
     event_source  aigw-audit
     event_index   aigw_audit
 ```
+
+A record passes the `grep` filter only when both `Regex` rules match, so the
+filter works whatever order the two keys appear in.
 
 ### Fluent Bit to Elastic
 
@@ -92,6 +96,10 @@ sinks:
 
 ### Promtail to Loki
 
+Promtail's `match` stage selects on labels, so this pipeline promotes `logger`
+and `msg` to labels, drops every line that isn't an audit record, then removes
+those two labels.
+
 ```yaml
 scrape_configs:
   - job_name: aigw-audit
@@ -101,7 +109,14 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_namespace]
         regex: <NAMESPACE>
         action: keep
+      - source_labels:
+          - __meta_kubernetes_pod_uid
+          - __meta_kubernetes_pod_container_name
+        separator: /
+        target_label: __path__
+        replacement: /var/log/pods/*$1/*.log
     pipeline_stages:
+      - cri: {}
       - json:
           expressions:
             logger: logger
@@ -109,14 +124,27 @@ scrape_configs:
             type: type
             outcome: outcome
             component: component
+      - labels:
+          logger:
+          msg:
       - match:
           selector: '{logger!="audit"}'
           action: drop
+      - match:
+          selector: '{msg!="audit_event"}'
+          action: drop
+      - labeldrop:
+          - logger
+          - msg
       - labels:
           type:
           outcome:
           component:
 ```
+
+On nodes that use the Docker runtime, replace `cri: {}` with `docker: {}`.
+Promtail has reached end of life. For new installs, use Grafana Alloy, which
+converts this configuration with `alloy convert --source-format=promtail`.
 
 ### CloudWatch and rsyslog
 
