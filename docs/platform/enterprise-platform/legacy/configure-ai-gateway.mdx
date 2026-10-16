@@ -1,0 +1,226 @@
+---
+title: Configure the legacy AI Gateway
+sidebar_label: Configure the legacy AI Gateway
+description:
+  Enable the legacy AI Gateway in the platform chart, satisfy its prerequisites,
+  and bring up a working gateway in the right order.
+---
+
+:::info[Legacy gateway]
+
+This page covers the legacy AI Gateway, which runs through the AI Gateway
+operator and `AIGateway` resources. For the current AI Gateway, see
+[Configure the AI Gateway](../configure-ai-gateway.mdx). To check which gateway
+you run, see
+[Identify your deployment](../../../ai-gateway/legacy/index.mdx#identify-your-deployment).
+
+:::
+
+Enable the legacy AI Gateway through the platform chart, then apply its custom
+resources in the order described below. See
+[Legacy AI Gateway](../../../ai-gateway/legacy/index.mdx) for ongoing
+configuration.
+
+## Prerequisites
+
+- **A corporate identity provider**, configured once at
+  `global.stacklok.primaryIdp`. The gateway ties every request to an identity
+  from that provider. See [Configure identity](../configure-identity.mdx).
+- **PostgreSQL**, which the platform already requires. Budgets, pricing, and
+  recorded spend live there.
+- **Redis or Valkey**, only if you intend to enable the detection result cache.
+  It is optional and off by default. See
+  [PCI/PII controls](../../../ai-gateway/legacy/pci-pii-controls.mdx).
+
+If the Enterprise Manager authenticates gRPC callers, as it must when the
+Connector Gateway is enabled, also allow the legacy gateway's ServiceAccounts as
+described in
+[Keep the legacy AI Gateway's access](../configure-connector-gateway.mdx#keep-the-legacy-ai-gateways-access).
+
+## Enable it
+
+Set the install toggle in your platform values and upgrade:
+
+```yaml title="values.yaml"
+global:
+  stacklok:
+    aiGateway:
+      enabled: true
+```
+
+This installs the AI Gateway operator and custom resource definitions. Apply an
+`AIGateway` resource to create a gateway instance.
+
+## Bring it up in this order
+
+Complete the following sequence before sending production traffic:
+
+1. **Create budgets that cover every caller**, before you enable the budget
+   webhook target. Set an organization default for resolved directory users, or
+   create budgets for individual users and groups. A caller with no applicable
+   budget is refused. See
+   [Budgets and pricing](../../../ai-gateway/budgets-and-pricing.mdx).
+
+2. **Enable gateway-level budget webhooks.** Add the webhook target and its
+   receiver configuration to your platform values, then upgrade the release:
+
+   ```yaml title="values.yaml"
+   global:
+     webhooks:
+       issuerRef:
+         name: <WEBHOOK_CLUSTER_ISSUER>
+         kind: ClusterIssuer
+       caBundleSecret: <WEBHOOK_CA_BUNDLE_SECRET>
+
+   enterprise-manager:
+     webhookTLS:
+       enabled: true
+       port: 443
+     webhookAuth:
+       audience: <BUDGET_WEBHOOK_AUDIENCE>
+
+   enterprise-ai-gateway-operator:
+     upstream:
+       budgetsWebhook:
+         serviceName: <ENTERPRISE_MANAGER_SERVICE>
+         port: 443
+         audience: <BUDGET_WEBHOOK_AUDIENCE>
+   ```
+
+   Set `serviceName` to the Enterprise Manager Service in the same namespace as
+   the gateway. The two `audience` values must match exactly. The operator adds
+   admission and usage webhooks to every OIDC-enabled gateway it manages.
+
+3. **Apply an `AIGateway` resource** with at least one provider and one route.
+   See
+   [Connect model providers](../../../ai-gateway/legacy/providers-and-models.mdx).
+
+4. **Verify.** Confirm the gateway reports its providers ready and that budget
+   enforcement probed successfully:
+
+   ```bash
+   kubectl get aigw -n <NAMESPACE>
+   kubectl get aigw <NAME> -n <NAMESPACE> \
+     -o jsonpath='{.status.webhooks}' | jq .
+   ```
+
+## Publish and verify the endpoints
+
+The operator creates a Gateway API `Gateway` with the same name and namespace as
+your `AIGateway`. Envoy Gateway creates the proxy Service that receives model
+inference requests. Configure publishing through the `AIGateway` resource so the
+operator preserves your settings during reconciliation.
+
+### Publish the inference listener
+
+For direct HTTPS exposure through a load balancer, merge this configuration into
+your existing `AIGateway`, keeping its authentication, providers, and routes:
+
+```yaml title="aigateway.yaml"
+spec:
+  gateway:
+    listeners:
+      - port: 443
+        protocol: HTTPS
+        tls:
+          certificateRef:
+            name: ai-gateway-tls
+    tls:
+      issuerRef:
+        name: <CERTIFICATE_ISSUER>
+        kind: ClusterIssuer
+      dnsNames:
+        - '<AI_GATEWAY_HOST>'
+    proxy:
+      serviceType: LoadBalancer
+```
+
+This example requires cert-manager, a ready `ClusterIssuer` that can issue a
+certificate for `<AI_GATEWAY_HOST>`, and a cluster with load balancer support.
+The operator creates the certificate Secret in the `AIGateway` namespace and
+references it from the HTTPS listener. If you supply your own TLS Secret in that
+namespace, set `listeners[].tls.certificateRef.name` to its name and omit
+`gateway.tls`.
+
+Apply your resource and inspect the listener, routes, and proxy Service:
+
+```bash
+kubectl apply -f aigateway.yaml
+kubectl get gateway <AIGATEWAY_NAME> -n <NAMESPACE> -o yaml
+kubectl get httproute -n <NAMESPACE>
+kubectl get svc -A \
+  -l gateway.envoyproxy.io/owning-gateway-name=<AIGATEWAY_NAME>,gateway.envoyproxy.io/owning-gateway-namespace=<NAMESPACE>
+```
+
+The proxy Service name is generated by Envoy Gateway. Use the selected Service's
+namespace, ports, and load balancer address rather than assuming the operator's
+Service receives inference traffic. Check that the Gateway's `Programmed`
+condition and its listener's `Accepted` condition are `True`, and that the
+inference routes have `Accepted` and `ResolvedRefs` set to `True`. Point
+`<AI_GATEWAY_HOST>` in DNS at the load balancer address.
+
+Clients use `https://<AI_GATEWAY_HOST>/v1` as the OpenAI-compatible base URL.
+Preserve paths such as `/v1/chat/completions` and the authentication headers if
+you place another proxy in front of Envoy. Configure that proxy to pass streamed
+responses without buffering and allow your longest model requests. The gateway's
+`spec.gateway.timeouts` sets a total request deadline, including the streamed
+response; leave it unset to avoid imposing that deadline.
+
+If your cluster uses an existing edge proxy, keep
+`spec.gateway.proxy.serviceType: ClusterIP` and route to the discovered Envoy
+proxy Service on its configured listener port. An HTTPS listener requires an
+HTTPS backend connection with certificate validation at the edge proxy.
+
+### Keep the management API reachable by the console
+
+When `spec.auth.virtualAPIKeys.enabled: true`, the operator also creates
+`<AIGATEWAY_NAME>-api-key-service` in the `AIGateway` namespace. Its HTTP port
+`8080` serves the management API, including `/v1/me` and model catalogs. The
+console can reach it inside the cluster. For external automation, publish a
+separate HTTPS hostname routed to that Service and port, preserving `/v1` paths.
+See the [management API reference](../../../ai-gateway/legacy/api-reference.mdx)
+for the base URL, authentication, and a port-forward alternative.
+
+### Verify authenticated use
+
+Send a request from a client machine using a model configured in your routes and
+a token accepted by your gateway's authentication configuration. The caller must
+have a directory identity, model access, and an applicable budget:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  https://<AI_GATEWAY_HOST>/v1/chat/completions \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"<MODEL_NAME>","messages":[{"role":"user","content":"Reply with pong"}]}'
+```
+
+A successful completion verifies DNS, TLS, authentication, admission, and the
+provider connection. For a private CA, use `--cacert <CA_FILE>` and configure
+your clients to trust that CA. Repeat with `"stream": true` in the request body
+and `curl --no-buffer` to confirm chunks arrive before the response completes.
+
+If you enabled the management API, verify it separately through its
+[port-forward](../../../ai-gateway/legacy/api-reference.mdx#base-url):
+
+```bash
+curl --fail --silent --show-error http://localhost:8080/v1/me \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>' | jq .
+```
+
+Use a token accepted by that API's authentication configuration. Then follow
+[Roll out gateway clients](../roll-out-gateway-clients.mdx) to distribute the
+verified endpoint.
+
+## Content screening posture
+
+Detection failures deny requests by default. An experimental waiver can allow
+traffic during a rollout or incident, but it is unavailable on the stable
+release channel.
+
+## Next steps
+
+- [Legacy AI Gateway](../../../ai-gateway/legacy/index.mdx) for providers,
+  routing, screening, and budgets.
+- [Roll out gateway clients](../roll-out-gateway-clients.mdx) to distribute
+  deployment-specific setup instructions.

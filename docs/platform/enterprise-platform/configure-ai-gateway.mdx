@@ -2,56 +2,108 @@
 title: Configure the AI Gateway
 sidebar_label: Configure the AI Gateway
 description:
-  Enable the AI Gateway in the platform chart, satisfy its prerequisites, and
-  bring up a working gateway in the right order.
+  Enable the AI Gateway in the platform chart, connect it to budgets and the
+  directory, and publish its inference endpoint behind the shared Gateway.
 ---
 
-Enable the AI Gateway through the platform chart, then apply its custom
-resources in the order described below. See
-[AI Gateway](../../ai-gateway/index.mdx) for ongoing configuration.
+The AI Gateway is a single gateway process configured entirely through platform
+chart values under the `ai-gateway-v2` key. There are no custom resources to
+apply. In prose, value paths on this page are relative to that key, except those
+that start with `global.` or another chart's key, such as `enterprise-manager.`.
+See [AI Gateway](../../ai-gateway/index.mdx) for providers, routing, screening,
+and budgets.
+
+For the legacy AI Gateway, see
+[Configure the legacy gateway](./legacy/configure-ai-gateway.mdx).
 
 ## Prerequisites
 
-- **A corporate identity provider**, configured once at
-  `global.stacklok.primaryIdp`. The gateway ties every request to an identity
-  from that provider. See [Configure identity](./configure-identity.mdx).
-- **PostgreSQL**, which the platform already requires. Budgets, pricing, and
-  recorded spend live there.
-- **Redis or Valkey**, only if you intend to enable the detection result cache.
-  It is optional and off by default. See
-  [PCI/PII controls](../../ai-gateway/pci-pii-controls.mdx).
-
-If the Enterprise Manager authenticates gRPC callers, as it must when the
-Connector Gateway is enabled, also allow the AI Gateway's ServiceAccounts as
-described in
-[Keep the AI Gateway's access](./configure-connector-gateway.mdx#keep-the-ai-gateways-access).
+- **A corporate identity provider** that issues the tokens your clients send.
+  The gateway trusts the issuers you list under `auth.issuers`. See
+  [Configure identity](./configure-identity.mdx).
+- **The Enterprise Manager with the directory enabled**. Budgets, pricing,
+  recorded spend, virtual API keys, and model access live there.
+- **cert-manager, a `ClusterIssuer`, and a Secret holding its CA bundle**. The
+  Enterprise Manager's budget receiver and the optional screening adapters are
+  served with certificates from that issuer, and the gateway verifies them with
+  the bundle.
+- **A Gateway API `Gateway`** served by Envoy Gateway. The AI Gateway attaches
+  to it with an `HTTPRoute` and has no ingress of its own.
+- **Redis or Valkey**, only if you intend to enable the PII scan result cache.
+  See [PCI/PII controls](../../ai-gateway/pci-pii-controls.mdx).
 
 ## Enable it
 
-Set the install toggle in your platform values and upgrade:
+The AI Gateway and the legacy gateway are alternative implementations of the
+same model gateway. A platform runs one of them. Turn the AI Gateway on and the
+legacy gateway off in the same change that adds the budget and directory values
+from [Bring it up in this order](#bring-it-up-in-this-order):
 
 ```yaml title="values.yaml"
 global:
   stacklok:
-    aiGateway:
+    aiGatewayV2:
       enabled: true
+    aiGateway:
+      enabled: false
 ```
 
-This installs the AI Gateway operator and custom resource definitions. Apply an
-`AIGateway` resource to create a gateway instance.
+The chart refuses to render with both set to `true`, and the error names both
+keys. To run both during a migration, see
+[Migrate from the legacy AI Gateway](../../ai-gateway/migrate-from-legacy.mdx).
+
+The chart also refuses to render until the AI Gateway has a budget receiver
+configured, as described in
+[Bring it up in this order](#bring-it-up-in-this-order). To run a gateway that
+records no spend, set `budgets.acknowledgeUnmetered: true` instead.
+
+## Trust an identity provider
+
+`auth.issuers` lists the identity providers whose JWTs the gateway accepts. Each
+entry takes these fields:
+
+| Field           | Purpose                                                                                                                             |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `issuer`        | The exact `iss` value                                                                                                               |
+| `audience`      | The `aud` value the token must carry                                                                                                |
+| `bindingClaim`  | The claim that identifies the caller, such as `uid` for Okta or `oid` for Microsoft Entra ID. Never a mutable claim such as `email` |
+| `tokenUse`      | Optional. The `token_use` value the token must carry                                                                                |
+| `requiredScope` | Optional. The scope the token must carry, written exactly as it appears in the token's scope claim                                  |
+| `jwksUri`       | Where the issuer publishes its signing keys                                                                                         |
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  auth:
+    issuers:
+      - issuer: 'https://login.microsoftonline.com/<TENANT_ID>/v2.0'
+        audience: '<APPLICATION_CLIENT_ID>'
+        bindingClaim: oid
+        requiredScope: LLM.Invoke
+        jwksUri: 'https://login.microsoftonline.com/<TENANT_ID>/discovery/v2.0/keys'
+```
+
+Set `requiredScope` whenever your identity provider gives ID tokens and access
+tokens the same audience, so an ID token can't serve as an API credential. A
+token without the scope is refused with `403`. For Entra ID, use the short name
+the token's `scp` claim carries, such as `LLM.Invoke`. Tokens issued through the
+client credentials flow carry no scope, so `requiredScope` refuses them.
+
+Credentials that aren't JWTs are treated as
+[virtual API keys](../enterprise-directory/virtual-api-keys.mdx) and checked
+against the directory, so virtual keys need no issuer entry.
 
 ## Bring it up in this order
 
 Complete the following sequence before sending production traffic:
 
-1. **Create budgets that cover every caller**, before you enable the budget
-   webhook target. Set an organization default for resolved directory users, or
-   create budgets for individual users and groups. A caller with no applicable
-   budget is refused. See
+1. **Create budgets that cover every caller.** A caller with no applicable
+   budget is refused. Set an organization default for resolved directory users,
+   or create budgets for individual users and groups. See
    [Budgets and pricing](../../ai-gateway/budgets-and-pricing.mdx).
 
-2. **Enable gateway-level budget webhooks.** Add the webhook target and its
-   receiver configuration to your platform values, then upgrade the release:
+2. **Connect the gateway to the Enterprise Manager.** Serve the Enterprise
+   Manager's webhook listener, point the gateway's budget receiver and directory
+   connection at it, and upgrade the release:
 
    ```yaml title="values.yaml"
    global:
@@ -64,116 +116,108 @@ Complete the following sequence before sending production traffic:
    enterprise-manager:
      webhookTLS:
        enabled: true
-       port: 443
      webhookAuth:
-       audience: <BUDGET_WEBHOOK_AUDIENCE>
+       audience: budgets-webhook
+     grpc:
+       callerAuth:
+         clusterOidcIssuer: '<CLUSTER_OIDC_ISSUER>'
 
-   enterprise-ai-gateway-operator:
-     upstream:
-       budgetsWebhook:
-         serviceName: <ENTERPRISE_MANAGER_SERVICE>
-         port: 443
-         audience: <BUDGET_WEBHOOK_AUDIENCE>
+   ai-gateway-v2:
+     budgets:
+       endpoint: 'https://<ENTERPRISE_MANAGER_SERVICE>.<NAMESPACE>.svc:443'
+       tokenProjection:
+         enabled: true
+     directory:
+       endpoint: '<DIRECTORY_GRPC_ADDRESS>'
+       groupsResolutionIssuer: '<IDP_ISSUER_URL>'
+       tokenProjection:
+         enabled: true
    ```
 
-   Set `serviceName` to the Enterprise Manager Service in the same namespace as
-   the gateway. The two `audience` values must match exactly. The operator adds
-   admission and usage webhooks to every OIDC-enabled gateway it manages.
+   `budgets.endpoint` must be an `https://` URL. Its token audience,
+   `budgets.tokenProjection.audience`, defaults to `budgets-webhook` and must
+   equal `enterprise-manager.webhookAuth.audience`. `directory.endpoint` is the
+   `host:port` of the directory's gRPC listener, without a scheme.
 
-3. **Apply an `AIGateway` resource** with at least one provider and one route.
-   See [Connect model providers](../../ai-gateway/providers-and-models.mdx).
+   Set `directory.groupsResolutionIssuer` to the issuer the directory knows your
+   users under, usually your corporate identity provider's issuer. Requests that
+   use a virtual API key resolve their owner's groups through it. Without it,
+   only user budgets apply to those requests.
 
-4. **Verify.** Confirm the gateway reports its providers ready and that budget
-   enforcement probed successfully:
+   Set `enterprise-manager.grpc.callerAuth.clusterOidcIssuer` to your cluster's
+   ServiceAccount token issuer. The Enterprise Manager verifies the gateway's
+   tokens against it, and while it's empty, refuses the gateway's directory
+   calls and connectivity polls. This command prints the issuer:
 
    ```bash
-   kubectl get aigw -n <NAMESPACE>
-   kubectl get aigw <NAME> -n <NAMESPACE> \
-     -o jsonpath='{.status.webhooks}' | jq .
+   kubectl get --raw /.well-known/openid-configuration | jq -r .issuer
    ```
 
-## Publish and verify the endpoints
+   On managed clusters such as Amazon EKS, the issuer is a public URL, so allow
+   egress to it from the Enterprise Manager pods.
 
-The operator creates a Gateway API `Gateway` with the same name and namespace as
-your `AIGateway`. Envoy Gateway creates the proxy Service that receives model
-inference requests. Configure publishing through the `AIGateway` resource so the
-operator preserves your settings during reconciliation.
+   The platform chart adds the gateway's ServiceAccount to
+   `enterprise-manager.grpc.callerAuth.saSubjectAllowlist` by default. If you
+   set that list yourself, include
+   `system:serviceaccount:<NAMESPACE>:<RELEASE_NAME>-ai-gateway-v2`.
 
-### Publish the inference listener
+3. **Add providers and models.** See
+   [Connect model providers](../../ai-gateway/providers-and-models.mdx).
 
-For direct HTTPS exposure through a load balancer, merge this configuration into
-your existing `AIGateway`, keeping its authentication, providers, and routes:
+4. **Optionally turn on model access**, so callers can use only the models their
+   directory grants cover. See
+   [Route models and control access](../../ai-gateway/model-routing.mdx).
 
-```yaml title="aigateway.yaml"
-spec:
-  gateway:
-    listeners:
-      - port: 443
-        protocol: HTTPS
-        tls:
-          certificateRef:
-            name: ai-gateway-tls
-    tls:
-      issuerRef:
-        name: <CERTIFICATE_ISSUER>
-        kind: ClusterIssuer
-      dnsNames:
-        - '<AI_GATEWAY_HOST>'
-    proxy:
-      serviceType: LoadBalancer
+5. **Verify** that the gateway pods are ready:
+
+   ```bash
+   kubectl get pods -n <NAMESPACE> \
+     -l app.kubernetes.io/name=ai-gateway-v2,app.kubernetes.io/component=gateway
+   ```
+
+   Then confirm that budget enforcement is wired, as described in
+   [Verify the gateway reaches the budgets service](../../ai-gateway/budget-enforcement.mdx#verify-the-gateway-reaches-the-budgets-service).
+
+## Publish the endpoint
+
+The AI Gateway serves inference on a `ClusterIP` Service, port `8080`. Publish
+it by attaching an `HTTPRoute` to your Envoy Gateway `Gateway`:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  httpRoute:
+    enabled: true
+    parentRefs:
+      - name: <GATEWAY_NAME>
+        namespace: <GATEWAY_NAMESPACE>
+        sectionName: <LISTENER_NAME>
+    hostname: '<AI_GATEWAY_HOST>'
 ```
 
-This example requires cert-manager, a ready `ClusterIssuer` that can issue a
-certificate for `<AI_GATEWAY_HOST>`, and a cluster with load balancer support.
-The operator creates the certificate Secret in the `AIGateway` namespace and
-references it from the HTTPS listener. If you supply your own TLS Secret in that
-namespace, set `listeners[].tls.certificateRef.name` to its name and omit
-`gateway.tls`.
+`parentRefs` is required when the route is enabled. Set `hostname`: without it,
+the route matches every hostname the listener accepts. The route's request
+timeout follows `lifecycle.maxStreamDuration`, 15 minutes by default, so a
+supported long stream is never cut short at the route.
 
-Apply your resource and inspect the listener, routes, and proxy Service:
+Check that the route has `Accepted` and `ResolvedRefs` set to `True`:
 
 ```bash
-kubectl apply -f aigateway.yaml
-kubectl get gateway <AIGATEWAY_NAME> -n <NAMESPACE> -o yaml
-kubectl get httproute -n <NAMESPACE>
-kubectl get svc -A \
-  -l gateway.envoyproxy.io/owning-gateway-name=<AIGATEWAY_NAME>,gateway.envoyproxy.io/owning-gateway-namespace=<NAMESPACE>
+kubectl get httproute -n <NAMESPACE> -o yaml
 ```
 
-The proxy Service name is generated by Envoy Gateway. Use the selected Service's
-namespace, ports, and load balancer address rather than assuming the operator's
-Service receives inference traffic. Check that the Gateway's `Programmed`
-condition and its listener's `Accepted` condition are `True`, and that the
-inference routes have `Accepted` and `ResolvedRefs` set to `True`. Point
-`<AI_GATEWAY_HOST>` in DNS at the load balancer address.
+If you place another proxy in front of the Gateway, preserve the request paths
+and authentication headers, pass streamed responses without buffering, and allow
+your longest model requests.
 
-Clients use `https://<AI_GATEWAY_HOST>/v1` as the OpenAI-compatible base URL.
-Preserve paths such as `/v1/chat/completions` and the authentication headers if
-you place another proxy in front of Envoy. Configure that proxy to pass streamed
-responses without buffering and allow your longest model requests. The gateway's
-`spec.gateway.timeouts` sets a total request deadline, including the streamed
-response; leave it unset to avoid imposing that deadline.
-
-If your cluster uses an existing edge proxy, keep
-`spec.gateway.proxy.serviceType: ClusterIP` and route to the discovered Envoy
-proxy Service on its configured listener port. An HTTPS listener requires an
-HTTPS backend connection with certificate validation at the edge proxy.
-
-### Keep the management API reachable by the console
-
-When `spec.auth.virtualAPIKeys.enabled: true`, the operator also creates
-`<AIGATEWAY_NAME>-api-key-service` in the `AIGateway` namespace. Its HTTP port
-`8080` serves the management API, including `/v1/me` and model catalogs. The
-console can reach it inside the cluster. For external automation, publish a
-separate HTTPS hostname routed to that Service and port, preserving `/v1` paths.
-See the [management API reference](../../ai-gateway/api-reference.mdx) for the
-base URL, authentication, and a port-forward alternative.
+To show this endpoint to users in the console and in the generated
+`thv llm setup` command, set `toolhive-cloud-ui.gatewayProxyUrl` to
+`https://<AI_GATEWAY_HOST>`.
 
 ### Verify authenticated use
 
-Send a request from a client machine using a model configured in your routes and
-a token accepted by your gateway's authentication configuration. The caller must
-have a directory identity, model access, and an applicable budget:
+Send a request from a client machine using a model you configured and a token
+accepted by one of your issuers. The caller needs a directory identity, an
+applicable budget, and a grant for the model if model access is on:
 
 ```bash
 curl --fail-with-body --silent --show-error \
@@ -183,28 +227,113 @@ curl --fail-with-body --silent --show-error \
   -d '{"model":"<MODEL_NAME>","messages":[{"role":"user","content":"Reply with pong"}]}'
 ```
 
-A successful completion verifies DNS, TLS, authentication, admission, and the
+This example uses an OpenAI-compatible model. For an Anthropic model, send the
+same check to `/anthropic/v1/messages` in the Anthropic Messages format. A
+successful response verifies DNS, TLS, authentication, budget admission, and the
 provider connection. For a private CA, use `--cacert <CA_FILE>` and configure
-your clients to trust that CA. Repeat with `"stream": true` in the request body
-and `curl --no-buffer` to confirm chunks arrive before the response completes.
+your clients to trust that CA. Repeat with `"stream": true` and
+`curl --no-buffer` to confirm chunks arrive before the response completes.
 
-If you enabled the management API, verify it separately through its
-[port-forward](../../ai-gateway/api-reference.mdx#base-url):
+## Client endpoints
 
-```bash
-curl --fail --silent --show-error http://localhost:8080/v1/me \
-  -H 'Authorization: Bearer <ACCESS_TOKEN>' | jq .
+The AI Gateway passes each request to the provider in the API format the client
+sent, so each client uses the base path for its own API:
+
+| Client                            | Base URL                                                     | Credential header                      |
+| --------------------------------- | ------------------------------------------------------------ | -------------------------------------- |
+| OpenAI-compatible clients         | `https://<AI_GATEWAY_HOST>/v1`                               | `Authorization: Bearer`                |
+| Claude Code and Anthropic clients | `https://<AI_GATEWAY_HOST>/anthropic`                        | `x-api-key` or `Authorization: Bearer` |
+| Codex (Responses API)             | `https://<AI_GATEWAY_HOST>/v1`, which serves `/v1/responses` | `Authorization: Bearer`                |
+| Gemini CLI and Gemini clients     | `https://<AI_GATEWAY_HOST>`, which serves `/v1beta`          | `x-goog-api-key`                       |
+
+Each credential header accepts either a JWT or a virtual API key. The
+`thv llm setup` command that the console builds configures each client with the
+right path. See [Roll out gateway clients](./roll-out-gateway-clients.mdx).
+
+## Restrict network access
+
+`networkPolicy.enabled` renders a NetworkPolicy for the gateway pods. It is off
+by default. Enable it when your cluster applies a default-deny policy:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  networkPolicy:
+    enabled: true
+    ingress:
+      gatewayNamespaces:
+        - envoy-gateway-system
+      monitoringNamespaces:
+        - monitoring
+    allowExternalEgress: false
 ```
 
-Use a token accepted by that API's authentication configuration. Then follow
-[Roll out gateway clients](./roll-out-gateway-clients.mdx) to distribute the
-verified endpoint.
+- **Ingress** admits only the Envoy pods in `ingress.gatewayNamespaces`, which
+  must not be empty. The metrics port is admitted from
+  `ingress.monitoringNamespaces` when Prometheus metrics are on.
+- **Egress** with `allowExternalEgress: false` admits DNS, outbound `443` for
+  providers, the Enterprise Manager, the enabled screening adapters, and the
+  OTLP ports in `telemetry.otlp.endpoint` and `telemetry.otlp.tracesEndpoint`.
+  If the Enterprise Manager runs in a different namespace, set
+  `networkPolicy.governanceEgress.namespaces`. Add anything else the gateway
+  reaches under `networkPolicy.egress`.
+
+A missing egress rule fails closed: governance calls can't complete, so every
+request is refused with `503` or `504`.
+
+## Disconnect the gateway
+
+An administrator can stop all model traffic without a redeploy by setting the AI
+Gateway's connectivity state through the
+[Enterprise Manager API](./enterprise-manager-api.mdx):
+
+```bash
+curl -X PUT \
+  https://<ENTERPRISE_MANAGER_URL>/api/v1/platform-settings/gateways/ai-gateway/connectivity \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"state": "disconnected"}'
+```
+
+While disconnected, the gateway refuses every inference request with `503` and
+the error code `administratively_disconnected`. Send `{"state": "connected"}` to
+restore traffic. Pods stay ready, so a disconnect never restarts them.
+
+The console's **Emergency Disconnect** control, on the **System** tab of
+**Platform Settings**, lists the AI Gateway only while the legacy gateway is
+enabled with `global.stacklok.aiGateway.enabled`, such as during a migration
+window. Its **Disconnect AI Gateway** button stops both gateways.
+
+Disconnection applies when `global.stacklok.enterpriseManager.url` is set. Each
+replica polls the state every 5 seconds by default. Until its first poll
+succeeds, a replica refuses traffic, and a later failed poll keeps the last
+known state. The platform chart allows the gateway's ServiceAccount to poll. If
+you override `enterprise-manager.grpc.callerAuth.httpSaSubjectAllowlist`, or
+rename the gateway with `fullnameOverride` or `serviceAccount.name`, include its
+actual subject or the gateway refuses all traffic.
 
 ## Content screening posture
 
-Detection failures deny requests by default. An experimental waiver can allow
-traffic during a rollout or incident, but it is unavailable on the stable
-release channel.
+Screening failures deny requests by default. PII scanning blocks a request when
+Presidio is unreachable or slow, and prompt injection screening blocks a request
+when its adapter is unreachable, slow, or returns an error. To admit traffic
+during a rollout or incident, set `scanning.ner.failureAction: fail-open` or
+`guardrails.failurePolicy: Ignore`. Requests admitted this way reach the
+provider unscreened. See
+[PCI/PII controls](../../ai-gateway/pci-pii-controls.mdx) and
+[Screen prompts for injection](../../ai-gateway/prompt-injection-screening.mdx).
+
+## How configuration changes apply
+
+The gateway reads its configuration at startup, so every change applies through
+a rollout. The chart renders the configuration into a ConfigMap, and a changed
+value changes the pod template. A credential Secret edited in place rolls the
+pods on the next `helm upgrade`, because the chart hashes Secret contents. With
+Argo CD or another renderer without cluster access, run
+`kubectl rollout restart` after editing a Secret.
+
+Existing pods keep serving until new pods are ready, so a change that leaves the
+new pods unready stalls the rollout and leaves the gateway up. Check
+`kubectl rollout status` after every upgrade.
 
 ## Next steps
 
@@ -212,3 +341,8 @@ release channel.
   and budgets.
 - [Roll out gateway clients](./roll-out-gateway-clients.mdx) to distribute
   deployment-specific setup instructions.
+
+## Related information
+
+- [AI Gateway endpoints reference](../../ai-gateway/endpoints-reference.mdx)
+- [AI Gateway inference Helm values](../reference/helm/ai-gateway.mdx)

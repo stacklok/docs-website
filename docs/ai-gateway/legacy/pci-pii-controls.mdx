@@ -1,0 +1,257 @@
+---
+title: Detect PCI and PII in prompts (legacy gateway)
+sidebar_label: PCI/PII controls
+description:
+  Scan prompts and responses for credit cards, national identifiers, and other
+  sensitive data, and block, redact, or log what is found.
+---
+
+:::info[Legacy gateway]
+
+This page covers the legacy AI Gateway, which runs through the AI Gateway
+operator and `AIGateway` resources. For the current AI Gateway, see
+[Detect PCI and PII in prompts](../pci-pii-controls.mdx). To check which gateway
+you run, see [Identify your deployment](./index.mdx#identify-your-deployment).
+
+:::
+
+The legacy AI Gateway uses Microsoft Presidio to scan requests and responses for
+personally identifiable information (PII) and payment data. Configure in-cluster
+scanning under `spec.processor` on the `AIGateway` resource. You can combine it
+with [prompt injection screening](./prompt-injection-screening.mdx).
+
+## Choose what happens on a match
+
+```yaml title="aigateway.yaml"
+spec:
+  processor:
+    replicas: 2
+    requestAction: Block
+    responseAction: LogOnly
+    placeholder: '[REDACTED]'
+    nerProvider:
+      type: presidio
+      timeout: '5s'
+      failureAction: fail-closed
+      presidio:
+        scoreThreshold: 50
+        language: 'en'
+        entities:
+          - CREDIT_CARD
+          - US_SSN
+          - EMAIL_ADDRESS
+          - PHONE_NUMBER
+```
+
+| Action    | On the request                                       | On the response                               |
+| --------- | ---------------------------------------------------- | --------------------------------------------- |
+| `Block`   | Refused. The prompt never reaches the provider.      | Refused. The response is not delivered.       |
+| `Redact`  | Matches replaced with `placeholder`, then forwarded. | Matches replaced before the client sees them. |
+| `LogOnly` | Recorded, forwarded unmodified.                      | Recorded, forwarded unmodified.               |
+
+`responseAction` is optional and falls back to `requestAction`.
+
+## Choose which entities to look for
+
+`entities` controls what the scanner detects. The default includes structured
+identifiers and model-derived entities such as `PERSON` and `LOCATION`.
+
+| Entity               | Matches                                     |
+| -------------------- | ------------------------------------------- |
+| `CREDIT_CARD`        | Card numbers, checksum-validated            |
+| `US_SSN`             | US Social Security numbers                  |
+| `ABA_ROUTING_NUMBER` | US bank routing numbers, checksum-validated |
+| `IBAN_CODE`          | International bank account numbers          |
+| `EMAIL_ADDRESS`      | Email addresses                             |
+| `PHONE_NUMBER`       | Phone numbers, region-aware                 |
+| `IP_ADDRESS`         | IPv4 and IPv6 addresses                     |
+| `US_ITIN`            | US taxpayer identification numbers          |
+| `IN_AADHAAR`         | Indian Aadhaar numbers                      |
+| `AU_TFN`             | Australian tax file numbers                 |
+| `UK_NHS`             | UK NHS numbers                              |
+| `PERSON`             | Personal names, from the language model     |
+| `LOCATION`           | Place names, from the language model        |
+| `DATE_TIME`          | Dates and times, from the language model    |
+
+The full supported list is published in the
+[Presidio documentation](https://microsoft.github.io/presidio/supported_entities/).
+Custom recognizers appear under their configured entity name and can be listed
+here verbatim.
+
+## Tune the confidence threshold
+
+`scoreThreshold` sets the minimum detection confidence from 0 to 100 and
+defaults to `50`. Test representative traffic in `LogOnly` mode, then adjust the
+threshold and entity list to balance false positives and false negatives. For
+predictable enforcement, select the structured identifiers required by your
+data-handling policy.
+
+## Decide how failures behave
+
+Configure parsing, redaction, and detection backend failures independently. Use
+the closed settings in production and open settings only during rollout or
+incident response.
+
+```yaml
+spec:
+  processor:
+    extractionFailureAction: Block
+    mutationFailureAction: Block
+    nerProvider:
+      failureAction: fail-closed
+```
+
+| Field                       | Closed setting                                    | Open setting              |
+| --------------------------- | ------------------------------------------------- | ------------------------- |
+| `extractionFailureAction`   | Refuse if the body cannot be parsed               | Forward unmodified        |
+| `mutationFailureAction`     | Refuse if redaction fails                         | Forward unmodified        |
+| `nerProvider.failureAction` | Refuse on backend error, timeout, or open circuit | Log a warning and forward |
+
+A circuit breaker applies `failureAction` without calling an unhealthy detection
+backend:
+
+```yaml
+spec:
+  processor:
+    nerProvider:
+      circuitBreaker:
+        failureThreshold: 5
+        resetTimeout: '30s'
+```
+
+The
+[`spec.resilience`](./model-routing.mdx#configure-retries-health-checks-and-timeouts)
+circuit breaker protects model providers separately.
+
+## Size the scanner
+
+`timeout` limits each detection call and defaults to `5s`. Test large request
+bodies before lowering it because timeouts count as detection backend failures.
+
+:::warning
+
+Keep `spec.processor.messageTimeout` strictly greater than
+`nerProvider.timeout`, or the request will be abandoned before the detection
+call returns.
+
+:::
+
+`concurrency` limits parallel detection calls for one request. It defaults to
+`8` and accepts values from 1 to 128. Changing it rolls the processor.
+
+Each Presidio pod processes one request at a time. Scale `presidio.replicas`
+before raising `concurrency`. If `stacklok_ai_gateway_presidio_analyze_inflight`
+divided by the number of ready analyzer pods exceeds 1, calls are queuing in the
+backend.
+
+```yaml
+spec:
+  processor:
+    nerProvider:
+      concurrency: 16
+      presidio:
+        replicas: 2
+        maxReplicas: 6
+        targetCPUUtilization: 75
+        resources:
+          requests:
+            cpu: '500m'
+            memory: 1Gi
+          limits:
+            cpu: '2'
+            memory: 2Gi
+```
+
+The language model uses approximately 800 MiB of memory after startup. The
+analyzer is CPU-bound, so use replicas and autoscaling for additional capacity.
+At two or more replicas, the gateway creates a PodDisruptionBudget.
+
+## Cache scan results
+
+Enable the result cache to avoid scanning repeated text. It stores detection
+results in the platform's Redis or Valkey instance, keyed by the text and
+scanning configuration.
+
+```yaml
+spec:
+  processor:
+    nerProvider:
+      resultCache:
+        enabled: true
+        ttl: '24h'
+```
+
+The cache uses the platform chart's Redis configuration. If the gateway cannot
+resolve the backend, scanning continues without caching. Use the hit-rate metric
+to verify that the cache is serving results.
+
+### What read access to the cache discloses
+
+Cache keys are an unsalted hash of the scanned text, which makes the keyspace a
+**confirmation oracle**. Anyone who can read the backing Redis can hash a
+candidate piece of text, probe for the key, and confirm whether that exact text
+was scanned by this gateway.
+
+On a hit they learn more than the yes or no. The entry carries the entity types
+found, the name of the rule that matched, and the byte offsets of each
+detection, which discloses the position and length of every detected value. If
+you ship custom recognizers, the rule name tells a reader which of your own
+detection rules fired.
+
+The cache limits exposure as follows:
+
+- Entries omit scanned text and matched substrings.
+- Each gateway uses a separate keyspace.
+- Integrity tags prevent a writer from inserting a result that suppresses
+  detection.
+
+Treat read access to the cache as permission to confirm whether specific text
+passed through the gateway. Leave caching disabled if that disclosure conflicts
+with your security requirements.
+
+### The integrity secret
+
+By default, the gateway creates `<GATEWAY_NAME>-ner-cache-mac` in its namespace.
+The Secret contains the integrity key for cached results.
+
+To supply your own instead, through External Secrets, sealed secrets, or
+out-of-band creation, name it on the operator chart:
+
+```yaml title="values.yaml"
+nerResultCache:
+  macSecret:
+    name: <SECRET_NAME>
+    key: mac-secret
+```
+
+Place a supplied Secret in each gateway namespace. Its value must contain at
+least 32 bytes of printable text. Base64-encoded random data satisfies this
+requirement.
+
+The gateway re-scans entries when it cannot verify the integrity tag. Replace
+the Secret value to rotate it; existing entries then miss the cache and are
+re-scanned.
+
+### Time to live and footprint
+
+`ttl` defaults to 24 hours. Cache keys include the scanning configuration, so
+changes to thresholds, entities, recognizers, or the analyzer image cause cache
+misses. Shorten the TTL to reduce the disclosure window and memory use.
+
+### Cache metrics
+
+| Metric                                              | What it measures                                                    |
+| --------------------------------------------------- | ------------------------------------------------------------------- |
+| `stacklok_ai_gateway_ner_cache_lookups_total`       | One per attempted read, labeled hit or miss and request or response |
+| `stacklok_ai_gateway_ner_cache_errors_total`        | Backend or codec faults, labeled by operation and error type        |
+| `stacklok_ai_gateway_ner_cache_op_duration_seconds` | Backend round-trip per operation                                    |
+
+Use the hit rate to measure avoided detection calls. Cache errors become misses
+and trigger a normal detection call.
+
+## Next steps
+
+- [Screen prompts for injection](./prompt-injection-screening.mdx) to add
+  adversarial-prompt screening alongside this.
+- [Forward audit logs](./forward-audit-logs.mdx) to get detections into your
+  security information and event management system.
