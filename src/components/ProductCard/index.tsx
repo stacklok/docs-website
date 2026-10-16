@@ -3,7 +3,7 @@
 
 import React from 'react';
 import clsx from 'clsx';
-import useBaseUrl from '@docusaurus/useBaseUrl';
+import { useBaseUrlUtils } from '@docusaurus/useBaseUrl';
 import ThemedImage from '@theme/ThemedImage';
 import styles from './styles.module.css';
 
@@ -155,6 +155,7 @@ export default function ProductCard(props: ProductCardProps) {
     children,
   } = props;
 
+  const { withBaseUrl } = useBaseUrlUtils();
   const linkAttributes = getExternalLinkAttributes(href);
 
   // Render inline icon if provided
@@ -171,8 +172,8 @@ export default function ProductCard(props: ProductCardProps) {
       return (
         <ThemedImage
           sources={{
-            light: useBaseUrl(icon.src),
-            dark: useBaseUrl(icon.srcDark),
+            light: withBaseUrl(icon.src),
+            dark: withBaseUrl(icon.srcDark),
           }}
           alt={icon.alt}
           style={iconStyle}
@@ -180,7 +181,7 @@ export default function ProductCard(props: ProductCardProps) {
       );
     }
 
-    return <img src={useBaseUrl(icon.src)} alt={icon.alt} style={iconStyle} />;
+    return <img src={withBaseUrl(icon.src)} alt={icon.alt} style={iconStyle} />;
   };
 
   // Type-safe content rendering based on discriminated union
@@ -203,8 +204,8 @@ export default function ProductCard(props: ProductCardProps) {
               title={logoTitle}
               className={clsx(invertLogoOnHover && styles.invertOnHover)}
               sources={{
-                light: useBaseUrl(logo),
-                dark: useBaseUrl(logoDark || logo),
+                light: withBaseUrl(logo),
+                dark: withBaseUrl(logoDark || logo),
               }}
             />
           </div>

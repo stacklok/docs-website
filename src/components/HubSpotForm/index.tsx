@@ -81,7 +81,7 @@ export default function HubSpotForm({
     const existing = document.querySelector(`script[src="${SCRIPT_SRC}"]`);
     if (existing) {
       existing.addEventListener('load', init);
-      return;
+      return () => existing.removeEventListener('load', init);
     }
 
     const script = document.createElement('script');
@@ -90,7 +90,8 @@ export default function HubSpotForm({
     script.type = 'text/javascript';
     script.addEventListener('load', init);
     document.body.appendChild(script);
-  }, [portalId, formId, region]);
+    return () => script.removeEventListener('load', init);
+  }, [portalId, formId, region, targetId]);
 
   const formContent = submitted ? (
     <div style={{ textAlign: 'center', padding: '2rem' }}>

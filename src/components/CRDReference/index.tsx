@@ -126,7 +126,7 @@ function formatDefault(value: unknown): string {
 }
 
 function Modifiers({ schema }: { schema: Schema }) {
-  const parts: React.ReactNode[] = [];
+  const parts: React.ReactElement[] = [];
   if (schema.default !== undefined) {
     parts.push(
       <span key='d' className={styles.modifier}>
@@ -139,7 +139,7 @@ function Modifiers({ schema }: { schema: Schema }) {
       <span key='e' className={styles.modifier}>
         enum:{' '}
         {schema.enum.map((v, i) => (
-          <React.Fragment key={i}>
+          <React.Fragment key={JSON.stringify(v)}>
             {i > 0 && ' | '}
             <code>{String(v)}</code>
           </React.Fragment>
@@ -192,7 +192,7 @@ function Modifiers({ schema }: { schema: Schema }) {
   if (!parts.length) return null;
   const interleaved: React.ReactNode[] = [];
   parts.forEach((p, i) => {
-    if (i > 0) interleaved.push(<span key={`sep-${i}`}> · </span>);
+    if (i > 0) interleaved.push(<span key={`sep-${p.key}`}> · </span>);
     interleaved.push(p);
   });
   return (
