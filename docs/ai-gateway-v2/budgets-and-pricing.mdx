@@ -3,7 +3,7 @@ title: Budgets and pricing
 sidebar_label: Budgets and pricing
 description:
   Cap AI Gateway v2 model spend per user or group in USD, update model pricing,
-  and see how refused requests reach the client.
+  and match each provider's models to the pricing catalog.
 ---
 
 import BudgetsApi from '../ai-gateway/_partials/_budgets-api.mdx';
@@ -32,23 +32,7 @@ gateway that serves traffic.
 
 ## Connect the gateway to budgets
 
-AI Gateway v2 reaches the budgets service through hook entries that the chart
-renders from the `budgets` values:
-
-| Hook entry          | When it runs                       | What it does                                                                             |
-| ------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------- |
-| `budgets-admission` | Before the provider call           | Admits or denies the request. A failed call denies the request.                          |
-| `budgets-usage`     | After the provider response        | Records usage and charges a budget. The client receives the response only after it does. |
-| `budgets-capture`   | After the other request-time hooks | Forwards the conversation for capture. Best effort, and never blocks the request.        |
-
-The chart renders `budgets-capture` only when `budgets.capture` is `true`.
-Conversation capture is experimental. Enterprise Manager accepts captured
-conversations only when
-`global.stacklok.experiments.insightsClassification.enabled` is `true`, subject
-to a release-channel guard. Without it, `budgets-capture` calls fail and its
-probe reports errors, while admission and usage are unaffected.
-
-Set these values to connect the gateway:
+Set these values to connect the gateway to the budgets service:
 
 | Value                              | Purpose                                                                                                                            |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
@@ -60,11 +44,16 @@ Set these values to connect the gateway:
 | `budgets.capture`                  | Forwards request bodies to the budgets service for conversation capture. Defaults to `false`.                                      |
 | `budgets.acknowledgeUnmetered`     | Set to `true` to install a gateway with no `endpoint`. That gateway admits every request and charges nothing.                      |
 
-The chart refuses to render when `endpoint` is empty without
-`acknowledgeUnmetered`, when `endpoint` isn't an `https://` URL, when token
-projection is off, or when no CA bundle is configured. For the full set of
-platform values and the order to apply them in, see
+The chart refuses to render when `endpoint` is empty and `acknowledgeUnmetered`
+isn't set, or when `endpoint` is set without the other connection values it
+requires. For the full set of platform values and the order to apply them in,
+see
 [Configure AI Gateway v2](../platform/enterprise-platform/configure-ai-gateway-v2.mdx#bring-it-up-in-this-order).
+
+Conversation capture is experimental. Enterprise Manager accepts captured
+conversations only when
+`global.stacklok.experiments.insightsClassification.enabled` is `true`, subject
+to a release-channel guard.
 
 With `budgets.capture` on, the budgets service receives the request body the
 provider sees. Before you turn on capture, set up
@@ -75,42 +64,30 @@ unscanned under `fail-open`, exactly as the caller sent it.
 
 ### Verify the gateway reaches the budgets service
 
-At startup, the gateway pings each hook entry's receiver until it answers. When
-pings keep failing, the gateway logs a warning that names the hook entry and the
-failure reason, and logs `receiver hook probe recovered` once the receiver
-answers:
+At startup, the gateway pings the budgets service until it answers. When pings
+keep failing, the gateway logs a `receiver hook probe failed` warning with the
+failure reason, then logs `receiver hook probe recovered` once the service
+answers. The gateway reaches the budgets service when the logs show no
+unrecovered warning:
 
 ```bash
 kubectl logs -n <NAMESPACE> deploy/<RELEASE_NAME>-ai-gateway-v2 \
   | grep 'receiver hook probe'
 ```
 
-The same pings feed the `stacklok.ai_gateway.webhook.probes` counter, labeled by
-`webhook_name`, `outcome` (`success` or `error`), and `webhook_reason`. A
-failing ping usually means the token audience doesn't match the receiver's, the
-CA bundle doesn't trust the receiver's certificate, or `budgets.endpoint` points
-at the wrong Service. Pings don't affect readiness, so a pod reports ready while
-its budgets receiver is unreachable.
+A failing ping usually means the token audience doesn't match the receiver's.
 
 <PricingCatalog />
 
 ### Match provider kinds to catalog entries
 
-Each catalog entry is keyed on a provider and a model. The catalog provider
-isn't always the same string as the AI Gateway v2 provider `kind`:
-
-| Provider `kind`     | Catalog `provider` |
-| ------------------- | ------------------ |
-| `anthropic`         | `anthropic`        |
-| `bedrock-anthropic` | `awsanthropic`     |
-| `openai`            | `openai`           |
-| `openrouter`        | `openrouter`       |
-| `gemini-aistudio`   | `google`           |
-| `vertex`            | `google`           |
+Each catalog entry is keyed on a provider and a model. Most provider kinds use
+the same name in the catalog. The exceptions are `bedrock-anthropic`, which maps
+to `awsanthropic`, and `gemini-aistudio` and `vertex`, which both map to
+`google`.
 
 The model in a catalog entry must match the model string in `providers[].models`
-exactly. A dated model ID and its undated alias are two different catalog
-entries. The gateway doesn't check its route table against the catalog, so
+exactly. The gateway refuses requests for a model with no catalog entry, so
 confirm that a model is priced before you
 [add it to a provider](providers-and-models.mdx).
 
@@ -119,41 +96,6 @@ confirm that a model is priced before you
 Use [Budgets](manage-budgets.mdx) to compare usage with each limit.
 
 <MonitorSpendApi />
-
-## How refusals reach the client
-
-The budgets service decides admission, and the gateway returns its status to the
-client with a `request denied by governance hook` message:
-
-| Status | Cause                                                                                                                                                                                       |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `402`  | Every applicable budget is exhausted (`budget exhausted`), or no budget covers the caller (`no applicable budget`).                                                                         |
-| `403`  | The caller doesn't resolve to a directory user, the directory couldn't be reached, or the model has no entry in the active pricing catalog. The message names the `budgets-admission` hook. |
-
-For an unpriced model, Enterprise Manager logs
-`budget admit: model not priceable by the active catalog; denying` with the
-model and catalog provider, so you can add the missing entry.
-
-When the gateway gets no usable answer from the budgets service, it denies the
-request:
-
-| Status | Cause                                                                                                                                        |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `503`  | The budgets service is unreachable.                                                                                                          |
-| `504`  | The call timed out. Each attempt must answer within 650 milliseconds, and the gateway retries a failed attempt once within a 5-second limit. |
-| `502`  | The budgets service returned an error status or a malformed reply.                                                                           |
-
-The gateway reports usage once per interaction, after the provider response
-completes. For a non-streaming request, the gateway holds the response until
-`budgets-usage` records it. If the usage report fails, the client receives a
-`502` error, by default `metering unavailable; interaction was not recorded`.
-
-For a streaming request, the gateway sends every frame except the last one as it
-arrives and holds the last frame until `budgets-usage` records the interaction.
-If the usage report fails, the gateway replaces the last frame with an error
-event in the client's API format, so the client's parser reports an error rather
-than a clean finish. On Gemini streams the last frame carries the final tokens,
-so a failed report also withholds them.
 
 ## When a budget runs out
 
@@ -174,6 +116,4 @@ counter.
 
 ## Related information
 
-- [Forward audit logs to your SIEM](forward-audit-logs.mdx), where each
-  interaction record carries the hook outcome.
-- [Enterprise Manager API reference](../platform/enterprise-platform/enterprise-manager-api.mdx)
+- [Forward audit logs to your SIEM](forward-audit-logs.mdx)

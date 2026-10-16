@@ -32,6 +32,8 @@ requires `project` and `region`.
 Each provider needs `kind`, `baseUrl`, and at least one model. The chart refuses
 to render a provider that is missing one of them or uses an unknown `kind`.
 
+Audit events identify a provider by its `kind`.
+
 ## Add a provider
 
 1. Create the credential Secret in the platform namespace:
@@ -67,9 +69,9 @@ to render a provider that is missing one of them or uses an unknown `kind`.
    kubectl rollout status deployment/<RELEASE_NAME>-ai-gateway-v2 -n <NAMESPACE>
    ```
 
-   A configuration the gateway can't load makes the new pods exit at startup, so
-   they never become ready. The previous pods keep serving, and the rollout
-   stops progressing.
+   If the rollout stalls, the gateway rejected the configuration and the
+   previous pods keep serving. See
+   [How configuration changes apply](../platform/enterprise-platform/configure-ai-gateway-v2.mdx#how-configuration-changes-apply).
 
 4. Send a request through the gateway to confirm the credential works end to
    end:
@@ -80,10 +82,6 @@ to render a provider that is missing one of them or uses an unknown `kind`.
      -H "Content-Type: application/json" \
      -d '{"model": "gpt-5-mini", "messages": [{"role": "user", "content": "ping"}]}'
    ```
-
-Credentials are never written inline in values. The chart refuses to render a
-provider with an inline credential, because the configuration lives in a
-ConfigMap.
 
 ## Provider specifics
 
@@ -141,7 +139,10 @@ ai-gateway-v2:
 ### Google Vertex AI
 
 Vertex AI authenticates with a Google service account key. Store the key file in
-a Secret and set `project` and `region`:
+a Secret and set `project` and `region`. With the global hostname
+`aiplatform.googleapis.com`, set `region: global`. For a regional endpoint, such
+as `us-central1-aiplatform.googleapis.com`, match `region` to the region prefix
+in the hostname.
 
 ```bash
 kubectl create secret generic ai-gateway-v2-vertex \
@@ -161,6 +162,9 @@ ai-gateway-v2:
         name: ai-gateway-v2-vertex
         key: service_account.json
 ```
+
+Service account keys are the only supported Vertex credential. Workload Identity
+Federation isn't supported.
 
 ### Google AI Studio
 
@@ -207,11 +211,8 @@ kubectl create secret generic ai-gateway-v2-openai \
 kubectl rollout restart deployment/<RELEASE_NAME>-ai-gateway-v2 -n <NAMESPACE>
 ```
 
-A `helm upgrade` run after the Secret change also rolls the pods, because the
-chart hashes the contents of every referenced Secret. Tools that render the
-chart without cluster access, such as Argo CD, can't read the Secret, so restart
-the Deployment explicitly there.
-
+A `helm upgrade` also rolls the pods. See
+[How configuration changes apply](../platform/enterprise-platform/configure-ai-gateway-v2.mdx#how-configuration-changes-apply).
 Send a test request after the rollout finishes to confirm the new credential is
 in use.
 
@@ -227,10 +228,6 @@ helm upgrade <RELEASE_NAME> <CHART> -n <NAMESPACE> -f values.yaml
 kubectl rollout status deployment/<RELEASE_NAME>-ai-gateway-v2 -n <NAMESPACE>
 kubectl delete secret ai-gateway-v2-openai -n <NAMESPACE>
 ```
-
-Requests for the provider's models then return `404`. If it was the last
-provider serving the Responses API or Gemini streaming, those endpoints return
-`501` instead.
 
 ## Next steps
 

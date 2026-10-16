@@ -51,9 +51,9 @@ verdict, so an adapter failure has no effect on the client.
 
 ## Enable screening
 
-Turning screening on in `Enforce` mode in a single upgrade refuses requests
-between the new gateway pods becoming ready and the adapter becoming ready,
-because the gateway doesn't wait for the adapter. Go through `Monitor` first:
+The gateway doesn't wait for the adapter to become ready, so turning screening
+on directly in `Enforce` mode refuses requests until it is. Go through `Monitor`
+first:
 
 1. Turn screening on in `Monitor` mode and wait for the adapter Deployment to
    roll out:
@@ -143,8 +143,11 @@ The chart creates a ServiceAccount for the adapter named
 ### EKS Pod Identity
 
 Associate an IAM role with the adapter's ServiceAccount through an EKS Pod
-Identity association. No annotation is needed. The chart's network policy
-already allows the adapter to reach the EKS Pod Identity node agent.
+Identity association. No annotation is needed. The chart's network policy allows
+the adapter to reach the EKS Pod Identity node agent at `169.254.170.23`. If you
+replace that policy, preserve this egress, and check that no cluster-wide policy
+blocks the address. Blocking it causes credential requests and screening calls
+to time out.
 
 ### IRSA
 
@@ -202,41 +205,28 @@ the guardrail ID, and the region are all correct. An access-denied error naming
 
 ## Observe verdicts
 
-In both modes, the gateway counts each prompt the guardrail flags on
-`stacklok_ai_gateway_webhook_invocations_total` with `webhook_name="guardrails"`
-and `webhook_outcome="deny"`. In `Monitor` mode, that count is what `Enforce`
-would have blocked. This query shows the rate:
+Verdicts reach you three ways:
 
-```text
-sum(rate(stacklok_ai_gateway_webhook_invocations_total{implementation="v2",webhook_name="guardrails",webhook_outcome="deny"}[5m]))
-```
-
-The two modes record the rest differently:
-
-- **In `Enforce` mode**, each screened request's audit record carries the
-  guardrail's verdict under `extra.hook_annotations.guardrails`, including the
-  blocked categories and, for unscreenable content, the reason. See
+- **The audit trail.** In `Enforce` mode, each screened request's audit record
+  carries the guardrail's verdict under `extra.hook_annotations.guardrails`,
+  including the blocked categories. See
   [Forward audit logs](./forward-audit-logs.mdx).
-- **In `Monitor` mode**, the verdict isn't written to the audit record. Each
-  would-be block appears as a warning in the gateway logs instead:
+- **Metrics.** In both modes, the gateway counts each prompt the guardrail flags
+  on `stacklok_ai_gateway_webhook_invocations_total` with
+  `webhook_name="guardrails"` and `webhook_outcome="deny"`. In `Monitor` mode,
+  that count is what `Enforce` would have blocked:
+
+  ```text
+  sum(rate(stacklok_ai_gateway_webhook_invocations_total{implementation="v2",webhook_name="guardrails",webhook_outcome="deny"}[5m]))
+  ```
+
+- **Adapter logs**, which name the categories that fired:
 
   ```bash
   kubectl logs -n <NAMESPACE> \
-    -l app.kubernetes.io/name=ai-gateway-v2,app.kubernetes.io/component=gateway \
-    | grep "receiver hook denied" | grep '"hook":"guardrails"'
+    -l app.kubernetes.io/component=guardrails-adapter \
+    | grep "guardrail intervened"
   ```
-
-  `Monitor` counts are a lower bound. Under queue pressure, the gateway sheds
-  some screens and counts them on
-  `stacklok_ai_gateway_webhook_invocations_dropped_total` instead.
-
-In either mode, the adapter logs the categories that fired:
-
-```bash
-kubectl logs -n <NAMESPACE> \
-  -l app.kubernetes.io/component=guardrails-adapter \
-  | grep "guardrail intervened"
-```
 
 ## Cost
 
@@ -264,46 +254,17 @@ through your AWS billing tooling.
 
 The gateway couldn't get a usable verdict from the adapter, and
 `failurePolicy: Fail` refused the request. A `503` or `504` means the adapter
-was unreachable or slow. A `502` with
-`Gateway policy validation received an invalid response` means the adapter
-reached AWS and the call failed, most often because the principal lacks
-`bedrock:ApplyGuardrail`. Check the adapter logs for
-`plugin screen error; failing closed`, and check that the adapter pods are
-ready:
+was unreachable or slow. A `502` means the adapter reached AWS and the call
+failed, most often because the principal lacks `bedrock:ApplyGuardrail`. Check
+that the adapter pods are ready:
 
 ```bash
 kubectl get pods -n <NAMESPACE> \
   -l app.kubernetes.io/component=guardrails-adapter
 ```
 
-Each gateway pod pings the adapter at startup. A steady stream of
-`outcome="error"` on `stacklok_ai_gateway_webhook_probes_total` for
-`webhook_name="guardrails"` means the gateway can't reach the adapter. If you
-replaced the chart's network policies, preserve ingress to the adapter from the
-gateway pods.
-
-</details>
-
-<details>
-<summary>Codex or Responses API requests are refused</summary>
-
-The adapter can't extract text from OpenAI Responses API requests, so in
-`Enforce` mode under `unscreenableContentPolicy: Deny` the gateway refuses every
-request to `/v1/responses` with `403` and
-`request denied by governance hook "guardrails"`. The adapter logs
-`request body carries no recognized chat container` with
-`unscreenable_reason=unrecognized_shape`. If those clients must keep working,
-set `guardrails.unscreenableContentPolicy: Admit`. They are then admitted
-without screening.
-
-</details>
-
-<details>
-<summary>Screening calls time out without reaching AWS</summary>
-
-When the adapter uses EKS Pod Identity, it fetches credentials from the node
-agent at `169.254.170.23`. If a cluster-wide network policy blocks that address,
-credential requests and screening calls time out. Allow egress from the adapter
-pods to the agent, then check the adapter logs for Bedrock errors.
+If you replaced the chart's network policies, preserve ingress to the adapter
+from the gateway pods. Check the adapter logs to confirm whether live screening
+requests succeed.
 
 </details>

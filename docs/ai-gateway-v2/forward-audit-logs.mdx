@@ -15,9 +15,12 @@ filters down to nothing.
 
 Events record decisions and metadata only. They never carry prompts,
 completions, credentials, request or response bodies, token claims, or email
-addresses. Every event carries a unique audit ID, a UTC timestamp, the outcome,
-the component, the source, the subjects, an optional target, and an extra block
-for correlation.
+addresses.
+
+Every event carries the fields required by NIST SP 800-53 controls AU-2, AU-3,
+and AU-8: a unique audit ID, a UTC timestamp, the outcome, the component, the
+source, an optional target, and an extra block for forensic correlation. Events
+for authenticated requests also carry the subject.
 
 ## Enable audit events
 
@@ -29,9 +32,10 @@ ai-gateway-v2:
     enabled: true
 ```
 
-Setting `global.stacklok.audit.enabled: true` also turns them on. Either value
-enables audit events, so `audit.enabled: false` doesn't turn them off while the
-global value is `true`. The change applies when the gateway pods roll out.
+Setting `global.stacklok.audit.enabled: true` also turns them on, and while it's
+`true`, `audit.enabled: false` has no effect. The change applies when the
+gateway pods roll out; see
+[How configuration changes apply](../platform/enterprise-platform/configure-ai-gateway-v2.mdx#how-configuration-changes-apply).
 
 Enabled audit events cover every interaction without sampling, and there are no
 per-event toggles. Filter and route events in your log pipeline.
@@ -82,7 +86,6 @@ one model emits none.
       "dialect": "anthropic-messages",
       "streaming": true,
       "duration_ms": 8421,
-      "terminal_stage": "delivery",
       "reason_code": "delivered",
       "usage_present": true,
       "input_tokens": 1834,
@@ -103,93 +106,35 @@ has resolved it. `provider` is the provider `kind` from the gateway
 configuration: `openai`, `openrouter`, `anthropic`, `bedrock-anthropic`,
 `gemini-aistudio`, or `vertex`. `route` is the endpoint path template.
 
-**Source** is the gateway pod that wrote the event, with `type` set to `local`.
-Events record no client IP address or user agent.
+**Source** is the gateway pod that wrote the event. Events carry no client IP
+address or user agent.
 
 **Common extras** are `schema_version`, `request_id`, `http_status`, and, when
 tracing is on, `trace_id` and `span_id` for OpenTelemetry correlation. The
-gateway generates `request_id` itself, ignores any inbound `X-Request-ID`, and
-returns the ID to the client in the `X-Request-ID` response header.
-Authentication events add `auth_method`, which is `jwt`, `virtual_key`, or
+gateway also returns `request_id` to the client in the `X-Request-ID` response
+header. Authentication events add `auth_method`: `jwt`, `virtual_key`, or
 `unknown`.
 
 Interaction events add `interaction_id`, `http_method`, `dialect`, `streaming`,
-`duration_ms`, `terminal_stage`, `reason_code`, and `usage_present`, plus
-`input_tokens` and `output_tokens` when the provider reported usage. When a
-governance hook denies or fails a request, `hook` names the hook entry. When a
-required hook reports audit annotations, `hook_annotations` maps the hook entry
-name to them, on refused and delivered requests alike. The budgets entries use
-annotations to report the charged subject and amount. The `scanning` entry
-reports `detection_types` for a block, `redact_types` for a redaction,
-`log_only_types` and `shadow_types` for log-only matches, and `unscanned_reason`
-and `unscanned_nodes` when a scan failure let the request through unscanned.
+`duration_ms`, `reason_code`, and `usage_present`, plus `input_tokens` and
+`output_tokens` when the provider reported usage. `reason_code` says what ended
+the interaction, such as `delivered` or `governance_denied`. When a governance
+hook denies or fails a request, `hook` names the hook entry.
 
-`schema_version` is `1`. New fields can appear within version 1. A removed
-field, or a change to a field's meaning, type, or enumerated values, comes with
-a new version.
-
-## Outcomes and reason codes
-
-`outcome` is coarse. `reason_code` says what ended the interaction, and
-`terminal_stage` says where: `validation`, `routing`, `governance`, `provider`,
-`metering`, or `delivery`.
-
-| Reason code                    | Outcome   | Meaning                                                    |
-| ------------------------------ | --------- | ---------------------------------------------------------- |
-| `delivered`                    | `success` | The response reached the client                            |
-| `request_invalid`              | `failure` | The request body or parameters were invalid                |
-| `dialect_unsupported`          | `failure` | No provider serves the Responses API or Gemini streaming   |
-| `route_not_found`              | `failure` | No provider is configured for the model                    |
-| `governance_denied`            | `denied`  | A governance hook, such as budgets, refused the request    |
-| `governance_hook_failed`       | `error`   | A required governance hook gave no usable answer           |
-| `governance_projection_failed` | `error`   | The gateway couldn't read the request for governance hooks |
-| `provider_request_failed`      | `error`   | The call to the provider failed                            |
-| `provider_response_failed`     | `error`   | The provider's response failed                             |
-| `usage_missing`                | `error`   | The provider response carried no usage                     |
-| `metering_failed`              | `error`   | The usage report to the budgets service failed             |
-| `client_disconnected`          | `failure` | The client disconnected before the interaction finished    |
-| `internal_failed`              | `error`   | Any other internal failure                                 |
-
-Rejected authentication events use these reason codes:
-
-| Reason code                   | Outcome   | Meaning                                                                             |
-| ----------------------------- | --------- | ----------------------------------------------------------------------------------- |
-| `auth_missing_credentials`    | `failure` | The request carried no credential                                                   |
-| `auth_invalid_jwt`            | `failure` | The token failed validation                                                         |
-| `auth_invalid_virtual_key`    | `failure` | The virtual key failed validation                                                   |
-| `auth_insufficient_scope`     | `failure` | The token lacks the scope the issuer configuration requires                         |
-| `auth_dependency_unavailable` | `error`   | A service needed to validate the credential, such as the directory, was unavailable |
-
-Hook-supplied text and provider error messages never appear in these fields.
+Required governance hooks can report annotations under `hook_annotations`, keyed
+by hook entry name. The budgets entries report the charged subject and amount,
+and the `scanning` entry reports the entity types it acted on, such as
+`detection_types` for a block and `redact_types` for a redaction.
 
 <AuditShippers />
 
 ## Related logs
 
-**Operational failure records** go to the pod's standard error stream, one per
-failed request, including a stream that fails after the gateway already sent a
-`200`. Each record carries `"event":"operational_failure"`, the `request_id`,
-`http_status`, `outcome`, `stage`, and `reason`, plus `interaction_id`, `route`,
-`model`, and `provider` when known. For a verified directory user, the record
-includes the user's `email`.
+The **Kubernetes API audit log** covers control-plane activity such as `kubectl`
+calls and Helm upgrades. Configure it through the API server audit policy.
 
-These records also include a bounded `message` parsed from the provider's error
-response. Restrict access to standard error logs, and keep retention short. To
-log metadata only, turn the message off:
-
-```yaml title="values.yaml"
-ai-gateway-v2:
-  failureLogs:
-    includeMessage: false
-```
-
-`failureLogs.level` sets the records' severity to `warn` (the default), `error`,
-or `debug`. Operational failure records are separate from audit events, so audit
-shippers that filter on `"logger":"audit"` don't collect them.
-
-**Conversation content** reaches no audit event or log. Screening sends prompt
-text to Presidio and AWS Bedrock for analysis, but two settings persist prompt
-content:
+**Conversation content** reaches no audit event. Screening sends prompt text to
+Presidio and AWS Bedrock for analysis, and two settings persist prompt content:
 
 - Conversation capture to the budgets service, configured with
   `budgets.capture`. See [Budgets and pricing](budgets-and-pricing.mdx).
