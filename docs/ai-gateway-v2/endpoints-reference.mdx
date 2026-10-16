@@ -1,0 +1,130 @@
+---
+title: AI Gateway v2 endpoints reference
+sidebar_label: Endpoints reference
+description:
+  Reference for AI Gateway v2 inference, model discovery, and health endpoints,
+  credential headers, and error responses.
+---
+
+AI Gateway v2 serves model inference, model discovery, and health checks on one
+HTTP listener. It has no separate management API. Virtual API keys, budgets,
+pricing, and Model Sets are managed in the console and through the
+[Enterprise Manager API](../platform/enterprise-platform/enterprise-manager-api.mdx).
+See [AI Gateway v2](./index.mdx) for configuration guides.
+
+## Base URL
+
+The chart creates a ClusterIP Service named `<RELEASE_NAME>-ai-gateway-v2` in
+the platform namespace, on port `8080`. When the release name already contains
+`ai-gateway-v2`, the Service is named `<RELEASE_NAME>`. These pages use
+`<RELEASE_NAME>-ai-gateway-v2` throughout. The in-cluster base URL is:
+
+```text
+http://<RELEASE_NAME>-ai-gateway-v2.<NAMESPACE>.svc:8080
+```
+
+Clients outside the cluster use the hostname you publish through the shared
+Gateway. See
+[Publish the endpoint](../platform/enterprise-platform/configure-ai-gateway-v2.mdx#publish-the-endpoint).
+For the base URL each client expects, see
+[Client endpoints](../platform/enterprise-platform/configure-ai-gateway-v2.mdx#client-endpoints).
+
+## Inference endpoints
+
+Each endpoint serves the models whose provider speaks that API. The gateway
+forwards the request body to the provider unchanged and relays the provider's
+response, including streamed responses.
+
+| Method and path                                     | API                     | Served by provider kinds         |
+| --------------------------------------------------- | ----------------------- | -------------------------------- |
+| `POST /v1/chat/completions`                         | OpenAI Chat Completions | `openai`, `openrouter`           |
+| `POST /v1/responses`                                | OpenAI Responses        | `openai`, `openrouter`           |
+| `POST /v1/messages`                                 | Anthropic Messages      | `anthropic`, `bedrock-anthropic` |
+| `POST /anthropic/v1/messages`                       | Anthropic Messages      | `anthropic`, `bedrock-anthropic` |
+| `POST /v1beta/models/<MODEL>:generateContent`       | Gemini                  | `gemini-aistudio`, `vertex`      |
+| `POST /v1beta/models/<MODEL>:streamGenerateContent` | Gemini streaming        | `gemini-aistudio`, `vertex`      |
+
+The `/anthropic` prefix serves clients that append the API path to a configured
+base URL, such as Claude Code with `ANTHROPIC_BASE_URL` set to
+`https://<AI_GATEWAY_HOST>/anthropic`.
+
+The gateway reads up to 10 MiB of a request body.
+
+## Model discovery endpoints
+
+| Method and path            | Response shape                                                        |
+| -------------------------- | --------------------------------------------------------------------- |
+| `GET /v1/models`           | OpenAI list. Anthropic list when the request has `anthropic-version`. |
+| `GET /anthropic/v1/models` | Anthropic list                                                        |
+| `GET /v1beta/models`       | Gemini list, with `supportedGenerationMethods` per model              |
+
+With model access enabled, each endpoint lists only the models the caller can
+use. See [Route models and control access](./model-routing.mdx#discover-models).
+
+## Health endpoints
+
+The health endpoints require no credential and stay available while the gateway
+is disconnected.
+
+| Method and path | Meaning                            | Response                                                                                                 |
+| --------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `GET /healthz`  | The process can serve HTTP         | `200` with `{"status":"ok"}`                                                                             |
+| `GET /readyz`   | The replica should receive traffic | `200` with `{"status":"ok"}`, or `503` with `{"status":"not_ready","reason":"draining"}` during shutdown |
+
+Metrics are served on a separate port, which the Service does not expose. See
+[Collect gateway telemetry](./telemetry.mdx).
+
+## Authentication
+
+Every inference and discovery request carries one credential. The gateway reads
+it from the first of these that is present:
+
+1. `Authorization: Bearer <CREDENTIAL>`
+2. `x-api-key: <CREDENTIAL>`
+3. `x-goog-api-key: <CREDENTIAL>`
+4. The `key` query parameter
+
+A credential shaped like a JWT is validated against the trusted identity
+providers configured in `ai-gateway-v2.auth.issuers`. Any other credential is
+treated as a virtual API key and validated against the directory.
+
+## Request headers the gateway sets
+
+The gateway derives its governance headers from the verified caller and replaces
+any client-supplied value for them, so a client can't claim another identity,
+group, or label. These include `X-User-Id`, the caller's directory groups, and
+the group label headers configured in `ai-gateway-v2.directory.groupLabels`,
+such as `X-Department` for the `department` label. Group label headers are
+removed before the request goes to the provider.
+
+Each inference and discovery response carries an `X-Request-ID` header that the
+gateway generates. Quote it when you look up a request in the gateway's logs or
+audit events. The health endpoints and the administrative-disconnect `503` don't
+carry one.
+
+## Errors
+
+Errors the gateway generates use this body:
+
+```json
+{ "error": { "message": "<MESSAGE>" } }
+```
+
+A provider's own error response, such as a `429` rate limit, is relayed to the
+client unchanged.
+
+| Status | Message or condition                                                                                                                                                                                                 |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | `invalid JSON: ...` or `invalid request: ...`. The body is malformed or isn't a valid request for the API.                                                                                                           |
+| `401`  | `unauthenticated`. The credential is missing, invalid, or expired.                                                                                                                                                   |
+| `402`  | `request denied by governance hook ...` with `budget exhausted` or `no applicable budget`. The caller has no budget with remaining capacity.                                                                         |
+| `403`  | `insufficient scope`, with a `WWW-Authenticate: Bearer error="insufficient_scope"` header. The token lacks the issuer's `requiredScope`.                                                                             |
+| `403`  | `request denied by governance hook ...`. A policy refused the request: the model is unpriced, the caller has no grant for the model, the caller can't be resolved in the directory, or content screening blocked it. |
+| `404`  | `no provider is configured for model <MODEL>`.                                                                                                                                                                       |
+| `501`  | No configured provider serves this API, for example `/v1/responses` without an `openai` or `openrouter` provider.                                                                                                    |
+| `502`  | `upstream request failed`, or `Gateway policy validation received an invalid response...`.                                                                                                                           |
+| `503`  | `service temporarily unavailable`, with `Retry-After: 1`. The directory couldn't validate the credential.                                                                                                            |
+| `503`  | `Gateway policy validation is unavailable...`. A policy service is unreachable.                                                                                                                                      |
+| `503`  | `model access unavailable`. A discovery request couldn't get a model access decision.                                                                                                                                |
+| `503`  | The gateway is administratively disconnected. The body adds `"type": "gateway_disconnected"` and `"code": "administratively_disconnected"`.                                                                          |
+| `504`  | `Gateway policy validation timed out...`. A policy service didn't answer in time.                                                                                                                                    |

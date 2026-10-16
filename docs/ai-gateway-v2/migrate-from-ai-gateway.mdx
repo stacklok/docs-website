@@ -1,0 +1,171 @@
+---
+title: Migrate from the AI Gateway
+sidebar_label: Migrate from AI Gateway
+description:
+  Move model traffic from the Envoy-based AI Gateway to AI Gateway v2, with a
+  side-by-side window, a configuration map, and a cutover checklist.
+---
+
+AI Gateway v2 replaces the Envoy-based AI Gateway's operator and `AIGateway`
+resource with platform chart values under the `ai-gateway-v2` key. Both gateways
+use the same Enterprise Manager for budgets, pricing, virtual API keys, and
+model access, so users, budgets, and keys carry over unchanged. What you move is
+the gateway configuration and the clients' base URLs.
+
+## Run both side by side
+
+A platform normally runs one gateway, and the chart refuses to render with both
+enabled. For a migration window, enable both and acknowledge it:
+
+```yaml title="values.yaml"
+global:
+  stacklok:
+    aiGateway:
+      enabled: true
+    aiGatewayV2:
+      enabled: true
+    acknowledgeBothDataPlanes: true
+```
+
+This is a migration window, not a way to load-balance across the two. While both
+run, you're responsible for four things the chart can't check:
+
+- **Distinct hostnames.** Give AI Gateway v2 its own hostname through
+  `ai-gateway-v2.httpRoute.hostname`, on a listener the `AIGateway` doesn't
+  serve. If the two routes overlap, nothing decides which gateway serves a
+  request.
+- **Screening differs by gateway.** AI Gateway v2 screens PII only when
+  `ai-gateway-v2.scanning.enabled` is on, and runs Bedrock Guardrails only when
+  `ai-gateway-v2.guardrails.enabled` is on. Move whole groups of users at once,
+  and keep track of which group uses which gateway.
+- **Two route tables.** Each gateway keeps its own model-to-provider mapping. A
+  model added to one is missing from the other until you add it there too.
+- **Two sets of workloads.** Both gateways consume cluster resources while
+  installed.
+
+Shared state behaves as one platform:
+
+- Spend from both gateways charges the same budgets.
+- A virtual API key works on both.
+- **Disconnect AI Gateway** in **Platform Settings** stops traffic on both.
+
+Set `acknowledgeBothDataPlanes` in your own values only, and remove it in the
+same change that disables the gateway you're retiring.
+
+## Map your configuration
+
+Each `AIGateway` field has an `ai-gateway-v2` value or no equivalent:
+
+| `AIGateway` field                                      | AI Gateway v2 value                                                                        |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `spec.providers[]`                                     | `providers[]` with `kind`, `baseUrl`, `models`, `credentialSecretRef`, `region`, `project` |
+| `schema: OpenAI`                                       | `kind: openai`                                                                             |
+| `schema: OpenAI` with the OpenRouter `pathPrefix`      | `kind: openrouter`                                                                         |
+| `schema: Anthropic`                                    | `kind: anthropic`                                                                          |
+| `schema: AWSAnthropic`                                 | `kind: bedrock-anthropic`                                                                  |
+| `schema: GCPVertexAI`                                  | `kind: vertex`, for Gemini models                                                          |
+| `schema: GeminiAIStudio`                               | `kind: gemini-aistudio`                                                                    |
+| `schema: AWSBedrock`, `schema: AzureOpenAI`            | Not supported                                                                              |
+| `spec.routes[].match.model`                            | The model's entry in its provider's `providers[].models`                                   |
+| `spec.routes[].backendRefs[].weight` and `.priority`   | Not supported                                                                              |
+| `spec.resilience.retry`                                | Not configurable                                                                           |
+| `spec.resilience.passiveHealthCheck`, `circuitBreaker` | Not supported                                                                              |
+| `spec.gateway.timeouts.requestTimeout`                 | `lifecycle.maxStreamDuration`                                                              |
+| `spec.gateway.listeners`, `tls`, `proxy`               | `httpRoute.*` on your existing Gateway                                                     |
+| `spec.auth.oidc`                                       | `auth.issuers`                                                                             |
+| `spec.auth.virtualAPIKeys`                             | `directory.endpoint`                                                                       |
+| `spec.auth.authz` and `AIPolicy`                       | Not supported                                                                              |
+| `spec.processor` and `nerProvider`                     | `scanning.*`                                                                               |
+| `spec.processor.requestAction`                         | `scanning.requestAction` and `scanning.entityActions`                                      |
+| `spec.processor.responseAction`                        | Not supported                                                                              |
+| `spec.processor.nerProvider.failureAction`             | `scanning.ner.failureAction`                                                               |
+| `spec.processor.nerProvider.resultCache`               | `scanning.resultCache`                                                                     |
+| `spec.guardrails`                                      | `guardrails.*`                                                                             |
+| `spec.audit.enabled`                                   | `audit.enabled`                                                                            |
+| `spec.monitoring.otelCollector`                        | `telemetry.otlp.*`                                                                         |
+| `spec.monitoring.prometheusAddr`                       | `telemetry.prometheus.enabled`                                                             |
+| `spec.monitoring.tokenMetrics.labels`                  | `telemetry.headerLabels`                                                                   |
+| `spec.monitoring.spanAttributes`                       | `telemetry.spanAttributes`                                                                 |
+| `spec.journaling`                                      | Not supported                                                                              |
+| `spec.webhooks`                                        | Not supported                                                                              |
+| Operator `upstream.budgetsWebhook.*` values            | `budgets.endpoint` and `budgets.tokenProjection`                                           |
+
+Provider credentials stay in Kubernetes Secrets. Reference each one with
+`providers[].credentialSecretRef`. The chart refuses inline credentials. See
+[Connect model providers](./providers-and-models.mdx).
+
+## What AI Gateway v2 does not support
+
+Check your `AIGateway` for these features before you migrate. None of them has
+an AI Gateway v2 equivalent:
+
+- Weighted or priority backends, and failover between providers. Each model is
+  served by exactly one provider.
+- Configurable retries, passive health checks, and circuit breaking. Upstream
+  retries use fixed, built-in bounds.
+- The AWS Bedrock Converse API and Azure OpenAI providers.
+- Per-key rate limits.
+- PII scanning of responses. Scanning covers requests.
+- Interaction journaling.
+- The AI Gateway management API. Users manage virtual API keys in the console,
+  and the directory validates them.
+- `AIPolicy` authorization and role-based authorization rules.
+- Custom webhooks and an operator-defined header strip list.
+- Hot reload. Configuration and credential changes apply through a rolling
+  restart.
+
+## Behavior differences
+
+- **Each client uses its own API.** AI Gateway v2 forwards requests in the
+  format the client sent and doesn't translate between APIs. OpenAI and
+  OpenRouter models are served on `/v1/chat/completions` and `/v1/responses`.
+  Anthropic and Bedrock models are served on `/v1/messages` and
+  `/anthropic/v1/messages`. Gemini and Vertex AI models are served on `/v1beta`.
+  See
+  [Client endpoints](../platform/enterprise-platform/configure-ai-gateway-v2.mdx#client-endpoints).
+- **Unknown models are refused.** A model no provider lists returns `404`. When
+  no provider serves the Responses API or Gemini streaming at all, those
+  endpoints return `501`. Listing the same model twice for the same client API
+  fails startup.
+- **Gemini discovery.** Gemini models are listed only on `GET /v1beta/models`.
+- **Budget denials keep their status.** An exhausted budget returns `402`. Other
+  governance denials return `403`, and an unreachable or slow budget receiver
+  returns `503` or `504`.
+- **Usage gates completion.** On a streamed response, the gateway holds the
+  final chunk until the usage report is recorded.
+- **Guardrails can't screen the Responses API.** With Bedrock Guardrails on and
+  the default `unscreenableContentPolicy: Deny`, `/v1/responses` requests, such
+  as those from Codex, are refused. See
+  [Screen prompts for injection](./prompt-injection-screening.mdx).
+
+See the [endpoints reference](./endpoints-reference.mdx) for every status code.
+
+## Cut over
+
+1. **Install AI Gateway v2 alongside the AI Gateway** with
+   `acknowledgeBothDataPlanes`, its own hostname, and the budget and directory
+   connections from
+   [Configure AI Gateway v2](../platform/enterprise-platform/configure-ai-gateway-v2.mdx).
+2. **Recreate your providers and models** in `ai-gateway-v2.providers`, using
+   the [configuration map](#map-your-configuration). Turn on the same screening
+   you run today.
+3. **Verify with a test client.** Send requests through each client API your
+   users rely on, streaming and non-streaming, with a test account that has a
+   budget.
+4. **Move clients.** Set `toolhive-cloud-ui.gatewayProxyUrl` to the AI Gateway
+   v2 URL so the console's setup instructions point there, and have users rerun
+   `thv llm setup`. Move one group of users at a time.
+5. **Delete the `AIGateway` resource** once no traffic reaches it, while the AI
+   Gateway operator is still installed to clean up what it created.
+6. **Disable the AI Gateway.** Set `global.stacklok.aiGateway.enabled: false`,
+   remove `global.stacklok.acknowledgeBothDataPlanes` in the same change, and
+   upgrade. Then delete the provider Secrets that only the `AIGateway` used.
+
+## Next steps
+
+- [Configure AI Gateway v2](../platform/enterprise-platform/configure-ai-gateway-v2.mdx)
+  to set up the gateway.
+- [Connect model providers](./providers-and-models.mdx) to recreate your
+  providers.
+- [Route models and control access](./model-routing.mdx) to restrict models per
+  group.

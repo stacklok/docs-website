@@ -379,6 +379,7 @@ const platformSidebar: SidebarsConfig[string] = [
       'platform/enterprise-platform/configure-registry-server',
       'platform/enterprise-platform/configure-identity',
       'platform/enterprise-platform/configure-ai-gateway',
+      'platform/enterprise-platform/configure-ai-gateway-v2',
       'platform/enterprise-platform/configure-connector-gateway',
       'platform/enterprise-platform/roll-out-gateway-clients',
       {
@@ -559,6 +560,30 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
   },
 ];
 
+const aiGatewayV2Sidebar: SidebarsConfig[string] = [
+  {
+    type: 'doc',
+    id: 'ai-gateway-v2/index',
+    className: 'enterprise-only enterprise-only--tooltip-below',
+  },
+  'ai-gateway-v2/providers-and-models',
+  'ai-gateway-v2/model-routing',
+  'ai-gateway-v2/budgets-and-pricing',
+  'ai-gateway-v2/manage-budgets',
+  'ai-gateway-v2/prompt-injection-screening',
+  'ai-gateway-v2/pci-pii-controls',
+  'ai-gateway-v2/forward-audit-logs',
+  'ai-gateway-v2/telemetry',
+  'ai-gateway-v2/migrate-from-ai-gateway',
+
+  {
+    type: 'category',
+    label: 'Reference',
+    collapsed: false,
+    items: ['ai-gateway-v2/endpoints-reference'],
+  },
+];
+
 const resourcesSidebar: SidebarsConfig[string] = [
   {
     type: 'category',
@@ -681,6 +706,7 @@ const sidebars: SidebarsConfig = {
   platformSidebar,
   mcpSidebar,
   aiGatewaySidebar,
+  aiGatewayV2Sidebar,
   connectorGatewaySidebar,
   resourcesSidebar,
 };

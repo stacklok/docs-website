@@ -1,0 +1,198 @@
+---
+title: Forward audit logs to your SIEM
+sidebar_label: Audit logs
+description:
+  Enable AI Gateway v2 audit events for model interactions and rejected
+  sign-ins, then ship them to Splunk, Elastic, Kafka, or Loki.
+---
+
+import AuditShippers from '../ai-gateway/_partials/_audit-shippers.mdx';
+
+AI Gateway v2 emits structured JSON audit events to pod standard output. It
+writes one event for each model interaction, one for each rejected
+authentication attempt, and one for each model list request that model access
+filters down to nothing.
+
+Events record decisions and metadata only. They never carry prompts,
+completions, credentials, request or response bodies, token claims, or email
+addresses. Every event carries a unique audit ID, a UTC timestamp, the outcome,
+the component, the source, the subjects, an optional target, and an extra block
+for correlation.
+
+## Enable audit events
+
+Audit events are off by default. Turn them on for the gateway:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  audit:
+    enabled: true
+```
+
+Setting `global.stacklok.audit.enabled: true` also turns them on. Either value
+enables audit events, so `ai-gateway-v2.audit.enabled: false` doesn't turn them
+off while the global value is `true`. The change applies when the gateway pods
+roll out.
+
+Enabled audit events cover every interaction without sampling, and there are no
+per-event toggles. Filter and route events in your log pipeline.
+
+## What gets captured
+
+| Event type                      | Fires when                                                                                              | Outcome                            |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `aigw.v2.interaction.completed` | An authenticated generation request reaches its final outcome, including an early refusal               | success, denied, failure, or error |
+| `aigw.v2.authentication.failed` | The gateway rejects a credential on a protected route, or can't reach a service it needs to validate it | failure, or error when unreachable |
+| `aigw.v2.models.no_grant`       | Model access filters a non-empty model list to nothing, and the caller receives a `200`                 | denied                             |
+
+Interaction events cover the OpenAI Chat Completions, OpenAI Responses,
+Anthropic Messages, and Gemini generate and stream-generate endpoints. A
+streaming interaction emits one event when it finishes, never one per frame.
+Health endpoints emit no events, and a model list request that returns at least
+one model emits none.
+
+## Event schema
+
+```json
+{
+  "time": "2026-10-16T14:22:31.418Z",
+  "level": "INFO",
+  "msg": "audit_event",
+  "logger": "audit",
+  "audit_id": "b3d4f7a2-8c11-4f6e-9b0a-1c2d3e4f5a6b",
+  "type": "aigw.v2.interaction.completed",
+  "logged_at": "2026-10-16T14:22:31.418Z",
+  "outcome": "success",
+  "component": "v2",
+  "source": { "type": "local", "value": "ai-gateway-v2-6d8f9c7b5-x2k4q" },
+  "subjects": { "user": "00u1a2b3c4d5e6f7g8h9", "department": "engineering" },
+  "target": {
+    "model": "claude-sonnet-4-6",
+    "provider": "anthropic",
+    "route": "/v1/messages"
+  },
+  "metadata": {
+    "extra": {
+      "schema_version": 1,
+      "request_id": "c0ffee01-2a3b-4c5d-6e7f-8091a2b3c4d5",
+      "interaction_id": "7e1d5390-41e5-4f71-b3c2-9a0815793c4a",
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "span_id": "00f067aa0ba902b7",
+      "http_method": "POST",
+      "http_status": 200,
+      "dialect": "anthropic-messages",
+      "streaming": true,
+      "duration_ms": 8421,
+      "terminal_stage": "delivery",
+      "reason_code": "delivered",
+      "usage_present": true,
+      "input_tokens": 1834,
+      "output_tokens": 412
+    }
+  }
+}
+```
+
+**Subjects** appear only after authentication succeeds. `user` is the caller's
+canonical subject, and `virtual_key_id` identifies the virtual key on
+virtual-key requests. Directory group labels named in `directory.groupLabels`,
+such as `department`, are added alongside them. A rejected authentication event
+carries no subjects.
+
+**Targets** carry `model`, `provider`, and `route`, each only once the gateway
+has resolved it. `provider` is the provider `kind` from the gateway
+configuration: `openai`, `openrouter`, `anthropic`, `bedrock-anthropic`,
+`gemini-aistudio`, or `vertex`. `route` is the endpoint path template.
+
+**Source** is the gateway pod that wrote the event, with `type` set to `local`.
+Events record no client IP address or user agent.
+
+**Common extras** are `schema_version`, `request_id`, `http_status`, and
+`trace_id` and `span_id` for OpenTelemetry correlation. The gateway generates
+`request_id` itself, ignores any inbound `X-Request-ID`, and returns the ID to
+the client in the `X-Request-ID` response header. Authentication events add
+`auth_method`, which is `jwt`, `virtual_key`, or `unknown`.
+
+Interaction events add `interaction_id`, `http_method`, `dialect`, `streaming`,
+`duration_ms`, `terminal_stage`, `reason_code`, and `usage_present`, plus
+`input_tokens` and `output_tokens` when the provider reported usage. When a
+governance hook denies or fails a request, `hook` names the hook entry. When a
+required hook reports audit annotations, `hook_annotations` maps the hook entry
+name to them. The budgets entries use annotations to report the charged subject
+and amount.
+
+`schema_version` is `1`. New fields can appear within version 1. A removed
+field, or a change to a field's meaning, type, or enumerated values, comes with
+a new version.
+
+## Outcomes and reason codes
+
+`outcome` is coarse. `reason_code` says what ended the interaction, and
+`terminal_stage` says where: `validation`, `routing`, `governance`, `provider`,
+`metering`, or `delivery`.
+
+| Reason code                    | Outcome   | Meaning                                                    |
+| ------------------------------ | --------- | ---------------------------------------------------------- |
+| `delivered`                    | `success` | The response reached the client                            |
+| `request_invalid`              | `failure` | The request body or parameters were invalid                |
+| `dialect_unsupported`          | `failure` | No configured provider serves the requested API            |
+| `route_not_found`              | `failure` | No provider is configured for the model                    |
+| `governance_denied`            | `denied`  | A governance hook, such as budgets, refused the request    |
+| `governance_hook_failed`       | `error`   | A required governance hook gave no usable answer           |
+| `governance_projection_failed` | `error`   | The gateway couldn't read the request for governance hooks |
+| `provider_request_failed`      | `error`   | The call to the provider failed                            |
+| `provider_response_failed`     | `error`   | The provider's response failed                             |
+| `usage_missing`                | `error`   | The provider response carried no usage                     |
+| `metering_failed`              | `error`   | The usage report to the budgets service failed             |
+| `client_disconnected`          | `failure` | The client disconnected before the interaction finished    |
+| `internal_failed`              | `error`   | Any other internal failure                                 |
+
+Rejected authentication events use these reason codes:
+
+| Reason code                   | Outcome   | Meaning                                                                             |
+| ----------------------------- | --------- | ----------------------------------------------------------------------------------- |
+| `auth_missing_credentials`    | `failure` | The request carried no credential                                                   |
+| `auth_invalid_jwt`            | `failure` | The token failed validation                                                         |
+| `auth_invalid_virtual_key`    | `failure` | The virtual key failed validation                                                   |
+| `auth_insufficient_scope`     | `failure` | The token lacks the scope the issuer configuration requires                         |
+| `auth_dependency_unavailable` | `error`   | A service needed to validate the credential, such as the directory, was unavailable |
+
+Hook-supplied text and provider error messages never appear in these fields.
+
+<AuditShippers />
+
+## Related logs
+
+**Operational failure records** go to the pod's standard error stream, one per
+failed request, including a stream that fails after the gateway already sent a
+`200`. Each record carries `"event":"operational_failure"`, the `request_id`,
+`http_status`, `outcome`, `stage`, and `reason`, plus `interaction_id`, `route`,
+`model`, and `provider` when known. For a verified directory user, the record
+includes the user's `email`.
+
+These records also include a bounded `message` parsed from the provider's error
+response. Restrict access to standard error logs, and keep retention short. To
+log metadata only, turn the message off:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  failureLogs:
+    includeMessage: false
+```
+
+`failureLogs.level` sets the records' severity to `warn` (the default), `error`,
+or `debug`. Operational failure records are separate from audit events, so audit
+shippers that filter on `"logger":"audit"` don't collect them.
+
+**Conversation content** reaches no log. The only path that forwards prompt
+content is conversation capture to the budgets service, configured with
+`budgets.capture`. See [Budgets and pricing](budgets-and-pricing.mdx).
+
+## Next steps
+
+- [Detect PCI and PII in prompts](pci-pii-controls.mdx) to configure the
+  scanning hook whose decisions appear as `governance_denied` events.
+- [Screen prompts for injection](prompt-injection-screening.mdx), whose enforced
+  verdicts also end interactions here.
+- [Collect gateway telemetry](telemetry.mdx) to export traces that join these
+  records on `trace_id`.

@@ -1,0 +1,346 @@
+---
+title: Collect gateway telemetry
+sidebar_label: Telemetry
+description:
+  Export AI Gateway v2 traces and metrics over OpenTelemetry or Prometheus, and
+  attribute model traffic to the users and groups that sent it.
+---
+
+AI Gateway v2 exports OpenTelemetry traces and metrics, and can serve its
+metrics to Prometheus. Configure both under `ai-gateway-v2.telemetry` in your
+platform values. Telemetry is off by default. This guide covers connecting a
+collector, counting token usage, and adding request and identity context to
+spans so you can break traffic down by project, team, or department.
+
+Every signal carries the service name `ai-gateway-v2`, and every gateway metric
+carries the label `implementation="v2"`. Filter on that label when the
+Envoy-based AI Gateway reports into the same metric store.
+
+## Export traces and metrics to a collector
+
+Set `telemetry.otlp.endpoint` to your collector's OpenTelemetry Protocol (OTLP)
+HTTP receiver, then turn on each signal you want:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  telemetry:
+    otlp:
+      enabled: true
+      endpoint: 'otel-collector.observability.svc:4318'
+    tracing:
+      enabled: true
+```
+
+`telemetry.otlp.enabled` pushes metrics and `telemetry.tracing.enabled` pushes
+traces, both to `telemetry.otlp.endpoint`. The gateway exports over OTLP/HTTP,
+usually port 4318, and uses TLS unless you set `telemetry.otlp.insecure: true`
+for a collector on a trusted private network.
+
+To share one collector across the platform, set
+`global.stacklok.telemetry.otlp.enabled` and
+`global.stacklok.telemetry.otlp.endpoint` instead. The gateway falls back to the
+global endpoint when it has no local one.
+
+Tracing samples every request by default. A sampled inbound `traceparent` always
+joins the caller's trace, and an unsampled one doesn't suppress the gateway's
+span, so an edge proxy that samples a fraction of traces still leaves every
+model request recorded. Set `telemetry.tracing.samplingRate` between `0.0` and
+`1.0` to cut span volume. A cost platform fed by these spans then counts only
+that fraction of traffic.
+
+### Send traces to a separate destination
+
+Some cost and usage platforms, such as CloudZero, ingest these spans directly at
+a fixed URL. Set `telemetry.otlp.tracesEndpoint` to send traces there. The
+gateway posts to the URL exactly as written, without appending `/v1/traces`, and
+`telemetry.otlp.endpoint` keeps receiving metrics if you set it.
+
+If the destination requires an API key, store the OTLP headers string under the
+`headers` key of a Secret in the release namespace:
+
+```bash
+kubectl create secret generic cloudzero-otlp-headers \
+  -n <NAMESPACE> \
+  --from-literal=headers='Authorization=<API_KEY>'
+```
+
+Then name the Secret in `telemetry.otlp.headersSecretRef`:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  telemetry:
+    tracing:
+      enabled: true
+      exportTimeoutSeconds: 60
+    otlp:
+      tracesEndpoint: 'https://telemetry.cloudzero.com/v2/telemetry/<SINK>'
+      headersSecretRef:
+        name: cloudzero-otlp-headers
+```
+
+The Secret holds headers as `key=value,key2=value2` on one line, with each value
+percent-encoded. The headers require an `https://` URL. The gateway sends the
+headers on every OTLP signal, so the chart refuses them while OTLP metrics push
+is on, locally or through `global.stacklok.telemetry.otlp`. Scrape metrics with
+[Prometheus](#scrape-metrics-with-prometheus) instead, or relay traces through
+your own collector that holds the credential.
+
+:::warning[A slow destination can receive the same batch twice]
+
+When an export reaches its deadline, the batch is sent again. If the first
+delivery was only slow, the destination receives both, and nothing is logged. A
+platform that counts what it receives then double-counts those spans. Set
+`telemetry.tracing.exportTimeoutSeconds` above the destination's worst-case
+response time. It defaults to 30 seconds and applies to every OTLP signal.
+
+:::
+
+## Scrape metrics with Prometheus
+
+Set `telemetry.prometheus.enabled` to serve `/metrics` on a dedicated port,
+`9464` by default (change it with `telemetry.metrics.port`):
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  telemetry:
+    prometheus:
+      enabled: true
+```
+
+The gateway pods carry `prometheus.io/scrape` annotations, so a Prometheus
+server that discovers targets by annotation picks them up automatically. The
+metrics listener is unauthenticated. When the chart's network policy is on, only
+pods in the namespaces under `networkPolicy.ingress.monitoringNamespaces`
+(default `monitoring`) can reach it.
+
+Use one export path per deployment. With both OTLP metrics push and Prometheus
+on, every series reaches the same store twice and queries double-count.
+
+## Record token usage
+
+The gateway records the `stacklok.ai_gateway.token.usage` counter for every
+request whose provider reports usage, labeled with `token_type` (`input` or
+`output`), `provider`, and `model`. Output tokens include reasoning tokens for
+every provider. In Prometheus, the counter appears as
+`stacklok_ai_gateway_token_usage_total`. For example, this query returns tokens
+per second by model:
+
+```text
+sum by (model, token_type) (rate(stacklok_ai_gateway_token_usage_total{implementation="v2"}[5m]))
+```
+
+To break usage down by a header the caller sends, map it under
+`telemetry.headerLabels` with the closed set of values to keep:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  telemetry:
+    headerLabels:
+      - header: x-team
+        attribute: team
+        permitted:
+          - payments
+          - platform
+```
+
+A value outside `permitted` becomes `other`, which keeps the number of metric
+series bounded however the header varies. Per-user and per-request identifiers
+belong on spans instead.
+
+The gateway also reports request outcomes and latency:
+
+| Metric                                            | What it measures                                                                                          |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `stacklok.ai_gateway.interaction.requests`        | Model requests by `outcome`: `success`, `rejected`, `error`, or `client_disconnect`                       |
+| `stacklok.ai_gateway.provider.duration`           | Time from dispatch to the provider's last response frame                                                  |
+| `stacklok.ai_gateway.provider.time_to_first_byte` | Time from dispatch to the provider's first response frame                                                 |
+| `stacklok.ai_gateway.request.overhead`            | Time the gateway itself spends on a request, excluding provider and client waits                          |
+| `stacklok.ai_gateway.webhook.invocations`         | Governance hook calls, such as budgets, scanning, and guardrails, by `webhook_name` and `webhook_outcome` |
+| `http.server.request.duration`                    | Every HTTP request, including ones refused by authentication                                              |
+
+Read `request.overhead` directly to measure gateway overhead. Subtracting
+`provider.duration` from a request's total duration doesn't give it, because the
+two measurements start at different points.
+
+## What each request's span carries
+
+Each model request produces one `ai_gateway.chat_completion` span, which covers
+the request from arrival to the client receiving the last byte. Its attributes
+follow the OpenTelemetry generative AI semantic conventions:
+
+| Attribute                                                 | Value                                                              |
+| --------------------------------------------------------- | ------------------------------------------------------------------ |
+| `gen_ai.request.model`, `gen_ai.response.model`           | The model that served the request                                  |
+| `gen_ai.provider.name`                                    | The routed provider, such as `openai` or `anthropic`               |
+| `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` | Token totals, the same numbers the token counter carries           |
+| `gen_ai.usage.cost`                                       | The USD charge recorded by budgets, when budgets are configured    |
+| `gen_ai.conversation.id`                                  | The session ID the client sent in a configured session header      |
+| `user.id`, `user.email`                                   | The caller's identity. `user.email` is absent for virtual API keys |
+| `response.streaming`                                      | Whether the response was streamed                                  |
+| `stacklok.failure_class`                                  | `none` for a clean request, otherwise why it failed                |
+
+Requests refused before a provider answered also produce a span, with no usage
+or cost, so denials appear on the same dashboards as delivered requests. Their
+`stacklok.failure_class` is one of these:
+
+| `stacklok.failure_class` | Cause                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `request_rejected`       | The request was unreadable, its API isn't served, or no provider serves its model |
+| `webhook_blocked`        | A governance check, such as a budget, guardrail, or model access, denied it       |
+| `webhook_unavailable`    | A governance check couldn't give a verdict, so the gateway failed closed          |
+| `provider_unreachable`   | The call to the provider failed before any response                               |
+
+A budget exhaustion, a guardrail block, and a model access denial all read
+`webhook_blocked`. The audit record names which check refused the request. A
+request that fails authentication produces no `ai_gateway.chat_completion` span,
+only the ingress HTTP span.
+
+`gen_ai.conversation.id` is client-controlled, so it groups one caller's
+requests and is never an identity. Query it together with `user.id`.
+
+## Add request headers to spans
+
+For per-request context that has too many distinct values for a metric label,
+such as a project or ticket ID, `telemetry.spanAttributes` copies a header the
+caller sends onto that request's span:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  telemetry:
+    tracing:
+      enabled: true
+    spanAttributes:
+      - header: x-cz-context-project
+        attribute: cz.context.project
+```
+
+You can configure up to 20 entries, and tracing must be on. A request that omits
+the header gets no attribute, and values longer than 256 bytes are truncated.
+The value is whatever the client sent, so treat it as an attribution hint, not
+an identity. A gateway-set or directory-resolved attribute with the same name
+always wins.
+
+Header names are lowercase. The gateway reserves attribute names under `gen_ai.`
+(except `gen_ai.client.app`), `stacklok.`, and `budget.`, plus `user.id`,
+`user.email`, `enduser.id`, `enduser.email`, `user_id`, `user_email`,
+`error.type`, and `response.streaming`. To keep secrets and personal data out of
+your traces, the chart refuses credential and personal-data headers such as
+`authorization`, `cookie`, `x-api-key`, `x-user-email`, and `x-forwarded-for`.
+
+## Attribute traffic to organizational groups
+
+The gateway can look up each caller in the directory and attach the labels of
+their derived groups, such as `department` or `cost_center`, to request spans
+and audit records. You can then break activity down by department or cost center
+without changing any client. You define these labels on derived groups in the
+directory; see
+[Label derived groups](../platform/enterprise-directory/scim-provisioning.mdx#label-derived-groups).
+
+Point the gateway at the directory's gRPC address, give it a credential to
+present, and list the labels to resolve:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  directory:
+    endpoint: '<DIRECTORY_GRPC_ADDRESS>'
+    tokenProjection:
+      enabled: true
+    groupLabels:
+      - department
+      - cost_center
+```
+
+The directory must allow the gateway's ServiceAccount to call it. The platform
+chart adds `system:serviceaccount:<NAMESPACE>:<RELEASE_NAME>-ai-gateway-v2` to
+`enterprise-manager.grpc.callerAuth.saSubjectAllowlist` by default when AI
+Gateway v2 is enabled. If you override that list, include this entry.
+
+For requests that use a virtual API key, the gateway resolves labels through the
+key's owner. Set `directory.groupsResolutionIssuer` to the issuer the directory
+knows those owners under.
+
+### How labels appear
+
+Labels appear as attributes on request spans under their own names and under
+`subjects` on audit records. They're kept off metrics because per-caller values
+would multiply metric series. The gateway forwards each label to its governance
+checks as a header, such as `X-Department`, and removes that header before the
+request reaches the provider.
+
+When a caller belongs to two derived groups with different values for the same
+label, the gateway omits that label and logs a warning naming it.
+
+### Remap a label to your own attribute name
+
+A cost platform usually wants its own dimension names.
+`telemetry.groupLabelAttributes` stamps a directory label onto the span under
+the name you choose, in place of the label's own name:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  telemetry:
+    groupLabelAttributes:
+      - label: department
+        attribute: cz.context.department
+```
+
+The value still comes from the directory, so no caller can populate the
+attribute. Each `label` must appear in `directory.groupLabels`, and tracing must
+be on.
+
+## Next steps
+
+- [Forward audit logs](./forward-audit-logs.mdx) to send these records, group
+  labels included, to your security information and event management (SIEM)
+  system.
+- [Budgets and pricing](./budgets-and-pricing.mdx) to turn attributed usage into
+  enforced spend limits.
+
+## Related information
+
+- [Collect telemetry for MCP workloads](../toolhive/integrations/opentelemetry.mdx)
+  covers standing up the collector, Prometheus, and Grafana.
+
+## Troubleshooting
+
+<details>
+<summary>No traces or metrics reach the collector</summary>
+
+Confirm the gateway has a destination for each signal. Metrics go to
+`telemetry.otlp.endpoint` when `telemetry.otlp.enabled` is set. Traces go to
+`telemetry.otlp.tracesEndpoint` when set, otherwise to
+`telemetry.otlp.endpoint`, and only when `telemetry.tracing.enabled` is set. The
+gateway speaks OTLP over HTTP, so point it at the collector's HTTP receiver,
+usually port 4318.
+
+With the chart's network policy on and `networkPolicy.allowExternalEgress` set
+to `false`, the chart opens egress on the ports named in
+`telemetry.otlp.endpoint` and `telemetry.otlp.tracesEndpoint`, to any
+destination. Confirm that each port in those values matches the port the
+collector listens on.
+
+</details>
+
+<details>
+<summary>Requests fail with a 503 after setting the directory endpoint</summary>
+
+With `directory.endpoint` set, the gateway resolves each caller's groups and
+refuses the request when the directory doesn't answer, so it never forwards an
+incomplete identity. The gateway logs
+`directory group resolution failed; refusing request`.
+
+Confirm that `directory.endpoint` includes the port, that
+`directory.tokenProjection.enabled` is `true`, and that `saSubjectAllowlist`
+contains the gateway's ServiceAccount.
+
+</details>
+
+<details>
+<summary>Spans carry no group labels</summary>
+
+Confirm that tracing is on and that the label is listed in
+`directory.groupLabels`. The gateway resolves only the labels you list. Then
+check the caller's group memberships in the console: a label with conflicting
+values across two groups is omitted.
+
+</details>
