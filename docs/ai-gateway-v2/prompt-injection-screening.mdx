@@ -8,10 +8,10 @@ description:
 
 Prompt injection screening sends each request's user-authored text to an AWS
 Bedrock Guardrail before the request reaches its provider. Configure your
-existing guardrail's ID and version under `ai-gateway-v2.guardrails` in your
-platform values. The chart then deploys a guardrails adapter that calls Bedrock
-on the gateway's behalf. When [PCI/PII scanning](./pci-pii-controls.mdx) is also
-on, screening runs after it, so the guardrail sees redacted text.
+existing guardrail's ID and version under `guardrails` in your platform values.
+The chart then deploys a guardrails adapter that calls Bedrock on the gateway's
+behalf. When [PCI/PII scanning](./pci-pii-controls.mdx) is also on, screening
+runs after it, so the guardrail sees redacted text.
 
 ## Prerequisites
 
@@ -43,8 +43,8 @@ bodies and requests without a user message are admitted without screening.
 The adapter reads the `messages` field of Chat Completions and Anthropic
 Messages requests and the `contents` field of Gemini requests. OpenAI Responses
 API requests (`/v1/responses`, used by Codex) carry neither, so the adapter
-can't screen them and `Deny` refuses them. Set `Admit` if those clients must
-keep working.
+can't screen them, and in `Enforce` mode `Deny` refuses them. Set `Admit` if
+those clients must keep working.
 
 `Monitor` never blocks. The gateway forwards the request without waiting for the
 verdict, so an adapter failure has no effect on the client.
@@ -164,7 +164,7 @@ token.
 
 ### Static credentials
 
-Set `guardrails.bedrock.credentialsSecretRef.name` to a Secret in the release
+Set `guardrails.bedrock.credentialsSecretRef.name` to a Secret in the platform
 namespace. It must carry a single `credentials` key holding an AWS credentials
 file in INI format:
 
@@ -208,7 +208,7 @@ and `webhook_outcome="deny"`. In `Monitor` mode, that count is what `Enforce`
 would have blocked. This query shows the rate:
 
 ```text
-sum(rate(stacklok_ai_gateway_webhook_invocations_total{webhook_name="guardrails",webhook_outcome="deny"}[5m]))
+sum(rate(stacklok_ai_gateway_webhook_invocations_total{implementation="v2",webhook_name="guardrails",webhook_outcome="deny"}[5m]))
 ```
 
 The two modes record the rest differently:
@@ -282,9 +282,10 @@ gateway pods.
 <details>
 <summary>Codex or Responses API requests are refused</summary>
 
-The adapter can't extract text from OpenAI Responses API requests, so under
-`unscreenableContentPolicy: Deny` the gateway refuses every request to
-`/v1/responses` with a `403` and `unscreenable user content`. The adapter logs
+The adapter can't extract text from OpenAI Responses API requests, so in
+`Enforce` mode under `unscreenableContentPolicy: Deny` the gateway refuses every
+request to `/v1/responses` with `403` and
+`request denied by governance hook: unscreenable user content`. The adapter logs
 `request body carries no recognized chat container` with
 `unscreenable_reason=unrecognized_shape`. If those clients must keep working,
 set `guardrails.unscreenableContentPolicy: Admit`. They are then admitted

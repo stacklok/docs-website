@@ -7,10 +7,10 @@ description:
 ---
 
 AI Gateway v2 exports OpenTelemetry traces and metrics, and can serve its
-metrics to Prometheus. Configure both under `ai-gateway-v2.telemetry` in your
-platform values. Telemetry is off by default. This guide covers connecting a
-collector, counting token usage, and adding request and identity context to
-spans so you can break traffic down by project, team, or department.
+metrics to Prometheus. Configure both under `telemetry` in your platform values.
+Telemetry is off by default. This guide covers connecting a collector, counting
+token usage, and adding request and identity context to spans so you can break
+traffic down by project, team, or department.
 
 Every signal carries the service name `ai-gateway-v2`, and every gateway metric
 carries the label `implementation="v2"`. Filter on that label when the
@@ -56,7 +56,7 @@ gateway posts to the URL exactly as written, without appending `/v1/traces`, and
 `telemetry.otlp.endpoint` keeps receiving metrics if you set it.
 
 If the destination requires an API key, store the OTLP headers string under the
-`headers` key of a Secret in the release namespace:
+`headers` key of a Secret in the platform namespace:
 
 ```bash
 kubectl create secret generic cloudzero-otlp-headers \
@@ -147,7 +147,8 @@ A value outside `permitted` becomes `other`, which keeps the number of metric
 series bounded however the header varies. Per-user and per-request identifiers
 belong on spans instead.
 
-The gateway also reports request outcomes and latency:
+The gateway also reports request outcomes and latency. Metric `outcome` values
+are a separate, smaller set from the audit `outcome` and `reason_code` fields:
 
 | Metric                                            | What it measures                                                                                          |
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -183,12 +184,12 @@ Requests refused before a provider answered also produce a span, with no usage
 or cost, so denials appear on the same dashboards as delivered requests. Their
 `stacklok.failure_class` is one of these:
 
-| `stacklok.failure_class` | Cause                                                                             |
-| ------------------------ | --------------------------------------------------------------------------------- |
-| `request_rejected`       | The request was unreadable, its API isn't served, or no provider serves its model |
-| `webhook_blocked`        | A governance check, such as a budget, guardrail, or model access, denied it       |
-| `webhook_unavailable`    | A governance check couldn't give a verdict, so the gateway failed closed          |
-| `provider_unreachable`   | The call to the provider failed before any response                               |
+| `stacklok.failure_class` | Cause                                                                                                                 |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `request_rejected`       | The request was unreadable, no provider serves the Responses API or Gemini streaming, or no provider serves its model |
+| `webhook_blocked`        | A governance check, such as a budget, guardrail, or model access, denied it                                           |
+| `webhook_unavailable`    | A governance check couldn't give a verdict, so the gateway failed closed                                              |
+| `provider_unreachable`   | The call to the provider failed before any response                                                                   |
 
 A budget exhaustion, a guardrail block, and a model access denial all read
 `webhook_blocked`. The audit record names which check refused the request. A
