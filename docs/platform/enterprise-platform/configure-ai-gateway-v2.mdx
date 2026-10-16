@@ -8,14 +8,16 @@ description:
 
 AI Gateway v2 is a single gateway process configured entirely through platform
 chart values under the `ai-gateway-v2` key. There are no custom resources to
-apply. See [AI Gateway v2](../../ai-gateway-v2/index.mdx) for providers,
-routing, screening, and budgets.
+apply. In prose, value paths on this page are relative to that key, except those
+that start with `global.` or another chart's key, such as `enterprise-manager.`.
+See [AI Gateway v2](../../ai-gateway-v2/index.mdx) for providers, routing,
+screening, and budgets.
 
 ## Prerequisites
 
 - **A corporate identity provider** that issues the tokens your clients send.
-  The gateway trusts the issuers you list under `ai-gateway-v2.auth.issuers`.
-  See [Configure identity](./configure-identity.mdx).
+  The gateway trusts the issuers you list under `auth.issuers`. See
+  [Configure identity](./configure-identity.mdx).
 - **The Enterprise Manager with the directory enabled**. Budgets, pricing,
   recorded spend, virtual API keys, and model access live there.
 - **cert-manager, a `ClusterIssuer`, and a Secret holding its CA bundle**. The
@@ -50,13 +52,12 @@ keys. To run both during a migration, see
 The chart also refuses to render until AI Gateway v2 has a budget receiver
 configured, as described in
 [Bring it up in this order](#bring-it-up-in-this-order). To run a gateway that
-records no spend, set `ai-gateway-v2.budgets.acknowledgeUnmetered: true`
-instead.
+records no spend, set `budgets.acknowledgeUnmetered: true` instead.
 
 ## Trust an identity provider
 
-`ai-gateway-v2.auth.issuers` lists the identity providers whose JWTs the gateway
-accepts. Each entry takes these fields:
+`auth.issuers` lists the identity providers whose JWTs the gateway accepts. Each
+entry takes these fields:
 
 | Field           | Purpose                                                                                                                   |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------- |
@@ -129,7 +130,7 @@ Complete the following sequence before sending production traffic:
    ```
 
    The gateway presents a projected ServiceAccount token to the budget receiver.
-   Its audience, `ai-gateway-v2.budgets.tokenProjection.audience`, defaults to
+   Its audience, `budgets.tokenProjection.audience`, defaults to
    `budgets-webhook` and must equal `enterprise-manager.webhookAuth.audience`
    exactly. `budgets.endpoint` must be an `https://` URL.
 
@@ -174,8 +175,8 @@ ai-gateway-v2:
 
 `parentRefs` is required when the route is enabled. Set `hostname`: without it,
 the route matches every hostname the listener accepts. The route's request
-timeout follows `ai-gateway-v2.lifecycle.maxStreamDuration`, 15 minutes by
-default, so a supported long stream is never cut short at the route.
+timeout follows `lifecycle.maxStreamDuration`, 15 minutes by default, so a
+supported long stream is never cut short at the route.
 
 Check that the route has `Accepted` and `ResolvedRefs` set to `True`:
 
@@ -235,9 +236,8 @@ with the right path. See
 
 ## Restrict network access
 
-`ai-gateway-v2.networkPolicy.enabled` renders a NetworkPolicy for the gateway
-pods. It is off by default. Enable it when your cluster applies a default-deny
-policy:
+`networkPolicy.enabled` renders a NetworkPolicy for the gateway pods. It is off
+by default. Enable it when your cluster applies a default-deny policy:
 
 ```yaml title="values.yaml"
 ai-gateway-v2:
@@ -258,12 +258,17 @@ ai-gateway-v2:
   to admit every source deliberately.
 - **Egress** with `allowExternalEgress: false` admits DNS, outbound `443` for
   providers, and the Enterprise Manager ports taken from `directory.endpoint`
-  and `budgets.endpoint`. If the Enterprise Manager runs in a different
-  namespace, set `networkPolicy.governanceEgress.namespaces`. Add anything else
-  the gateway reaches under `networkPolicy.egress`.
+  and `budgets.endpoint`, plus its connectivity and model access listeners when
+  those are configured. It also admits the scanning and guardrails adapters when
+  they're enabled, the ports in `telemetry.otlp.endpoint` and
+  `telemetry.otlp.tracesEndpoint`, and the EKS Pod Identity Agent when a
+  `bedrock-anthropic` provider has no `credentialSecretRef`. If the Enterprise
+  Manager runs in a different namespace, set
+  `networkPolicy.governanceEgress.namespaces`. Add anything else the gateway
+  reaches under `networkPolicy.egress`.
 
-A missing egress rule fails closed: budget admission can't complete, so every
-request is refused with `503`.
+A missing egress rule fails closed: a governance call can't complete, so every
+request is refused with `503` or, when the dropped connection times out, `504`.
 
 ## Disconnect the gateway
 
@@ -313,4 +318,4 @@ gateway down. Check `kubectl rollout status` after every upgrade.
 ## Related information
 
 - [AI Gateway v2 endpoints reference](../../ai-gateway-v2/endpoints-reference.mdx)
-- [AI Gateway v2 Helm values](../reference/helm/ai-gateway.mdx)
+- [AI Gateway inference Helm values](../reference/helm/ai-gateway.mdx)

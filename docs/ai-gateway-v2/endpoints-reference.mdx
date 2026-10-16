@@ -85,17 +85,17 @@ it from the first of these that is present:
 4. The `key` query parameter
 
 A credential shaped like a JWT is validated against the trusted identity
-providers configured in `ai-gateway-v2.auth.issuers`. Any other credential is
-treated as a virtual API key and validated against the directory.
+providers configured in `auth.issuers`. Any other credential is treated as a
+virtual API key and validated against the directory.
 
 ## Request headers the gateway sets
 
 The gateway derives its governance headers from the verified caller and replaces
 any client-supplied value for them, so a client can't claim another identity,
 group, or label. These include `X-User-Id`, the caller's directory groups, and
-the group label headers configured in `ai-gateway-v2.directory.groupLabels`,
-such as `X-Department` for the `department` label. Group label headers are
-removed before the request goes to the provider.
+the group label headers configured in `directory.groupLabels`, such as
+`X-Department` for the `department` label. Group label headers are removed
+before the request goes to the provider.
 
 Each inference and discovery response carries an `X-Request-ID` header that the
 gateway generates. Quote it when you look up a request in the gateway's logs or
@@ -113,18 +113,19 @@ Errors the gateway generates use this body:
 A provider's own error response, such as a `429` rate limit, is relayed to the
 client unchanged.
 
-| Status | Message or condition                                                                                                                                                                                                 |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `400`  | `invalid JSON: ...` or `invalid request: ...`. The body is malformed or isn't a valid request for the API.                                                                                                           |
-| `401`  | `unauthenticated`. The credential is missing, invalid, or expired.                                                                                                                                                   |
-| `402`  | `request denied by governance hook ...` with `budget exhausted` or `no applicable budget`. The caller has no budget with remaining capacity.                                                                         |
-| `403`  | `insufficient scope`, with a `WWW-Authenticate: Bearer error="insufficient_scope"` header. The token lacks the issuer's `requiredScope`.                                                                             |
-| `403`  | `request denied by governance hook ...`. A policy refused the request: the model is unpriced, the caller has no grant for the model, the caller can't be resolved in the directory, or content screening blocked it. |
-| `404`  | `no provider is configured for model <MODEL>`.                                                                                                                                                                       |
-| `501`  | No configured provider serves this API, for example `/v1/responses` without an `openai` or `openrouter` provider.                                                                                                    |
-| `502`  | `upstream request failed`, or `Gateway policy validation received an invalid response...`.                                                                                                                           |
-| `503`  | `service temporarily unavailable`, with `Retry-After: 1`. The directory couldn't validate the credential.                                                                                                            |
-| `503`  | `Gateway policy validation is unavailable...`. A policy service is unreachable.                                                                                                                                      |
-| `503`  | `model access unavailable`. A discovery request couldn't get a model access decision.                                                                                                                                |
-| `503`  | The gateway is administratively disconnected. The body adds `"type": "gateway_disconnected"` and `"code": "administratively_disconnected"`.                                                                          |
-| `504`  | `Gateway policy validation timed out...`. A policy service didn't answer in time.                                                                                                                                    |
+| Status | Message or condition                                                                                                                                                                                                               |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | `invalid JSON: ...` or `invalid request: ...`. The body is malformed or isn't a valid request for the API.                                                                                                                         |
+| `401`  | `unauthenticated`. The credential is missing, invalid, or expired.                                                                                                                                                                 |
+| `402`  | `request denied by governance hook ...` with `budget exhausted` or `no applicable budget`. The caller has no budget with remaining capacity.                                                                                       |
+| `403`  | `insufficient scope`, with a `WWW-Authenticate: Bearer error="insufficient_scope"` header. The token lacks the issuer's `requiredScope`.                                                                                           |
+| `403`  | `request denied by governance hook ...`. A policy refused the request: the model is unpriced, the caller has no grant for the model, the caller can't be resolved in the directory, or content screening blocked it.               |
+| `404`  | `no provider is configured for model <MODEL>`. No provider lists the model for this API. A malformed Gemini path returns `not a Gemini generateContent path`.                                                                      |
+| `501`  | `the OpenAI Responses API is not yet supported` or `gemini <ACTION> is not yet supported`. No provider serves `/v1/responses` or `:streamGenerateContent`, or the Gemini action is unknown. Every other API returns `404` instead. |
+| `502`  | `upstream request failed`, or `Gateway policy validation received an invalid response...`.                                                                                                                                         |
+| `502`  | `metering unavailable; interaction was not recorded` by default. The usage report failed, so the gateway withheld the response. On a stream, the final event carries this error instead.                                           |
+| `503`  | `service temporarily unavailable`, with `Retry-After: 1`. The directory couldn't validate the credential or resolve the caller's groups.                                                                                           |
+| `503`  | `Gateway policy validation is unavailable...`. A policy service is unreachable.                                                                                                                                                    |
+| `503`  | `model access unavailable`. A discovery request couldn't get a model access decision.                                                                                                                                              |
+| `503`  | The gateway is administratively disconnected. The body adds `"type": "gateway_disconnected"` and `"code": "administratively_disconnected"`.                                                                                        |
+| `504`  | `Gateway policy validation timed out...`. A policy service didn't answer in time.                                                                                                                                                  |

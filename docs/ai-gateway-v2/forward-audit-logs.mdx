@@ -30,9 +30,8 @@ ai-gateway-v2:
 ```
 
 Setting `global.stacklok.audit.enabled: true` also turns them on. Either value
-enables audit events, so `ai-gateway-v2.audit.enabled: false` doesn't turn them
-off while the global value is `true`. The change applies when the gateway pods
-roll out.
+enables audit events, so `audit.enabled: false` doesn't turn them off while the
+global value is `true`. The change applies when the gateway pods roll out.
 
 Enabled audit events cover every interaction without sampling, and there are no
 per-event toggles. Filter and route events in your log pipeline.
@@ -118,8 +117,11 @@ Interaction events add `interaction_id`, `http_method`, `dialect`, `streaming`,
 `input_tokens` and `output_tokens` when the provider reported usage. When a
 governance hook denies or fails a request, `hook` names the hook entry. When a
 required hook reports audit annotations, `hook_annotations` maps the hook entry
-name to them. The budgets entries use annotations to report the charged subject
-and amount.
+name to them, on refused and delivered requests alike. The budgets entries use
+annotations to report the charged subject and amount. The `scanning` entry
+reports `detection_types` for a block, `redact_types` for a redaction,
+`log_only_types` and `shadow_types` for log-only matches, and `unscanned_reason`
+and `unscanned_nodes` when a scan failure let the request through unscanned.
 
 `schema_version` is `1`. New fields can appear within version 1. A removed
 field, or a change to a field's meaning, type, or enumerated values, comes with
@@ -135,7 +137,7 @@ a new version.
 | ------------------------------ | --------- | ---------------------------------------------------------- |
 | `delivered`                    | `success` | The response reached the client                            |
 | `request_invalid`              | `failure` | The request body or parameters were invalid                |
-| `dialect_unsupported`          | `failure` | No configured provider serves the requested API            |
+| `dialect_unsupported`          | `failure` | No provider serves the Responses API or Gemini streaming   |
 | `route_not_found`              | `failure` | No provider is configured for the model                    |
 | `governance_denied`            | `denied`  | A governance hook, such as budgets, refused the request    |
 | `governance_hook_failed`       | `error`   | A required governance hook gave no usable answer           |
@@ -184,14 +186,15 @@ ai-gateway-v2:
 or `debug`. Operational failure records are separate from audit events, so audit
 shippers that filter on `"logger":"audit"` don't collect them.
 
-**Conversation content** reaches no log. The only path that forwards prompt
-content is conversation capture to the budgets service, configured with
-`budgets.capture`. See [Budgets and pricing](budgets-and-pricing.mdx).
+**Conversation content** reaches no log. Screening sends prompt text to Presidio
+and AWS Bedrock for analysis, but the only path that persists prompt content is
+conversation capture to the budgets service, configured with `budgets.capture`.
+See [Budgets and pricing](budgets-and-pricing.mdx).
 
 ## Next steps
 
 - [Detect PCI and PII in prompts](pci-pii-controls.mdx) to configure the
-  scanning hook whose decisions appear as `governance_denied` events.
+  scanning hook whose decisions appear in `hook_annotations.scanning`.
 - [Screen prompts for injection](prompt-injection-screening.mdx), whose enforced
   verdicts also end interactions here.
 - [Collect gateway telemetry](telemetry.mdx) to export traces that join these
