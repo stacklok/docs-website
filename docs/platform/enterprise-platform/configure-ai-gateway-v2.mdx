@@ -80,11 +80,9 @@ ai-gateway-v2:
 ```
 
 Set `requiredScope` whenever your identity provider gives ID tokens and access
-tokens the same audience. Without it, an ID token works as an API credential.
-With it, a token without the scope is refused with `403` and
-`WWW-Authenticate: Bearer error="insufficient_scope"`. For Entra ID, use the
-short scope name from the `scp` claim, such as `LLM.Invoke`, not the
-`api://<APP>/LLM.Invoke` form a client requests. Tokens issued through the
+tokens the same audience, so an ID token can't serve as an API credential. A
+token without the scope is refused with `403`. For Entra ID, use the short name
+the token's `scp` claim carries, such as `LLM.Invoke`. Tokens issued through the
 client credentials flow carry no scope, so `requiredScope` refuses them.
 
 Credentials that aren't JWTs are treated as
@@ -133,38 +131,31 @@ Complete the following sequence before sending production traffic:
          enabled: true
    ```
 
-   The gateway presents a projected ServiceAccount token to the budget receiver.
-   Its audience, `budgets.tokenProjection.audience`, defaults to
-   `budgets-webhook` and must equal `enterprise-manager.webhookAuth.audience`
-   exactly. `budgets.endpoint` must be an `https://` URL.
-
-   `directory.endpoint` is the `host:port` of the directory's gRPC listener,
-   without a scheme. The directory resolves virtual API keys, group membership,
-   and model access for the gateway.
+   `budgets.endpoint` must be an `https://` URL. Its token audience,
+   `budgets.tokenProjection.audience`, defaults to `budgets-webhook` and must
+   equal `enterprise-manager.webhookAuth.audience`. `directory.endpoint` is the
+   `host:port` of the directory's gRPC listener, without a scheme.
 
    Set `directory.groupsResolutionIssuer` to the issuer the directory knows your
    users under, usually your corporate identity provider's issuer. Requests that
    use a virtual API key resolve their owner's groups through it. Without it,
-   those requests carry no groups, so only user budgets apply to them.
+   only user budgets apply to those requests.
 
-   The Enterprise Manager verifies the gateway's ServiceAccount tokens against
-   `enterprise-manager.grpc.callerAuth.clusterOidcIssuer`. It's empty by
-   default, and while it's empty the Enterprise Manager refuses the gateway's
-   directory calls and connectivity polls, even when the gateway's
-   ServiceAccount is on every allowlist. Set it to your cluster's ServiceAccount
-   token issuer, which this command prints:
+   Set `enterprise-manager.grpc.callerAuth.clusterOidcIssuer` to your cluster's
+   ServiceAccount token issuer. The Enterprise Manager verifies the gateway's
+   tokens against it, and while it's empty, refuses the gateway's directory
+   calls and connectivity polls. This command prints the issuer:
 
    ```bash
    kubectl get --raw /.well-known/openid-configuration | jq -r .issuer
    ```
 
-   The Enterprise Manager fetches the issuer's discovery document and signing
-   keys from that URL. On managed clusters such as Amazon EKS, the issuer is a
-   public URL, so allow egress to it from the Enterprise Manager pods.
+   On managed clusters such as Amazon EKS, the issuer is a public URL, so allow
+   egress to it from the Enterprise Manager pods.
 
    The platform chart adds the gateway's ServiceAccount to
    `enterprise-manager.grpc.callerAuth.saSubjectAllowlist` by default. If you
-   set that list yourself, your list replaces the default, so include
+   set that list yourself, include
    `system:serviceaccount:<NAMESPACE>:<RELEASE_NAME>-ai-gateway-v2`.
 
 3. **Add providers and models.** See
@@ -180,6 +171,9 @@ Complete the following sequence before sending production traffic:
    kubectl get pods -n <NAMESPACE> \
      -l app.kubernetes.io/name=ai-gateway-v2,app.kubernetes.io/component=gateway
    ```
+
+   Then confirm that budget enforcement is wired, as described in
+   [Verify the gateway reaches the budgets service](../../ai-gateway-v2/budgets-and-pricing.mdx#verify-the-gateway-reaches-the-budgets-service).
 
 ## Publish the endpoint
 
@@ -233,8 +227,9 @@ curl --fail-with-body --silent --show-error \
 This example uses an OpenAI-compatible model. For an Anthropic model, send the
 same check to `/anthropic/v1/messages` in the Anthropic Messages format. A
 successful response verifies DNS, TLS, authentication, budget admission, and the
-provider connection. Repeat with `"stream": true` and `curl --no-buffer` to
-confirm chunks arrive before the response completes.
+provider connection. For a private CA, use `--cacert <CA_FILE>` and configure
+your clients to trust that CA. Repeat with `"stream": true` and
+`curl --no-buffer` to confirm chunks arrive before the response completes.
 
 ## Client endpoints
 
@@ -248,14 +243,9 @@ sent, so each client uses the base path for its own API:
 | Codex (Responses API)             | `https://<AI_GATEWAY_HOST>/v1`, which serves `/v1/responses` | `Authorization: Bearer`                |
 | Gemini CLI and Gemini clients     | `https://<AI_GATEWAY_HOST>`, which serves `/v1beta`          | `x-goog-api-key`                       |
 
-The gateway reads the credential from `Authorization: Bearer`, then `x-api-key`,
-then `x-goog-api-key`, then the `key` query parameter, and accepts either a JWT
-or a virtual API key in any of them.
-
-In the console, the **Clients** tab under **Gateways > AI Gateway** builds a
-`thv llm setup` command from `toolhive-cloud-ui.gatewayProxyUrl`, and that
-command configures each client with the right path. See
-[Roll out gateway clients](./roll-out-gateway-clients.mdx).
+Each credential header accepts either a JWT or a virtual API key. The
+`thv llm setup` command that the console builds configures each client with the
+right path. See [Roll out gateway clients](./roll-out-gateway-clients.mdx).
 
 ## Restrict network access
 
@@ -274,24 +264,18 @@ ai-gateway-v2:
     allowExternalEgress: false
 ```
 
-- **Ingress** admits only the Envoy pods in `ingress.gatewayNamespaces`,
-  narrowed by `ingress.gatewayPodSelector`. An empty namespace list fails the
-  render. The metrics port is admitted only from `ingress.monitoringNamespaces`,
-  and only when Prometheus metrics are on. Set `ingress.allowAllSources: true`
-  to admit every source deliberately.
+- **Ingress** admits only the Envoy pods in `ingress.gatewayNamespaces`, which
+  must not be empty. The metrics port is admitted from
+  `ingress.monitoringNamespaces` when Prometheus metrics are on.
 - **Egress** with `allowExternalEgress: false` admits DNS, outbound `443` for
-  providers, and the Enterprise Manager ports taken from `directory.endpoint`
-  and `budgets.endpoint`, plus its connectivity and model access listeners when
-  those are configured. It also admits the scanning and guardrails adapters when
-  they're enabled, the ports in `telemetry.otlp.endpoint` and
-  `telemetry.otlp.tracesEndpoint`, and the EKS Pod Identity Agent when a
-  `bedrock-anthropic` provider has no `credentialSecretRef`. If the Enterprise
-  Manager runs in a different namespace, set
+  providers, the Enterprise Manager, the enabled screening adapters, and the
+  OTLP ports in `telemetry.otlp.endpoint` and `telemetry.otlp.tracesEndpoint`.
+  If the Enterprise Manager runs in a different namespace, set
   `networkPolicy.governanceEgress.namespaces`. Add anything else the gateway
   reaches under `networkPolicy.egress`.
 
-A missing egress rule fails closed: a governance call can't complete, so every
-request is refused with `503` or, when the dropped connection times out, `504`.
+A missing egress rule fails closed: governance calls can't complete, so every
+request is refused with `503` or `504`.
 
 ## Disconnect the gateway
 
@@ -308,44 +292,45 @@ curl -X PUT \
 ```
 
 While disconnected, the gateway refuses every inference request with `503` and
-an error whose `type` is `gateway_disconnected` and whose `code` is
-`administratively_disconnected`. Send `{"state": "connected"}` to restore
-traffic.
+the error code `administratively_disconnected`. Send `{"state": "connected"}` to
+restore traffic. Pods stay ready, so a disconnect never restarts them.
 
 The console's **Emergency Disconnect** control, on the **System** tab of
 **Platform Settings**, lists the AI Gateway only while
 `global.stacklok.aiGateway.enabled` is `true`, such as during a migration
-window. Its **Disconnect AI Gateway** button sets the same state, so it stops
-both gateways.
+window. Its **Disconnect AI Gateway** button stops both gateways.
 
 Disconnection applies when `global.stacklok.enterpriseManager.url` is set. Each
-replica polls the state every
-`global.stacklok.enterpriseManager.platformSettings.connectivityPollIntervalSeconds`
-seconds, 5 by default.
-
-- Until the first poll succeeds, the gateway refuses traffic. A gateway that
-  can't reach the Enterprise Manager serves nothing.
-- A later failed poll keeps the last known state.
-- `/healthz` and `/readyz` are unaffected, so a disconnect never restarts pods
-  or removes them from the Service.
-
-The platform chart allows the gateway's ServiceAccount to poll by default. If
+replica polls the state every 5 seconds by default. Until its first poll
+succeeds, a replica refuses traffic, and a later failed poll keeps the last
+known state. The platform chart allows the gateway's ServiceAccount to poll. If
 you override `enterprise-manager.grpc.callerAuth.httpSaSubjectAllowlist`, or
 rename the gateway with `fullnameOverride` or `serviceAccount.name`, include its
 actual subject or the gateway refuses all traffic.
 
+## Content screening posture
+
+Screening failures deny requests by default. PII scanning blocks a request when
+Presidio is unreachable or slow, and prompt injection screening blocks a request
+when its adapter is unreachable, slow, or returns an error. To admit traffic
+during a rollout or incident, set `scanning.ner.failureAction: fail-open` or
+`guardrails.failurePolicy: Ignore`. Requests admitted this way reach the
+provider unscreened. See
+[PCI/PII controls](../../ai-gateway-v2/pci-pii-controls.mdx) and
+[Screen prompts for injection](../../ai-gateway-v2/prompt-injection-screening.mdx).
+
 ## How configuration changes apply
 
-The chart renders the gateway's configuration into a ConfigMap and mounts
-provider credentials from Secrets. There is no hot reload. A changed value
-changes the pod template and starts a rollout. A credential Secret edited in
-place rolls the pods on the next `helm upgrade`, because the chart hashes Secret
-contents. With Argo CD or another renderer without cluster access, run
+The gateway reads its configuration at startup, so every change applies through
+a rollout. The chart renders the configuration into a ConfigMap, and a changed
+value changes the pod template. A credential Secret edited in place rolls the
+pods on the next `helm upgrade`, because the chart hashes Secret contents. With
+Argo CD or another renderer without cluster access, run
 `kubectl rollout restart` after editing a Secret.
 
-The rollout keeps all existing pods serving until new pods are ready. A change
-that leaves the new pods unready stalls the rollout instead of taking the
-gateway down. Check `kubectl rollout status` after every upgrade.
+Existing pods keep serving until new pods are ready, so a change that leaves the
+new pods unready stalls the rollout and leaves the gateway up. Check
+`kubectl rollout status` after every upgrade.
 
 ## Next steps
 

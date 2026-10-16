@@ -37,20 +37,9 @@ The chart refuses to render with scanning on and no issuer or CA bundle. To give
 the adapter its own pair, set `scanning.tls.issuerRef` and
 `scanning.tls.caBundleSecret`.
 
-Presidio loads its language model when it first starts, which takes a few
-minutes on a cold node. With the default fail-closed settings, the gateway
-refuses requests until Presidio passes its warm-up probe:
-
-- Before the adapter is ready, requests fail with `503` and
-  `Gateway policy validation is unavailable`, or `504` and
-  `Gateway policy validation timed out`.
-- After the adapter is ready but before Presidio answers, requests fail with
-  `403` and `request denied by governance hook "scanning"`, including requests
-  that carry no PII.
-
-This happens on a fresh install, on the upgrade that turns scanning on, and when
-every Presidio replica restarts at once. A rolling update of a running install
-keeps the old Presidio replicas serving until the new ones are warm.
+Presidio takes a few minutes to load its language model when it first starts.
+With the default fail-closed settings, the gateway refuses every request until
+Presidio is ready.
 
 ## Choose what happens on a match
 
@@ -100,9 +89,8 @@ uses this default list:
 | `LOCATION`      | Place names, from the language model     |
 | `DATE_TIME`     | Dates and times, from the language model |
 
-Setting `entities` replaces the default list. Editing the list rolls the
-adapter, and an entity the adapter can't detect fails the rollout. That includes
-most of the country-specific entities in the
+Setting `entities` replaces the default list. An entity the adapter can't detect
+fails the rollout. That includes most of the country-specific entities in the
 [Presidio documentation](https://microsoft.github.io/presidio/supported_entities/),
 because the bundled Presidio registry ships their recognizers turned off. To
 detect one of those identifiers,
@@ -130,8 +118,7 @@ ai-gateway-v2:
 ```
 
 Patterns use RE2 syntax. A recognizer can use a `denyList` of literal strings in
-place of, or alongside, `patterns`. A regex that doesn't compile fails the
-render. Editing the recognizers rolls the Presidio pods.
+place of, or alongside, `patterns`.
 
 ### Exempt known strings
 
@@ -158,12 +145,8 @@ unreachable, slow, or behind an open circuit breaker:
 | `fail-closed` (default) | Refuse the request                              |
 | `fail-open`             | Forward the request unscanned and log a warning |
 
-`failureAction` covers Presidio only. If the adapter itself is unreachable, the
-gateway refuses the request whatever this value is.
-
 Use `fail-closed` in production and `fail-open` only during rollout or incident
-response. With `fail-open`, requests that arrive while Presidio warms up are
-forwarded unscanned.
+response.
 
 A circuit breaker applies `failureAction` without calling an unhealthy Presidio:
 
@@ -181,11 +164,9 @@ ai-gateway-v2:
 
 `scanning.ner.timeout` limits each Presidio call and defaults to `5s`.
 `scanning.hook.timeout` is the budget the gateway gives the adapter for the
-whole scan. Left empty, it's `scanning.ner.timeout` plus two seconds, so a slow
-Presidio surfaces as the adapter's fail-closed `403` rather than a gateway
-`504`. Raise `scanning.hook.timeout` when large requests regularly need several
-rounds of Presidio calls under load. An explicit value must be greater than
-`scanning.ner.timeout`.
+whole scan. Left empty, it's `scanning.ner.timeout` plus two seconds. Raise it
+when large requests regularly need several rounds of Presidio calls under load.
+An explicit value must be greater than `scanning.ner.timeout`.
 
 Each Presidio pod runs one analysis worker per whole CPU core in
 `scanning.presidio.resources.limits.cpu`, and each worker loads its own language
@@ -213,16 +194,13 @@ ai-gateway-v2:
 ```
 
 Setting `scanning.presidio.maxReplicas` above 1 renders a
-HorizontalPodAutoscaler. To let an external scaler such as KEDA own the replica
-count, set `scanning.presidio.autoscaling.mode: External` and keep
-`scanning.presidio.replicas` at the minimum that scaler maintains.
+HorizontalPodAutoscaler.
 
 The adapter is on every request's path, so run at least two replicas. At two or
 more replicas, the chart creates a PodDisruptionBudget for the adapter and for
 Presidio.
 
-To watch for queuing, set `scanning.adapter.metrics.enabled: true`. The adapter
-then serves Prometheus metrics on port `9090`. If
+To watch for queuing, set `scanning.adapter.metrics.enabled: true`. If
 `stacklok_ai_gateway_presidio_analyze_inflight` divided by the total number of
 Presidio workers exceeds 1, calls are queuing in Presidio.
 
@@ -239,9 +217,8 @@ ai-gateway-v2:
       ttl: 24h
 ```
 
-The cache uses `global.redis` unless you set a different backend under
-`scanning.resultCache.redis`. If the adapter can't verify a cache entry or reach
-its integrity secret, it scans the text again.
+The cache uses the `global.redis` configuration. If the adapter can't verify a
+cache entry or reach its integrity secret, it scans the text again.
 
 ### What read access to the cache discloses
 
@@ -259,8 +236,7 @@ detection rules fired.
 The cache limits exposure as follows:
 
 - Entries omit scanned text and matched substrings.
-- Each release uses a separate keyspace, under
-  `aigw:ner:v1:<NAMESPACE>:<RELEASE_NAME>-ai-gateway-v2:`.
+- Each release uses a separate keyspace.
 - Integrity tags prevent a writer from inserting a result that suppresses
   detection.
 
@@ -272,9 +248,7 @@ with your security requirements.
 
 By default, the adapter creates the Secret
 `<RELEASE_NAME>-ai-gateway-v2-ner-cache-mac` in the platform namespace the first
-time it starts. The Secret holds the integrity key for cached results. Because
-the adapter creates it outside the Helm release, it survives an uninstall or a
-prune.
+time it starts. The Secret holds the integrity key for cached results.
 
 To supply your own instead, through External Secrets, sealed secrets, or
 out-of-band creation, name it in your values:
@@ -301,24 +275,18 @@ entries then fail verification and are scanned again.
 to recognizers or the Presidio image cause cache misses. Shorten the TTL to
 reduce the disclosure window and memory use.
 
-While Presidio is mid-rollout, old and new pods answer side by side, so the
-adapter withholds cache writes until every Presidio pod runs the same detection
-inputs. Reads continue throughout.
-
 ### Cache metrics
 
 With `scanning.adapter.metrics.enabled` set, the adapter exposes these metrics:
 
-| Metric                                                | What it measures                                                 |
-| ----------------------------------------------------- | ---------------------------------------------------------------- |
-| `stacklok_ai_gateway_ner_cache_lookups_total`         | One per attempted read, labeled hit or miss                      |
-| `stacklok_ai_gateway_ner_cache_errors_total`          | Backend or codec faults, labeled by operation and error type     |
-| `stacklok_ai_gateway_ner_cache_op_duration_seconds`   | Backend round-trip per operation                                 |
-| `stacklok_ai_gateway_ner_cache_withheld_writes_total` | Writes withheld while Presidio pods disagree on detection inputs |
+| Metric                                              | What it measures                                             |
+| --------------------------------------------------- | ------------------------------------------------------------ |
+| `stacklok_ai_gateway_ner_cache_lookups_total`       | One per attempted read, labeled hit or miss                  |
+| `stacklok_ai_gateway_ner_cache_errors_total`        | Backend or codec faults, labeled by operation and error type |
+| `stacklok_ai_gateway_ner_cache_op_duration_seconds` | Backend round-trip per operation                             |
 
 Use the hit rate to measure avoided Presidio calls. Cache errors become misses
-and trigger a normal Presidio call. A withheld-writes rate that never drops
-means the cache has gone read-only.
+and trigger a normal Presidio call.
 
 ## Next steps
 
@@ -326,34 +294,3 @@ means the cache has gone read-only.
   adversarial-prompt screening after the scan.
 - [Forward audit logs](./forward-audit-logs.mdx) to get scan decisions into your
   security information and event management (SIEM) system.
-
-## Troubleshooting
-
-<details>
-<summary>Every request is refused with `403` right after enabling scanning</summary>
-
-Presidio is still loading its language model. Check that the Presidio pods have
-passed their startup probe:
-
-```bash
-kubectl get pods -n <NAMESPACE> -l app.kubernetes.io/component=presidio
-```
-
-The refusals clear once the pods are ready. If they persist, check the adapter
-logs for Presidio connection errors:
-
-```bash
-kubectl logs -n <NAMESPACE> -l app.kubernetes.io/component=scanning-adapter
-```
-
-</details>
-
-<details>
-<summary>The cache never serves a hit</summary>
-
-Confirm a Redis host resolves, from `scanning.resultCache.redis.host` or
-`global.redis.host`. Then check the adapter logs for a warning about the
-integrity secret: without permission to read or create it, the adapter runs
-uncached.
-
-</details>
