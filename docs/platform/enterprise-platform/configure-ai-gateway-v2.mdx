@@ -59,14 +59,14 @@ records no spend, set `budgets.acknowledgeUnmetered: true` instead.
 `auth.issuers` lists the identity providers whose JWTs the gateway accepts. Each
 entry takes these fields:
 
-| Field           | Purpose                                                                                                                   |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `issuer`        | The exact `iss` value                                                                                                     |
-| `audience`      | The `aud` value the token must carry                                                                                      |
-| `bindingClaim`  | The claim that identifies the caller, such as `uid` for Okta or `oid` for Entra ID. Never a mutable claim such as `email` |
-| `tokenUse`      | Optional. The `token_use` value the token must carry                                                                      |
-| `requiredScope` | Optional. The scope the token must carry, written exactly as it appears in the token's scope claim                        |
-| `jwksUri`       | Where the issuer publishes its signing keys                                                                               |
+| Field           | Purpose                                                                                                                             |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `issuer`        | The exact `iss` value                                                                                                               |
+| `audience`      | The `aud` value the token must carry                                                                                                |
+| `bindingClaim`  | The claim that identifies the caller, such as `uid` for Okta or `oid` for Microsoft Entra ID. Never a mutable claim such as `email` |
+| `tokenUse`      | Optional. The `token_use` value the token must carry                                                                                |
+| `requiredScope` | Optional. The scope the token must carry, written exactly as it appears in the token's scope claim                                  |
+| `jwksUri`       | Where the issuer publishes its signing keys                                                                                         |
 
 ```yaml title="values.yaml"
 ai-gateway-v2:
@@ -117,6 +117,9 @@ Complete the following sequence before sending production traffic:
        enabled: true
      webhookAuth:
        audience: budgets-webhook
+     grpc:
+       callerAuth:
+         clusterOidcIssuer: '<CLUSTER_OIDC_ISSUER>'
 
    ai-gateway-v2:
      budgets:
@@ -125,6 +128,7 @@ Complete the following sequence before sending production traffic:
          enabled: true
      directory:
        endpoint: '<DIRECTORY_GRPC_ADDRESS>'
+       groupsResolutionIssuer: '<IDP_ISSUER_URL>'
        tokenProjection:
          enabled: true
    ```
@@ -137,6 +141,26 @@ Complete the following sequence before sending production traffic:
    `directory.endpoint` is the `host:port` of the directory's gRPC listener,
    without a scheme. The directory resolves virtual API keys, group membership,
    and model access for the gateway.
+
+   Set `directory.groupsResolutionIssuer` to the issuer the directory knows your
+   users under, usually your corporate identity provider's issuer. Requests that
+   use a virtual API key resolve their owner's groups through it. Without it,
+   those requests carry no groups, so only user budgets apply to them.
+
+   The Enterprise Manager verifies the gateway's ServiceAccount tokens against
+   `enterprise-manager.grpc.callerAuth.clusterOidcIssuer`. It's empty by
+   default, and while it's empty the Enterprise Manager refuses the gateway's
+   directory calls and connectivity polls, even when the gateway's
+   ServiceAccount is on every allowlist. Set it to your cluster's ServiceAccount
+   token issuer, which this command prints:
+
+   ```bash
+   kubectl get --raw /.well-known/openid-configuration | jq -r .issuer
+   ```
+
+   The Enterprise Manager fetches the issuer's discovery document and signing
+   keys from that URL. On managed clusters such as Amazon EKS, the issuer is a
+   public URL, so allow egress to it from the Enterprise Manager pods.
 
    The platform chart adds the gateway's ServiceAccount to
    `enterprise-manager.grpc.callerAuth.saSubjectAllowlist` by default. If you
@@ -228,10 +252,9 @@ The gateway reads the credential from `Authorization: Bearer`, then `x-api-key`,
 then `x-goog-api-key`, then the `key` query parameter, and accepts either a JWT
 or a virtual API key in any of them.
 
-The console flow is the same as for the AI Gateway. The **Clients** tab under
-**Gateways > AI Gateway** builds a `thv llm setup` command from
-`toolhive-cloud-ui.gatewayProxyUrl`, and that command configures each client
-with the right path. See
+In the console, the **Clients** tab under **Gateways > AI Gateway** builds a
+`thv llm setup` command from `toolhive-cloud-ui.gatewayProxyUrl`, and that
+command configures each client with the right path. See
 [Roll out gateway clients](./roll-out-gateway-clients.mdx).
 
 ## Restrict network access
@@ -272,12 +295,28 @@ request is refused with `503` or, when the dropped connection times out, `504`.
 
 ## Disconnect the gateway
 
-An administrator can stop all model traffic without a redeploy. In the console's
-**Administration** experience, **Platform Settings** has an **Emergency
-Disconnect** control with a **Disconnect AI Gateway** button. While
-disconnected, the gateway refuses every inference request with `503` and an
-error whose `type` is `gateway_disconnected` and whose `code` is
-`administratively_disconnected`. **Reconnect AI Gateway** restores traffic.
+An administrator can stop all model traffic without a redeploy by setting the AI
+Gateway's connectivity state through the
+[Enterprise Manager API](./enterprise-manager-api.mdx):
+
+```bash
+curl -X PUT \
+  https://<ENTERPRISE_MANAGER_URL>/api/v1/platform-settings/gateways/ai-gateway/connectivity \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"state": "disconnected"}'
+```
+
+While disconnected, the gateway refuses every inference request with `503` and
+an error whose `type` is `gateway_disconnected` and whose `code` is
+`administratively_disconnected`. Send `{"state": "connected"}` to restore
+traffic.
+
+The console's **Emergency Disconnect** control, on the **System** tab of
+**Platform Settings**, lists the AI Gateway only while
+`global.stacklok.aiGateway.enabled` is `true`, such as during a migration
+window. Its **Disconnect AI Gateway** button sets the same state, so it stops
+both gateways.
 
 Disconnection applies when `global.stacklok.enterpriseManager.url` is set. Each
 replica polls the state every

@@ -27,11 +27,11 @@ runs after it, so the guardrail sees redacted text.
 
 ## The three decisions
 
-| Field                       | Default   | What it decides                                                  |
-| --------------------------- | --------- | ---------------------------------------------------------------- |
-| `mode`                      | `Enforce` | `Enforce` blocks a flagged prompt; `Monitor` only records it     |
-| `failurePolicy`             | `Fail`    | Under `Enforce`, what happens if the screening call itself fails |
-| `unscreenableContentPolicy` | `Deny`    | What happens to user content that carries no screenable text     |
+| Field                       | Default   | What it decides                                                                                                            |
+| --------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `mode`                      | `Enforce` | `Enforce` blocks a flagged prompt; `Monitor` only records it                                                               |
+| `failurePolicy`             | `Fail`    | Under `Enforce`, what happens if the screening call itself fails: `Fail` blocks the request, `Ignore` admits it unscreened |
+| `unscreenableContentPolicy` | `Deny`    | What happens to user content that carries no screenable text                                                               |
 
 `failurePolicy` handles an adapter that is unreachable, slow, or returns an
 error, including AWS errors. `unscreenableContentPolicy` handles user content
@@ -260,10 +260,15 @@ through your AWS billing tooling.
 ## Troubleshooting
 
 <details>
-<summary>Requests fail with a 503 or 504 under `Enforce`</summary>
+<summary>Requests fail with a 502, 503, or 504 under `Enforce`</summary>
 
-The gateway couldn't get a verdict from the adapter in time, and
-`failurePolicy: Fail` refused the request. Check that the adapter pods are
+The gateway couldn't get a usable verdict from the adapter, and
+`failurePolicy: Fail` refused the request. A `503` or `504` means the adapter
+was unreachable or slow. A `502` with
+`Gateway policy validation received an invalid response` means the adapter
+reached AWS and the call failed, most often because the principal lacks
+`bedrock:ApplyGuardrail`. Check the adapter logs for
+`plugin screen error; failing closed`, and check that the adapter pods are
 ready:
 
 ```bash
@@ -285,7 +290,7 @@ gateway pods.
 The adapter can't extract text from OpenAI Responses API requests, so in
 `Enforce` mode under `unscreenableContentPolicy: Deny` the gateway refuses every
 request to `/v1/responses` with `403` and
-`request denied by governance hook: unscreenable user content`. The adapter logs
+`request denied by governance hook "guardrails"`. The adapter logs
 `request body carries no recognized chat container` with
 `unscreenable_reason=unrecognized_shape`. If those clients must keep working,
 set `guardrails.unscreenableContentPolicy: Admit`. They are then admitted

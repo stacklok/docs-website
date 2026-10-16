@@ -191,6 +191,10 @@ or cost, so denials appear on the same dashboards as delivered requests. Their
 | `webhook_unavailable`    | A governance check couldn't give a verdict, so the gateway failed closed                                              |
 | `provider_unreachable`   | The call to the provider failed before any response                                                                   |
 
+A request that reached the provider reads `provider_4xx`, `provider_5xx`, or
+`provider_error` when the provider failed, `client_disconnect` when the client
+hung up, or `webhook_blocked` when the usage report to budgets failed.
+
 A budget exhaustion, a guardrail block, and a model access denial all read
 `webhook_blocked`. The audit record names which check refused the request. A
 request that fails authentication produces no `ai_gateway.chat_completion` span,
@@ -217,9 +221,8 @@ ai-gateway-v2:
 
 You can configure up to 20 entries, and tracing must be on. A request that omits
 the header gets no attribute, and values longer than 256 bytes are truncated.
-The value is whatever the client sent, so treat it as an attribution hint, not
-an identity. A gateway-set or directory-resolved attribute with the same name
-always wins.
+The value is whatever the client sent, so treat it as an attribution hint. A
+gateway-set or directory-resolved attribute with the same name always wins.
 
 Header names are lowercase. The gateway reserves attribute names under `gen_ai.`
 (except `gen_ai.client.app`), `stacklok.`, and `budget.`, plus `user.id`,
@@ -244,6 +247,7 @@ present, and list the labels to resolve:
 ai-gateway-v2:
   directory:
     endpoint: '<DIRECTORY_GRPC_ADDRESS>'
+    groupsResolutionIssuer: '<IDP_ISSUER_URL>'
     tokenProjection:
       enabled: true
     groupLabels:
@@ -257,8 +261,8 @@ chart adds `system:serviceaccount:<NAMESPACE>:<RELEASE_NAME>-ai-gateway-v2` to
 Gateway v2 is enabled. If you override that list, include this entry.
 
 For requests that use a virtual API key, the gateway resolves labels through the
-key's owner. Set `directory.groupsResolutionIssuer` to the issuer the directory
-knows those owners under.
+key's owner. `directory.groupsResolutionIssuer` is the issuer the directory
+knows those owners under. The chart refuses to render `groupLabels` without it.
 
 ### How labels appear
 
@@ -331,8 +335,9 @@ incomplete identity. The gateway logs
 `directory group resolution failed; refusing request`.
 
 Confirm that `directory.endpoint` includes the port, that
-`directory.tokenProjection.enabled` is `true`, and that `saSubjectAllowlist`
-contains the gateway's ServiceAccount.
+`directory.tokenProjection.enabled` is `true`, and that
+`enterprise-manager.grpc.callerAuth.saSubjectAllowlist` contains the gateway's
+ServiceAccount.
 
 </details>
 

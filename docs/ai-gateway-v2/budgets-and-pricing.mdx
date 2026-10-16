@@ -2,8 +2,8 @@
 title: Budgets and pricing
 sidebar_label: Budgets and pricing
 description:
-  Cap AI Gateway v2 model spend per user or group in USD, publish a pricing
-  catalog, and see how refused requests reach the client.
+  Cap AI Gateway v2 model spend per user or group in USD, update model pricing,
+  and see how refused requests reach the client.
 ---
 
 import BudgetsApi from '../ai-gateway/_partials/_budgets-api.mdx';
@@ -17,13 +17,14 @@ service can charge it.
 
 Use [Budgets](manage-budgets.mdx) in the console for routine administration. Use
 the REST API for automation, bulk import, and pricing. Budgets belong to users
-and groups, so the same budgets apply to traffic from either AI Gateway data
-plane.
+and groups, so the same budgets apply to traffic from both the AI Gateway and AI
+Gateway v2.
 
 :::danger[Cover every caller before you connect the gateway to budgets]
 
-Budget enforcement denies callers without an applicable budget. Cover every
-caller before you set `budgets.endpoint` on a gateway that serves traffic.
+A connected gateway refuses every caller without an applicable budget. Use one
+of the approaches in the next section before you set `budgets.endpoint` on a
+gateway that serves traffic.
 
 :::
 
@@ -40,8 +41,14 @@ renders from the `budgets` values:
 | `budgets-usage`     | After the provider response        | Records usage and charges a budget. The client receives the response only after it does. |
 | `budgets-capture`   | After the other request-time hooks | Forwards the conversation for capture. Best effort, and never blocks the request.        |
 
-The chart renders `budgets-capture` only when `budgets.capture` is `true`. Set
-these values to connect the gateway:
+The chart renders `budgets-capture` only when `budgets.capture` is `true`.
+Conversation capture is experimental. Enterprise Manager accepts captured
+conversations only when
+`global.stacklok.experiments.insightsClassification.enabled` is `true`, subject
+to a release-channel guard. Without it, `budgets-capture` calls fail and its
+probe reports errors, while admission and usage are unaffected.
+
+Set these values to connect the gateway:
 
 | Value                              | Purpose                                                                                                                            |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
@@ -76,11 +83,11 @@ kubectl logs -n <NAMESPACE> deploy/<RELEASE_NAME>-ai-gateway-v2 \
 ```
 
 The same pings feed the `stacklok.ai_gateway.webhook.probes` counter, labeled by
-`webhook_name` and `outcome` (`success` or `error`). A failing ping usually
-means the token audience doesn't match the receiver's, the CA bundle doesn't
-trust the receiver's certificate, or `budgets.endpoint` points at the wrong
-Service. Pings don't affect readiness, so a pod reports ready while its budgets
-receiver is unreachable.
+`webhook_name`, `outcome` (`success` or `error`), and `webhook_reason`. A
+failing ping usually means the token audience doesn't match the receiver's, the
+CA bundle doesn't trust the receiver's certificate, or `budgets.endpoint` points
+at the wrong Service. Pings don't affect readiness, so a pod reports ready while
+its budgets receiver is unreachable.
 
 <PricingCatalog />
 
@@ -115,10 +122,10 @@ Use [Budgets](manage-budgets.mdx) to compare usage with each limit.
 The budgets service decides admission, and the gateway returns its status to the
 client with a `request denied by governance hook` message:
 
-| Status | Cause                                                                                                               |
-| ------ | ------------------------------------------------------------------------------------------------------------------- |
-| `402`  | Every applicable budget is exhausted (`budget exhausted`), or no budget covers the caller (`no applicable budget`). |
-| `403`  | The caller doesn't resolve to a directory user, or the model has no entry in the active pricing catalog.            |
+| Status | Cause                                                                                                                                                                                                          |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `402`  | Every applicable budget is exhausted (`budget exhausted`), or no budget covers the caller (`no applicable budget`).                                                                                            |
+| `403`  | The caller doesn't resolve to a directory user or service account, the directory couldn't be reached, or the model has no entry in the active pricing catalog. The message names the `budgets-admission` hook. |
 
 For an unpriced model, Enterprise Manager logs
 `budget admit: model not priceable by the active catalog; denying` with the
@@ -127,11 +134,11 @@ model and catalog provider, so you can add the missing entry.
 When the gateway gets no usable answer from the budgets service, it denies the
 request:
 
-| Status | Cause                                                              |
-| ------ | ------------------------------------------------------------------ |
-| `503`  | The budgets service is unreachable.                                |
-| `504`  | The call timed out. Each budgets call has a 5-second timeout.      |
-| `502`  | The budgets service returned an error status or a malformed reply. |
+| Status | Cause                                                                                                                                        |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `503`  | The budgets service is unreachable.                                                                                                          |
+| `504`  | The call timed out. Each attempt must answer within 650 milliseconds, and the gateway retries a failed attempt once within a 5-second limit. |
+| `502`  | The budgets service returned an error status or a malformed reply.                                                                           |
 
 The gateway reports usage once per interaction, after the provider response
 completes. For a non-streaming request, the gateway holds the response until
