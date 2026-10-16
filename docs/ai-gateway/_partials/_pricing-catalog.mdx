@@ -1,0 +1,110 @@
+## Publish a pricing catalog
+
+Publish the organization-wide pricing catalog through the API. Catalog versions
+use `effective_from` and take effect without a restart.
+
+Enterprise Manager ships a baseline catalog generated weekly from public model
+pricing. After publishing a custom version, maintain the custom catalog to add
+models or update rates.
+
+:::warning[`PUT` replaces the whole catalog]
+
+`PUT /v1/budgets/pricing` replaces the catalog. Retrieve the active catalog,
+edit it, and publish the complete result. The gateway denies requests for models
+omitted from the active catalog.
+
+:::
+
+```bash
+curl https://<ENTERPRISE_MANAGER_URL>/v1/budgets/pricing \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" > catalog.json
+# edit catalog.json
+curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets/pricing \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d @catalog.json
+```
+
+At startup, the service logs provider and model pairs omitted from a custom
+catalog. Application rollback preserves the active catalog. Publish a previous
+catalog version to restore earlier rates.
+
+### Rate fields by provider
+
+Set provider-specific rates for cache creation, reasoning, audio, prompt-size
+tiers, and server-side tools when the model reports those usage categories.
+
+Anthropic reports cache-creation tokens split by time to live, so declare each
+rate separately:
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "anthropic": {
+    "inputUsdPerMillion": "3",
+    "cacheCreation5mInputUsdPerMillion": "3.75",
+    "cacheCreation1hInputUsdPerMillion": "6",
+    "cachedInputUsdPerMillion": "0.3",
+    "outputUsdPerMillion": "15"
+  }
+}
+```
+
+OpenAI reasoning models report reasoning tokens, and the audio families report
+audio input and output separately:
+
+```json
+{
+  "provider": "openai",
+  "model": "gpt-4o-audio-preview",
+  "openai": {
+    "inputUsdPerMillion": "2.5",
+    "cachedInputUsdPerMillion": "1.25",
+    "outputUsdPerMillion": "10",
+    "audioInputUsdPerMillion": "40",
+    "audioOutputUsdPerMillion": "80"
+  }
+}
+```
+
+Some models charge a higher rate above a prompt-size threshold. Encode that with
+`promptSizeTiers`:
+
+```json
+{
+  "provider": "google",
+  "model": "gemini-2.5-pro",
+  "google": {
+    "inputUsdPerMillion": "1.25",
+    "cachedInputUsdPerMillion": "0.125",
+    "outputUsdPerMillion": "10",
+    "thoughtsOutputUsdPerMillion": "10",
+    "promptSizeTiers": [
+      {
+        "aboveTokens": 200000,
+        "inputUsdPerMillion": "2.5",
+        "cachedInputUsdPerMillion": "0.25",
+        "outputUsdPerMillion": "15"
+      }
+    ]
+  }
+}
+```
+
+Server-side tools that bill per thousand calls go in a `tools` block alongside
+`entries`, per provider rather than per model:
+
+```json
+{
+  "entries": ["...per-model entries..."],
+  "tools": {
+    "anthropic": { "webSearchUsdPerThousand": "10" },
+    "openai": {
+      "webSearchUsdPerThousand": "10",
+      "fileSearchUsdPerThousand": "2.5"
+    },
+    "google": { "groundingSearchUsdPerThousand": "35" }
+  }
+}
+```
