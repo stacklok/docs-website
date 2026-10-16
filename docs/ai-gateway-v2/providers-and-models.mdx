@@ -1,0 +1,237 @@
+---
+title: Connect model providers
+sidebar_label: Model providers
+description:
+  Connect OpenAI, Anthropic, AWS Bedrock, Google Vertex AI, Google AI Studio,
+  and OpenRouter to AI Gateway v2, and rotate their credentials.
+---
+
+A _provider_ is an upstream API endpoint, its credential, and the models it
+serves. Declare providers in `ai-gateway-v2.providers` and store credentials in
+Kubernetes Secrets.
+
+## Supported providers
+
+The provider `kind` decides which client APIs serve its models. AI Gateway v2
+forwards request bodies unchanged, so a model is reachable only on the APIs its
+provider speaks.
+
+| Provider              | `kind`              | Client APIs                            | Credential                                   |
+| --------------------- | ------------------- | -------------------------------------- | -------------------------------------------- |
+| OpenAI                | `openai`            | Chat Completions, Responses            | API key                                      |
+| OpenRouter            | `openrouter`        | Chat Completions, Responses            | API key                                      |
+| Anthropic             | `anthropic`         | Anthropic Messages                     | API key                                      |
+| Claude on AWS Bedrock | `bedrock-anthropic` | Anthropic Messages                     | EKS Pod Identity, or an AWS credentials file |
+| Google AI Studio      | `gemini-aistudio`   | Gemini `generateContent` and streaming | API key                                      |
+| Google Vertex AI      | `vertex`            | Gemini `generateContent` and streaming | Service account key                          |
+
+`bedrock-anthropic` calls the Bedrock InvokeModel API with Anthropic's native
+request format and requires `region`. `vertex` uses the Vertex Gemini API and
+requires `project` and `region`.
+
+Each provider needs `kind`, `baseUrl`, and at least one model. The chart refuses
+to render a provider that is missing one of them or uses an unknown `kind`.
+
+## Add a provider
+
+1. Create the credential Secret in the platform namespace:
+
+   ```bash
+   kubectl create secret generic ai-gateway-v2-openai \
+     -n <NAMESPACE> \
+     --from-literal=api-key='<OPENAI_API_KEY>'
+   ```
+
+2. Declare the provider and the models it serves. `credentialSecretRef` names
+   the Secret and the data key that holds the credential:
+
+   ```yaml title="values.yaml"
+   ai-gateway-v2:
+     providers:
+       - kind: openai
+         baseUrl: https://api.openai.com
+         models: ['gpt-5', 'gpt-5-mini']
+         credentialSecretRef:
+           name: ai-gateway-v2-openai
+           key: api-key
+   ```
+
+   The `models` list is the route table. See
+   [Route models and control access](./model-routing.mdx) for how the gateway
+   matches a request to a provider.
+
+3. Upgrade the release and wait for the rollout to finish:
+
+   ```bash
+   helm upgrade <RELEASE_NAME> <CHART> -n <NAMESPACE> -f values.yaml
+   kubectl rollout status deployment/<RELEASE_NAME>-ai-gateway-v2 -n <NAMESPACE>
+   ```
+
+   A configuration the gateway can't load makes the new pods exit at startup, so
+   they never become ready. The previous pods keep serving, and the rollout
+   stops progressing.
+
+4. Send a request through the gateway to confirm the credential works end to
+   end:
+
+   ```bash
+   curl -s https://<AI_GATEWAY_HOST>/v1/chat/completions \
+     -H "Authorization: Bearer <ACCESS_TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{"model": "gpt-5-mini", "messages": [{"role": "user", "content": "ping"}]}'
+   ```
+
+Credentials are never written inline in values. The chart refuses to render a
+provider with an inline credential, because the configuration lives in a
+ConfigMap.
+
+## Provider specifics
+
+### Anthropic
+
+```yaml
+ai-gateway-v2:
+  providers:
+    - kind: anthropic
+      baseUrl: https://api.anthropic.com
+      models: ['claude-sonnet-5', 'claude-haiku-4-5']
+      credentialSecretRef:
+        name: ai-gateway-v2-anthropic
+        key: api-key
+```
+
+### Claude on AWS Bedrock
+
+Without a `credentialSecretRef`, the gateway resolves AWS credentials from the
+default AWS credential chain. Associate an IAM role that can invoke the Bedrock
+models with the gateway's ServiceAccount through EKS Pod Identity.
+
+```yaml
+ai-gateway-v2:
+  providers:
+    - kind: bedrock-anthropic
+      baseUrl: https://bedrock-runtime.us-east-1.amazonaws.com
+      region: us-east-1
+      models: ['us.anthropic.claude-sonnet-5']
+```
+
+To use long-lived keys instead, store an AWS shared credentials file in a
+Secret, reference it with `credentialSecretRef`, and optionally select a profile
+with `awsProfile`. The profile defaults to `default`.
+
+```bash
+kubectl create secret generic ai-gateway-v2-bedrock \
+  -n <NAMESPACE> \
+  --from-file=credentials=<PATH_TO_AWS_CREDENTIALS_FILE>
+```
+
+```yaml
+ai-gateway-v2:
+  providers:
+    - kind: bedrock-anthropic
+      baseUrl: https://bedrock-runtime.us-east-1.amazonaws.com
+      region: us-east-1
+      models: ['us.anthropic.claude-sonnet-5']
+      credentialSecretRef:
+        name: ai-gateway-v2-bedrock
+        key: credentials
+      awsProfile: <AWS_PROFILE>
+```
+
+### Google Vertex AI
+
+Vertex AI authenticates with a Google service account key. Store the key file in
+a Secret and set `project` and `region`:
+
+```bash
+kubectl create secret generic ai-gateway-v2-vertex \
+  -n <NAMESPACE> \
+  --from-file=service_account.json=<PATH_TO_SERVICE_ACCOUNT_JSON>
+```
+
+```yaml
+ai-gateway-v2:
+  providers:
+    - kind: vertex
+      baseUrl: https://aiplatform.googleapis.com
+      project: <GCP_PROJECT_ID>
+      region: <GCP_REGION>
+      models: ['gemini-2.5-pro']
+      credentialSecretRef:
+        name: ai-gateway-v2-vertex
+        key: service_account.json
+```
+
+### Google AI Studio
+
+`gemini-aistudio` uses the Gemini API with an API key:
+
+```yaml
+ai-gateway-v2:
+  providers:
+    - kind: gemini-aistudio
+      baseUrl: https://generativelanguage.googleapis.com
+      models: ['gemini-2.5-flash']
+      credentialSecretRef:
+        name: ai-gateway-v2-gemini
+        key: api-key
+```
+
+### OpenRouter
+
+`openrouter` serves OpenRouter's model slugs on the OpenAI Chat Completions and
+Responses APIs. Set `baseUrl` to the host only; the gateway adds OpenRouter's
+`/api/v1` path.
+
+```yaml
+ai-gateway-v2:
+  providers:
+    - kind: openrouter
+      baseUrl: https://openrouter.ai
+      models: ['deepseek/deepseek-v4-pro', 'moonshotai/kimi-k3']
+      credentialSecretRef:
+        name: ai-gateway-v2-openrouter
+        key: api-key
+```
+
+## Rotate a credential
+
+Update the Secret in place, then restart the gateway so new pods mount the new
+value:
+
+```bash
+kubectl create secret generic ai-gateway-v2-openai \
+  -n <NAMESPACE> \
+  --from-literal=api-key='<NEW_OPENAI_API_KEY>' \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl rollout restart deployment/<RELEASE_NAME>-ai-gateway-v2 -n <NAMESPACE>
+```
+
+A `helm upgrade` run after the Secret change also rolls the pods, because the
+chart hashes the contents of every referenced Secret. Tools that render the
+chart without cluster access, such as Argo CD, can't read the Secret, so restart
+the Deployment explicitly there.
+
+Send a test request after the rollout finishes to confirm the new credential is
+in use.
+
+## Remove a provider
+
+Remove the provider entry from `ai-gateway-v2.providers`, upgrade the release,
+and delete its Secret after the rollout finishes:
+
+```bash
+helm upgrade <RELEASE_NAME> <CHART> -n <NAMESPACE> -f values.yaml
+kubectl delete secret ai-gateway-v2-openai -n <NAMESPACE>
+```
+
+Requests for the provider's models then return `404`. If it was the last
+provider serving the Responses API or Gemini streaming, those endpoints return
+`501` instead.
+
+## Next steps
+
+- [Route models and control access](./model-routing.mdx) to understand how
+  requests reach a provider and to limit models per group.
+- [Budgets and pricing](./budgets-and-pricing.mdx) to publish prices for the
+  models you route.

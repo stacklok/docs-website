@@ -300,6 +300,12 @@ const config: Config = {
         },
         {
           type: 'docSidebar',
+          sidebarId: 'aiGatewayV2Sidebar',
+          label: 'AI Gateway v2',
+          position: 'left',
+        },
+        {
+          type: 'docSidebar',
           sidebarId: 'connectorGatewaySidebar',
           label: 'Connector Gateway',
           position: 'left',
