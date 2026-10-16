@@ -1,16 +1,17 @@
 ---
-title: Migrate from the AI Gateway
-sidebar_label: Migrate from the AI Gateway
+title: Migrate from the legacy AI Gateway
+sidebar_label: Migrate from the legacy gateway
 description:
-  Move model traffic from the Envoy-based AI Gateway to AI Gateway v2, with a
+  Move model traffic from the legacy AI Gateway to the AI Gateway, with a
   side-by-side window, a configuration map, and a cutover checklist.
 ---
 
-AI Gateway v2 replaces the Envoy-based AI Gateway's operator and `AIGateway`
-resource with platform chart values under the `ai-gateway-v2` key. Both gateways
-use the same Enterprise Manager for budgets, pricing, virtual API keys, and
-model access, so users, budgets, and keys carry over unchanged. What you move is
-the gateway configuration and the clients' base URLs.
+The legacy AI Gateway is configured through its operator and the `AIGateway`
+resource. The AI Gateway is configured through platform chart values under the
+`ai-gateway-v2` key. Both gateways use the same Enterprise Manager for budgets,
+pricing, virtual API keys, and model access, so users, budgets, and keys carry
+over unchanged. What you move is the gateway configuration and the clients' base
+URLs.
 
 ## Run both side by side
 
@@ -30,10 +31,10 @@ global:
 Run both only for the migration window. While both run, you're responsible for
 four things the chart can't check:
 
-- **Distinct hostnames.** Give AI Gateway v2 its own hostname through
+- **Distinct hostnames.** Give the AI Gateway its own hostname through
   `httpRoute.hostname`, on a listener the `AIGateway` doesn't serve. If the two
   routes overlap, nothing decides which gateway serves a request.
-- **Screening differs by gateway.** AI Gateway v2 screens PII only when
+- **Screening differs by gateway.** The AI Gateway screens PII only when
   `scanning.enabled` is on, and runs Bedrock Guardrails only when
   `guardrails.enabled` is on. Move whole groups of users at once, and keep track
   of which group uses which gateway.
@@ -55,7 +56,7 @@ same change that disables the gateway you're retiring.
 
 Each `AIGateway` field has an `ai-gateway-v2` value or no equivalent:
 
-| `AIGateway` field                                                                                      | AI Gateway v2 value                                                                                      |
+| `AIGateway` field                                                                                      | AI Gateway value                                                                                         |
 | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
 | `spec.providers[]`                                                                                     | `providers[]` with `kind`, `baseUrl`, `models`, `credentialSecretRef`, `region`, `project`, `awsProfile` |
 | `schema: OpenAI`                                                                                       | `kind: openai`                                                                                           |
@@ -98,10 +99,10 @@ Provider credentials stay in Kubernetes Secrets. Reference each one with
 `providers[].credentialSecretRef`. The chart refuses inline credentials. See
 [Connect model providers](./providers-and-models.mdx).
 
-## What AI Gateway v2 does not support
+## What the AI Gateway does not support
 
 Check your `AIGateway` for these features before you migrate. None of them has
-an AI Gateway v2 equivalent:
+an AI Gateway equivalent:
 
 - Weighted or priority backends, and failover between providers. Each model is
   served by exactly one provider.
@@ -111,8 +112,9 @@ an AI Gateway v2 equivalent:
   on Google Vertex AI.
 - PII scanning of responses. Scanning covers requests.
 - Interaction journaling.
-- The AI Gateway management API (`/v1/info`, `/v1/me`, and the MCP server
-  catalog). AI Gateway v2 serves `GET /v1/models` on its inference listener.
+- The legacy gateway's [management API](./legacy/api-reference.mdx) (`/v1/info`,
+  `/v1/me`, and the MCP server catalog). The AI Gateway serves `GET /v1/models`
+  on its inference listener.
 - `AIPolicy` authorization and role-based authorization rules.
 - Custom webhooks and an operator-defined header strip list.
 - Hot reload. Configuration and credential changes apply through a rolling
@@ -120,13 +122,13 @@ an AI Gateway v2 equivalent:
 
 ## Behavior differences
 
-- **Each client uses its own API.** AI Gateway v2 forwards requests in the
+- **Each client uses its own API.** The AI Gateway forwards requests in the
   format the client sent and doesn't translate between APIs. OpenAI and
   OpenRouter models are served on `/v1/chat/completions` and `/v1/responses`.
   Anthropic and Bedrock models are served on `/v1/messages` and
   `/anthropic/v1/messages`. Gemini and Vertex AI models are served on `/v1beta`.
   See
-  [Client endpoints](../platform/enterprise-platform/configure-ai-gateway-v2.mdx#client-endpoints).
+  [Client endpoints](../platform/enterprise-platform/configure-ai-gateway.mdx#client-endpoints).
 - **Unknown models are refused.** A model no provider lists returns `404`. When
   no provider serves the Responses API or Gemini streaming at all, those
   endpoints return `501`. Listing the same model twice for the same client API
@@ -148,10 +150,10 @@ format.
 
 ## Cut over
 
-1. **Install AI Gateway v2 alongside the AI Gateway** with
+1. **Install the AI Gateway alongside the legacy gateway** with
    `acknowledgeBothDataPlanes`, its own hostname, and the budget and directory
    connections from
-   [Configure AI Gateway v2](../platform/enterprise-platform/configure-ai-gateway-v2.mdx).
+   [Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx).
 2. **Recreate your providers and models** in `providers`, using the
    [configuration map](#map-your-configuration). Turn on the same screening you
    run today.
@@ -159,18 +161,19 @@ format.
    users rely on, streaming and non-streaming, with a test account that has a
    budget.
 4. **Move clients.** Set `toolhive-cloud-ui.gatewayProxyUrl` to the AI Gateway
-   v2 URL so the console's setup instructions point there, and have users rerun
+   URL so the console's setup instructions point there, and have users rerun
    `thv llm setup`. Move one group of users at a time.
 5. **Delete the `AIGateway` resource** once no traffic reaches it. Do this
    before step 6, while the AI Gateway operator is still installed, so the
    operator cleans up the resources it created.
-6. **Disable the AI Gateway.** Set `global.stacklok.aiGateway.enabled: false`,
-   remove `global.stacklok.acknowledgeBothDataPlanes` in the same change, and
-   upgrade. Then delete the provider Secrets that only the `AIGateway` used.
+6. **Disable the legacy gateway.** Set
+   `global.stacklok.aiGateway.enabled: false`, remove
+   `global.stacklok.acknowledgeBothDataPlanes` in the same change, and upgrade.
+   Then delete the provider Secrets that only the `AIGateway` used.
 
 ## Next steps
 
-- [Configure AI Gateway v2](../platform/enterprise-platform/configure-ai-gateway-v2.mdx)
+- [Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx)
   to set up the gateway.
 - [Connect model providers](./providers-and-models.mdx) to recreate your
   providers.

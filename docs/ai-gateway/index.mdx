@@ -1,8 +1,8 @@
 ---
 title: AI Gateway
 description:
-  Govern, secure, and control access to large language model providers from one
-  self-hosted enterprise gateway.
+  Govern and control access to large language model providers with a
+  self-hosted, single-binary enterprise gateway configured through Helm.
 ---
 
 import DocCardList from '@theme/DocCardList';
@@ -16,9 +16,13 @@ The AI Gateway is a component of Stacklok Enterprise.
 :::
 
 The AI Gateway is a self-hosted control point between AI clients and large
-language model (LLM) providers. Platform and security teams use it to enforce
-identity, budget, routing, data protection, and audit policies for model
-traffic.
+language model (LLM) providers. It authenticates each caller, routes the request
+to the provider that serves the model, and applies identity, budget, data
+protection, and audit policies on the way through.
+
+Clients call each model through its provider's own API, such as OpenAI Chat
+Completions, the OpenAI Responses API, Anthropic Messages, or the Gemini API.
+The gateway passes the request through in that format.
 
 The AI Gateway governs model access. The
 [Connector Gateway](../connector-gateway/index.mdx) governs MCP tool access.
@@ -26,43 +30,62 @@ The AI Gateway governs model access. The
 ## What you can do
 
 - Set cost budgets for users and groups.
-- Route model names across providers with weighting and failover.
-- Screen requests and responses for prompt injection, payment card data, and
-  personally identifiable information (PII).
+- Limit which models each user or group can call, and show each caller only the
+  models they can use.
+- Screen requests for prompt injection, payment card data, and personally
+  identifiable information (PII).
 - Record structured audit events and forward them to a security information and
   event management (SIEM) system.
-- Associate requests with identities while keeping provider credentials in the
-  gateway.
+- Authenticate callers with your identity provider or with virtual API keys,
+  while provider credentials stay in the gateway.
 - Export traces and metrics to an OpenTelemetry collector, attributed to the
   users and groups that sent the traffic.
 
 ## How configuration works
 
-Apply an `AIGateway` custom resource to configure providers, routing,
-resilience, and screening. The AI Gateway operator reconciles the resource into
-running infrastructure.
+You configure the AI Gateway through Helm values under the `ai-gateway-v2` key
+of the platform chart. The chart renders the values into a configuration file in
+a ConfigMap and mounts provider credentials from Kubernetes Secrets.
 
-Manage budgets in the console or use the
-[Enterprise Manager API](../platform/enterprise-platform/enterprise-manager-api.mdx)
-for automation and bulk import. See [Manage budgets](manage-budgets.mdx) and
+A configuration or credential change takes effect through a pod rollout. See
+[How configuration changes apply](../platform/enterprise-platform/configure-ai-gateway.mdx#how-configuration-changes-apply).
+Pods can become ready with a wrong budgets or provider setting, so send an
+authenticated test request after each rollout.
+
+Manage budgets in the console or through the Enterprise Manager API. See
+[Manage budgets](./manage-budgets.mdx) and
 [Budgets and pricing](./budgets-and-pricing.mdx).
 
-AI Gateway v2 is a separate implementation configured through Helm values
-instead of a custom resource. See the
-[AI Gateway v2 documentation](../ai-gateway-v2/index.mdx). To move an existing
-deployment, see
-[Migrate from the AI Gateway](../ai-gateway-v2/migrate-from-ai-gateway.mdx).
+## Legacy gateway
+
+The legacy AI Gateway is still documented for platforms that run it. A platform
+runs one of the two, except during a migration window. To tell which one you
+run:
+
+- The AI Gateway is enabled with `global.stacklok.aiGatewayV2.enabled`, runs as
+  the `<RELEASE_NAME>-ai-gateway-v2` Deployment, and is configured through Helm
+  values.
+- The legacy gateway is installed through the AI Gateway operator with
+  `global.stacklok.aiGateway.enabled`, and is configured through `AIGateway`
+  custom resources. Run `kubectl get aigw -A` to list them.
+
+See the [legacy AI Gateway documentation](./legacy/index.mdx). To move to the AI
+Gateway, see [Migrate from the legacy AI Gateway](./migrate-from-legacy.mdx).
 
 ## Before you start
 
 Install the AI Gateway before applying the examples in this section. See
 [Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx).
 
-Examples on these pages use `-n <NAMESPACE>`, where `<NAMESPACE>` is the
-namespace your AI Gateway is installed into.
+Examples on these pages show values relative to the platform chart's values file
+and use `<NAMESPACE>` for the namespace the platform is installed into,
+`<RELEASE_NAME>` for the Helm release name, and `<CHART>` for the platform chart
+reference you install from. In prose, value paths are relative to the
+`ai-gateway-v2` key, except those that start with `global.` or another chart's
+key, such as `enterprise-manager.`.
 
-For caller identity and catalog API endpoints, see the
-[management API reference](./api-reference.mdx).
+For the client-facing endpoints and credential headers, see the
+[endpoints reference](./endpoints-reference.mdx).
 
 ## Contents
 

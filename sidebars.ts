@@ -379,7 +379,6 @@ const platformSidebar: SidebarsConfig[string] = [
       'platform/enterprise-platform/configure-registry-server',
       'platform/enterprise-platform/configure-identity',
       'platform/enterprise-platform/configure-ai-gateway',
-      'platform/enterprise-platform/configure-ai-gateway-v2',
       'platform/enterprise-platform/configure-connector-gateway',
       'platform/enterprise-platform/roll-out-gateway-clients',
       {
@@ -541,46 +540,109 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
   {
     type: 'doc',
     id: 'ai-gateway/index',
+    label: 'Overview',
     className: 'enterprise-only enterprise-only--tooltip-below',
   },
-  'ai-gateway/providers-and-models',
-  'ai-gateway/model-routing',
-  'ai-gateway/budgets-and-pricing',
-  'ai-gateway/manage-budgets',
-  'ai-gateway/prompt-injection-screening',
-  'ai-gateway/pci-pii-controls',
-  'ai-gateway/forward-audit-logs',
-  'ai-gateway/telemetry',
-
   {
-    type: 'category',
-    label: 'Reference',
-    collapsed: false,
-    items: ['ai-gateway/api-reference'],
+    type: 'ref',
+    id: 'platform/enterprise-platform/configure-ai-gateway',
+    label: 'Configure and deploy',
   },
-];
-
-const aiGatewayV2Sidebar: SidebarsConfig[string] = [
   {
     type: 'doc',
-    id: 'ai-gateway-v2/index',
-    className: 'enterprise-only enterprise-only--tooltip-below',
+    id: 'ai-gateway/providers-and-models',
+    label: 'Model providers',
   },
-  'ai-gateway-v2/providers-and-models',
-  'ai-gateway-v2/model-routing',
-  'ai-gateway-v2/budgets-and-pricing',
-  'ai-gateway-v2/manage-budgets',
-  'ai-gateway-v2/prompt-injection-screening',
-  'ai-gateway-v2/pci-pii-controls',
-  'ai-gateway-v2/forward-audit-logs',
-  'ai-gateway-v2/telemetry',
-  'ai-gateway-v2/migrate-from-ai-gateway',
+  {
+    type: 'doc',
+    id: 'ai-gateway/model-routing',
+    label: 'Model routing and access',
+  },
+  { type: 'doc', id: 'ai-gateway/manage-budgets', label: 'Manage budgets' },
+  'ai-gateway/budgets-and-pricing',
+  'ai-gateway/budget-enforcement',
+  {
+    type: 'doc',
+    id: 'ai-gateway/prompt-injection-screening',
+    label: 'Prompt injection screening',
+  },
+  { type: 'doc', id: 'ai-gateway/pci-pii-controls', label: 'PCI/PII controls' },
+  {
+    type: 'doc',
+    id: 'ai-gateway/forward-audit-logs',
+    label: 'Audit log forwarding',
+  },
+  { type: 'doc', id: 'ai-gateway/telemetry', label: 'Telemetry' },
 
   {
     type: 'category',
     label: 'Reference',
     collapsed: false,
-    items: ['ai-gateway-v2/endpoints-reference'],
+    items: [
+      {
+        type: 'doc',
+        id: 'ai-gateway/endpoints-reference',
+        label: 'Endpoints reference',
+      },
+    ],
+  },
+  {
+    type: 'doc',
+    id: 'ai-gateway/migrate-from-legacy',
+    label: 'Migrate from the legacy gateway',
+  },
+  {
+    type: 'category',
+    label: 'Legacy gateway',
+    collapsed: true,
+    items: [
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/index',
+        label: 'Overview and deployment identification',
+      },
+      {
+        type: 'doc',
+        id: 'platform/enterprise-platform/legacy/configure-ai-gateway',
+        label: 'Configure and deploy',
+      },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/providers-and-models',
+        label: 'Model providers',
+      },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/model-routing',
+        label: 'Model routing',
+      },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/budget-enforcement',
+        label: 'Budget enforcement',
+      },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/prompt-injection-screening',
+        label: 'Prompt injection screening',
+      },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/pci-pii-controls',
+        label: 'PCI/PII controls',
+      },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/forward-audit-logs',
+        label: 'Audit log forwarding',
+      },
+      { type: 'doc', id: 'ai-gateway/legacy/telemetry', label: 'Telemetry' },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/api-reference',
+        label: 'Management API reference',
+      },
+    ],
   },
 ];
 
@@ -706,7 +768,6 @@ const sidebars: SidebarsConfig = {
   platformSidebar,
   mcpSidebar,
   aiGatewaySidebar,
-  aiGatewayV2Sidebar,
   connectorGatewaySidebar,
   resourcesSidebar,
 };

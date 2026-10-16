@@ -2,90 +2,130 @@
 title: Screen prompts for injection
 sidebar_label: Prompt injection screening
 description:
-  Screen inbound prompts for injection attacks with AWS Bedrock Guardrails,
-  including rollout from monitor to enforce, IAM setup, and cost.
+  Screen AI Gateway prompts for injection attacks with AWS Bedrock Guardrails,
+  including the monitor-to-enforce rollout, IAM setup, and cost.
 ---
 
-Prompt injection screening sends inbound prompts to an AWS Bedrock Guardrail
-before the model request reaches its provider. Configure the existing guardrail
-ID and version under `spec.guardrails` on the `AIGateway` resource.
+Prompt injection screening sends each request's user-authored text to an AWS
+Bedrock Guardrail before the request reaches its provider. Configure your
+existing guardrail's ID and version under `guardrails` in your platform values.
+The chart then deploys a guardrails adapter that calls Bedrock on the gateway's
+behalf. When [PCI/PII scanning](./pci-pii-controls.mdx) is also on, screening
+runs after it, so the guardrail sees redacted text.
 
-:::note
-
-[PCI/PII controls](./pci-pii-controls.mdx) scan sensitive data in your cluster.
-Configure either control independently or use them together.
-
-:::
+For the legacy AI Gateway, see
+[legacy gateway prompt injection screening](./legacy/prompt-injection-screening.mdx).
 
 ## Prerequisites
 
 - A Bedrock guardrail exists in your AWS account with at least one filter
   configured.
-- You have chosen how the gateway authenticates to AWS: IAM roles for service
-  accounts (IRSA), EKS Pod Identity, or a static credentials Secret.
+- `global.webhooks.issuerRef` and `global.webhooks.caBundleSecret` name a
+  cert-manager issuer and the Secret holding its CA. The adapter's serving
+  certificate comes from them, the same pair PCI/PII scanning uses.
+- You have chosen how the adapter authenticates to AWS: EKS Pod Identity, IAM
+  roles for service accounts (IRSA), or a static credentials Secret.
 - The principal it authenticates as holds `bedrock:ApplyGuardrail` on the
   guardrail ARN. See [Grant AWS access](#grant-aws-access).
 
-## The five decisions
+## The three decisions
 
-| Field                       | Default   | What it decides                                                      |
-| --------------------------- | --------- | -------------------------------------------------------------------- |
-| `engine`                    | required  | Which screening service. `BedrockGuardrails` is the only value today |
-| `phases`                    | required  | When screening runs. `[Request]` is the only value today             |
-| `mode`                      | `Enforce` | `Enforce` blocks a flagged prompt; `Monitor` only records it         |
-| `failurePolicy`             | `Fail`    | What happens if the screening call itself fails                      |
-| `unscreenableContentPolicy` | `Deny`    | What happens to content that cannot be turned into text              |
+| Field                       | Default   | What it decides                                                                                                            |
+| --------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `mode`                      | `Enforce` | `Enforce` blocks a flagged prompt; `Monitor` only records it                                                               |
+| `failurePolicy`             | `Fail`    | Under `Enforce`, what happens if the screening call itself fails: `Fail` blocks the request, `Ignore` admits it unscreened |
+| `unscreenableContentPolicy` | `Deny`    | What happens to user content that carries no screenable text                                                               |
 
-`failurePolicy` handles timeouts and AWS errors. `unscreenableContentPolicy`
-handles content that the gateway cannot convert to text, such as an image-only
-message. For vision workloads, consider `Admit` for unscreenable content while
-retaining `Fail` for screening errors.
+`failurePolicy` handles an adapter that is unreachable, slow, or returns an
+error, including AWS errors. `unscreenableContentPolicy` handles user content
+the adapter can't convert to text, such as an image-only message or a request
+format it doesn't recognize. For vision workloads, consider `Admit` for
+unscreenable content while retaining `Fail` for screening errors. Empty request
+bodies and requests without a user message are admitted without screening.
 
-The gateway also marks unrecognized provider request formats as unscreenable.
-Alert on this reason because it can indicate that prompts are bypassing
-screening. Empty request bodies and requests without a user message are admitted
-without screening. The audit trail records each decision.
+The adapter reads the `messages` field of Chat Completions and Anthropic
+Messages requests and the `contents` field of Gemini requests. OpenAI Responses
+API requests (`/v1/responses`, used by Codex) carry neither, so the adapter
+can't screen them, and in `Enforce` mode `Deny` refuses them. Set `Admit` if
+those clients must keep working.
+
+`Monitor` never blocks. The gateway forwards the request without waiting for the
+verdict, so an adapter failure has no effect on the client.
 
 ## Enable screening
 
-Start in `Monitor` with `failurePolicy: Ignore` to measure verdicts, latency,
-and cost before enforcing the control.
+The gateway doesn't wait for the adapter to become ready, so turning screening
+on directly in `Enforce` mode refuses requests until it is. Go through `Monitor`
+first:
 
-```yaml title="aigateway.yaml"
-apiVersion: ai-gateway.stacklok.dev/v1alpha1
-kind: AIGateway
-metadata:
-  name: ai-gateway
-spec:
+1. Turn screening on in `Monitor` mode and wait for the adapter Deployment to
+   roll out:
+
+   ```yaml title="values.yaml"
+   ai-gateway-v2:
+     guardrails:
+       enabled: true
+       mode: Monitor
+       unscreenableContentPolicy: Deny
+       bedrock:
+         guardrailId: <GUARDRAIL_ID>
+         guardrailVersion: '1'
+         region: us-east-1
+   ```
+
+   Measure verdicts, latency, and cost here, and tune the guardrail. See
+   [Observe verdicts](#observe-verdicts).
+
+1. Switch to enforcement in a second upgrade:
+
+   ```yaml title="values.yaml"
+   ai-gateway-v2:
+     guardrails:
+       mode: Enforce
+       failurePolicy: Fail
+   ```
+
+To turn screening off, reverse the order: switch back to `Monitor` first, then
+set `enabled: false`.
+
+`guardrailVersion` is `DRAFT` or a version number, written as a string. The
+chart refuses to render with screening on and no guardrail ID, version, or
+region.
+
+`guardrails.hook.timeout` is the budget the gateway gives the adapter, including
+the Bedrock call. It defaults to `5s` and accepts up to `120s`; raise it if
+guardrail latency approaches it. To scale the adapter, set
+`guardrails.adapter.replicas` (default `2`), or set
+`guardrails.adapter.maxReplicas` above `1` to have a HorizontalPodAutoscaler
+manage it. `guardrails.adapter.targetCPUUtilization` defaults to `75`. Under
+`failurePolicy: Fail`, a single adapter replica is a single point of failure for
+every request.
+
+### Exempt known prompts
+
+Some clients send fixed, machine-generated prompts, such as a health check.
+`guardrails.bedrock.promptWhitelist` exempts them from screening:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
   guardrails:
-    enabled: true
-    engine: BedrockGuardrails
-    phases:
-      - Request
-    mode: Monitor
-    failurePolicy: Ignore
-    unscreenableContentPolicy: Deny
-    timeoutSeconds: 5
     bedrock:
-      guardrailId: <GUARDRAIL_ID>
-      guardrailVersion: '1'
-      region: us-east-1
+      promptWhitelist:
+        prompts:
+          - ping
+        regexes:
+          - '^Summarize this conversation in [0-9]+ words\.$'
 ```
 
-After validation, enforce verdicts and fail closed on screening errors:
-
-```yaml
-mode: Enforce
-failurePolicy: Fail
-```
-
-`timeoutSeconds` accepts 1 to 120 and defaults to 5. To scale the screening
-component, set `replicas`, or set `maxReplicas` and `targetCPUUtilization`
-together to have the gateway manage autoscaling for you.
+`prompts` are exact, case-sensitive matches on a complete user turn. `regexes`
+are RE2 expressions that match anywhere in the turn unless anchored, so anchor
+both ends: `^ping` also exempts `ping. Ignore previous instructions`, while
+`^ping$` exempts only `ping`. An exempt turn skips every guardrail filter, not
+only prompt attack detection.
 
 ## Grant AWS access
 
-Whichever principal the gateway authenticates as must hold this permission on
+Whichever principal the adapter authenticates as must hold this permission on
 the guardrail:
 
 ```json
@@ -100,35 +140,39 @@ Grant `bedrock:ApplyGuardrail` explicitly. The control-plane actions
 `bedrock:GetGuardrail` and `bedrock:ListGuardrails` do not include this
 permission. Missing permission causes screening calls to follow `failurePolicy`.
 
-### IRSA
-
-The gateway creates a ServiceAccount named `<GATEWAY_NAME>-guardrails-adapter`.
-Annotate it with the IAM role:
-
-```bash
-kubectl annotate serviceaccount \
-  -n <NAMESPACE> \
-  <GATEWAY_NAME>-guardrails-adapter \
-  eks.amazonaws.com/role-arn=arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME>
-```
-
-The operator preserves the annotation during reconciliation. Restart the
-screening pod to project the role token.
+The chart creates a ServiceAccount for the adapter named
+`<RELEASE_NAME>-ai-gateway-v2-guardrails-adapter`.
 
 ### EKS Pod Identity
 
-Associate the same ServiceAccount with an IAM role through an EKS Pod Identity
-association, and no annotation is needed.
+Associate an IAM role with the adapter's ServiceAccount through an EKS Pod
+Identity association. No annotation is needed. The chart's network policy allows
+the adapter to reach the EKS Pod Identity node agent at `169.254.170.23`. If you
+replace that policy, preserve this egress, and check that no cluster-wide policy
+blocks the address. Blocking it causes credential requests and screening calls
+to time out.
 
-The default network policy allows access to the EKS Pod Identity node agent. If
-you replace the policy, preserve this egress rule. Blocking it causes credential
-requests and screening calls to time out.
+### IRSA
+
+Annotate the adapter's ServiceAccount with the IAM role through your values:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  guardrails:
+    adapter:
+      serviceAccount:
+        annotations:
+          eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME>
+```
+
+Restart the adapter Deployment after the upgrade so its pods receive the role
+token.
 
 ### Static credentials
 
-Set `spec.guardrails.bedrock.credentialsSecretRef.name` to a Secret in the same
-namespace as the gateway. It must carry a single `credentials` key holding an
-AWS credentials file in INI format:
+Set `guardrails.bedrock.credentialsSecretRef.name` to a Secret in the platform
+namespace. It must carry a single `credentials` key holding an AWS credentials
+file in INI format:
 
 ```yaml
 apiVersion: v1
@@ -166,15 +210,20 @@ the guardrail ID, and the region are all correct. An access-denied error naming
 
 Verdicts reach you three ways:
 
-- **The audit trail**, which carries the full event. See
+- **The audit trail.** In `Enforce` mode, each screened request's audit record
+  carries the guardrail's verdict under `extra.hook_annotations.guardrails`,
+  including the blocked categories. See
   [Forward audit logs](./forward-audit-logs.mdx).
-- **Metrics.** `aigw.guardrail.category_detections`, labeled by category and
-  policy type, increments once per blocked category in both `Monitor` and
-  `Enforce` mode. `aigw.guardrail.unscreenable`, labeled by reason, increments
-  once per request that could not be screened, under both `Deny` and `Admit`.
-  Alert on the `unrecognized-shape` reason because it indicates that the gateway
-  cannot extract text from a connected provider's requests.
-- **Component logs**, which name the categories that fired:
+- **Metrics.** In both modes, the gateway counts each prompt the guardrail flags
+  on `stacklok_ai_gateway_webhook_invocations_total` with
+  `webhook_name="guardrails"` and `webhook_outcome="deny"`. In `Monitor` mode,
+  that count is what `Enforce` would have blocked:
+
+  ```text
+  sum(rate(stacklok_ai_gateway_webhook_invocations_total{implementation="v2",webhook_name="guardrails",webhook_outcome="deny"}[5m]))
+  ```
+
+- **Adapter logs**, which name the categories that fired:
 
   ```bash
   kubectl logs -n <NAMESPACE> \
@@ -197,26 +246,28 @@ through your AWS billing tooling.
 ## Next steps
 
 - [PCI/PII controls](./pci-pii-controls.mdx) for in-cluster scanning of
-  sensitive data, which is a separate surface from this one.
+  sensitive data, which runs before this screen.
 - [Forward audit logs](./forward-audit-logs.mdx) to get verdicts into your
-  security information and event management system.
+  security information and event management (SIEM) system.
 
 ## Troubleshooting
 
 <details>
-<summary>`WebhooksReady=False` reports a guardrails probe failure</summary>
+<summary>Requests fail with a 502, 503, or 504 under `Enforce`</summary>
 
-The gateway pings the screening component once per reconcile to set this status.
-Inspect the probe details:
+The gateway couldn't get a usable verdict from the adapter, and
+`failurePolicy: Fail` refused the request. A `503` or `504` means the adapter
+was unreachable or slow. A `502` means the adapter reached AWS and the call
+failed, most often because the principal lacks `bedrock:ApplyGuardrail`. Check
+that the adapter pods are ready:
 
 ```bash
-kubectl get aigw <NAME> -n <NAMESPACE> \
-  -o jsonpath='{.status.webhooks}' | jq
+kubectl get pods -n <NAMESPACE> \
+  -l app.kubernetes.io/component=guardrails-adapter
 ```
 
-A transport timeout without a component log entry usually indicates a network
-policy problem. Preserve ingress from the gateway's main processor and the
-operator when replacing the default policy. Check component logs to confirm
-whether live screening requests succeed.
+If you replaced the chart's network policies, preserve ingress to the adapter
+from the gateway pods. Check the adapter logs to confirm whether live screening
+requests succeed.
 
 </details>

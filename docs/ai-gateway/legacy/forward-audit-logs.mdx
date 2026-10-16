@@ -1,0 +1,139 @@
+---
+title: Forward audit logs to your SIEM (legacy gateway)
+sidebar_label: Audit logs
+description:
+  Enable structured audit events for model requests, detections, and key
+  lifecycle, then ship them to Splunk, Elastic, Kafka, or Loki.
+---
+
+import AuditShippers from '../_partials/_audit-shippers.mdx';
+
+:::info[Legacy gateway]
+
+This page covers the legacy AI Gateway, which runs through the AI Gateway
+operator and `AIGateway` resources. For the current AI Gateway, see
+[Forward audit logs to your SIEM](../forward-audit-logs.mdx). To check which
+gateway you run, see
+[Identify your deployment](./index.mdx#identify-your-deployment).
+
+:::
+
+The legacy AI Gateway emits structured JSON audit events to pod standard output
+for request admission, detection decisions, virtual key changes, and
+authentication outcomes.
+
+Every event carries the fields required by NIST SP 800-53 controls AU-2, AU-3,
+and AU-8: a unique audit ID, a UTC timestamp, the subject, the component, the
+outcome, an optional target, and an extra block for forensic correlation.
+
+## Enable audit events
+
+Emission is off by default and is enabled per gateway:
+
+```yaml title="aigateway.yaml"
+apiVersion: ai-gateway.stacklok.dev/v1alpha1
+kind: AIGateway
+metadata:
+  name: ai-gateway
+spec:
+  audit:
+    enabled: true
+```
+
+Enabling audit events captures every supported event without sampling. Filter
+and route events in your log pipeline.
+
+## What gets captured
+
+| Event type                         | Fires when                                                   | Outcome         |
+| ---------------------------------- | ------------------------------------------------------------ | --------------- |
+| `aigw.processor.request.blocked`   | A detection blocks a request                                 | denied          |
+| `aigw.processor.request.redacted`  | A request body was masked before forwarding                  | success         |
+| `aigw.processor.response.blocked`  | Response masking failed, so the client got a synthetic error | denied          |
+| `aigw.processor.response.redacted` | A response body was masked before delivery                   | success         |
+| `aigw.processor.detection.logged`  | A passive detector fired, nothing mutated                    | success         |
+| `aigw.processor.body.truncated`    | A request or response body exceeded the size limit           | failure         |
+| `aigw.processor.config.reloaded`   | Configuration was reloaded                                   | success/failure |
+| `aigw.apikey.key.created`          | A virtual key was created                                    | success/error   |
+| `aigw.apikey.key.rotated`          | A virtual key was rotated                                    | success/error   |
+| `aigw.apikey.key.revoked`          | A virtual key was revoked                                    | success/error   |
+| `aigw.apikey.key.updated`          | A key was enabled, disabled, or edited                       | success/error   |
+| `aigw.apikey.authn.failed`         | Token validation failed on an API call                       | failure         |
+| `aigw.apikey.authz.denied`         | The caller lacked the required role                          | denied          |
+| `aigw.apikey.validation.failed`    | An invalid or unknown virtual key was presented              | failure         |
+| `aigw.apikey.ratelimit.exceeded`   | A per-key request rate limit was exceeded                    | denied          |
+
+Event types use `aigw.<component>.<resource>.<verb>`.
+
+## Event schema
+
+```json
+{
+  "audit_id": "b3d4f7a2-8c11-4f6e-9b0a-1c2d3e4f5a6b",
+  "type": "aigw.processor.request.blocked",
+  "logged_at": "2026-04-20T14:22:31.418Z",
+  "outcome": "denied",
+  "component": "main-processor",
+  "source": { "type": "network", "value": "10.42.0.17" },
+  "subjects": { "user": "alice", "virtual_key_id": "a7Hj3kLm" },
+  "target": {
+    "type": "llm_request",
+    "model": "gpt-4o",
+    "provider": "openai",
+    "route": "chat-completions"
+  },
+  "metadata": {
+    "extra": {
+      "request_id": "c0ffee01-2a3b-4c5d-6e7f-8091a2b3c4d5",
+      "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "client_ip": "203.0.113.42",
+      "pod": "ai-gateway-main-processor-7f6b9c-x2k4q",
+      "detection_types": ["CREDIT_CARD", "US_SSN"],
+      "action": "block",
+      "body_bytes": 1842
+    }
+  }
+}
+```
+
+**Subjects** come from authenticated tokens on API events or a trusted upstream
+filter on request-path events. The gateway adds `virtual_key_id` after key
+validation.
+
+**Targets** use `{type: llm_request, model, provider, route}` on request events
+and `{type: virtual_api_key, key_id, prefix}` on key events. Key events omit
+secret material. Match `target.provider` against these lowercase values:
+`openai`, `anthropic`, `awsbedrock`, `azureopenai`, `gcpvertexai`, and
+`geminiaistudio`.
+
+**Common extras** are `request_id`, `trace_id` and `span_id` for OpenTelemetry
+correlation, `client_ip`, `user_agent`, `pod`, and the gateway's name and
+namespace.
+
+Detection events add `detection_types` and `action`. `action` is `block`,
+`redact`, or `log-only`. Passive detections use `shadow_types` for detectors in
+shadow mode and `log_only_types` for log-only policy.
+
+Request-path events carry `body_bytes`; response-path events carry
+`chunk_bytes`, which is per-chunk for streaming responses and must not be summed
+with `body_bytes` to estimate traffic.
+
+<AuditShippers />
+
+## Related logs
+
+The **Kubernetes API audit log** covers control-plane activity such as `kubectl`
+calls and operator reconciles. Configure it through the API server audit policy.
+
+**Interaction journaling**, configured under `spec.journaling`, captures prompt
+and response content. Audit events capture decisions and reasons without the
+full interaction content.
+
+## Next steps
+
+- [PCI/PII controls](./pci-pii-controls.mdx) to configure the detections these
+  events report.
+- [Screen prompts for injection](./prompt-injection-screening.mdx), whose
+  verdicts also land in this stream.
+- [Collect gateway telemetry](./telemetry.mdx) to export traces and metrics and
+  add directory group labels to the `subjects` on these records.

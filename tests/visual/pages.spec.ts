@@ -15,7 +15,6 @@ const NAV_PAGES: Array<{ section: string; path: string }> = [
   { section: 'Stacklok Platform', path: '/platform' },
   { section: 'ToolHive', path: '/toolhive' },
   { section: 'AI Gateway', path: '/ai-gateway' },
-  { section: 'AI Gateway v2', path: '/ai-gateway-v2' },
   { section: 'Connector Gateway', path: '/connector-gateway' },
   { section: 'Resources', path: '/toolhive/concepts' },
 ];

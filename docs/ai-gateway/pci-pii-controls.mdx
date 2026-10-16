@@ -2,184 +2,231 @@
 title: Detect PCI and PII in prompts
 sidebar_label: PCI/PII controls
 description:
-  Scan prompts and responses for credit cards, national identifiers, and other
-  sensitive data, and block, redact, or log what is found.
+  Scan prompts for credit cards, national identifiers, and other sensitive data
+  with Presidio, and block, redact, or log what the AI Gateway finds.
 ---
 
-The AI Gateway uses Microsoft Presidio to scan requests and responses for
-personally identifiable information (PII) and payment data. Configure in-cluster
-scanning under `spec.processor` on the `AIGateway` resource. You can combine it
-with [prompt injection screening](./prompt-injection-screening.mdx).
+The AI Gateway uses Microsoft Presidio to scan request text for personally
+identifiable information (PII) and payment data before the request reaches its
+provider. Turn scanning on under `scanning` in your platform values. The chart
+then deploys Presidio and a scanning adapter next to the gateway. You can
+combine scanning with
+[prompt injection screening](./prompt-injection-screening.mdx).
+
+For the legacy AI Gateway, see
+[legacy gateway PCI and PII detection](./legacy/pci-pii-controls.mdx).
+
+## Turn on scanning
+
+The scanning adapter serves the gateway over TLS. It needs a cert-manager issuer
+for its serving certificate and a Secret, in the platform namespace, holding
+that issuer's CA. Set them once under `global.webhooks`, the same pair the
+platform's other webhooks use:
+
+```yaml title="values.yaml"
+global:
+  webhooks:
+    issuerRef:
+      name: <WEBHOOK_CLUSTER_ISSUER>
+      kind: ClusterIssuer
+    caBundleSecret: <WEBHOOK_CA_BUNDLE_SECRET>
+
+ai-gateway-v2:
+  scanning:
+    enabled: true
+```
+
+The chart refuses to render with scanning on and no issuer or CA bundle. To give
+the adapter its own pair, set `scanning.tls.issuerRef` and
+`scanning.tls.caBundleSecret`.
+
+Presidio takes a few minutes to load its language model when it first starts.
+With the default fail-closed settings, the gateway refuses every request until
+Presidio is ready.
 
 ## Choose what happens on a match
 
-```yaml title="aigateway.yaml"
-spec:
-  processor:
-    replicas: 2
-    requestAction: Block
-    responseAction: LogOnly
-    placeholder: '[REDACTED]'
-    nerProvider:
-      type: presidio
-      timeout: '5s'
-      failureAction: fail-closed
-      presidio:
-        scoreThreshold: 50
-        language: 'en'
-        entities:
-          - CREDIT_CARD
-          - US_SSN
-          - EMAIL_ADDRESS
-          - PHONE_NUMBER
+`scanning.requestAction` sets the action for every detected entity.
+`scanning.entityActions` overrides it per entity:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  scanning:
+    enabled: true
+    requestAction: block
+    entityActions:
+      - entity: EMAIL_ADDRESS
+        action: redact
+        placeholder: '[EMAIL]'
+      - entity: DATE_TIME
+        action: log-only
 ```
 
-| Action    | On the request                                       | On the response                               |
-| --------- | ---------------------------------------------------- | --------------------------------------------- |
-| `Block`   | Refused. The prompt never reaches the provider.      | Refused. The response is not delivered.       |
-| `Redact`  | Matches replaced with `placeholder`, then forwarded. | Matches replaced before the client sees them. |
-| `LogOnly` | Recorded, forwarded unmodified.                      | Recorded, forwarded unmodified.               |
+| Action     | What happens to the request                                                                                   |
+| ---------- | ------------------------------------------------------------------------------------------------------------- |
+| `block`    | Refused with `403` and `request denied by governance hook "scanning"`. The prompt never reaches the provider. |
+| `redact`   | Each match is replaced with a placeholder, then forwarded.                                                    |
+| `log-only` | Recorded in the audit event and forwarded unmodified.                                                         |
 
-`responseAction` is optional and falls back to `requestAction`.
+The default `requestAction` is `block`. A redacted match without its own
+`placeholder` becomes `[REDACTED-<ENTITY>]`, for example
+`[REDACTED-EMAIL_ADDRESS]`. Redaction edits the body the gateway forwards, so
+the provider and any conversation capture see only the redacted text.
 
 ## Choose which entities to look for
 
-`entities` controls what the scanner detects. The default includes structured
-identifiers and model-derived entities such as `PERSON` and `LOCATION`.
+`scanning.entities` controls what Presidio detects. When it's empty, the scanner
+uses this default list:
 
-| Entity               | Matches                                     |
-| -------------------- | ------------------------------------------- |
-| `CREDIT_CARD`        | Card numbers, checksum-validated            |
-| `US_SSN`             | US Social Security numbers                  |
-| `ABA_ROUTING_NUMBER` | US bank routing numbers, checksum-validated |
-| `IBAN_CODE`          | International bank account numbers          |
-| `EMAIL_ADDRESS`      | Email addresses                             |
-| `PHONE_NUMBER`       | Phone numbers, region-aware                 |
-| `IP_ADDRESS`         | IPv4 and IPv6 addresses                     |
-| `US_ITIN`            | US taxpayer identification numbers          |
-| `IN_AADHAAR`         | Indian Aadhaar numbers                      |
-| `AU_TFN`             | Australian tax file numbers                 |
-| `UK_NHS`             | UK NHS numbers                              |
-| `PERSON`             | Personal names, from the language model     |
-| `LOCATION`           | Place names, from the language model        |
-| `DATE_TIME`          | Dates and times, from the language model    |
+| Entity          | Matches                                  |
+| --------------- | ---------------------------------------- |
+| `CREDIT_CARD`   | Card numbers, checksum-validated         |
+| `US_SSN`        | US Social Security numbers               |
+| `IBAN_CODE`     | International bank account numbers       |
+| `EMAIL_ADDRESS` | Email addresses                          |
+| `PHONE_NUMBER`  | Phone numbers, region-aware              |
+| `IP_ADDRESS`    | IPv4 and IPv6 addresses                  |
+| `US_ITIN`       | US taxpayer identification numbers       |
+| `UK_NHS`        | UK NHS numbers                           |
+| `PERSON`        | Personal names, from the language model  |
+| `LOCATION`      | Place names, from the language model     |
+| `DATE_TIME`     | Dates and times, from the language model |
 
-The full supported list is published in the
-[Presidio documentation](https://microsoft.github.io/presidio/supported_entities/).
-Custom recognizers appear under their configured entity name and can be listed
-here verbatim.
+Setting `entities` replaces the default list. An entity the adapter can't detect
+fails the rollout. That includes most of the country-specific entities in the
+[Presidio documentation](https://microsoft.github.io/presidio/supported_entities/),
+because the bundled Presidio registry ships their recognizers turned off. To
+detect one of those identifiers,
+[add your own recognizer](#add-your-own-recognizers) for it.
+
+### Add your own recognizers
+
+To detect identifiers specific to your organization, add pattern recognizers
+under `scanning.presidio.recognizers`. Each one names a new entity in
+`supportedEntity`, which the scanner then always detects:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  scanning:
+    presidio:
+      recognizers:
+        - name: employee-id
+          supportedEntity: EMPLOYEE_ID
+          patterns:
+            - name: employee-id-pattern
+              regex: 'EMP-[0-9]{6}'
+              score: 80
+          contextWords:
+            - employee
+```
+
+Patterns use RE2 syntax. A recognizer can use a `denyList` of literal strings in
+place of, or alongside, `patterns`.
+
+### Exempt known strings
+
+`scanning.allowlist` lists strings Presidio never reports, such as a support
+address that appears in every prompt. Set `scanning.allowlistMatch` to `regex`
+to treat the entries as regular expressions; the default is `exact`.
 
 ## Tune the confidence threshold
 
-`scoreThreshold` sets the minimum detection confidence from 0 to 100 and
-defaults to `50`. Test representative traffic in `LogOnly` mode, then adjust the
-threshold and entity list to balance false positives and false negatives. For
-predictable enforcement, select the structured identifiers required by your
-data-handling policy.
+`scanning.presidio.scoreThreshold` sets the minimum detection confidence from 0
+to 100 and defaults to `50`. Test representative traffic with
+`requestAction: log-only`, then adjust the threshold and entity list to balance
+false positives and false negatives. For predictable enforcement, select the
+structured identifiers your data-handling policy requires. Presidio analyzes
+English (`en`) only.
 
 ## Decide how failures behave
 
-Configure parsing, redaction, and detection backend failures independently. Use
-the closed settings in production and open settings only during rollout or
-incident response.
+`scanning.ner.failureAction` decides what the adapter does when Presidio is
+unreachable, slow, or behind an open circuit breaker:
 
-```yaml
-spec:
-  processor:
-    extractionFailureAction: Block
-    mutationFailureAction: Block
-    nerProvider:
+| Setting                 | Behavior                                        |
+| ----------------------- | ----------------------------------------------- |
+| `fail-closed` (default) | Refuse the request                              |
+| `fail-open`             | Forward the request unscanned and log a warning |
+
+Use `fail-closed` in production and `fail-open` only during rollout or incident
+response.
+
+A circuit breaker applies `failureAction` without calling an unhealthy Presidio:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  scanning:
+    ner:
       failureAction: fail-closed
-```
-
-| Field                       | Closed setting                                    | Open setting              |
-| --------------------------- | ------------------------------------------------- | ------------------------- |
-| `extractionFailureAction`   | Refuse if the body cannot be parsed               | Forward unmodified        |
-| `mutationFailureAction`     | Refuse if redaction fails                         | Forward unmodified        |
-| `nerProvider.failureAction` | Refuse on backend error, timeout, or open circuit | Log a warning and forward |
-
-A circuit breaker applies `failureAction` without calling an unhealthy detection
-backend:
-
-```yaml
-spec:
-  processor:
-    nerProvider:
       circuitBreaker:
         failureThreshold: 5
-        resetTimeout: '30s'
+        resetTimeout: 30s
 ```
-
-The
-[`spec.resilience`](./model-routing.mdx#configure-retries-health-checks-and-timeouts)
-circuit breaker protects model providers separately.
 
 ## Size the scanner
 
-`timeout` limits each detection call and defaults to `5s`. Test large request
-bodies before lowering it because timeouts count as detection backend failures.
+`scanning.ner.timeout` limits each Presidio call and defaults to `5s`.
+`scanning.hook.timeout` is the budget the gateway gives the adapter for the
+whole scan. Left empty, it's `scanning.ner.timeout` plus two seconds. Raise it
+when large requests regularly need several rounds of Presidio calls under load.
+An explicit value must be greater than `scanning.ner.timeout`.
 
-:::warning
+Each Presidio pod runs one analysis worker per whole CPU core in
+`scanning.presidio.resources.limits.cpu`, and each worker loads its own language
+model. Size `scanning.presidio.resources.limits.memory` at about 1 GiB per
+worker plus headroom; a lower limit fails the render. The chart derives how many
+Presidio calls one request may have in flight from `scanning.presidio.replicas`
+times the workers per pod, so scale Presidio to raise it.
 
-Keep `spec.processor.messageTimeout` strictly greater than
-`nerProvider.timeout`, or the request will be abandoned before the detection
-call returns.
-
-:::
-
-`concurrency` limits parallel detection calls for one request. It defaults to
-`8` and accepts values from 1 to 128. Changing it rolls the processor.
-
-Each Presidio pod processes one request at a time. Scale `presidio.replicas`
-before raising `concurrency`. If `stacklok_ai_gateway_presidio_analyze_inflight`
-divided by the number of ready analyzer pods exceeds 1, calls are queuing in the
-backend.
-
-```yaml
-spec:
-  processor:
-    nerProvider:
-      concurrency: 16
-      presidio:
-        replicas: 2
-        maxReplicas: 6
-        targetCPUUtilization: 75
-        resources:
-          requests:
-            cpu: '500m'
-            memory: 1Gi
-          limits:
-            cpu: '2'
-            memory: 2Gi
+```yaml title="values.yaml"
+ai-gateway-v2:
+  scanning:
+    presidio:
+      replicas: 2
+      maxReplicas: 6
+      targetCPUUtilization: 75
+      resources:
+        requests:
+          cpu: 500m
+          memory: 2Gi
+        limits:
+          cpu: '2'
+          memory: 3Gi
+    adapter:
+      replicas: 2
 ```
 
-The language model uses approximately 800 MiB of memory after startup. The
-analyzer is CPU-bound, so use replicas and autoscaling for additional capacity.
-At two or more replicas, the gateway creates a PodDisruptionBudget.
+Setting `scanning.presidio.maxReplicas` above 1 renders a
+HorizontalPodAutoscaler.
+
+The adapter is on every request's path, so run at least two replicas. At two or
+more replicas, the chart creates a PodDisruptionBudget for the adapter and for
+Presidio.
+
+To watch for queuing, set `scanning.adapter.metrics.enabled: true`. If
+`stacklok_ai_gateway_presidio_analyze_inflight` divided by the total number of
+Presidio workers exceeds 1, calls are queuing in Presidio.
 
 ## Cache scan results
 
 Enable the result cache to avoid scanning repeated text. It stores detection
-results in the platform's Redis or Valkey instance, keyed by the text and
-scanning configuration.
+results in Redis or Valkey, keyed by the text and the detection inputs.
 
-```yaml
-spec:
-  processor:
-    nerProvider:
-      resultCache:
-        enabled: true
-        ttl: '24h'
+```yaml title="values.yaml"
+ai-gateway-v2:
+  scanning:
+    resultCache:
+      enabled: true
+      ttl: 24h
 ```
 
-The cache uses the platform chart's Redis configuration. If the gateway cannot
-resolve the backend, scanning continues without caching. Use the hit-rate metric
-to verify that the cache is serving results.
+The cache uses the `global.redis` configuration. If the adapter can't verify a
+cache entry or reach its integrity secret, it scans the text again.
 
 ### What read access to the cache discloses
 
 Cache keys are an unsalted hash of the scanned text, which makes the keyspace a
-**confirmation oracle**. Anyone who can read the backing Redis can hash a
+_confirmation oracle_. Anyone who can read the backing Redis can hash a
 candidate piece of text, probe for the key, and confirm whether that exact text
 was scanned by this gateway.
 
@@ -192,7 +239,7 @@ detection rules fired.
 The cache limits exposure as follows:
 
 - Entries omit scanned text and matched substrings.
-- Each gateway uses a separate keyspace.
+- Each release uses a separate keyspace.
 - Integrity tags prevent a writer from inserting a result that suppresses
   detection.
 
@@ -202,47 +249,51 @@ with your security requirements.
 
 ### The integrity secret
 
-By default, the gateway creates `<GATEWAY_NAME>-ner-cache-mac` in its namespace.
-The Secret contains the integrity key for cached results.
+By default, the adapter creates the Secret
+`<RELEASE_NAME>-ai-gateway-v2-ner-cache-mac` in the platform namespace the first
+time it starts. The Secret holds the integrity key for cached results.
 
 To supply your own instead, through External Secrets, sealed secrets, or
-out-of-band creation, name it on the operator chart:
+out-of-band creation, name it in your values:
 
 ```yaml title="values.yaml"
-nerResultCache:
-  macSecret:
-    name: <SECRET_NAME>
-    key: mac-secret
+ai-gateway-v2:
+  scanning:
+    resultCache:
+      macSecret:
+        name: <SECRET_NAME>
+        key: mac-secret
 ```
 
-Place a supplied Secret in each gateway namespace. Its value must contain at
-least 32 bytes of printable text. Base64-encoded random data satisfies this
-requirement.
+The adapter then only reads that Secret. Its value must contain at least 32
+bytes of printable text; base64-encoded random data satisfies this requirement.
+If the Secret is missing, the cache stays off.
 
-The gateway re-scans entries when it cannot verify the integrity tag. Replace
-the Secret value to rotate it; existing entries then miss the cache and are
-re-scanned.
+To rotate the key, replace the Secret's value and restart the adapter. Existing
+entries then fail verification and are scanned again.
 
 ### Time to live and footprint
 
-`ttl` defaults to 24 hours. Cache keys include the scanning configuration, so
-changes to thresholds, entities, recognizers, or the analyzer image cause cache
-misses. Shorten the TTL to reduce the disclosure window and memory use.
+`ttl` defaults to 24 hours. Cache keys include the detection inputs, so changes
+to recognizers or the Presidio image cause cache misses. Shorten the TTL to
+reduce the disclosure window and memory use.
 
 ### Cache metrics
 
-| Metric                                              | What it measures                                                    |
-| --------------------------------------------------- | ------------------------------------------------------------------- |
-| `stacklok_ai_gateway_ner_cache_lookups_total`       | One per attempted read, labeled hit or miss and request or response |
-| `stacklok_ai_gateway_ner_cache_errors_total`        | Backend or codec faults, labeled by operation and error type        |
-| `stacklok_ai_gateway_ner_cache_op_duration_seconds` | Backend round-trip per operation                                    |
+With `scanning.adapter.metrics.enabled` set, the adapter exposes these metrics:
 
-Use the hit rate to measure avoided detection calls. Cache errors become misses
-and trigger a normal detection call.
+| Metric                                              | What it measures                                             |
+| --------------------------------------------------- | ------------------------------------------------------------ |
+| `stacklok_ai_gateway_ner_cache_lookups_total`       | One per attempted read, labeled hit or miss                  |
+| `stacklok_ai_gateway_ner_cache_errors_total`        | Backend or codec faults, labeled by operation and error type |
+| `stacklok_ai_gateway_ner_cache_op_duration_seconds` | Backend round-trip per operation                             |
+
+Use the hit rate to measure avoided Presidio calls. Cache errors become misses
+and trigger a normal Presidio call.
 
 ## Next steps
 
 - [Screen prompts for injection](./prompt-injection-screening.mdx) to add
-  adversarial-prompt screening alongside this.
-- [Forward audit logs](./forward-audit-logs.mdx) to get detections into your
-  security information and event management system.
+  adversarial-prompt screening after the scan.
+- [Forward audit logs](./forward-audit-logs.mdx) to get scan decisions into your
+  security information and event management (SIEM) system.
