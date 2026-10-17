@@ -1,0 +1,127 @@
+## Update the pricing catalog
+
+Enterprise Manager ships a baseline catalog generated weekly from public model
+pricing, and each upgrade refreshes every rate you haven't changed. To override
+a price, update one model's entry at a time through the API. Changes take effect
+without a restart.
+
+`GET /v1/budgets/pricing` returns the active catalog with an `ETag` header. Send
+that value as `If-Match` with a `PUT` to the entry's address,
+`/v1/budgets/pricing/entries/<PROVIDER>/<MODEL>`. Use the provider and model
+exactly as they appear in the catalog. A model name can contain `/`. The body
+carries exactly one rate block: `anthropic`, `openai`, or `google`.
+
+```bash
+curl -i https://<ENTERPRISE_MANAGER_URL>/v1/budgets/pricing \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"
+
+curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets/pricing/entries/anthropic/claude-sonnet-4-6 \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H 'If-Match: <ETAG>' \
+  -H "Content-Type: application/json" \
+  -d '{"anthropic": {"inputUsdPerMillion": "3", "outputUsdPerMillion": "15"}}'
+```
+
+The `ETag` identifies the whole catalog version, so a write to any entry changes
+it. A request without `If-Match` returns `428`, and a stale value returns `412`.
+Read the catalog again and retry.
+
+Each write publishes a new complete catalog version, effective immediately. The
+entry you write stops tracking the baseline, so later upgrades leave its rate
+alone. Every other entry keeps tracking the baseline.
+
+To withdraw or restore a rate, use these requests, which also require
+`If-Match`:
+
+- `DELETE` on the entry removes its rate. The gateway denies requests for that
+  model until you price it again, and upgrades don't restore it.
+- `POST` to `/v1/budgets/pricing/entries/<PROVIDER>/<MODEL>/revert` returns the
+  entry to the baseline's current rate. It returns `409` when the baseline
+  doesn't price that model.
+
+`GET /v1/budgets/pricing/versions` lists published catalog versions, and
+`GET /v1/budgets/pricing/versions/<EFFECTIVE_FROM>` returns one of them. To
+restore an earlier rate, read it from that version and `PUT` it on the entry.
+
+### Rate fields by provider
+
+Set provider-specific rates for cache creation, reasoning, audio, prompt-size
+tiers, and server-side tools when the model reports those usage categories. The
+examples below show entries as the catalog stores them. In a `PUT` body, send
+only the provider block. The provider and model come from the URL.
+
+Anthropic reports cache-creation tokens split by time to live, so declare each
+rate separately:
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "anthropic": {
+    "inputUsdPerMillion": "3",
+    "cacheCreation5mInputUsdPerMillion": "3.75",
+    "cacheCreation1hInputUsdPerMillion": "6",
+    "cachedInputUsdPerMillion": "0.3",
+    "outputUsdPerMillion": "15"
+  }
+}
+```
+
+OpenAI reasoning models report reasoning tokens, and the audio families report
+audio input and output separately:
+
+```json
+{
+  "provider": "openai",
+  "model": "gpt-4o-audio-preview",
+  "openai": {
+    "inputUsdPerMillion": "2.5",
+    "cachedInputUsdPerMillion": "1.25",
+    "outputUsdPerMillion": "10",
+    "audioInputUsdPerMillion": "40",
+    "audioOutputUsdPerMillion": "80"
+  }
+}
+```
+
+Some models charge a higher rate above a prompt-size threshold. Encode that with
+`promptSizeTiers`:
+
+```json
+{
+  "provider": "google",
+  "model": "gemini-2.5-pro",
+  "google": {
+    "inputUsdPerMillion": "1.25",
+    "cachedInputUsdPerMillion": "0.125",
+    "outputUsdPerMillion": "10",
+    "thoughtsOutputUsdPerMillion": "10",
+    "promptSizeTiers": [
+      {
+        "aboveTokens": 200000,
+        "inputUsdPerMillion": "2.5",
+        "cachedInputUsdPerMillion": "0.25",
+        "outputUsdPerMillion": "15"
+      }
+    ]
+  }
+}
+```
+
+Server-side tools that bill per thousand calls appear in the catalog's `tools`
+block, per provider rather than per model. These fees come from the baseline
+catalog, and the API can't change them:
+
+```json
+{
+  "entries": ["...per-model entries..."],
+  "tools": {
+    "anthropic": { "webSearchUsdPerThousand": "10" },
+    "openai": {
+      "webSearchUsdPerThousand": "10",
+      "fileSearchUsdPerThousand": "2.5"
+    },
+    "google": { "groundingSearchUsdPerThousand": "35" }
+  }
+}
+```

@@ -1,0 +1,105 @@
+---
+title: Enforce budgets at the AI Gateway
+sidebar_label: Budget enforcement
+description:
+  Connect the AI Gateway to the Enterprise Manager budgets service, verify the
+  connection, and match provider models to the pricing catalog.
+---
+
+Before the AI Gateway calls a provider, it asks the budgets service in the
+Enterprise Manager to admit the request. After the response, it reports the
+provider's usage so the service can charge it. Create the budgets themselves in
+[Budgets and pricing](budgets-and-pricing.mdx) or the
+[console](manage-budgets.mdx).
+
+For the legacy AI Gateway, see
+[legacy gateway budget enforcement](legacy/budget-enforcement.mdx).
+
+:::danger[Cover every caller before you connect the gateway to budgets]
+
+A connected gateway refuses every caller without an applicable budget. Set an
+organization default or give every caller a budget before you set
+`budgets.endpoint` on a gateway that serves traffic.
+
+:::
+
+## Connect the gateway to budgets
+
+Set these values to connect the gateway to the budgets service:
+
+| Value                              | Purpose                                                                                                                            |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `budgets.endpoint`                 | HTTPS base URL of the Enterprise Manager budgets receiver, for example `https://<ENTERPRISE_MANAGER_SERVICE>.<NAMESPACE>.svc:443`. |
+| `budgets.tokenProjection.enabled`  | Projects a ServiceAccount token that the receiver validates. Required when `endpoint` is set.                                      |
+| `budgets.tokenProjection.audience` | Audience of that token. Defaults to `budgets-webhook` and must match `enterprise-manager.webhookAuth.audience`.                    |
+| `budgets.caBundle.secretName`      | Secret holding the CA bundle that verifies the receiver's certificate. Falls back to `global.webhooks.caBundleSecret`.             |
+| `budgets.sessionHeaders`           | Session-correlation headers the gateway forwards. Inherits `global.stacklok.sessionHeaders` when empty.                            |
+| `budgets.capture`                  | Forwards request bodies to the budgets service for conversation capture. Defaults to `false`.                                      |
+| `budgets.acknowledgeUnmetered`     | Set to `true` to install a gateway with no `endpoint`. That gateway admits every request and charges nothing.                      |
+
+The chart refuses to render when `endpoint` is empty and `acknowledgeUnmetered`
+isn't set, or when `endpoint` is set without the other connection values it
+requires. For the full set of platform values and the order to apply them in,
+see
+[Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx#bring-it-up-in-this-order).
+
+Conversation capture is experimental. Enterprise Manager accepts captured
+conversations only when
+`global.stacklok.experiments.insightsClassification.enabled` is `true`, subject
+to a release-channel guard.
+
+With `budgets.capture` on, the budgets service receives the request body the
+provider sees. Before you turn on capture, set up
+[PII scanning](pci-pii-controls.mdx) to `redact` or `block` every entity you
+need to keep out of storage, and keep `scanning.ner.failureAction` at
+`fail-closed`. Capture stores a `log-only` match, and a request forwarded
+unscanned under `fail-open`, exactly as the caller sent it.
+
+### Verify the gateway reaches the budgets service
+
+At startup, the gateway pings the budgets service until it answers. When pings
+keep failing, the gateway logs a `receiver hook probe failed` warning with the
+failure reason, then logs `receiver hook probe recovered` once the service
+answers. The gateway reaches the budgets service when the logs show no
+unrecovered warning:
+
+```bash
+kubectl logs -n <NAMESPACE> deploy/<RELEASE_NAME>-ai-gateway-v2 \
+  | grep 'receiver hook probe'
+```
+
+A failing ping usually means the token audience doesn't match the receiver's.
+
+## Match provider kinds to catalog entries
+
+Each catalog entry is keyed on a provider and a model. Most provider kinds use
+the same name in the catalog. The exceptions are `bedrock-anthropic`, which maps
+to `awsanthropic`, and `gemini-aistudio` and `vertex`, which both map to
+`google`.
+
+The model in a catalog entry must match the model string in `providers[].models`
+exactly. The gateway refuses requests for a model with no catalog entry, so
+confirm that a model is priced before you
+[add it to a provider](providers-and-models.mdx).
+
+## When a budget runs out
+
+An exhausted budget returns `402` before the gateway calls the provider. The
+error message tells an exhausted budget (`budget exhausted`) apart from missing
+coverage (`no applicable budget`). Check the caller in the console to see which
+budgets apply.
+
+Access resumes when the calendar period resets. To restore access immediately,
+raise the limit. The change applies on the next request and preserves the usage
+counter.
+
+## Next steps
+
+- [Budgets and pricing](budgets-and-pricing.mdx) to create budgets and update
+  model pricing.
+- [Connect model providers](providers-and-models.mdx) to add models to the
+  gateway.
+
+## Related information
+
+- [Forward audit logs to your SIEM](forward-audit-logs.mdx)

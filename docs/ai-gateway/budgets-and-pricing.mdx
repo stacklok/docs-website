@@ -2,265 +2,45 @@
 title: Budgets and pricing
 sidebar_label: Budgets and pricing
 description:
-  Cap LLM spend per user or group in USD, publish a pricing catalog, and
-  understand why an unpriced model is refused at the gateway.
+  Cap model spend per user or group in USD, update model pricing, and monitor
+  spend through the Enterprise Manager API.
 ---
 
-A _budget_ caps model spend in USD for a directory user or group. The AI Gateway
-checks available budget before sending a request and charges provider-reported
-usage after the response.
+import BudgetsApi from './_partials/_budgets-api.mdx';
+import PricingCatalog from './_partials/_pricing-catalog.mdx';
+import MonitorSpendApi from './_partials/_monitor-spend-api.mdx';
+
+A _budget_ caps model spend in USD for a directory user or group. Before the AI
+Gateway calls a provider, it asks the budgets service in the Enterprise Manager
+to admit the request. After the response, it reports the provider's usage so the
+service can charge it.
 
 Use [Budgets](manage-budgets.mdx) in the console for routine administration. Use
-the REST API for automation, bulk import, and pricing.
+the REST API for automation, bulk import, and pricing. To connect the gateway to
+the budgets service, see [Budget enforcement](budget-enforcement.mdx).
 
 :::danger[Cover every caller before you turn enforcement on]
 
-Budget enforcement denies callers without an applicable budget. Cover every
-caller before enabling enforcement.
+Budget enforcement refuses every caller without an applicable budget. Cover
+every caller before you connect a gateway that serves traffic.
 
 :::
 
-## Prerequisites
+<BudgetsApi />
 
-Budget enforcement runs through gateway-level webhooks.
-
-Confirm that both budget entries report `probeSucceeded: true`:
-
-```bash
-kubectl get aigw <NAME> -n <NAMESPACE> \
-  -o jsonpath='{.status.webhooks}' | jq .
-```
-
-A `false` value usually indicates mismatched audiences on the gateway and budget
-service.
-
-## Cover every caller first
-
-Before enabling budget enforcement for an environment with traffic, choose one
-of these approaches:
-
-**Set an organization default.** This covers directory users without an explicit
-budget. Set it on the **Defaults** tab or through the API.
-
-**Create budgets individually.** Use the [bulk import](#import-in-bulk) for an
-existing user and group inventory.
-
-The organization default applies only to resolved directory users.
-
-## Create budgets
-
-Each budget has a USD limit and a daily, monthly, or yearly calendar period.
-
-The API identifies a budget by scope and subject. `scope` is `user` or `group`;
-`subject_id` is the OIDC subject for a user, or the directory group's UUID for a
-group. `limit_usd` is a decimal string and `period` is `day`, `month`, or
-`year`.
-
-### Set an organization default
-
-Set the organization default on the **Defaults** tab or through the API:
-
-```bash
-curl -X PUT https://<GATEWAY_API>/v1/budgets/default \
-  -H "Authorization: Bearer <ADMIN_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"limit_usd": "350.000000000", "period": "day"}'
-```
-
-Setting the default replaces its previous value. Deleting it leaves users
-without explicit budgets uncovered. Moving a user between the default and an
-explicit budget preserves their current-period usage.
-
-### Update one budget
-
-Use the user or group endpoint to create or update one budget:
-
-```bash
-curl -X PUT https://<GATEWAY_API>/v1/budgets/users/<SUBJECT_ID> \
-  -H "Authorization: Bearer <ADMIN_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"limit_usd": "5.000000000", "period": "day"}'
-
-curl -X PUT https://<GATEWAY_API>/v1/budgets/groups/<GROUP_UUID> \
-  -H "Authorization: Bearer <ADMIN_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"limit_usd": "500.000000000", "period": "month", "precedence": 1}'
-```
-
-Group budgets use 1-based `precedence`. The gateway charges an explicit user
-budget first.
-
-### Import in bulk
-
-`PUT /v1/budgets` replaces the **entire** collection: budgets in the request are
-created or updated, and **budgets absent from the request are deleted**. Use it
-only for complete imports.
-
-```bash
-curl -X PUT https://<GATEWAY_API>/v1/budgets \
-  -H "Authorization: Bearer <ADMIN_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "budgets": [
-      {"scope": "user",  "subject_id": "<SUBJECT_ID>", "limit_usd": "5.000000000",   "period": "day"},
-      {"scope": "group", "subject_id": "<GROUP_UUID>", "limit_usd": "500.000000000", "period": "month"}
-    ]
-  }'
-```
-
-Bulk replacement preserves spend counters.
-
-`GET /v1/budgets` returns the collection with an `ETag`. Send it back as
-`If-Match` on your next write to detect a concurrent change; a `412` response
-means re-read and retry.
-
-## Which budget gets charged
-
-The gateway charges budgets in this order:
-
-1. The user's explicit budget, or the organization default.
-2. The first group budget with remaining capacity, ordered by ascending
-   `precedence`.
-
-The gateway denies the request when no applicable budget has capacity.
-
-## Publish a pricing catalog
-
-Publish the organization-wide pricing catalog through the API. Catalog versions
-use `effective_from` and take effect without a restart.
-
-The gateway ships a baseline catalog generated weekly from public model pricing.
-After publishing a custom version, maintain the custom catalog to add models or
-update rates.
-
-:::warning[`PUT` replaces the whole catalog]
-
-`PUT /v1/budgets/pricing` replaces the catalog. Retrieve the active catalog,
-edit it, and publish the complete result. The gateway denies requests for models
-omitted from the active catalog.
-
-:::
-
-```bash
-curl https://<GATEWAY_API>/v1/budgets/pricing \
-  -H "Authorization: Bearer <ADMIN_TOKEN>" > catalog.json
-# edit catalog.json
-curl -X PUT https://<GATEWAY_API>/v1/budgets/pricing \
-  -H "Authorization: Bearer <ADMIN_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d @catalog.json
-```
-
-At startup, the service logs provider and model pairs omitted from a custom
-catalog. Application rollback preserves the active catalog. Publish a previous
-catalog version to restore earlier rates.
-
-### Rate fields by provider
-
-Set provider-specific rates for cache creation, reasoning, audio, prompt-size
-tiers, and server-side tools when the model reports those usage categories.
-
-Anthropic reports cache-creation tokens split by time to live, so declare each
-rate separately:
-
-```json
-{
-  "provider": "anthropic",
-  "model": "claude-sonnet-4-6",
-  "anthropic": {
-    "inputUsdPerMillion": "3",
-    "cacheCreation5mInputUsdPerMillion": "3.75",
-    "cacheCreation1hInputUsdPerMillion": "6",
-    "cachedInputUsdPerMillion": "0.3",
-    "outputUsdPerMillion": "15"
-  }
-}
-```
-
-OpenAI reasoning models report reasoning tokens, and the audio families report
-audio input and output separately:
-
-```json
-{
-  "provider": "openai",
-  "model": "gpt-4o-audio-preview",
-  "openai": {
-    "inputUsdPerMillion": "2.5",
-    "cachedInputUsdPerMillion": "1.25",
-    "outputUsdPerMillion": "10",
-    "audioInputUsdPerMillion": "40",
-    "audioOutputUsdPerMillion": "80"
-  }
-}
-```
-
-Some models charge a higher rate above a prompt-size threshold. Encode that with
-`promptSizeTiers`:
-
-```json
-{
-  "provider": "google",
-  "model": "gemini-2.5-pro",
-  "google": {
-    "inputUsdPerMillion": "1.25",
-    "cachedInputUsdPerMillion": "0.125",
-    "outputUsdPerMillion": "10",
-    "thoughtsOutputUsdPerMillion": "10",
-    "promptSizeTiers": [
-      {
-        "aboveTokens": 200000,
-        "inputUsdPerMillion": "2.5",
-        "cachedInputUsdPerMillion": "0.25",
-        "outputUsdPerMillion": "15"
-      }
-    ]
-  }
-}
-```
-
-Server-side tools that bill per thousand calls go in a `tools` block alongside
-`entries`, per provider rather than per model:
-
-```json
-{
-  "entries": ["...per-model entries..."],
-  "tools": {
-    "anthropic": { "webSearchUsdPerThousand": "10" },
-    "openai": {
-      "webSearchUsdPerThousand": "10",
-      "fileSearchUsdPerThousand": "2.5"
-    },
-    "google": { "groundingSearchUsdPerThousand": "35" }
-  }
-}
-```
+<PricingCatalog />
 
 ## Monitor spend
 
 Use [Budgets](manage-budgets.mdx) to compare usage with each limit.
 
-Use the API for finance reports and external dashboards:
-
-| Endpoint                    | Returns                                                          |
-| --------------------------- | ---------------------------------------------------------------- |
-| `GET /v1/budgets/summary`   | Used, limit, and remaining per principal for the period          |
-| `GET /v1/budgets/spend`     | A spend time series, for charting                                |
-| `GET /v1/budgets/breakdown` | Current-period spend for one budget, by user, model, or provider |
-| `GET /v1/budgets/charges`   | Recorded charges, newest first, with the exact amount charged    |
-| `GET /v1/budgets/events`    | Raw usage events, including those that resolved to no charge     |
-
-`GET /v1/budgets/groups/<ID>` and `GET /v1/budgets/users/<ID>` return the same
-breakdown addressed per budget, with a `dimension` query parameter.
-
-Any authenticated caller can read their own figures at the `/v1/me/budgets/*`
-equivalents without an admin grant. The admin routes above require the platform
-admin grant, the same one directory administration requires; there is no
-separate budgets role.
+<MonitorSpendApi />
 
 ## When a budget runs out
 
-An exhausted budget returns a policy denial. Check the caller in the console to
-distinguish an exhausted budget from missing coverage.
+The gateway refuses the caller's requests until the budget has capacity again.
+Check the caller in the console to tell an exhausted budget apart from missing
+coverage.
 
 Access resumes when the calendar period resets. To restore access immediately,
 raise the limit. The change applies on the next request and preserves the usage
@@ -268,6 +48,6 @@ counter.
 
 ## Next steps
 
+- [Budget enforcement](budget-enforcement.mdx) to connect the gateway to the
+  budgets service.
 - [Manage budgets](manage-budgets.mdx) for console-based administration.
-- [Connect model providers](./providers-and-models.mdx) to add models to the
-  gateway.

@@ -392,10 +392,22 @@ const platformSidebar: SidebarsConfig[string] = [
           'platform/reference/helm/toolhive-operator',
           'platform/reference/helm/toolhive-operator-crds',
           'platform/reference/helm/registry-server',
-          'platform/reference/helm/ai-gateway-operator',
-          'platform/reference/helm/ai-gateway-operator-crds',
+          {
+            type: 'doc',
+            id: 'platform/reference/helm/ai-gateway-operator',
+            label: 'Legacy AI Gateway operator',
+          },
+          {
+            type: 'doc',
+            id: 'platform/reference/helm/ai-gateway-operator-crds',
+            label: 'Legacy AI Gateway operator CRDs',
+          },
           'platform/reference/helm/connector-gateway',
-          'platform/reference/helm/ai-gateway',
+          {
+            type: 'doc',
+            id: 'platform/reference/helm/ai-gateway',
+            label: 'AI Gateway',
+          },
         ],
       },
       'platform/enterprise-platform/api-reference',
@@ -540,22 +552,109 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
   {
     type: 'doc',
     id: 'ai-gateway/index',
+    label: 'Overview',
     className: 'enterprise-only enterprise-only--tooltip-below',
   },
-  'ai-gateway/providers-and-models',
-  'ai-gateway/model-routing',
+  {
+    type: 'ref',
+    id: 'platform/enterprise-platform/configure-ai-gateway',
+    label: 'Configure and deploy',
+  },
+  {
+    type: 'doc',
+    id: 'ai-gateway/providers-and-models',
+    label: 'Model providers',
+  },
+  {
+    type: 'doc',
+    id: 'ai-gateway/model-routing',
+    label: 'Model routing and access',
+  },
+  { type: 'doc', id: 'ai-gateway/manage-budgets', label: 'Manage budgets' },
   'ai-gateway/budgets-and-pricing',
-  'ai-gateway/manage-budgets',
-  'ai-gateway/prompt-injection-screening',
-  'ai-gateway/pci-pii-controls',
-  'ai-gateway/forward-audit-logs',
-  'ai-gateway/telemetry',
+  'ai-gateway/budget-enforcement',
+  {
+    type: 'doc',
+    id: 'ai-gateway/prompt-injection-screening',
+    label: 'Prompt injection screening',
+  },
+  { type: 'doc', id: 'ai-gateway/pci-pii-controls', label: 'PCI/PII controls' },
+  {
+    type: 'doc',
+    id: 'ai-gateway/forward-audit-logs',
+    label: 'Audit log forwarding',
+  },
+  { type: 'doc', id: 'ai-gateway/telemetry', label: 'Telemetry' },
 
   {
     type: 'category',
     label: 'Reference',
     collapsed: false,
-    items: ['ai-gateway/api-reference'],
+    items: [
+      {
+        type: 'doc',
+        id: 'ai-gateway/endpoints-reference',
+        label: 'Endpoints reference',
+      },
+    ],
+  },
+  {
+    type: 'doc',
+    id: 'ai-gateway/migrate-from-legacy',
+    label: 'Migrate from the legacy gateway',
+  },
+  {
+    type: 'category',
+    label: 'Legacy gateway',
+    collapsed: true,
+    items: [
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/index',
+        label: 'Overview and deployment identification',
+      },
+      {
+        type: 'doc',
+        id: 'platform/enterprise-platform/legacy/configure-ai-gateway',
+        label: 'Configure and deploy',
+      },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/providers-and-models',
+        label: 'Model providers',
+      },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/model-routing',
+        label: 'Model routing',
+      },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/budget-enforcement',
+        label: 'Budget enforcement',
+      },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/prompt-injection-screening',
+        label: 'Prompt injection screening',
+      },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/pci-pii-controls',
+        label: 'PCI/PII controls',
+      },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/forward-audit-logs',
+        label: 'Audit log forwarding',
+      },
+      { type: 'doc', id: 'ai-gateway/legacy/telemetry', label: 'Telemetry' },
+      {
+        type: 'doc',
+        id: 'ai-gateway/legacy/api-reference',
+        label: 'Management API reference',
+      },
+    ],
   },
 ];
 

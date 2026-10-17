@@ -1,147 +1,140 @@
 ---
-title: Route models
+title: Route models and control access
 sidebar_label: Model routing
 description:
-  Map model names onto providers with a default route, weighted load balancing,
-  priority failover, retries, and timeouts on the AI Gateway.
+  Map model names onto providers, limit which models each user or group can
+  call, and understand retries and timeouts on the AI Gateway.
 ---
 
-A _route_ maps a requested model name to one or more providers. Configure routes
-under `spec.routes` to change model providers without updating clients.
+A _route_ maps a requested model name to the provider that serves it. In the AI
+Gateway, the route table is the `models` list on each entry in `providers`.
+Change the provider behind a model by moving the model name to another provider,
+without updating clients.
+
+For the legacy AI Gateway, see
+[legacy gateway model routing](./legacy/model-routing.mdx).
 
 ## Route a specific model
 
-```yaml title="aigateway.yaml"
-spec:
-  routes:
-    - name: gpt4o
-      match:
-        model: 'gpt-4o'
-      backendRefs:
-        - provider: openai
-    - name: claude
-      match:
-        model: 'claude-sonnet-4-6'
-      backendRefs:
-        - provider: anthropic
+List each model under the provider that serves it:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  providers:
+    - kind: openai
+      baseUrl: https://api.openai.com
+      models: ['gpt-5', 'gpt-5-mini']
+      credentialSecretRef:
+        name: ai-gateway-v2-openai
+        key: api-key
+    - kind: anthropic
+      baseUrl: https://api.anthropic.com
+      models: ['claude-sonnet-5']
+      credentialSecretRef:
+        name: ai-gateway-v2-anthropic
+        key: api-key
 ```
 
-## Add a default route
+Write each model name exactly as the provider expects it. The gateway sends the
+name upstream unchanged, and the pricing catalog uses the same name to price the
+request. `claude-sonnet-4-5` and `claude-sonnet-4-5-20250929` are two different
+routes and two different prices.
 
-A route with no `match` block catches every model that no other route claims. At
-most one route may omit `match`, and route names must be unique.
+## How the gateway picks a provider
 
-```yaml
-spec:
-  routes:
-    - name: default
-      backendRefs:
-        - provider: openai
+The gateway looks up the requested model within the client API the request
+arrived on, so a client calls each model through an API its provider speaks. See
+[Supported providers](./providers-and-models.mdx#supported-providers).
+
+Within one client API, a model name maps to exactly one provider. Listing the
+same model under two providers that share an API, such as `anthropic` and
+`bedrock-anthropic`, is a configuration error. Use distinct model names for the
+two, such as `claude-sonnet-5` and `us.anthropic.claude-sonnet-5`.
+
+There is no default route. A request for a model that no provider lists returns
+`404`, so only the models you list are reachable.
+
+## Control which models each caller can use
+
+_Model access_ limits each caller to the models their directory grants cover.
+With model access on, the gateway refuses a request for a model the caller has
+no grant for with `403`, before it calls any provider. The model discovery
+endpoints list only the models the caller can use.
+
+Grants come from _model sets_, named collections of models that you manage on
+the **Models** page in the console's administration experience and grant to
+users or groups. The **All Users** set is held by every active user. It starts
+out granting every model, so turning model access on changes nothing until you
+narrow it.
+
+Turn model access on in the chart values:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  modelAccess:
+    enabled: true
 ```
 
-If you omit a default route, the gateway denies requests for unmatched models.
-Use this behavior to allow only explicitly routed models.
+Model access uses the same receiver, token, and certificate authority as budget
+enforcement, and the directory connection used for virtual API keys. The chart
+refuses to render when one of these is missing. See
+[Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx)
+for the platform values it depends on.
 
-## Spread traffic across providers
+Model access fails closed for both requests and discovery calls. If the gateway
+can't get a decision for a request, it refuses the request. If it can't get a
+decision for a discovery call, it returns `503` with `model access unavailable`
+instead of the full model list.
 
-Give each backend a `weight` to split traffic proportionally. Here roughly three
-quarters of the traffic goes to OpenAI:
+## Discover models
 
-```yaml
-spec:
-  routes:
-    - name: default
-      backendRefs:
-        - provider: openai
-          weight: 3
-        - provider: anthropic
-          weight: 1
-```
+Clients list the models they can call through the discovery endpoints. Each
+endpoint returns the response shape its client family expects:
 
-## Fail over to another provider
+| Endpoint                   | Response shape | Lists                                               |
+| -------------------------- | -------------- | --------------------------------------------------- |
+| `GET /v1/models`           | OpenAI         | Models served on Chat Completions and Responses     |
+| `GET /anthropic/v1/models` | Anthropic      | Models served on Anthropic Messages                 |
+| `GET /v1beta/models`       | Gemini         | Models served on the Gemini API, with their actions |
 
-Use `priority` for active-passive failover. Lower values are preferred, so all
-traffic goes to priority `0` until that provider stops answering:
+A `GET /v1/models` request that carries an `anthropic-version` header returns
+the Anthropic shape and models.
 
-```yaml
-spec:
-  routes:
-    - name: default
-      backendRefs:
-        - provider: openai
-          weight: 1
-          priority: 0
-        - provider: anthropic
-          weight: 1
-          priority: 1
-```
+Where the gateway knows a model's context window, it includes it in the
+response: `context_window` in the OpenAI shape, `max_input_tokens` in the
+Anthropic shape, and `inputTokenLimit` in the Gemini shape. The gateway ships a
+catalog of context windows generated from public model metadata. A model missing
+from the catalog is listed without a context window, so clients fall back to
+their own default.
 
-:::warning[Failover needs retries configured]
+## Retries and timeouts
 
-Configure `spec.resilience.retry` with `priority`. A failed request reaches the
-next priority only during a retry.
+The gateway applies one fixed resilience policy to every provider:
 
-:::
+- **Retries.** The gateway retries a request up to two times when the connection
+  to the provider fails, or when the provider answers `502`, `503`, or `504`. It
+  retries only before any response bytes reach the client, and always against
+  the same provider.
+- **Response headers.** The gateway waits up to 5 minutes for the provider to
+  start responding.
+- **Stalled streams.** The gateway ends a stream that sends nothing for 5
+  minutes.
+- **Stream lifetime.** The gateway ends any stream after
+  `lifecycle.maxStreamDuration`, which defaults to `15m`.
 
-## Configure retries, health checks, and timeouts
-
-`spec.resilience` applies to the whole gateway. Each sub-block is optional.
-
-```yaml title="aigateway.yaml"
-spec:
-  resilience:
-    retry:
-      numRetries: 2
-      numAttemptsPerPriority: 1
-      retryOn:
-        triggers: [5xx, gateway-error, reset, connect-failure]
-      perRetryTimeout: 10s
-    passiveHealthCheck:
-      consecutive5xxErrors: 5
-      baseEjectionTime: 30s
-      maxEjectionPercent: 10
-  gateway:
-    timeouts:
-      requestTimeout: 60s
-```
-
-**Retries.** `numRetries` caps attempts per request, from 0 to 10.
-`numAttemptsPerPriority` is how many attempts happen against one priority group
-before moving to the next, so the default of `1` switches provider on every
-retry. `retryOn.triggers` accepts `5xx`, `gateway-error`, `reset`,
-`connect-failure`, and `retriable-status-codes`; at least one trigger is
-required whenever `numRetries` is above zero. Listing `retriable-status-codes`
-additionally requires a non-empty `retryOn.httpStatusCodes`. `perRetryTimeout`
-bounds a single attempt. The whole request, across every attempt, is bounded by
-`spec.gateway.timeouts.requestTimeout` for the gateway default, or
-`spec.routes[].timeouts.requestTimeout` to override it on one route. Those sit
-outside `spec.resilience`.
-
-**Passive health checks** eject a misbehaving provider from the pool for
-`baseEjectionTime` after `consecutive5xxErrors` consecutive failures, with
-`maxEjectionPercent` limiting how much of the pool can be ejected at once.
-
-**Circuit breaking** is available under `spec.resilience.circuitBreaker` to cap
-concurrent connections, queued requests, in-flight requests, and in-flight
-retries, so a retry storm cannot exhaust upstream capacity.
-
-## How retries interact with budgets
-
-The gateway evaluates budgets before retries and charges the request once.
-Provider retries do not add charges, and budget denials are not retried.
+Budget admission runs once per request, before the provider call, and the
+request is charged once for the usage the provider reports. Retries don't add
+charges.
 
 ## Limits worth knowing
 
-- A gateway supports up to 20 providers and 120 routes.
-- The gateway supports approximately 15 distinct combinations of backends and
-  timeouts. Routes that share a combination are consolidated.
-- A configuration that exceeds this limit reports `RoutesValid=False` with
-  reason `TooManyRouteRules` and preserves the previous working routes.
+- Each model is served by one provider. The gateway has no weighted routing
+  across providers and no failover to a second provider.
 
 ## Next steps
 
-- [Budgets and pricing](./budgets-and-pricing.mdx) to price every model you have
-  routed. An unpriced model is refused.
+- [Budgets and pricing](./budgets-and-pricing.mdx) to price every model you
+  route. An unpriced model is refused.
 - [Screen prompts for injection](./prompt-injection-screening.mdx) and
   [PCI/PII controls](./pci-pii-controls.mdx) to decide what content is allowed
-  through these routes.
+  through the gateway.

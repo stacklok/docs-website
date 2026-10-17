@@ -1,0 +1,95 @@
+## Cover every caller first
+
+Before enabling budget enforcement for an environment with traffic, choose one
+of these approaches:
+
+**Set an organization default.** This covers directory users without an explicit
+budget. Set it on the **Defaults** tab or through the API.
+
+**Create budgets individually.** Use the [bulk import](#import-in-bulk) for an
+existing user and group inventory.
+
+The organization default applies only to resolved directory users.
+
+## Create budgets
+
+Each budget has a USD limit and a daily, monthly, or yearly calendar period. The
+budgets endpoints are part of the
+[Enterprise Manager API](../../platform/enterprise-platform/enterprise-manager-api.mdx).
+
+The API identifies a budget by scope and subject. `scope` is `user` or `group`.
+`subject_id` is the user's directory UUID or the directory group's UUID. Find a
+user's UUID in the `id` field that `GET /v1/users` returns. That endpoint
+accepts an `email` filter. `limit_usd` is a decimal string and `period` is
+`day`, `month`, or `year`.
+
+### Set an organization default
+
+Set the organization default on the **Defaults** tab or through the API:
+
+```bash
+curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets/default \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"limit_usd": "350.000000000", "period": "day"}'
+```
+
+Setting the default replaces its previous value. Deleting it leaves users
+without explicit budgets uncovered. Moving a user between the default and an
+explicit budget preserves their current-period usage.
+
+### Update one budget
+
+Use the user or group endpoint to create or update one budget:
+
+```bash
+curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets/users/<USER_UUID> \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"limit_usd": "5.000000000", "period": "day"}'
+
+curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets/groups/<GROUP_UUID> \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"limit_usd": "500.000000000", "period": "month", "precedence": 1}'
+```
+
+Group budgets use 1-based `precedence`. The gateway charges an explicit user
+budget first.
+
+### Import in bulk
+
+`PUT /v1/budgets` replaces the **entire** collection: budgets in the request are
+created or updated, and **budgets absent from the request are deleted**. Use it
+only for complete imports.
+
+```bash
+curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "budgets": [
+      {"scope": "user",  "subject_id": "<USER_UUID>", "limit_usd": "5.000000000",   "period": "day"},
+      {"scope": "group", "subject_id": "<GROUP_UUID>", "limit_usd": "500.000000000", "period": "month"}
+    ]
+  }'
+```
+
+Bulk replacement preserves spend counters. A bulk import takes no `precedence`
+field. Group budgets are charged in the order their entries appear in the
+request, and the import renumbers every group, replacing any precedence you set
+through the per-group endpoint.
+
+`GET /v1/budgets` returns the collection with an `ETag`. Send it back as
+`If-Match` on your next write to detect a concurrent change; a `412` response
+means re-read and retry.
+
+## Which budget gets charged
+
+The gateway charges budgets in this order:
+
+1. The user's explicit budget, or the organization default.
+2. The first group budget with remaining capacity, ordered by ascending
+   `precedence`.
+
+The gateway denies the request when no applicable budget has capacity.
