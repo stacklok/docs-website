@@ -13,7 +13,7 @@
   "x-kubernetes-scope": "Namespaced",
   "properties": {
     "spec": {
-      "description": "VirtualMCPServerSpec defines the desired state of VirtualMCPServer",
+      "description": "VirtualMCPServerSpec defines the desired state of VirtualMCPServer\n\nDeeper cross-reference checks (every referenced upstream provider must\nexist, and no reference to the mandatory first provider) were previously\nexpressed as CEL on this struct but were removed because they pushed the\ncluster's x-kubernetes-validations cost budget over the per-schema limit\nin realistic deployments where upstreamProviders is unbounded. The same\ninvariants are re-checked at reconciliation time by\nvalidateAuthServerUpstreamFilter in the VirtualMCPServer controller, which\nsurfaces a terminal AuthServerConfigValidated=False condition — only the\nkubectl-apply-time feedback is lost, not the safety.",
       "properties": {
         "authServerConfig": {
           "description": "AuthServerConfig configures an embedded OAuth authorization server.\nWhen set, the vMCP server acts as an OIDC issuer, drives users through\nupstream IDPs, and issues ToolHive JWTs. The embedded AS becomes the\nIncomingAuth OIDC provider — its issuer must match IncomingAuth.OIDCConfigRef\nso that tokens it issues are accepted by the vMCP's incoming auth middleware.\nWhen nil, IncomingAuth uses an external IDP and behavior is unchanged.",
@@ -1287,6 +1287,12 @@
                             "pattern": "^https://[^\\s?#]+[^/\\s?#]$",
                             "type": "string"
                           },
+                          "rotationKey": {
+                            "description": "RotationKey is an optional operator-chosen label that is part of the\ncached registration's identity but is never sent to the upstream.\nChange it to make the proxies register a fresh client at their next\nstart instead of reusing the cached one: for example after the\nupstream has dropped the registration, or when a rotation is required.\nAt start ToolHive checks the cached client at the upstream's token\nendpoint and registers a new one by itself when the upstream answers\ninvalid_client. Where that check cannot tell (an upstream that answers\na dropped public client like a live one, or a private_key_jwt client),\nthe stale client_id is only rejected in the user's browser, and\nchanging this key is the remedy. The previous registration's row stays\nin storage, and upstream refresh tokens bound to the previous client_id\nstop refreshing, so affected users sign in again.",
+                            "maxLength": 64,
+                            "pattern": "^[A-Za-z0-9._-]+$",
+                            "type": "string"
+                          },
                           "softwareId": {
                             "description": "SoftwareID is the RFC 7591 \"software_id\" registration metadata value,\nidentifying the client software independent of any particular\nregistration instance. Typically a UUID or short identifier.",
                             "maxLength": 255,
@@ -1335,6 +1341,10 @@
                       },
                       "insecureAllowHTTP": {
                         "description": "InsecureAllowHTTP permits plain-HTTP authorization and token endpoint URLs\nfor this upstream. Only for in-cluster development environments (e.g. an\nOAuth2 provider served over HTTP in a kind cluster) where TLS is not\navailable. Never set this in production.",
+                        "type": "boolean"
+                      },
+                      "omitScopeOnRefresh": {
+                        "description": "OmitScopeOnRefresh stops the scope parameter from being sent on\nrefresh_token grant requests to the upstream provider's token endpoint.\nScopes are still sent on the authorization request.\nBy default (false), the configured scopes are sent on refresh as well,\nwhich some providers require to avoid narrowing the refreshed token.\nSet it for providers that reject scope on refresh, such as Salesforce\n(\"invalid_request - scope parameter not supported\").",
                         "type": "boolean"
                       },
                       "redirectUri": {
@@ -1582,6 +1592,12 @@
                             "pattern": "^https://[^\\s?#]+[^/\\s?#]$",
                             "type": "string"
                           },
+                          "rotationKey": {
+                            "description": "RotationKey is an optional operator-chosen label that is part of the\ncached registration's identity but is never sent to the upstream.\nChange it to make the proxies register a fresh client at their next\nstart instead of reusing the cached one: for example after the\nupstream has dropped the registration, or when a rotation is required.\nAt start ToolHive checks the cached client at the upstream's token\nendpoint and registers a new one by itself when the upstream answers\ninvalid_client. Where that check cannot tell (an upstream that answers\na dropped public client like a live one, or a private_key_jwt client),\nthe stale client_id is only rejected in the user's browser, and\nchanging this key is the remedy. The previous registration's row stays\nin storage, and upstream refresh tokens bound to the previous client_id\nstop refreshing, so affected users sign in again.",
+                            "maxLength": 64,
+                            "pattern": "^[A-Za-z0-9._-]+$",
+                            "type": "string"
+                          },
                           "softwareId": {
                             "description": "SoftwareID is the RFC 7591 \"software_id\" registration metadata value,\nidentifying the client software independent of any particular\nregistration instance. Typically a UUID or short identifier.",
                             "maxLength": 255,
@@ -1605,6 +1621,10 @@
                         "description": "IssuerURL is the OIDC issuer URL for automatic endpoint discovery.\nMust be a valid HTTPS URL.",
                         "pattern": "^https://.*$",
                         "type": "string"
+                      },
+                      "omitScopeOnRefresh": {
+                        "description": "OmitScopeOnRefresh stops the scope parameter from being sent on\nrefresh_token grant requests to the upstream provider's token endpoint.\nScopes are still sent on the authorization request.\nBy default (false), the configured scopes are sent on refresh as well,\nwhich some providers require to avoid narrowing the refreshed token.\nSet it for providers that reject scope on refresh, such as Salesforce\n(\"invalid_request - scope parameter not supported\").",
+                        "type": "boolean"
                       },
                       "redirectUri": {
                         "description": "RedirectURI is the callback URL where the upstream IdP will redirect after authentication.\nWhen not specified, defaults to `{resourceUrl}/oauth/callback` where `resourceUrl` is the\nURL associated with the resource (e.g., MCPServer or vMCP) using this config.\nIts hostname must match the browser-facing authorization endpoint (`issuer`, or\n`authorizationEndpointBaseUrl` when set): the callback is bound to the browser that\nstarted the login by a host-only cookie, so a different host rejects every browser login.",
@@ -1825,6 +1845,67 @@
               "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.jwtBearer) || !has(self.inboundGrants.jwtBearer.issuerPolicies) || self.inboundGrants.jwtBearer.issuerPolicies.all(policy, self.inboundGrants.jwtBearer.issuerPolicies.filter(other, other.issuerRef == policy.issuerRef).size() == 1)"
             }
           ]
+        },
+        "authServerUpstreamFilter": {
+          "description": "AuthServerUpstreamFilter optionally narrows the multi-upstream\nauthorization chain per-request based on the first upstream's resolved\nidentity, so principals only walk the upstream providers they are\nentitled to. Lives beside AuthServerConfig (rather than nested in it)\nbecause the shared EmbeddedAuthServerConfig type is also used by\nMCPExternalAuthConfig, where multi-upstream filtering has no meaning.\n\nWhen nil, every request walks the full upstream chain in configured\norder — the behavior from before the filter hook existed. The filter\nonly controls which OAuth credentials are collected during login;\nbackend and tool authorization remain Cedar's responsibility.",
+          "properties": {
+            "claim": {
+              "description": "Claim is the exact top-level JWT/OIDC claim name to read group\nmembership from on the first upstream's resolved principal. Defaults\nto \"groups\" when empty. Nested claims (e.g. Keycloak's\nrealm_access.roles) are not supported and must be flattened to a\ntop-level string array by the identity provider.\n\nThe value is read from the identity the first upstream resolves: an\nOIDC upstream fills it from the validated ID token, a pure OAuth2\nupstream from the userinfo response. Groups carried only in an access\ntoken never reach it. Before enabling the filter, configure the first\nupstream to include the claim in its ID token or userinfo response,\nand request any required scopes. A missing claim fails the\nauthorization (defaultUpstreams covers a valid-but-empty claim and\nunmatched groups, not an absent one), so enabling the filter before\nthe provider emits the claim locks every principal out.",
+              "maxLength": 253,
+              "minLength": 1,
+              "type": "string"
+            },
+            "defaultUpstreams": {
+              "description": "DefaultUpstreams is used when the claim is a valid empty array or\nwhen no rule matches. When omitted, no optional upstreams are added —\nthe mandatory first upstream remains but the authorization walks no\nfurther. Every entry must name a configured\nauthServerConfig.upstreamProviders provider other than the mandatory\nfirst provider; those cross-reference checks are enforced at\nreconciliation time rather than by CEL (CEL cost-budget constraints\nmoved the check into the Go filter constructor; see the top-level CEL\nrules on VirtualMCPServerSpec for the shape invariants that remain at\nadmission time).",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array",
+              "x-kubernetes-list-type": "set"
+            },
+            "rules": {
+              "description": "Rules assigns groups to upstream provider subsets. A principal matches\na rule if any of its groups appears in the rule's groups list\n(any-of / OR semantics). Multiple matching rules are combined by\nunion — the effective chain contains every upstream from every\nmatching rule, deduplicated and in configured order.",
+              "items": {
+                "description": "UpstreamFilterGroupRule pairs a set of principal group names with the set\nof non-first upstream provider names those principals are entitled to walk.",
+                "properties": {
+                  "groups": {
+                    "description": "Groups is the set of principal group names this rule matches. Matching\nis case-sensitive and exact. Per-element emptiness and duplicate\ndetection are enforced at reconciliation time by the Go filter\nconstructor, which runs again before the auth server starts.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "type": "array",
+                    "x-kubernetes-list-type": "set"
+                  },
+                  "upstreamProviders": {
+                    "description": "UpstreamProviders lists the non-first upstream provider names to\ninclude in the chain when this rule matches. Every entry must name a\nconfigured authServerConfig.upstreamProviders provider other than the\nmandatory first provider; these cross-reference checks are enforced at\nreconciliation time rather than by CEL (CEL cost-budget constraints\nmoved the check into the Go filter constructor). Per-element emptiness\nand duplicates are also enforced at reconciliation time.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "type": "array",
+                    "x-kubernetes-list-type": "set"
+                  }
+                },
+                "required": [
+                  "groups",
+                  "upstreamProviders"
+                ],
+                "type": "object"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array",
+              "x-kubernetes-list-type": "atomic"
+            }
+          },
+          "required": [
+            "rules"
+          ],
+          "type": "object"
         },
         "config": {
           "description": "Config is the Virtual MCP server configuration.\nThe audit config from here is also supported, but not required.",
@@ -3997,6 +4078,14 @@
         {
           "message": "embeddingServerRef provisions a managed TEI server and cannot be combined with optimizer.embeddingProvider 'openai'; openai mode uses embeddingService directly",
           "rule": "!(has(self.embeddingServerRef) && has(self.config) && has(self.config.optimizer) && has(self.config.optimizer.embeddingProvider) && self.config.optimizer.embeddingProvider == 'openai')"
+        },
+        {
+          "message": "authServerUpstreamFilter requires authServerConfig to be set",
+          "rule": "!has(self.authServerUpstreamFilter) || has(self.authServerConfig)"
+        },
+        {
+          "message": "authServerUpstreamFilter requires at least two configured upstream providers",
+          "rule": "!has(self.authServerUpstreamFilter) || (has(self.authServerConfig) && has(self.authServerConfig.upstreamProviders) && size(self.authServerConfig.upstreamProviders) >= 2)"
         }
       ]
     },
