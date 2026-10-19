@@ -973,6 +973,56 @@ dcrConfig:
     key: token
 ```
 
+#### Re-register a dropped upstream client
+
+ToolHive caches the client it registers and reuses it across restarts. Each time
+the proxy starts, ToolHive checks the cached client at the upstream's token
+endpoint. If the upstream answers `invalid_client`, ToolHive registers a new
+client and replaces the cached one automatically.
+
+That check can't detect every dropped registration. Some upstreams answer a
+request from a dropped public client as if it were still registered, and the
+check can't verify `private_key_jwt` clients. In those cases the stale client ID
+is only rejected when a user signs in through the browser. To force a fresh
+registration, set or change `rotationKey` in `dcrConfig`:
+
+```yaml title="MCPExternalAuthConfig: rotate the DCR client"
+dcrConfig:
+  discoveryUrl: 'https://mcp.example.com/.well-known/oauth-authorization-server'
+  # highlight-next-line
+  rotationKey: '2026-10-19'
+```
+
+The value is a label of 1 to 64 letters, digits, dots, underscores, or hyphens.
+ToolHive uses it only to identify the cached registration and never sends it to
+the upstream. When the value changes, the proxy registers a new client at its
+next start. Upstream refresh tokens issued to the previous client stop working,
+so affected users must sign in again.
+
+### Omit scopes on token refresh
+
+By default, the embedded authorization server sends the configured `scopes` when
+it refreshes an upstream token, because some providers narrow the refreshed
+token when the `scope` parameter is missing. Providers such as Salesforce reject
+refresh requests that include `scope`
+(`invalid_request - scope parameter not supported`). For these providers, set
+`omitScopeOnRefresh: true` on the upstream's `oidcConfig` or `oauth2Config`:
+
+```yaml title="MCPExternalAuthConfig: omit scope on refresh"
+oauth2Config:
+  authorizationEndpoint: 'https://login.salesforce.com/services/oauth2/authorize'
+  tokenEndpoint: 'https://login.salesforce.com/services/oauth2/token'
+  scopes:
+    - api
+    - refresh_token
+  # highlight-next-line
+  omitScopeOnRefresh: true
+```
+
+ToolHive still sends the scopes on the authorization request, so the provider
+grants them at sign-in and the refreshed token keeps the originally granted
+scopes.
+
 ### Extract identity from the token response
 
 Some providers don't expose a userinfo endpoint but return user identity in the
