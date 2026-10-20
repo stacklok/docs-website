@@ -354,17 +354,28 @@ outbound network isolation to include the appropriate hostnames and ports.
 **Reaching the host with `host.docker.internal`**
 
 `host.docker.internal` is a Docker Desktop hostname that resolves to the host
-machine's IP address. Docker gateway addresses are blocked by an explicit deny
-in the egress proxy by default, even when `insecure_allow_all` is set. Pass the
+machine's IP address, and `host.containers.internal` is its Podman equivalent.
+Host gateway addresses are blocked by an explicit deny in the egress proxy by
+default, even when `insecure_allow_all` is set. Pass the
 `--allow-docker-gateway` flag to grant access to `host.docker.internal`,
-`gateway.docker.internal`, and the gateway IP of every bridge network on the
-container runtime (typically `172.17.0.1` on Linux, `192.168.65.1` on Docker
-Desktop). The flag alone is enough: you do not need to add the gateway hostname
-or IP to `allow_host`.
+`gateway.docker.internal`, `host.containers.internal`, and the gateway IP of
+every bridge network on the container runtime (typically `172.17.0.1` on Linux,
+`192.168.65.1` on Docker Desktop). On Podman, the flag also covers every address
+that the runtime maps to those hostnames, which includes the host-access address
+used by rootless Podman. The flag alone is enough: you do not need to add the
+gateway hostname or IP to `allow_host`.
 
-ToolHive discovers the bridge gateway IPs when it deploys the MCP server. If you
-create a new bridge network afterward, remove the MCP server with `thv rm` and
-run it again so the egress proxy picks up the new gateway.
+ToolHive discovers these addresses when it deploys the MCP server. If you create
+a new bridge network afterward, or change Podman's host mappings or rootless
+networking mode, remove the MCP server with `thv rm` and run it again so the
+egress proxy picks up the new addresses.
+
+On Podman, ToolHive reads the host mappings from the `/etc/hosts` file that the
+runtime generates for its DNS sidecar container. If that file has no
+`host.containers.internal` entry (for example, because `no_hosts = true` is set
+in `containers.conf`), or ToolHive can't read it, network-isolated deployments
+fail before the MCP server starts, whether or not you pass
+`--allow-docker-gateway`.
 
 Gateway access granted by `--allow-docker-gateway` is intentionally
 port-independent. It bypasses the permission profile's `allow_port` list so that
