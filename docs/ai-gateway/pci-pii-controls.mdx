@@ -69,9 +69,14 @@ ai-gateway-v2:
 | `log-only` | Recorded in the audit event and forwarded unmodified.                                                         |
 
 The default `requestAction` is `block`. A redacted match without its own
-`placeholder` becomes `[REDACTED-<ENTITY>]`, for example
-`[REDACTED-EMAIL_ADDRESS]`. Redaction edits the body the gateway forwards, so
-the provider and any conversation capture see only the redacted text.
+`placeholder` uses `scanning.placeholder`. When that's empty too, the match
+becomes `[REDACTED-<ENTITY>]`, for example `[REDACTED-EMAIL_ADDRESS]`. Redaction
+edits the body the gateway forwards, so the provider sees only the redacted
+text.
+
+To trial a new entity without affecting traffic, set `mode: shadow` on its
+`entityActions` entry. The adapter then records each detection in its metrics
+and logs, but never blocks or redacts for that entity.
 
 ## Choose which entities to look for
 
@@ -140,18 +145,31 @@ English (`en`) only.
 
 ## Decide how failures behave
 
-`scanning.ner.failureAction` decides what the adapter does when Presidio is
-unreachable, slow, or behind an open circuit breaker:
+A scan can fail in four places, and each has its own setting. The defaults
+refuse the request in every case:
 
-| Setting                 | Behavior                                        |
-| ----------------------- | ----------------------------------------------- |
-| `fail-closed` (default) | Refuse the request                              |
-| `fail-open`             | Forward the request unscanned and log a warning |
+| Setting                            | When it applies                                                            | Default       | Open setting                                           |
+| ---------------------------------- | -------------------------------------------------------------------------- | ------------- | ------------------------------------------------------ |
+| `scanning.hook.failurePolicy`      | The gateway can't reach the adapter, times out, or gets an error reply     | `Fail`        | `Ignore` forwards the request unscanned                |
+| `scanning.ner.failureAction`       | The adapter can't reach Presidio, Presidio is slow, or the breaker is open | `fail-closed` | `fail-open` forwards the request unscanned             |
+| `scanning.extractionFailureAction` | The adapter can't extract text from the body, such as invalid JSON         | `block`       | `continue` forwards the request unscanned              |
+| `scanning.mutationFailureAction`   | A match must be redacted but the body can't be rewritten safely            | `block`       | `continue` forwards the request with the match left in |
 
-Use `fail-closed` in production and `fail-open` only during rollout or incident
-response.
+Use the defaults in production and open settings only during rollout or incident
+response. Requests forwarded under an open setting reach the provider with
+unscanned or unredacted content, and each one is logged as a warning.
 
-A circuit breaker applies `failureAction` without calling an unhealthy Presidio:
+A refusal from the adapter, including a Presidio failure under `fail-closed`,
+returns `403` with the same message as a `block` match. When the gateway can't
+get an answer from the adapter under `Fail`, it returns `504` for a timeout,
+`503` when the adapter is unreachable, and `502` for an invalid reply.
+
+Under `scanning.hook.failurePolicy: Ignore`, a client can pad a request until
+the scan times out and gets forwarded, so keep `Fail` wherever scanning is a
+control you rely on.
+
+A circuit breaker applies `ner.failureAction` without calling an unhealthy
+Presidio:
 
 ```yaml title="values.yaml"
 ai-gateway-v2:
@@ -197,7 +215,7 @@ ai-gateway-v2:
 ```
 
 Setting `scanning.presidio.maxReplicas` above 1 renders a
-HorizontalPodAutoscaler.
+HorizontalPodAutoscaler that scales on CPU.
 
 The adapter is on every request's path, so run at least two replicas. At two or
 more replicas, the chart creates a PodDisruptionBudget for the adapter and for
@@ -206,6 +224,71 @@ Presidio.
 To watch for queuing, set `scanning.adapter.metrics.enabled: true`. If
 `stacklok_ai_gateway_presidio_analyze_inflight` divided by the total number of
 Presidio workers exceeds 1, calls are queuing in Presidio.
+
+### Scale Presidio on load with KEDA
+
+Each Presidio worker analyzes one call at a time, so calls can queue while CPU
+use stays low. To scale on queued work instead of CPU, hand the replica count to
+[KEDA](https://keda.sh/) and scale on the in-flight metric the adapter reports.
+
+First, let KEDA own the replica count. With `autoscaling.mode: External`, the
+chart renders no HorizontalPodAutoscaler. Keep `replicas` at the floor you give
+KEDA, because the chart sizes each request's Presidio concurrency from it:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  scanning:
+    adapter:
+      metrics:
+        enabled: true
+    presidio:
+      replicas: 2
+      autoscaling:
+        mode: External
+```
+
+The first upgrade that switches to `External` can drop Presidio to one replica
+until KEDA acts, so make the change during a quiet period. Once the upgrade has
+removed the chart's HorizontalPodAutoscaler, apply a `ScaledObject` that targets
+the Presidio Deployment:
+
+```yaml title="presidio-scaledobject.yaml"
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: <RELEASE_NAME>-ai-gateway-v2-presidio
+  namespace: <NAMESPACE>
+spec:
+  scaleTargetRef:
+    name: <RELEASE_NAME>-ai-gateway-v2-presidio
+  minReplicaCount: 2
+  maxReplicaCount: 6
+  fallback:
+    failureThreshold: 3
+    replicas: 2
+  triggers:
+    - type: prometheus
+      metricType: AverageValue
+      metadata:
+        serverAddress: <PROMETHEUS_URL>
+        # highlight-next-line
+        query: max_over_time(sum(stacklok_ai_gateway_presidio_analyze_inflight{namespace="<NAMESPACE>",app_kubernetes_io_name="ai-gateway-v2-scanning-adapter"})[5m:1m])
+        threshold: '8'
+        ignoreNullValues: 'false'
+```
+
+KEDA keeps `sum(in-flight calls) / threshold` replicas, so set `threshold` to
+the number of concurrent calls one Presidio pod should carry. Eight fits the
+default of two workers per pod. The label that selects the adapter's pods
+depends on how your Prometheus scrapes them; match the pod label
+`app.kubernetes.io/name: ai-gateway-v2-scanning-adapter`. The metric appears
+only after Presidio's first call, and until then `fallback` holds the replica
+count.
+
+To go back to the chart's autoscaler, delete the `ScaledObject` first, then
+return `autoscaling.mode` to `HPA`. If you turn scanning off, delete the
+`ScaledObject` in the same change, because the chart removes the Presidio
+Deployment.
 
 ## Cache scan results
 

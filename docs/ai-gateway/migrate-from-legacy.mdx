@@ -40,13 +40,23 @@ four things the chart can't check:
   of which group uses which gateway.
 - **Two route tables.** Each gateway keeps its own model-to-provider mapping. A
   model added to one is missing from the other until you add it there too.
+- **Model access applies to one gateway.** Model sets restrict callers on the AI
+  Gateway only. Narrowing a model set cuts off callers on the AI Gateway while
+  the legacy gateway keeps serving them.
 - **Two sets of workloads.** Both gateways consume cluster resources while
-  installed.
+  installed, including separate Presidio pools when both scan for PII. Both
+  report the same `stacklok_ai_gateway_presidio_*` metrics, so scope dashboards,
+  alerts, and autoscalers by the pod label `app.kubernetes.io/name`.
 
 Shared state behaves as one platform:
 
 - Spend from both gateways charges the same budgets.
 - A virtual API key works on both.
+- A user's identity provider token works on both when `auth.issuers` lists the
+  same issuer and audience as the `AIGateway`'s `spec.auth.oidc`. Clients change
+  only their base URL.
+- A PII result cache can share one Redis or Valkey. Each release keeps its
+  entries under its own keys.
 - **Disconnect AI Gateway** in **Platform Settings** stops traffic on both.
 
 Set `acknowledgeBothDataPlanes` in your own values only, and remove it in the
@@ -82,6 +92,8 @@ Each `AIGateway` field has an `ai-gateway-v2` value or no equivalent:
 | `spec.processor.requestAction`                                                                         | `scanning.requestAction` and `scanning.entityActions`                                                    |
 | `spec.processor.responseAction`                                                                        | Not supported                                                                                            |
 | `spec.processor.nerProvider.failureAction`                                                             | `scanning.ner.failureAction`                                                                             |
+| `spec.processor.extractionFailureAction`                                                               | `scanning.extractionFailureAction`, with lowercase `block` or `continue`                                 |
+| `spec.processor.mutationFailureAction`                                                                 | `scanning.mutationFailureAction`, with lowercase `block` or `continue`                                   |
 | `spec.processor.nerProvider.resultCache`                                                               | `scanning.resultCache`                                                                                   |
 | `spec.guardrails`                                                                                      | `guardrails.*`                                                                                           |
 | `spec.audit.enabled`                                                                                   | `audit.enabled`                                                                                          |
@@ -103,8 +115,18 @@ The legacy gateway turns on group label lookup with the platform value
 [Attribute traffic to organizational groups](telemetry.mdx#attribute-traffic-to-organizational-groups).
 
 Provider credentials stay in Kubernetes Secrets. Reference each one with
-`providers[].credentialSecretRef`. The chart refuses inline credentials. See
-[Connect model providers](./providers-and-models.mdx).
+`providers[].credentialSecretRef`. The chart refuses inline credentials. You can
+reuse the same provider keys, but the AI Gateway expects one Secret per
+provider, so you might need to create new Secrets. On Amazon EKS, Bedrock and
+Bedrock Guardrails access needs a Pod Identity association for the AI Gateway's
+own ServiceAccounts. See [Connect model providers](./providers-and-models.mdx).
+
+The legacy gateway's ServiceAccounts don't carry over to the Enterprise Manager
+allowlists. The platform chart adds the AI Gateway's ServiceAccount by default,
+but if you set `enterprise-manager.grpc.callerAuth.saSubjectAllowlist` or
+`httpSaSubjectAllowlist` yourself, your list replaces the default. Add
+`system:serviceaccount:<NAMESPACE>:<RELEASE_NAME>-ai-gateway-v2` to both, or the
+AI Gateway refuses every request.
 
 ## What the AI Gateway does not support
 
