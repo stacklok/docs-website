@@ -6,10 +6,6 @@ description:
   spend through the Enterprise Manager API.
 ---
 
-import BudgetsApi from './_partials/_budgets-api.mdx';
-import PricingCatalog from './_partials/_pricing-catalog.mdx';
-import MonitorSpendApi from './_partials/_monitor-spend-api.mdx';
-
 A _budget_ caps model spend in USD for a directory user or group. Before the AI
 Gateway calls a provider, it asks the budgets service in the Enterprise Manager
 to admit the request. After the response, it reports the provider's usage so the
@@ -17,7 +13,8 @@ service can charge it.
 
 Use [Budgets](manage-budgets.mdx) in the console for routine administration. Use
 the REST API for automation, bulk import, and pricing. To connect the gateway to
-the budgets service, see [Budget enforcement](budget-enforcement.mdx).
+the budgets service, see
+[Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx#bring-it-up-in-this-order).
 
 :::danger[Cover every caller before you turn enforcement on]
 
@@ -26,21 +23,274 @@ every caller before you connect a gateway that serves traffic.
 
 :::
 
-<BudgetsApi />
+## Cover every caller first
 
-<PricingCatalog />
+Before enabling budget enforcement for an environment with traffic, choose one
+of these approaches:
+
+**Set an organization default.** This covers directory users without an explicit
+budget. Set it on the **Defaults** tab or through the API.
+
+**Create budgets individually.** Use the [bulk import](#import-in-bulk) for an
+existing user and group inventory.
+
+The organization default applies only to resolved directory users.
+
+## Create budgets
+
+Each budget has a USD limit and a daily, monthly, or yearly calendar period. The
+budgets endpoints are part of the
+[Enterprise Manager API](../platform/enterprise-platform/enterprise-manager-api.mdx).
+In the examples on this page, replace `<ENTERPRISE_MANAGER_URL>` with its
+[base URL](../platform/enterprise-platform/enterprise-manager-api.mdx#base-url)
+and `<ADMIN_TOKEN>` with a
+[platform administrator's access token](../platform/enterprise-platform/enterprise-manager-api.mdx#authenticate).
+
+The API identifies a budget by scope and subject. `scope` is `user` or `group`.
+`subject_id` is the user's directory UUID or the directory group's UUID. Find a
+user's UUID in the `id` field that `GET /v1/users` returns. That endpoint
+accepts an `email` filter. `limit_usd` is a decimal string and `period` is
+`day`, `month`, or `year`.
+
+### Set an organization default
+
+Set the organization default on the **Defaults** tab or through the API:
+
+```bash
+curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets/default \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"limit_usd": "350.000000000", "period": "day"}'
+```
+
+Setting the default replaces its previous value. Deleting it leaves users
+without explicit budgets uncovered. Moving a user between the default and an
+explicit budget preserves their current-period usage.
+
+### Update one budget
+
+Use the user or group endpoint to create or update one budget:
+
+```bash
+curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets/users/<USER_UUID> \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"limit_usd": "5.000000000", "period": "day"}'
+
+curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets/groups/<GROUP_UUID> \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"limit_usd": "500.000000000", "period": "month", "precedence": 1}'
+```
+
+Group budgets use 1-based `precedence`. The gateway charges an explicit user
+budget first.
+
+### Import in bulk
+
+`PUT /v1/budgets` replaces the **entire** collection: budgets in the request are
+created or updated, and **budgets absent from the request are deleted**. Use it
+only for complete imports.
+
+```bash
+curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "budgets": [
+      {"scope": "user",  "subject_id": "<USER_UUID>", "limit_usd": "5.000000000",   "period": "day"},
+      {"scope": "group", "subject_id": "<GROUP_UUID>", "limit_usd": "500.000000000", "period": "month"}
+    ]
+  }'
+```
+
+Bulk replacement preserves spend counters. A bulk import takes no `precedence`
+field. Group budgets are charged in the order their entries appear in the
+request, and the import renumbers every group, replacing any precedence you set
+through the per-group endpoint.
+
+`GET /v1/budgets` returns the collection with an `ETag`. Send it back as
+`If-Match` on your next write to detect a concurrent change; a `412` response
+means re-read and retry.
+
+## Which budget gets charged
+
+The gateway charges budgets in this order:
+
+1. The user's explicit budget, or the organization default.
+2. The first group budget with remaining capacity, ordered by ascending
+   `precedence`.
+
+The gateway denies the request when no applicable budget has capacity.
+
+## Update the pricing catalog
+
+Enterprise Manager ships a baseline catalog generated weekly from public model
+pricing, and each upgrade refreshes every rate you haven't changed. To override
+a price, update one model's entry at a time through the API. Changes take effect
+without a restart.
+
+`GET /v1/budgets/pricing` returns the active catalog with an `ETag` header. Send
+that value as `If-Match` with a `PUT` to the entry's address,
+`/v1/budgets/pricing/entries/<PROVIDER>/<MODEL>`. Use the provider and model
+exactly as they appear in the catalog. A model name can contain `/`. The body
+carries exactly one rate block: `anthropic`, `openai`, or `google`.
+
+```bash
+curl -i https://<ENTERPRISE_MANAGER_URL>/v1/budgets/pricing \
+  -H "Authorization: Bearer <ADMIN_TOKEN>"
+
+curl -X PUT https://<ENTERPRISE_MANAGER_URL>/v1/budgets/pricing/entries/anthropic/claude-sonnet-4-6 \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H 'If-Match: <ETAG>' \
+  -H "Content-Type: application/json" \
+  -d '{"anthropic": {"inputUsdPerMillion": "3", "outputUsdPerMillion": "15"}}'
+```
+
+The `ETag` identifies the whole catalog version, so a write to any entry changes
+it. A request without `If-Match` returns `428`, and a stale value returns `412`.
+Read the catalog again and retry.
+
+Each write publishes a new complete catalog version, effective immediately. The
+entry you write stops tracking the baseline, so later upgrades leave its rate
+alone. Every other entry keeps tracking the baseline.
+
+To withdraw or restore a rate, use these requests, which also require
+`If-Match`:
+
+- `DELETE` on the entry removes its rate. The gateway denies requests for that
+  model until you price it again, and upgrades don't restore it.
+- `POST` to `/v1/budgets/pricing/entries/<PROVIDER>/<MODEL>/revert` returns the
+  entry to the baseline's current rate. It returns `409` when the baseline
+  doesn't price that model.
+
+`GET /v1/budgets/pricing/versions` lists published catalog versions, and
+`GET /v1/budgets/pricing/versions/<EFFECTIVE_FROM>` returns one of them. To
+restore an earlier rate, read it from that version and `PUT` it on the entry.
+
+### Rate fields by provider
+
+Set provider-specific rates for cache creation, reasoning, audio, prompt-size
+tiers, and server-side tools when the model reports those usage categories. The
+examples below show entries as the catalog stores them. In a `PUT` body, send
+only the provider block. The provider and model come from the URL.
+
+Anthropic reports cache-creation tokens split by time to live, so declare each
+rate separately:
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "anthropic": {
+    "inputUsdPerMillion": "3",
+    "cacheCreation5mInputUsdPerMillion": "3.75",
+    "cacheCreation1hInputUsdPerMillion": "6",
+    "cachedInputUsdPerMillion": "0.3",
+    "outputUsdPerMillion": "15"
+  }
+}
+```
+
+OpenAI reasoning models report reasoning tokens, and the audio families report
+audio input and output separately:
+
+```json
+{
+  "provider": "openai",
+  "model": "gpt-4o-audio-preview",
+  "openai": {
+    "inputUsdPerMillion": "2.5",
+    "cachedInputUsdPerMillion": "1.25",
+    "outputUsdPerMillion": "10",
+    "audioInputUsdPerMillion": "40",
+    "audioOutputUsdPerMillion": "80"
+  }
+}
+```
+
+Some models charge a higher rate above a prompt-size threshold. Encode that with
+`promptSizeTiers`:
+
+```json
+{
+  "provider": "google",
+  "model": "gemini-2.5-pro",
+  "google": {
+    "inputUsdPerMillion": "1.25",
+    "cachedInputUsdPerMillion": "0.125",
+    "outputUsdPerMillion": "10",
+    "thoughtsOutputUsdPerMillion": "10",
+    "promptSizeTiers": [
+      {
+        "aboveTokens": 200000,
+        "inputUsdPerMillion": "2.5",
+        "cachedInputUsdPerMillion": "0.25",
+        "outputUsdPerMillion": "15"
+      }
+    ]
+  }
+}
+```
+
+Server-side tools that bill per thousand calls appear in the catalog's `tools`
+block, per provider rather than per model. These fees come from the baseline
+catalog, and the API can't change them:
+
+```json
+{
+  "entries": ["...per-model entries..."],
+  "tools": {
+    "anthropic": { "webSearchUsdPerThousand": "10" },
+    "openai": {
+      "webSearchUsdPerThousand": "10",
+      "fileSearchUsdPerThousand": "2.5"
+    },
+    "google": { "groundingSearchUsdPerThousand": "35" }
+  }
+}
+```
+
+### Match provider kinds to catalog entries
+
+Each catalog entry is keyed on a provider and a model. Most AI Gateway provider
+kinds use the same name in the catalog. The exceptions are `bedrock-anthropic`,
+which maps to `awsanthropic`, and `gemini-aistudio` and `vertex`, which both map
+to `google`.
+
+The model in a catalog entry must match the model string in `providers[].models`
+exactly. The gateway refuses requests for a model with no catalog entry, so
+confirm that a model is priced before you
+[add it to a provider](providers-and-models.mdx).
 
 ## Monitor spend
 
 Use [Budgets](manage-budgets.mdx) to compare usage with each limit.
 
-<MonitorSpendApi />
+Use the API for finance reports and external dashboards:
+
+| Endpoint                    | Returns                                                          |
+| --------------------------- | ---------------------------------------------------------------- |
+| `GET /v1/budgets/summary`   | Used, limit, and remaining per principal for the period          |
+| `GET /v1/budgets/spend`     | A spend time series, for charting                                |
+| `GET /v1/budgets/breakdown` | Current-period spend for one budget, by user, model, or provider |
+| `GET /v1/budgets/charges`   | Recorded charges, newest first, with the exact amount charged    |
+| `GET /v1/budgets/events`    | Raw usage events, including those that resolved to no charge     |
+
+`GET /v1/budgets/groups/<ID>` and `GET /v1/budgets/users/<ID>` return the same
+breakdown addressed per budget, with a `dimension` query parameter.
+
+Any authenticated caller can read their own events, charges, summary, and spend
+series at `/v1/me/budgets/events`, `/charges`, `/summary`, and `/spend` without
+an admin grant. The admin routes above require the platform admin grant, the
+same one directory administration requires; there is no separate budgets role.
 
 ## When a budget runs out
 
-The gateway refuses the caller's requests until the budget has capacity again.
-Check the caller in the console to tell an exhausted budget apart from missing
-coverage.
+The AI Gateway refuses the request with `402` before it calls the provider. The
+error message tells an exhausted budget (`budget exhausted`) apart from missing
+coverage (`no applicable budget`). Check the caller in the console to see which
+budgets apply.
 
 Access resumes when the calendar period resets. To restore access immediately,
 raise the limit. The change applies on the next request and preserves the usage
@@ -48,6 +298,6 @@ counter.
 
 ## Next steps
 
-- [Budget enforcement](budget-enforcement.mdx) to connect the gateway to the
-  budgets service.
+- [Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx)
+  to connect the gateway to the budgets service.
 - [Manage budgets](manage-budgets.mdx) for console-based administration.

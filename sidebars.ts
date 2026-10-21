@@ -572,7 +572,6 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
   },
   { type: 'doc', id: 'ai-gateway/manage-budgets', label: 'Manage budgets' },
   'ai-gateway/budgets-and-pricing',
-  'ai-gateway/budget-enforcement',
   {
     type: 'doc',
     id: 'ai-gateway/prompt-injection-screening',

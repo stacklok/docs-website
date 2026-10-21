@@ -137,9 +137,11 @@ Complete the following sequence before sending production traffic:
 
    `budgets.endpoint` must be an `https://` URL. Its token audience,
    `budgets.tokenProjection.audience`, defaults to `budgets-webhook` and must
-   equal `enterprise-manager.webhookAuth.audience`. `directory.endpoint` is the
-   `host:port` of the directory's gRPC listener, without a scheme. The gateway
-   connects to the cleartext listener on port `9091`, so set
+   equal `enterprise-manager.webhookAuth.audience`. The gateway verifies the
+   receiver's certificate with the CA in `global.webhooks.caBundleSecret`; set
+   `budgets.caBundle.secretName` to use a different Secret. `directory.endpoint`
+   is the `host:port` of the directory's gRPC listener, without a scheme. The
+   gateway connects to the cleartext listener on port `9091`, so set
    `directory.insecure: true`. It still authenticates every call with its
    projected ServiceAccount token.
 
@@ -179,8 +181,18 @@ Complete the following sequence before sending production traffic:
      -l app.kubernetes.io/name=ai-gateway-v2,app.kubernetes.io/component=gateway
    ```
 
-   Then confirm that budget enforcement is wired, as described in
-   [Verify the gateway reaches the budgets service](../../ai-gateway/budget-enforcement.mdx#verify-the-gateway-reaches-the-budgets-service).
+   Then confirm that the gateway reaches the budgets service. At startup, the
+   gateway pings the budgets service until it answers. While pings fail, it logs
+   a `receiver hook probe failed` warning with the reason, then logs
+   `receiver hook probe recovered` once the service answers. The connection
+   works when the logs show no unrecovered warning:
+
+   ```bash
+   kubectl logs -n <NAMESPACE> deploy/<RELEASE_NAME>-ai-gateway-v2 \
+     | grep 'receiver hook probe'
+   ```
+
+   A failing ping usually means the token audience doesn't match the receiver's.
 
 ## Publish the endpoint
 
@@ -318,10 +330,11 @@ actual subject or the gateway refuses all traffic.
 ## Content screening posture
 
 Screening failures deny requests by default. PII scanning blocks a request when
-Presidio is unreachable or slow, and prompt injection screening blocks a request
-when its adapter is unreachable, slow, or returns an error. To admit traffic
-during a rollout or incident, set `scanning.ner.failureAction: fail-open` or
-`guardrails.failurePolicy: Ignore`. Requests admitted this way reach the
+its adapter or Presidio is unreachable or slow, and prompt injection screening
+blocks a request when its adapter is unreachable, slow, or returns an error. To
+admit traffic during a rollout or incident, set
+`scanning.ner.failureAction: fail-open`, `scanning.hook.failurePolicy: Ignore`,
+or `guardrails.failurePolicy: Ignore`. Requests admitted this way reach the
 provider unscreened. See
 [PCI/PII controls](../../ai-gateway/pci-pii-controls.mdx) and
 [Screen prompts for injection](../../ai-gateway/prompt-injection-screening.mdx).
