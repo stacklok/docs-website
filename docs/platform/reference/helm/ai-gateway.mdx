@@ -12,8 +12,8 @@ Configure the AI Gateway inference chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `ai-gateway-v2`. Chart version: `0.22.0`. Generated from the platform
-source at `e71926418e98c7598815d0abf07039d3c1646f21`.
+Chart: `ai-gateway-v2`. Chart version: `0.23.0`. Generated from the platform
+source at `v0.23.0`.
 
 ## Values
 
@@ -105,8 +105,10 @@ Override the full name of the resources
 **Default:** `true`
 
 Specifies whether a service account should be created. Sprout uses its
-ServiceAccount only as the identity behind the projected tokens it presents to
-the directory and budgets services — it never calls the Kubernetes API itself.
+ServiceAccount as the identity behind the projected tokens it presents to the
+directory and budgets services. With directory.endpoint set it also reads the
+API server's issuer discovery and JWKS for in-cluster workload trusts, bound to
+system:service-account-issuer-discovery; it makes no other Kubernetes API call.
 
 ### `serviceAccount.automount`
 
@@ -114,10 +116,9 @@ the directory and budgets services — it never calls the Kubernetes API itself.
 
 **Default:** `false`
 
-Automatically mount a ServiceAccount's API-server credentials. Sprout never
-calls the Kubernetes API, so this stays false; the directory/budgets tokens
-below are separate, audience-bound PROJECTED volumes, not the automounted
-API-server token.
+Automatically mount a ServiceAccount's API-server credentials. Stays false:
+every token Sprout presents, including the API-server token for workload trust
+keys, is a separately PROJECTED volume.
 
 ### `serviceAccount.annotations`
 
@@ -229,17 +230,25 @@ Service.
 <summary>Default value</summary>
 
 ```yaml
+claimLabels: []
+groupLabelAttributes: []
 headerLabels: []
 metrics:
   port: 9464
 otlp:
   enabled: false
   endpoint: ''
+  headersSecretRef:
+    key: headers
+    name: ''
   insecure: false
+  tracesEndpoint: ''
 prometheus:
   enabled: false
+spanAttributes: []
 tracing:
   enabled: false
+  exportTimeoutSeconds: 0
   samplingRate: 0
 ```
 
@@ -287,6 +296,40 @@ endpoint is set, locally or via global.
 Disable TLS on the OTLP connection. Only for a collector reachable over a
 private, trusted network.
 
+### `telemetry.otlp.tracesEndpoint`
+
+**Type:** `string`
+
+**Default:** `""`
+
+Exact URL spans are POSTed to over OTLP/HTTP, with no "/v1/traces" appended, for
+a destination whose ingest route is an exact path (a cost/usage platform's, e.g.
+"https://telemetry.cloudzero.com/v2/telemetry/&#60;sink&#62;"). Traces only:
+metrics keep `endpoint`, and with this set `endpoint` is optional for tracing.
+The URL's scheme decides TLS (`insecure` does not apply to it). Must be http(s)
+with a host and no query or fragment. Needs tracing.enabled. Not composed with
+global.stacklok.telemetry.otlp.
+
+### `telemetry.otlp.headersSecretRef`
+
+**Type:** `object`
+
+**Default:** `{"key":"headers","name":""}`
+
+Secret holding the OTLP export headers for `tracesEndpoint`, as
+`key=value,key2=value2` (an Authorization credential). Mounted as a file and
+read at startup, never rendered into the config. Needs an https
+`tracesEndpoint`, and is refused while OTLP metrics push is on (locally or via
+global.stacklok.telemetry.otlp), because the headers are sent on every OTLP
+signal and the metrics collector would receive the destination's credential.
+`key` defaults to "headers".
+
+```yaml
+Example:
+  headersSecretRef:
+    name: cloudzero-otlp-headers
+```
+
 ### `telemetry.prometheus.enabled`
 
 **Type:** `bool`
@@ -300,7 +343,7 @@ Expose a pull-scrapeable /metrics route on its own dedicated listener
 
 **Type:** `object`
 
-**Default:** `{"enabled":false,"samplingRate":0}`
+**Default:** `{"enabled":false,"exportTimeoutSeconds":0,"samplingRate":0}`
 
 Push traces to the SAME OTLP collector as otlp.endpoint above — tracing and
 metrics are independent signals sharing one transport. Off by default.
@@ -311,8 +354,8 @@ metrics are independent signals sharing one transport. Off by default.
 
 **Default:** `false`
 
-Export spans via OTLP. Requires otlp.endpoint to be set (shared with
-metrics.otlp above), independently of otlp.enabled.
+Export spans via OTLP. Requires otlp.endpoint (shared with metrics.otlp above,
+independently of otlp.enabled) or otlp.tracesEndpoint to be set.
 
 ### `telemetry.tracing.samplingRate`
 
@@ -320,10 +363,26 @@ metrics.otlp above), independently of otlp.enabled.
 
 **Default:** `0`
 
-Root-span sampling ratio (0.0-1.0). A sampled inbound traceparent is always
-honored regardless of this ratio (parent-based sampling). Zero (the default) is
-treated as "sample every root span" — leaving it unset when enabled is true
-doesn't silently sample nothing.
+Sampling ratio (0.0-1.0) for a request with no inbound trace context AND for one
+whose inbound traceparent is unsampled: an edge proxy that samples a fraction of
+traces and forwards the rest as unsampled does not suppress this gateway's
+spans, this ratio decides. A sampled inbound traceparent is always honored. Zero
+(the default) is treated as "sample every request" — leaving it unset when
+enabled is true doesn't silently sample nothing. Lower it only to cut span
+volume; a cost platform fed by these spans then counts that fraction of traffic.
+
+### `telemetry.tracing.exportTimeoutSeconds`
+
+**Type:** `int`
+
+**Default:** `0`
+
+Bound, in seconds, on one OTLP export. Zero keeps the library default (30s).
+Raise it above the destination's worst-case response time: **a destination that
+accepts a batch slower than this deadline can be delivered the same batch
+twice**, with nothing logged, and a platform that counts what it receives then
+double-counts those spans. A larger value trades that for a slower flush on
+shutdown. Needs tracing.enabled.
 
 ### `telemetry.metrics`
 
@@ -347,12 +406,114 @@ observed value folds to "other", which is what keeps an operator-controlled
 header from becoming an unbounded-cardinality label. Absent by default: no
 header contributes a label.
 
+`header` may not be a governance or credential header (x-user-id,
+x-platform-groups-v1, x-request-id, authorization, x-api-key, x-goog-api-key):
+the value is the caller's own, so it would put a client-chosen identity on the
+metric. Use `claimLabels` to label the metric with a verified caller claim.
+
 ```yaml
 Example:
   headerLabels:
     - header: x-stacklok-team
       attribute: team
       permitted: [platform, research]
+```
+
+### `telemetry.claimLabels`
+
+**Type:** `list`
+
+**Default:** `[]`
+
+Verified token claims the token-usage metric carries as labels (telemetryConfig
+.ClaimLabels), so a per-caller token series exists: the `sub` claim as `user_id`
+and the `department` claim as `department` give the same dimensions the Envoy
+plane's claimToHeaders-based labels do. This is the ONE way caller identity
+reaches a metric, and it is token-usage only: no other instrument carries it.
+Absent by default: the metric carries no per-caller label.
+
+The value is read from the signed token after verification, never from a header
+or the body, so a client cannot choose it. A virtual-key caller has no token:
+its `sub` is the key owner's directory id, and any other claim name reads the
+owner's directory group label of that name (it must be in
+`directory.groupLabels`). It never reads the key's own metadata. A claim the
+source does not carry omits the label.
+
+Cost: without `permitted` the claim value passes through (bounded to 256 bytes
+of printable text, otherwise "other"), so a per-user label is one series per
+user per model, provider, token type and cache type, and `user_id` is personal
+data in your metrics store. Set `permitted` to the CLOSED set of values that
+pass through when the claim is a bounded dimension; any other value folds to
+"other". A value with leading or trailing whitespace, or a non-ASCII space, also
+folds to "other". `sub` is unique only within one issuer, so with several
+`auth.issuers` two people can share a `user_id` series; map a claim that is
+unique across them, or use `permitted`. At most 10 `claimLabels` entries.
+`attribute` is snake_case and may not be implementation, model, provider,
+token_type or cache_type, nor a `headerLabels` attribute. A claim that changes
+on every token or session (jti, nonce, sid, at_hash, c_hash) needs `permitted`.
+
+```yaml
+Example:
+  claimLabels:
+    - claim: sub
+      attribute: user_id
+    - claim: department
+      attribute: department
+```
+
+### `telemetry.groupLabelAttributes`
+
+**Type:** `list`
+
+**Default:** `[]`
+
+Remap a directory-resolved group label onto a custom span-attribute name on the
+interaction span, in place of the label's bare name (telemetryConfig
+.GroupLabelAttributes). Unlike `headerLabels` this carries no caller-supplied
+data: it chooses the attribute NAME a directory-resolved value is stamped under,
+never the value, so a caller can never populate one of these attributes. Absent
+by default: every resolved label keeps its own bare name.
+
+Each `label` must appear in `directory.groupLabels`, or the gateway refuses to
+start — a remapping of a label nothing resolves would stamp nothing, forever,
+with no error. The same label may be listed more than once to fan one value out
+to several names; once a label is named at all, its bare name is no longer also
+stamped.
+
+```yaml
+Example:
+  groupLabelAttributes:
+    - label: department
+      attribute: cz.context.department
+```
+
+### `telemetry.spanAttributes`
+
+**Type:** `list`
+
+**Default:** `[]`
+
+Copy a caller-sent request header onto the interaction span under a chosen
+attribute name (telemetryConfig .SpanAttributes), such as the `X-Cz-Context-*`
+headers onto `cz.context.*` for a cost platform that reads its business
+dimensions off span attributes. The VALUE is whatever the client sent (cut to
+256 bytes), so it is an attribution hint and never an identity: a
+directory-resolved or gateway-owned attribute of the same name always wins, and
+a name a group label is also stamped under is refused. Absent by default.
+
+`header` is lower-case (letters, digits and hyphens). Credential and
+personal-data headers (authorization, cookie, x-api-key, x-virtual-key,
+x-user-email, x-forwarded-for and the like, plus the platform's own
+x-stacklok-\* identity headers) are refused, as are attribute names under
+gen_ai., stacklok. and budget. (gen_ai.client.app is the one exception), the
+caller-identity attributes, error.type, a duplicate attribute, and more than 20
+entries. Needs telemetry.tracing.enabled.
+
+```yaml
+Example:
+  spanAttributes:
+    - header: x-cz-context-project
+      attribute: cz.context.project
 ```
 
 ### `resources`
@@ -518,7 +679,32 @@ Example:
 **Default:** `{"issuers":[]}`
 
 Trusted OIDC issuers for the JWT authentication path (authConfig.Issuers in
-cmd/sprout/main.go): issuer/audience/bindingClaim/tokenUse/jwksUri.
+cmd/sprout/main.go): issuer/audience/bindingClaim/tokenUse/requiredScope/
+jwksUri. requiredScope is the scope a token from that issuer must carry, written
+exactly as the token's scope claim holds it (for Entra, the short name
+"LLM.Invoke", never "api://&#60;app&#62;/LLM.Invoke"). Set it when the IdP gives
+ID tokens and access tokens the same aud; a token without it is refused 403
+insufficient_scope. Empty means no check. A value with whitespace or a character
+RFC 6749 scope tokens exclude fails startup, as does "://" on an Entra issuer.
+
+Each issuer may also set caBundleRef, the CA bundle that verifies its JWKS
+endpoint's serving certificate when the IdP sits behind a private CA. It is
+added to the system roots for that issuer's fetches only:
+
+```yaml
+caBundleRef:
+  secretRef: { name: corp-idp-ca } # or configMapRef: {name: ...}
+  key: ca.crt # optional, default ca.crt
+```
+
+Set exactly one of secretRef and configMapRef. The shape is
+global.stacklok.primaryIdp.caBundleRef's, with key beside the arm; a key inside
+the arm (enterprise-manager's trustedCABundle shape) is refused. An issuer with
+no caBundleRef whose `issuer` equals global.stacklok.primaryIdp.issuer, ignoring
+trailing slashes, inherits global.stacklok.primaryIdp.caBundleRef, so a
+private-CA IdP is declared once for the whole umbrella. The chart mounts the key
+read-only under /etc/sprout/issuer-ca/&#60;index&#62;/ and renders it as the
+issuer's ca_file.
 
 ### `directory.endpoint`
 
@@ -546,7 +732,10 @@ credential projected.
 **Default:** `""`
 
 The `iss` the virtual-key path presents to ResolveIdentity so the directory can
-bind the resolved uid to an issuer and return its groups.
+bind the resolved uid to an issuer and return its groups. The uid is presented
+under the `bindingClaim` of the `auth.issuers` entry with this issuer, or under
+`uid` (Okta's binding) when no entry matches. Do not add an issuer to
+`auth.issuers` only for this lookup: the gateway would also trust its tokens.
 
 ### `directory.groupLabels`
 
@@ -598,6 +787,15 @@ Audience the directory's caller-auth gate expects.
 
 Requested lifetime of the projected token. Minimum 600 — the API server REJECTS
 a Pod spec below that floor rather than clamping to it.
+
+### `directory.workloadTrust.pollInterval`
+
+**Type:** `string`
+
+**Default:** `""`
+
+Snapshot poll interval as a Go duration, e.g. "15s", at least "10s". Empty keeps
+the binary's 30s default.
 
 ### `budgets.endpoint`
 
@@ -720,13 +918,14 @@ be an accident.
 **Default:** `false`
 
 Enforce directory model access on this gateway. Inference is refused (HTTP 403,
-before any provider call) for a model the caller's grants do not cover, and
-/v1/models lists only the models the caller may use. Both halves fail closed.
-Needs directory.endpoint (the discovery filter dials the directory's
-ResolveModelAccess RPC). Reuses budgets.tokenProjection (its audience must equal
-the receiver's budgets audience) and budgets.caBundle /
-global.webhooks.caBundleSecret for the receiver's token and CA, so it also works
-on a gateway that is deliberately unmetered.
+before any provider call) for a model the caller's grants do not cover, and the
+discovery mounts (/v1/models, /anthropic/v1/models, /v1beta/models) list only
+the models the caller may use. Both halves fail closed. Needs directory.endpoint
+(the discovery filter dials the directory's ResolveModelAccess RPC). Reuses
+budgets.tokenProjection (its audience must equal the receiver's budgets
+audience) and budgets.caBundle / global.webhooks.caBundleSecret for the
+receiver's token and CA, so it also works on a gateway that is deliberately
+unmetered.
 
 ### `modelAccess.endpoint`
 
@@ -736,6 +935,23 @@ on a gateway that is deliberately unmetered.
 
 Receiver base URL, e.g. "https://enterprise-server.toolhive-system:443".
 Defaults to budgets.endpoint, which is the same listener.
+
+### `failureLogs.level`
+
+**Type:** `string`
+
+**Default:** `"warn"`
+
+Severity of structured operational failure records (warn, error, or debug).
+
+### `failureLogs.includeMessage`
+
+**Type:** `bool`
+
+**Default:** `true`
+
+Include a bounded parsed failure message by default. Set false to log metadata
+only when stderr retention or access cannot accommodate PII.
 
 ### `audit.enabled`
 
@@ -875,6 +1091,14 @@ aws_credentials_file (the ambient EKS-Pod-Identity chain), the chart
 automatically adds the Pod Identity Agent's link-local egress rule
 (169.254.170.23/32 and fd00:ec2::23/128, TCP 80) — no need to list it here.
 
+Workload trust keys (directory.endpoint set): an in-cluster trust needs the API
+server's endpoint addresses and port, often 6443, which
+`kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`
+lists. Allowing the `kubernetes.default` Service address on 443 is not enough:
+most network plugins evaluate egress after rewriting it to the endpoint. A trust
+with a public JWKS URL needs its host on 443, which the provider rule above
+already admits.
+
 ### `extraEnv`
 
 **Type:** `list`
@@ -1013,7 +1237,7 @@ adapter:
   logLevel: ''
   maxReplicas: null
   metrics:
-    enabled: false
+    enabled: null
     port: 9090
   nodeSelector: {}
   podAnnotations: {}
@@ -1043,7 +1267,6 @@ ner:
   circuitBreaker:
     failureThreshold: 5
     resetTimeout: 30s
-  concurrency: 8
   failureAction: fail-closed
   timeout: 5s
 presidio:
@@ -1063,10 +1286,10 @@ presidio:
   resources:
     limits:
       cpu: '2'
-      memory: 2Gi
+      memory: 3Gi
     requests:
       cpu: 500m
-      memory: 1Gi
+      memory: 2Gi
   scoreThreshold: 50
   targetCPUUtilization: null
   tolerations: []
@@ -1185,16 +1408,6 @@ How allowlist entries match: `exact` or `regex`.
 
 Budget for one Presidio call, as a single-unit Go duration. Must be positive.
 
-### `scanning.ner.concurrency`
-
-**Type:** `int`
-
-**Default:** `8`
-
-Concurrent Presidio calls within one request. The adapter scans a request's text
-nodes in waves of this size. It is not a pod-wide cap: every in-flight request
-gets its own limit.
-
 ### `scanning.ner.failureAction`
 
 **Type:** `string`
@@ -1229,11 +1442,12 @@ How long the breaker stays open before probing again.
 Budget the gateway gives the adapter, as a single-unit Go duration. Empty
 derives ner.timeout + 2s, so a slow Presidio surfaces the adapter's fail-closed
 403 rather than the gateway's own 504. That covers one wave of Presidio calls.
-The adapter has no request-wide deadline, so a request with more than
-ner.concurrency text nodes runs several waves, and a slow Presidio that still
-answers within ner.timeout can push it past this budget into a gateway 504.
-Raise it if large requests need more than one wave under load. An explicit value
-must exceed ner.timeout.
+The adapter has no request-wide deadline, so a request with more Presidio calls
+than presidio.replicas times the workers per pod (more text nodes, or text nodes
+over 50,000 characters, which are scanned in chunks) runs several waves, and a
+slow Presidio that still answers within ner.timeout can push it past this budget
+into a gateway 504. Raise it if large requests need more than one wave under
+load. An explicit value must exceed ner.timeout.
 
 ### `scanning.hook.tokenExpirationSeconds`
 
@@ -1409,13 +1623,17 @@ Adapter log level (`debug|info|warn|error`). Empty keeps the binary default.
 
 ### `scanning.adapter.metrics.enabled`
 
-**Type:** `bool`
+**Type:** `string`
 
-**Default:** `false`
+**Default:** `nil`
 
-Serve the adapter's Prometheus metrics on `port`, and admit scrapes to that port
-in its NetworkPolicy from networkPolicy.ingress.monitoringNamespaces (or from
-any source under networkPolicy.ingress.allowAllSources).
+The adapter records what it scans (PII detections, unscanned requests) on its
+own metrics. Unset follows the gateway's telemetry settings:
+telemetry.prometheus.enabled serves them on `port`, admitting scrapes from
+networkPolicy.ingress.monitoringNamespaces (or from any source under
+networkPolicy.ingress.allowAllSources), and OTLP metrics push sends them to the
+same collector. `false` turns both off; `true` serves `port` whatever the
+gateway does.
 
 ### `scanning.resultCache.enabled`
 
@@ -1589,7 +1807,10 @@ Image pull policy.
 **Default:** `2`
 
 Replica count. Also the HPA's minReplicas when one renders. A
-PodDisruptionBudget renders at 2 or more.
+PodDisruptionBudget renders at 2 or more. The per-request Presidio fan-out is
+this value times the workers per pod, so with autoscaling.mode External set it
+to the minimum the external scaler keeps, even though the Deployment then omits
+it.
 
 ### `scanning.presidio.maxReplicas`
 
@@ -1663,9 +1884,14 @@ Presidio selector labels into each entry that sets no labelSelector.
 **Type:** `object`
 
 **Default:**
-`{"limits":{"cpu":"2","memory":"2Gi"},"requests":{"cpu":"500m","memory":"1Gi"}}`
+`{"limits":{"cpu":"2","memory":"3Gi"},"requests":{"cpu":"500m","memory":"2Gi"}}`
 
-Analyzer container resources.
+Analyzer container resources. The analyzer runs one worker per whole core of
+limits.cpu (at least 1, and 1 when no CPU limit is set), since one worker
+analyzes one request at a time on one core. Each worker loads its own NER model,
+so size limits.memory at about 1Gi per worker plus headroom: the default 2 cores
+run 2 workers that peak near 2Gi. A memory limit under 1Gi per worker fails the
+render.
 
 ### `scanning.presidio.language`
 
@@ -1995,6 +2221,29 @@ Annotations on the adapter's ServiceAccount, e.g. the
 `{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"50m","memory":"64Mi"}}`
 
 Adapter container resources.
+
+### `guardrails.adapter.metrics.enabled`
+
+**Type:** `string`
+
+**Default:** `nil`
+
+The adapter records what it screens (deny categories, unscreenable requests) on
+its own metrics. Unset follows the gateway's telemetry settings:
+telemetry.prometheus.enabled serves them on `port`, admitting scrapes from
+networkPolicy.ingress.monitoringNamespaces (or from any source under
+networkPolicy.ingress.allowAllSources), and OTLP metrics push sends them to the
+same collector. `false` turns both off; `true` serves `port` whatever the
+gateway does.
+
+### `guardrails.adapter.metrics.port`
+
+**Type:** `int`
+
+**Default:** `9090`
+
+Port for the guardrails adapter's Prometheus metrics listener when metrics
+serving is enabled.
 
 ## Related information
 

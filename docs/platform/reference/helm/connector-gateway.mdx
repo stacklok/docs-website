@@ -12,8 +12,8 @@ Configure the Connector Gateway chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `connector-gateway`. Chart version: `0.22.0`. Generated from the platform
-source at `e71926418e98c7598815d0abf07039d3c1646f21`.
+Chart: `connector-gateway`. Chart version: `0.23.0`. Generated from the platform
+source at `v0.23.0`.
 
 ## Values
 
@@ -98,9 +98,10 @@ Override the full name of the resources
 
 **Default:** `true`
 
-Specifies whether a service account should be created. The gateway's in-cluster
-BackendWatcher authenticates to the API server with this ServiceAccount's token,
-so it is created (and its token mounted) by default.
+Specifies whether a service account should be created. The gateway presents this
+ServiceAccount's token to the API server to verify internalApi callers, and
+projected tokens of it to Directory, metering ingest and enterprise-manager, so
+it is created (and its token mounted) by default.
 
 ### `serviceAccount.automount`
 
@@ -108,8 +109,8 @@ so it is created (and its token mounted) by default.
 
 **Default:** `true`
 
-Automatically mount a ServiceAccount's API credentials. Required: the
-BackendWatcher reads the MCP backend CRs via the mounted token.
+Automatically mount a ServiceAccount's API credentials. Required: the gateway
+reads the mounted token (see internalApi).
 
 ### `serviceAccount.annotations`
 
@@ -127,19 +128,6 @@ Annotations to add to the service account
 
 The name of the service account to use (if not set and create is true, a name is
 generated using the fullname template)
-
-### `rbac.create`
-
-**Type:** `bool`
-
-**Default:** `true`
-
-Specifies whether RBAC resources should be created: the namespaced Role granting
-the BackendWatcher get/list/watch on the MCP backend CRs and ConfigMaps, plus
-the RoleBinding to the chart's ServiceAccount. The BackendReconciler is
-single-namespace by design, so this is a Role / RoleBinding in
-`.Release.Namespace` — never a ClusterRole. Set to false if you manage RBAC
-externally or bind a pre-existing ServiceAccount.
 
 ### `podAnnotations`
 
@@ -281,6 +269,7 @@ exposes it on the same port.
 ```yaml
 allowedSubjects: []
 audience: connector-gateway-internal
+deriveEnterpriseManagerSubject: false
 enabled: false
 issuer: ''
 port: 8091
@@ -349,8 +338,26 @@ directory.connectorGateway.tokenAudience must be set to the same value.
 
 ServiceAccount subjects permitted to call, as
 system:serviceaccount:&#60;namespace&#62;:&#60;name&#62;. REQUIRED when enabled:
-the chart refuses to render an enabled internal API with none. Include the
-enterprise-manager's ServiceAccount.
+the chart refuses to render an enabled internal API with none. Every subject
+listed here may call both internal routes, so it can revoke any User's stored
+upstream tokens on this gateway as well as list a Connector's tools. Empty
+derives the enterprise-manager's ServiceAccount subject when
+deriveEnterpriseManagerSubject is true. Helm replaces a list whole, so a value
+set here must list the enterprise-manager's subject itself.
+
+### `internalApi.deriveEnterpriseManagerSubject`
+
+**Type:** `bool`
+
+**Default:** `false`
+
+Derive allowedSubjects, when it is empty, from the enterprise-manager installed
+in the same release
+(system:serviceaccount:&#60;namespace&#62;:&#60;release&#62;-enterprise-manager).
+The stacklok-enterprise-platform umbrella sets it, and checks at render time
+that the subject matches the ServiceAccount enterprise-manager actually runs as.
+Leave it false on a standalone install, where no sibling enterprise-manager is
+known, so an empty allowlist is refused rather than admitting a guessed subject.
 
 ### `internalApi.issuer`
 
@@ -613,6 +620,16 @@ the umbrella's global.stacklok.audit (#4409) — see
 connector-gateway.effectiveVmcpConfig. Setting `audit` here at all, in any
 shape, opts out of that fallback and always wins in full.
 
+Sections that take effect: name, incomingAuth (its oidc block, when an auth
+server is configured), aggregation, compositeTools, rateLimiting, sessionStorage
+and audit. outgoingAuth.backends/default are cleared at load with a WARN: every
+backend's auth comes from its Directory Connector. backends, compositeToolRefs,
+telemetry, operational, metadata, optimizer, codeMode and passthroughHeaders are
+validated but ignored; OTLP settings go under enterpriseConfig.telemetry. The
+gateway reads no toolhive CRD (MCPServer, MCPGroup, MCPExternalAuthConfig, ...):
+register a backend as a Connector in the Directory instead. See
+docs/design/configuration-sources.md.
+
 ### `vmcpConfig.groupRef`
 
 **Type:** `string`
@@ -621,6 +638,15 @@ shape, opts out of that fallback and always wins in full.
 
 MCPGroup name backing this gateway, used for status/logging visibility only.
 Backends are always read from the directory (enterpriseConfig.directory).
+
+### `vmcpConfig.outgoingAuth`
+
+**Type:** `object`
+
+**Default:** `{"source":"discovered"}`
+
+outgoingAuth.backends and outgoingAuth.default are ignored (one startup WARN
+when set): every backend's auth comes from its Directory Connector.
 
 ### `enterpriseConfig`
 
@@ -670,6 +696,20 @@ cid/client_id/azp/appid, refused at render and at config load unless
 clientClaimAllowUnsafe (a real boolean, never --set-string) admits it.
 enterpriseConfig.primaryIdp is NOT a door — it is chart-owned and refused at
 render, the same as enterpriseConfig.gateway.
+
+Microsoft Entra ID requires clientClaim: azp. The platform accepts only v2.0
+tokens (issuer https://login.microsoftonline.com/&#60;tenant&#62;/v2.0;
+api.requestedAccessTokenVersion: 2 in the manifest of the app registration that
+exposes the API), which carry the client ID in azp; v1.0 tokens (and their appid
+claim) are not supported. When the platform issuer (the issuer_url of
+authServer.upstreams[0]) is Entra v2.0 (the public, US Government or China cloud
+host) and clientClaim is unset on both doors (an explicit empty
+appConfig.primaryIdp.clientClaim counts as unset), the chart renders
+clientClaim: azp. An explicit claim other than azp on such an issuer fails the
+render. Entra External ID and Azure AD B2C issuers are not recognised, so set
+azp by hand there. Dex emits azp only on a cross-client token (one requested
+with an audience:server:client_id:&#60;peer&#62; scope); a plain Dex token has
+no azp.
 
 ```yaml
 appConfig:
@@ -1204,14 +1244,15 @@ validated at render to name a version actually present in that map. See
 A free-form token that forces a rolling restart when it changes, so phase one of
 a rotation reliably rolls out the new keyring even when activeVersion does not
 change. It is hashed into the pod checksum alongside kek.value /
-kek.existingSecret / kek.activeVersion. This is REQUIRED in existingSecret mode,
-where the Secret's CONTENT is not part of the checksum: adding a version to the
-external Secret changes nothing the chart can see, and on a second or later
-rotation activeVersion is already pinned to the current version, so phase one
-would otherwise perform no rollout and phase two's single restart would strand
-rows. Bump this (e.g. an incrementing integer, or the delivered Secret's
-resourceVersion) on every phase one. Harmless in value/generate mode, where a
-keyring change already re-hashes the checksum. See
+kek.existingSecret / kek.activeVersion. This is REQUIRED in existingSecret and
+generate mode, where the Secret's CONTENT is not part of the checksum: adding a
+version to the external Secret, or to the chart-managed `<fullname>-kek` Secret
+that generate mode preserves through `lookup`, changes nothing the chart can
+see. On a second or later rotation activeVersion is already pinned to the
+current version, so phase one would otherwise perform no rollout and phase two's
+single restart would strand rows. Bump this (e.g. an incrementing integer, or
+the delivered Secret's resourceVersion) on every phase one. Harmless in value
+mode, where a keyring change already re-hashes the checksum. See
 [Rotate the encryption key](https://docs.stacklok.com/connector-gateway/rotate-encryption-key).
 
 ### `authServerKeys`
@@ -1331,11 +1372,11 @@ OVERRIDING any cluster-wide default-deny egress policy (Kyverno
 
 Recommended default nonetheless: every outbound destination this gateway dials
 (global.stacklok.primaryIdp.issuer, enterprise-manager's directory gRPC, and
-every MCP backend the BackendWatcher discovers via in-cluster CRs) is
-deployment-specific — this chart has no way to know your actual backends at
-template time, so a fixed allow-list here would be a guess. Set to false and
-populate `egress` below to actually lock this pod down (this gateway holds the
-KEK and the primary-IdP client secret, so this matters more than usual).
+every MCP backend Directory serves) is deployment-specific — this chart has no
+way to know your actual backends at template time, so a fixed allow-list here
+would be a guess. Set to false and populate `egress` below to actually lock this
+pod down (this gateway holds the KEK and the primary-IdP client secret, so this
+matters more than usual).
 
 ### `networkPolicy.egress`
 

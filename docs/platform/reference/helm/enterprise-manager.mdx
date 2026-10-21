@@ -12,8 +12,8 @@ Configure the Enterprise Manager chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `enterprise-manager`. Chart version: `0.22.0`. Generated from the
-platform source at `e71926418e98c7598815d0abf07039d3c1646f21`.
+Chart: `enterprise-manager`. Chart version: `0.23.0`. Generated from the
+platform source at `v0.23.0`.
 
 ## Values
 
@@ -1257,8 +1257,11 @@ awsRdsIam:
 `{"existingSecret":"","existingSecretKey":"postgres-admin-password","user":""}`
 
 admin: BYPASSRLS credentials for the directory module's admin pool used for
-cross-user connector-config reads (AdminListUserConnectorConfigs). Pre-create a
-Secret with key `postgres-admin-password`, then set existingSecret to its name.
+cross-user reads (AdminListUserConnectorConfigs, the admin Connection reads) and
+for Delete connector, which must read every User's Connections to revoke the
+upstream tokens its cascade orphans. Without it, Delete connector answers 503
+naming database.admin and deletes nothing. Pre-create a Secret with key
+`postgres-admin-password`, then set existingSecret to its name.
 
 PREREQUISITE: the migration user (database.migration.user) must hold SUPERUSER
 or CREATEROLE to apply BYPASSRLS to the admin role at boot. On managed Postgres
@@ -1650,6 +1653,7 @@ taxonomy:
 ```yaml
 connectorGateway:
   controlPlaneUrl: ''
+  gatewayId: ''
   timeout: ''
   tokenAudience: connector-gateway-internal
   tokenExpirationSeconds: 600
@@ -1712,6 +1716,7 @@ absolute URLs, so set this whenever issuers are configured). Example:
 
 ```yaml
 controlPlaneUrl: ''
+gatewayId: ''
 timeout: ''
 tokenAudience: connector-gateway-internal
 tokenExpirationSeconds: 600
@@ -1741,7 +1746,27 @@ Origin of the connector-gateway's INTERNAL API listener, not the control-plane
 URL the Console uses. E.g.
 http://&#60;release&#62;-connector-gateway-internal.&#60;namespace&#62;.svc:8091.
 Plain HTTP is accepted in-cluster: the token is audience-bound and short-lived,
-and the response carries tool names only.
+and the requests carry ids and tool names only. Besides tool refresh, it is how
+deleting a Connection revokes the user's orphaned upstream token at the gateway;
+with no url that token stays stored and is reused when the user reconnects.
+
+Empty derives the address of the connector-gateway in the same release when
+global.stacklok.connectorGateway.enabled is true and serviceAccount.create is
+true (the umbrella default): the gateway derives this chart's ServiceAccount
+subject into its internalApi.allowedSubjects. Set it explicitly when the
+gateway's fullnameOverride, nameOverride or internalApi.port differ from their
+defaults.
+
+### `directory.connectorGateway.gatewayId`
+
+**Type:** `string`
+
+**Default:** `""`
+
+Id of the Gateway url reaches. Upstream-token revocation names it in every
+request and needs it to tell a Connection on another Gateway apart. Empty uses
+global.stacklok.connectorGatewayId; with url set and neither, the chart refuses
+to render.
 
 ### `directory.connectorGateway.controlPlaneUrl`
 
@@ -1853,25 +1878,41 @@ namespace: "stacklok" name: "directory-scim-token-okta" key: "token"
 group_variables: # SCIM user attributes to mint UserGroups from - "department" #
 bare path: label derived from it - path:
 "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:costCenter" label:
-"cost_center" # label its UserGroups carry group_variables is the only surface
-that enables generated UserGroups: one group per distinct value the attribute
-carries on this issuer's active users, compared with surrounding whitespace
-trimmed and letter case folded, so "Marketing" and "marketing" are one group
-whose membership is the union of both. Membership is kept in step with the user
-table hourly. There is no Admin equivalent — an Admin governs the resulting
-groups but cannot cause them to exist. Paths are written in SCIM attribute path
-notation, so an extension attribute carries its full URN, and a malformed one
-refuses the boot. `label` is the ONE place a label is authored: a SCIM path
-carries schema URNs and camel case, so the label is a separate lower-case dotted
-name. A bare path takes the label derived from its attribute, so "costCenter"
-becomes "cost_center", and two entries claiming one label refuse the boot. The
-platform stores the label as group metadata. Consumers read it over the identity
-RPCs and decide for themselves what to do with it. Two things to know before
-turning it on. There is no cardinality cap, so nominating a per-user attribute
-such as userName mints one group per user. And removing a variable does not
-delete its groups immediately: they drain on the next cycle and are deleted 90
-days later, which is the window to notice a typo before every budget and grant
-attached to them is lost.
+"cost_center" # label its UserGroups carry - id: "entra-prod" issuer_url:
+"https://login.microsoftonline.com/&#60;tenant-id&#62;/v2.0" audience:
+"enterprise-manager" binding_claim: "oid" # Entra's immutable user object ID
+provisioning_attribute: "externalId" # ONLY after remapping externalId to
+objectId in Entra (below) scim_bearer_token_ref: namespace: "stacklok" name:
+"directory-scim-token-entra" key: "token" Microsoft Entra ID needs an Entra-side
+change. binding_claim and provisioning_attribute must name the same identifier,
+and Entra's default SCIM attribute mapping sources externalId from mailNickname,
+not from the objectId the oid claim carries. Left as is, an issuer with
+binding_claim "oid" refuses every user Entra provisions (400 invalidValue) and
+stores none of them. In the Entra enterprise application, under Provisioning
+&#62; Attribute mappings &#62; Provision Microsoft Entra ID Users, map objectId
+to externalId, then set provisioning_attribute explicitly to confirm it. An
+Entra v2.0 issuer (issuer_url on login.microsoftonline.com,
+login.microsoftonline.us or login.partner.microsoftonline.cn) that leaves
+provisioning_attribute unset boots with a WARN naming this. See the Microsoft
+Entra ID section of docs/customer/install-helm.md. group_variables is the only
+surface that enables generated UserGroups: one group per distinct value the
+attribute carries on this issuer's active users, compared with surrounding
+whitespace trimmed and letter case folded, so "Marketing" and "marketing" are
+one group whose membership is the union of both. Membership is kept in step with
+the user table hourly. There is no Admin equivalent — an Admin governs the
+resulting groups but cannot cause them to exist. Paths are written in SCIM
+attribute path notation, so an extension attribute carries its full URN, and a
+malformed one refuses the boot. `label` is the ONE place a label is authored: a
+SCIM path carries schema URNs and camel case, so the label is a separate
+lower-case dotted name. A bare path takes the label derived from its attribute,
+so "costCenter" becomes "cost_center", and two entries claiming one label refuse
+the boot. The platform stores the label as group metadata. Consumers read it
+over the identity RPCs and decide for themselves what to do with it. Two things
+to know before turning it on. There is no cardinality cap, so nominating a
+per-user attribute such as userName mints one group per user. And removing a
+variable does not delete its groups immediately: they drain on the next cycle
+and are deleted 90 days later, which is the window to notice a typo before every
+budget and grant attached to them is lost.
 
 ### `directory.oktaReconcilers`
 

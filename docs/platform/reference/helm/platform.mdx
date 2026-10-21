@@ -11,8 +11,8 @@ Configure the platform chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `stacklok-enterprise-platform`. Chart version: `0.22.0`. Generated from
-the platform source at `e71926418e98c7598815d0abf07039d3c1646f21`.
+Chart: `stacklok-enterprise-platform`. Chart version: `0.23.0`. Generated from
+the platform source at `v0.23.0`.
 
 ## Values
 
@@ -150,6 +150,23 @@ collected resource inventory exceeds the default capacity.
 PostgreSQL URI for the optional preflight database probe. Supply it only for a
 one-off preflight run: a persistent values file stores its password in the
 rendered preflight Secret. Empty disables the probe.
+
+### `enterprise-manager.serviceAccount`
+
+**Type:** `object`
+
+**Default:** `{"automount":true,"create":true}`
+
+enterprise-manager runs as a ServiceAccount of its own rather than the
+namespace's `default` one. connector-gateway admits exactly this subject to its
+internal API (internalApi.allowedSubjects), which can revoke any user's stored
+upstream tokens; deriving `default` there would admit every pod in the namespace
+that runs as it. The chart's RBAC bindings follow serviceAccountName, and
+automount keeps the in-cluster API access the `default` SA gave it (Directory,
+leader election). The ServiceAccount is named after the release
+(&#60;release&#62;-enterprise-manager, or the release name when it already
+contains "enterprise-manager"); renaming it requires setting
+connector-gateway.internalApi.allowedSubjects to match.
 
 ### `enterprise-manager.grpc.insecure`
 
@@ -504,6 +521,23 @@ Fallback installation toggle when global.stacklok.connectorGateway.enabled is
 absent. The explicit false default keeps the gateway disabled when
 global.stacklok is null.
 
+### `connector-gateway.internalApi`
+
+**Type:** `object`
+
+**Default:** `{"deriveEnterpriseManagerSubject":true,"enabled":true}`
+
+The internal API is on whenever the gateway is installed: deleting a Connection
+calls it to revoke the user's orphaned upstream token, and Connector tool
+refresh calls it too. With internalApi.allowedSubjects empty the gateway chart
+admits enterprise-manager's own ServiceAccount (see
+enterprise-manager.serviceAccount above), and enterprise-manager derives the
+internal Service's address. connector-gateway-internal-api-guard.yaml refuses
+the render when a rename, a moved port, a disabled internal API or a mismatched
+audience would leave the two sides disagreeing. With networkPolicy.enabled and
+allowExternalEgress false, the gateway also needs egress to the kube-apiserver
+for the ServiceAccount signing keys, or every Disconnect answers 502.
+
 ### `ai-gateway-v2.enabled`
 
 **Type:** `bool`
@@ -736,6 +770,15 @@ client_id, azp, and appid.
 Allow a clientClaim outside the supported list. Configure only when the IdP's
 claim reliably identifies the requesting client; a claim shared across clients
 can defeat client validation.
+
+### `global.stacklok.primaryIdp.subjectClaim`
+
+**Type:** `string`
+
+**Default:** `""`
+
+Token claim Connector Gateway's primary-IdP upstream resolves user subjects on.
+Empty uses sub; Microsoft Entra ID needs oid.
 
 ### `global.stacklok.primaryIdp.allowPrivateIps`
 
