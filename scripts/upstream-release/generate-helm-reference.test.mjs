@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { compile } from '@mdx-js/mdx';
 import yaml from 'yaml';
 import {
@@ -9,6 +14,7 @@ import {
   sourceDescriptions,
   renderPage,
   renderDescription,
+  validateDescriptions,
 } from './generate-helm-reference.mjs';
 
 const chart = {
@@ -67,6 +73,98 @@ test('incomplete chart documentation fails instead of publishing empty reference
     () => render([{ Key: 'operator.image', Type: 'string', Default: '`""`' }]),
     /Missing description.*operator.image/
   );
+});
+
+test('coverage validation reports every missing value across charts', () => {
+  assert.throws(
+    () =>
+      validateDescriptions([
+        { chart, rows: [{ Key: 'first' }, { Key: 'second' }] },
+        { chart: { source: 'another/chart' }, rows: [{ Key: 'third' }] },
+      ]),
+    (error) => {
+      assert.match(error.message, /operator\/values.yaml: first/);
+      assert.match(error.message, /operator\/values.yaml: second/);
+      assert.match(error.message, /another\/chart\/values.yaml: third/);
+      return true;
+    }
+  );
+});
+
+test('check mode validates all charts without writing pages or formatting', () => {
+  const root = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'helm-reference-check-'))
+  );
+  try {
+    const scripts = path.join(root, 'scripts/upstream-release');
+    fs.mkdirSync(scripts, { recursive: true });
+    for (const file of ['generate-helm-reference.mjs', 'helm-values.gotmpl']) {
+      fs.copyFileSync(new URL(file, import.meta.url), path.join(scripts, file));
+    }
+    fs.symlinkSync(
+      fileURLToPath(new URL('../../node_modules', import.meta.url)),
+      path.join(root, 'node_modules'),
+      'dir'
+    );
+    fs.mkdirSync(path.join(root, '.github'));
+    const charts = ['first', 'second'].map((name) => ({
+      source: name,
+      page: `pages/${name}.mdx`,
+    }));
+    fs.writeFileSync(
+      path.join(root, '.github/upstream-projects.yaml'),
+      yaml.stringify({
+        projects: [{ id: 'fixture', helm: charts }],
+      })
+    );
+    for (const { source } of charts) {
+      fs.mkdirSync(path.join(root, source));
+      fs.writeFileSync(
+        path.join(root, source, 'Chart.yaml'),
+        `name: ${source}\nversion: 1.0.0\n`
+      );
+      fs.writeFileSync(path.join(root, source, 'values.yaml'), 'port: 9090\n');
+    }
+    const bin = path.join(root, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(
+      path.join(bin, 'helm-docs'),
+      `#!${process.execPath}
+process.stdout.write(JSON.stringify([{ Key: 'port', AutoDescription: process.env.FIXTURE_DESCRIPTION }]));
+`,
+      { mode: 0o755 }
+    );
+    const run = (description) =>
+      spawnSync(
+        process.execPath,
+        [
+          path.join(scripts, 'generate-helm-reference.mjs'),
+          '--id',
+          'fixture',
+          '--clone',
+          root,
+          '--check',
+        ],
+        {
+          encoding: 'utf8',
+          env: { ...process.env, PATH: bin, FIXTURE_DESCRIPTION: description },
+        }
+      );
+    const failed = run('');
+    assert.equal(failed.status, 1, failed.stderr);
+    assert.match(failed.stderr, /first\/values.yaml: port/);
+    assert.match(failed.stderr, /second\/values.yaml: port/);
+    const passed = run('Metrics listener port.');
+    assert.equal(passed.status, 0, passed.stderr);
+    assert.match(passed.stdout, /validated for 2 chart/);
+    assert.equal(fs.existsSync(path.join(root, 'pages')), false);
+    assert.equal(
+      fs.readFileSync(path.join(root, 'first/values.yaml'), 'utf8'),
+      'port: 9090\n'
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('raw continuation comments preserve paragraphs, YAML examples, and lists', async () => {
