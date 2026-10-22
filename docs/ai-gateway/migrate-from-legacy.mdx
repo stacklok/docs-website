@@ -34,9 +34,13 @@ four things the chart can't check:
 - **Distinct hostnames.** Give the AI Gateway its own hostname through
   `httpRoute.hostname`, on a listener the `AIGateway` doesn't serve. If the two
   routes overlap, nothing decides which gateway serves a request.
-- **Screening differs by gateway.** The AI Gateway screens PII only when
-  `scanning.enabled` is on, and runs Bedrock Guardrails only when
-  `guardrails.enabled` is on.
+- **Matching screening configuration.** Both gateways run the same PII scanning
+  and Bedrock Guardrails code with the same defaults, so equivalent `scanning`
+  and `guardrails` values screen requests the same way. The AI Gateway screens
+  only when `scanning.enabled` and `guardrails.enabled` are on, scans requests
+  only, and has no `AIPolicy` authorization. Mirror your screening settings on
+  both, and move whole groups of users so each group gets one gateway's
+  behavior.
 - **Two route tables.** Each gateway keeps its own model-to-provider mapping. A
   model added to one is missing from the other until you add it there too.
 - **Two sets of workloads.** Both gateways consume cluster resources while
@@ -48,11 +52,15 @@ Shared state behaves as one platform:
 
 - Spend from both gateways charges the same budgets.
 - A virtual API key works on both.
-- Model sets restrict callers on both. The legacy gateway enforces them when its
-  model-access webhook is enabled.
+- Model sets restrict callers on each gateway that enforces them. The legacy
+  gateway enforces them when its model-access webhook is enabled. The AI Gateway
+  enforces them when `modelAccess.enabled` is on, which is off by default. See
+  [Turn on model access](./control-model-access.mdx#turn-on-model-access).
 - A user's identity provider token works on both when `auth.issuers` lists the
-  same issuer and audience as the `AIGateway`'s `spec.auth.oidc`. Clients change
-  only their base URL.
+  same issuer and audience as the `AIGateway`'s `spec.auth.oidc`, with a
+  `bindingClaim` that matches the claim the directory binds that issuer on. The
+  AI Gateway also requires every token caller to be
+  [provisioned in the directory](#behavior-differences).
 - A PII result cache can share one Redis or Valkey. Each release keeps its
   entries under its own keys.
 - **Disconnect AI Gateway** in **Platform Settings** stops traffic on both.
@@ -62,48 +70,56 @@ same change that disables the gateway you're retiring.
 
 ## Map your configuration
 
-Each `AIGateway` field has an `ai-gateway-v2` value or no equivalent:
+The `AIGateway` fields map to `ai-gateway-v2` values as follows. Settings that
+size the legacy gateway's own components, such as `spec.gateway.proxy` and each
+component's `replicas` and `resources`, have no direct equivalent. Size the AI
+Gateway with its own `replicaCount` and `resources` values.
 
-| `AIGateway` field                                                                                      | AI Gateway value                                                                                         |
-| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `spec.providers[]`                                                                                     | `providers[]` with `kind`, `baseUrl`, `models`, `credentialSecretRef`, `region`, `project`, `awsProfile` |
-| `schema: OpenAI`                                                                                       | `kind: openai`                                                                                           |
-| `schema: OpenAI` with the OpenRouter `pathPrefix`                                                      | `kind: openrouter`                                                                                       |
-| `schema: Anthropic`                                                                                    | `kind: anthropic`                                                                                        |
-| `schema: AWSAnthropic`                                                                                 | `kind: bedrock-anthropic`                                                                                |
-| `schema: GCPVertexAI`                                                                                  | `kind: vertex`, for Gemini models only. Clients move to `/v1beta`                                        |
-| `schema: GeminiAIStudio`                                                                               | `kind: gemini-aistudio`. Clients move from the OpenAI-compatible API to `/v1beta`                        |
-| `schema: GoogleGenerativeLanguage`                                                                     | `kind: gemini-aistudio`                                                                                  |
-| `schema: AWSBedrock`, `schema: AzureOpenAI`                                                            | Not supported                                                                                            |
-| `spec.routes[].match.model`                                                                            | The model's entry in its provider's `providers[].models`                                                 |
-| `spec.routes[].backendRefs[].weight` and `.priority`                                                   | Not supported                                                                                            |
-| `spec.resilience.retry`                                                                                | Not configurable                                                                                         |
-| `spec.resilience.passiveHealthCheck`, `circuitBreaker`                                                 | Not supported                                                                                            |
-| `spec.gateway.streamTimeouts.maxStreamDuration`                                                        | `lifecycle.maxStreamDuration`                                                                            |
-| `spec.gateway.timeouts`, `spec.gateway.streamTimeouts.streamIdleTimeout`, and `spec.routes[].timeouts` | Not configurable                                                                                         |
-| `spec.gateway.listeners`, `tls`, `proxy`                                                               | `httpRoute.*` on your existing Gateway                                                                   |
-| `spec.auth.oidc`                                                                                       | `auth.issuers`                                                                                           |
-| `spec.auth.virtualAPIKeys`                                                                             | `directory.endpoint`, `directory.tokenProjection.enabled`, and `directory.groupsResolutionIssuer`        |
-| `spec.auth.authz`, `spec.policies`, and `AIPolicy`                                                     | Not supported                                                                                            |
-| `spec.gateway.stripHeaders`                                                                            | Not supported                                                                                            |
-| `spec.processor` and `nerProvider`                                                                     | `scanning.*`                                                                                             |
-| `spec.processor.requestAction`                                                                         | `scanning.requestAction` and `scanning.entityActions`                                                    |
-| `spec.processor.responseAction`                                                                        | Not supported                                                                                            |
-| `spec.processor.nerProvider.failureAction`                                                             | `scanning.ner.failureAction`                                                                             |
-| `spec.processor.extractionFailureAction`                                                               | `scanning.extractionFailureAction`, with lowercase `block` or `continue`                                 |
-| `spec.processor.mutationFailureAction`                                                                 | `scanning.mutationFailureAction`, with lowercase `block` or `continue`                                   |
-| `spec.processor.nerProvider.resultCache`                                                               | `scanning.resultCache`                                                                                   |
-| `spec.guardrails`                                                                                      | `guardrails.*`                                                                                           |
-| `spec.audit.enabled`                                                                                   | `audit.enabled`                                                                                          |
-| `spec.monitoring.otelCollector`                                                                        | `telemetry.otlp.*`                                                                                       |
-| `spec.monitoring.tokenMetrics.prometheusAddr`                                                          | `telemetry.prometheus.enabled` and `telemetry.metrics.port`                                              |
-| `spec.monitoring.tokenMetrics.labels`                                                                  | `telemetry.headerLabels`                                                                                 |
-| `spec.monitoring.spanAttributes`                                                                       | `telemetry.spanAttributes`                                                                               |
-| `spec.monitoring.groupLabelAttributes`                                                                 | `telemetry.groupLabelAttributes`                                                                         |
-| `spec.networkPolicies`                                                                                 | `networkPolicy.*`                                                                                        |
-| `spec.journaling`                                                                                      | Not supported                                                                                            |
-| `spec.webhooks`                                                                                        | Not supported                                                                                            |
-| Operator `upstream.budgetsWebhook.*` values                                                            | `budgets.endpoint` and `budgets.tokenProjection`                                                         |
+| `AIGateway` field                                                                                      | AI Gateway value                                                                                                      |
+| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `spec.providers[]`                                                                                     | `providers[]` with `kind`, `baseUrl`, `models`, `credentialSecretRef`, `region`, `project`, `awsProfile`              |
+| `schema: OpenAI`                                                                                       | `kind: openai`                                                                                                        |
+| `schema: OpenAI` with the OpenRouter `pathPrefix`                                                      | `kind: openrouter`                                                                                                    |
+| `schema: Anthropic`                                                                                    | `kind: anthropic`                                                                                                     |
+| `schema: AWSAnthropic`                                                                                 | `kind: bedrock-anthropic`                                                                                             |
+| `schema: GCPVertexAI`                                                                                  | `kind: vertex`, for Gemini models only                                                                                |
+| `schema: GeminiAIStudio`, `schema: GoogleGenerativeLanguage`                                           | `kind: gemini-aistudio`                                                                                               |
+| `schema: AWSBedrock`, `schema: AzureOpenAI`                                                            | Not supported                                                                                                         |
+| `spec.routes[].match.model`                                                                            | The model's entry in its provider's `providers[].models`                                                              |
+| `spec.routes[].inputSchema`                                                                            | Not supported. Clients call each model on its provider's API, see [Behavior differences](#behavior-differences)       |
+| `spec.routes[].backendRefs[].weight` and `.priority`                                                   | Not supported                                                                                                         |
+| `spec.resilience.retry`                                                                                | Not configurable                                                                                                      |
+| `spec.resilience.passiveHealthCheck`, `circuitBreaker`                                                 | Not supported                                                                                                         |
+| `spec.resilience.upstreamConnection`, `spec.gateway.bufferLimit`, and `spec.gateway.connectionLimit`   | Not configurable                                                                                                      |
+| `spec.gateway.streamTimeouts.maxStreamDuration`                                                        | `lifecycle.maxStreamDuration`                                                                                         |
+| `spec.gateway.timeouts`, `spec.gateway.streamTimeouts.streamIdleTimeout`, and `spec.routes[].timeouts` | Not configurable                                                                                                      |
+| `spec.gateway.listeners` and `tls`                                                                     | `httpRoute.*` on your existing Gateway                                                                                |
+| `spec.auth.oidc`                                                                                       | `auth.issuers`, with a `bindingClaim` for each issuer                                                                 |
+| `spec.auth.oidc.claimToHeaders`                                                                        | `telemetry.claimLabels`, for token usage labels                                                                       |
+| `spec.auth.virtualAPIKeys`                                                                             | `directory.endpoint`, `directory.tokenProjection.enabled`, and `directory.groupsResolutionIssuer`                     |
+| `spec.auth.authz`, `spec.auth.workloadIssuers`, `spec.policies`, and `AIPolicy`                        | Not supported                                                                                                         |
+| `spec.gateway.stripHeaders`                                                                            | Not supported                                                                                                         |
+| `spec.processor` and `nerProvider`                                                                     | `scanning.*`                                                                                                          |
+| `spec.processor.requestAction`                                                                         | `scanning.requestAction` and `scanning.entityActions`, with lowercase `block`, `redact`, or `log-only`                |
+| `spec.processor.responseAction`                                                                        | Not supported                                                                                                         |
+| `spec.processor.placeholder`                                                                           | `scanning.placeholder`                                                                                                |
+| `spec.processor.nerProvider.failureAction`                                                             | `scanning.ner.failureAction`                                                                                          |
+| `spec.processor.extractionFailureAction`                                                               | `scanning.extractionFailureAction`, with lowercase `block` or `continue`                                              |
+| `spec.processor.mutationFailureAction`                                                                 | `scanning.mutationFailureAction`, with lowercase `block` or `continue`                                                |
+| `spec.processor.nerProvider.resultCache`                                                               | `scanning.resultCache`                                                                                                |
+| `spec.guardrails`                                                                                      | `guardrails.*`                                                                                                        |
+| `spec.audit.enabled`                                                                                   | `audit.enabled`                                                                                                       |
+| `spec.monitoring.otelCollector`                                                                        | `telemetry.otlp.*`, plus `telemetry.tracing.enabled` for spans                                                        |
+| `spec.monitoring.tokenMetrics.prometheusAddr`                                                          | `telemetry.prometheus.enabled` and `telemetry.metrics.port`                                                           |
+| `spec.monitoring.tokenMetrics.labels`                                                                  | `telemetry.headerLabels` for headers the caller sends, or `telemetry.claimLabels` for headers set by `claimToHeaders` |
+| `spec.monitoring.spanAttributes`                                                                       | `telemetry.spanAttributes`                                                                                            |
+| `spec.monitoring.groupLabelAttributes`                                                                 | `telemetry.groupLabelAttributes`                                                                                      |
+| `spec.monitoring.grafanaDashboards`                                                                    | Not supported                                                                                                         |
+| `spec.networkPolicies`                                                                                 | `networkPolicy.*`                                                                                                     |
+| `spec.journaling`                                                                                      | Not supported                                                                                                         |
+| `spec.webhooks`                                                                                        | Not supported                                                                                                         |
+| Operator `upstream.budgetsWebhook.*` values                                                            | `budgets.endpoint` and `budgets.tokenProjection`                                                                      |
+| Operator `upstream.modelAccessWebhook.*` values                                                        | `modelAccess.enabled`                                                                                                 |
 
 The legacy gateway turns on group label lookup with the platform value
 `global.stacklok.directoryGrpcEndpoint`. The AI Gateway uses
@@ -112,19 +128,32 @@ The legacy gateway turns on group label lookup with the platform value
 `directory.groupLabels`. See
 [Attribute traffic to organizational groups](telemetry.mdx#attribute-traffic-to-organizational-groups).
 
+Token usage is recorded under a different metric. The legacy gateway's
+`aigw_token_usage_total` corresponds to `stacklok_ai_gateway_token_usage_total`,
+which adds `provider`, `implementation`, and `cache_type` labels, so update
+dashboards and billing queries before you move traffic. The counts also differ.
+Input includes cache reads and writes, which raises input for Anthropic and
+Bedrock models that use prompt caching, so price `cache_read` and
+`cache_creation` at the provider's cache rates. Gemini output includes thinking
+tokens. For a virtual API key, a `department` claim label comes from the key
+owner's directory group, so add `department` to `directory.groupLabels`. See
+[Record token usage](telemetry.mdx#record-token-usage).
+
 Provider credentials stay in Kubernetes Secrets. Reference each one with
-`providers[].credentialSecretRef`. The chart refuses inline credentials. You can
-reuse the same provider keys, but the AI Gateway expects one Secret per
-provider, so you might need to create new Secrets. On Amazon EKS, Bedrock and
-Bedrock Guardrails access needs a Pod Identity association for the AI Gateway's
-own ServiceAccounts. See [Connect model providers](./providers-and-models.mdx).
+`providers[].credentialSecretRef`, which names a Secret and the key that holds
+the credential. The chart refuses inline credentials. You can reference the
+Secrets your `AIGateway` uses today when the key holds the credential in the
+format its provider kind expects. On Amazon EKS, Bedrock and Bedrock Guardrails
+access needs a Pod Identity association for the AI Gateway's own
+ServiceAccounts. See [Connect model providers](./providers-and-models.mdx).
 
 The legacy gateway's ServiceAccounts don't carry over to the Enterprise Manager
 allowlists. The platform chart adds the AI Gateway's ServiceAccount by default,
 but if you set `enterprise-manager.grpc.callerAuth.saSubjectAllowlist` or
 `httpSaSubjectAllowlist` yourself, your list replaces the default. Add
 `system:serviceaccount:<NAMESPACE>:<RELEASE_NAME>-ai-gateway-v2` to both, or the
-AI Gateway refuses every request.
+AI Gateway refuses every request. When the release name already contains
+`ai-gateway-v2`, the ServiceAccount is named after the release alone.
 
 ## What the AI Gateway does not support
 
@@ -137,12 +166,15 @@ an AI Gateway equivalent:
   retries use fixed, built-in bounds.
 - The AWS Bedrock Converse API and Azure OpenAI providers, and non-Gemini models
   on Google Vertex AI.
-- PII scanning of responses. Scanning covers requests.
+- PII scanning of responses. Scanning covers requests. The legacy gateway scans
+  responses whenever `spec.processor` is configured, applying `requestAction`
+  when `responseAction` is unset.
 - Interaction journaling.
 - The legacy gateway's [management API](./legacy/api-reference.mdx) (`/v1/info`,
   `/v1/me`, and the MCP server catalog). The AI Gateway serves `GET /v1/models`
   on its inference listener.
-- `AIPolicy` authorization and role-based authorization rules.
+- `AIPolicy` authorization, role-based authorization rules, and workload issuers
+  (`spec.auth.workloadIssuers`).
 - Custom webhooks and an operator-defined header strip list.
 - Hot reload. Configuration and credential changes apply through a rolling
   restart.
@@ -154,8 +186,21 @@ an AI Gateway equivalent:
   OpenRouter models are served on `/v1/chat/completions` and `/v1/responses`.
   Anthropic and Bedrock models are served on `/v1/messages` and
   `/anthropic/v1/messages`. Gemini and Vertex AI models are served on `/v1beta`.
-  See
+  The legacy gateway accepts OpenAI-format requests for every model by default
+  (`inputSchema: OpenAI`) and translates them for the provider. A client that
+  calls an Anthropic, Bedrock, Gemini, or Vertex AI model through
+  `/v1/chat/completions` today moves to that provider's API. See
   [Client endpoints](../platform/enterprise-platform/configure-ai-gateway.mdx#client-endpoints).
+- **Token callers must be in the directory.** With `directory.endpoint` set, the
+  AI Gateway looks up every identity provider token caller in the directory and
+  refuses a caller it can't resolve with `403` and the audit reason
+  `auth_identity_unresolved`. That covers a user SCIM hasn't provisioned yet, an
+  inactive user, and a token without the claim the directory binds on. Confirm
+  that
+  [SCIM provisioning](../platform/enterprise-directory/scim-provisioning.mdx)
+  covers every user who calls the gateway before you move them. A virtual API
+  key's owner is checked when the key is validated, so virtual keys need no
+  extra step.
 - **Unknown models are refused.** A model no provider lists returns `404`. When
   no provider serves the Responses API or Gemini streaming at all, those
   endpoints return `501`. Listing the same model twice for the same client API
@@ -183,13 +228,16 @@ format.
    [Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx).
 2. **Recreate your providers and models** in `providers`, using the
    [configuration map](#map-your-configuration). Turn on the same screening you
-   run today.
+   run today, and set `modelAccess.enabled` if you restrict callers with model
+   sets.
 3. **Verify with a test client.** Send requests through each client API your
    users rely on, streaming and non-streaming, with a test account that has a
-   budget.
+   budget and that SCIM has provisioned in the directory.
 4. **Move clients.** Set `toolhive-cloud-ui.gatewayProxyUrl` to the AI Gateway
    URL so the console's setup instructions point there, and have users rerun
-   `thv llm setup`. Move one group of users at a time.
+   `thv llm setup`. Point clients that call non-OpenAI models through the
+   OpenAI-compatible API at the provider's own API. Move one group of users at a
+   time.
 5. **Delete the `AIGateway` resource** once no traffic reaches it. Do this
    before step 6, while the AI Gateway operator is still installed, so the
    operator cleans up the resources it created.
