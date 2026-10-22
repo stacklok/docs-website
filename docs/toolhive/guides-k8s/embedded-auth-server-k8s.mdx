@@ -398,10 +398,10 @@ For a complete walkthrough including deploying Redis Sentinel from scratch, see
 
 MCP clients must identify themselves to the embedded authorization server. The
 server always accepts Dynamic Client Registration (DCR) requests from MCP
-clients; no configuration is required. Enable CIMD for clients that support the
-MCP specification's preferred registration mechanism. You can also set baseline
-scopes for clients that need to request scopes beyond those in their
-registration metadata.
+clients, within configurable registration limits; no configuration is required.
+Enable CIMD for clients that support the MCP specification's preferred
+registration mechanism. You can also set baseline scopes for clients that need
+to request scopes beyond those in their registration metadata.
 
 ### Enable CIMD for zero-registration clients
 
@@ -461,6 +461,54 @@ For the two-layer trust model behind CIMD (why the upstream IdP never sees the
 client's CIMD URL), see
 [Client ID Metadata Document (CIMD)](../concepts/embedded-auth-server.mdx#client-id-metadata-document-cimd).
 
+### Limit Dynamic Client Registration
+
+Because `/oauth/register` is unauthenticated, the embedded authorization server
+bounds how many clients it registers and how many it keeps:
+
+- **Expiry:** a client that registers but never completes a token exchange
+  expires after 24 hours. Its first successful token exchange extends the
+  registration to 30 days, and a registration idle for more than 30 days
+  expires. An expired client must register again.
+- **Client cap:** `storage.maxDCRClients` caps the number of live DCR-registered
+  clients (default `10000`). At the cap, `/oauth/register` returns HTTP `503`
+  with a `Retry-After` header until a client expires; no existing client is
+  evicted. Operator-configured clients and CIMD clients don't count toward the
+  cap. With Redis storage, every replica shares the count; with in-memory
+  storage, each replica keeps its own.
+- **Rate limit:** `registrationRateLimit` is a token bucket that limits
+  registrations per replica (default 1 per second with a burst of 5). Requests
+  over the limit get HTTP `429` with a `Retry-After` header. Set `maxTokens` to
+  the burst size and `refillPeriod` to the time it takes to refill the bucket
+  from empty. For example, 10 registrations per minute with a burst of 3 is
+  `maxTokens: 3` and `refillPeriod: 18s`.
+
+The defaults suit most deployments. Raise the limits if many legitimate clients
+register in a short window, such as during a large client rollout:
+
+```yaml title="MCPExternalAuthConfig: DCR limits"
+spec:
+  embeddedAuthServer:
+    registrationRateLimit:
+      maxTokens: 10
+      refillPeriod: 10s
+    storage:
+      type: redis
+      maxDCRClients: 25000
+      redis:
+        # ...
+```
+
+When you size the cap, keep in mind that a caller registering at the full rate
+keeps up to rate x replicas x 86,400 unused clients alive for 24 hours. At the
+default rate, one replica fills the default cap in about 2.8 hours, and new
+registrations then fail with `503` until those clients expire.
+
+Setting `maxDCRClients: 0` removes the cap, leaving the rate limit as the only
+bound on stored clients. Use it only temporarily, for example while an existing
+client population above the cap drains. A large finite value, such as two to
+three times your observed live client count, keeps some protection.
+
 ### Allow confidential DCR clients
 
 By default, DCR only issues public clients: registrations must use
@@ -477,9 +525,9 @@ spec:
 
 `/oauth/register` is unauthenticated, so enabling this lets any caller who can
 reach the endpoint mint a client credential. Confidential registrations are
-restricted to `https` non-loopback redirect URIs, and (with the Redis storage
-backend) any DCR registration idle for more than 30 days is evicted and must
-re-register.
+restricted to `https` non-loopback redirect URIs, and they expire like any other
+DCR registration (see
+[Limit Dynamic Client Registration](#limit-dynamic-client-registration)).
 
 To let an agent register a keypair for RFC 8693 token exchange instead of
 receiving a shared secret, set `allowPrivateKeyJWTRegistration: true`:
