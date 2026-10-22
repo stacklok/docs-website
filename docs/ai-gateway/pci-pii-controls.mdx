@@ -78,6 +78,35 @@ To trial a new entity without affecting traffic, set `mode: shadow` on its
 `entityActions` entry. The adapter then records each detection in its metrics
 and logs, but never blocks or redacts for that entity.
 
+## Verify scanning
+
+After the rollout finishes and Presidio is ready, send a request that carries
+synthetic data through the gateway. This example uses a well-known test card
+number, which passes the checksum but belongs to no real account:
+
+```bash
+curl -i https://<AI_GATEWAY_HOST>/v1/chat/completions \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<MODEL_NAME>","messages":[{"role":"user","content":"My card number is 4111 1111 1111 1111."}]}'
+```
+
+With `CREDIT_CARD` set to `block`, the default, the gateway returns `403` with
+`request denied by governance hook "scanning"`, and the provider never receives
+the prompt. If you [forward audit logs](./forward-audit-logs.mdx), the request
+appears as an `aigw.v2.interaction.completed` event with `outcome` set to
+`denied`, `hook` set to `scanning`, and `CREDIT_CARD` in
+`hook_annotations.scanning.detection_types`.
+
+To check redaction, send an entity you set to `redact`, such as an email address
+in the earlier example. The request succeeds, the provider sees the placeholder
+in place of the match, and the audit event lists the entity in
+`hook_annotations.scanning.redact_types`.
+
+A `200` for the card number means scanning didn't act on it. Confirm that
+`scanning.enabled` is on in the running release and that `CREDIT_CARD` isn't set
+to `log-only` or `mode: shadow`.
+
 ## Choose which entities to look for
 
 `scanning.entities` controls what Presidio detects. When it's empty, the scanner
@@ -278,9 +307,12 @@ spec:
 ```
 
 KEDA keeps `sum(in-flight calls) / threshold` replicas, so set `threshold` to
-the number of concurrent calls one Presidio pod should carry. Eight fits the
-default of two workers per pod. The label that selects the adapter's pods
-depends on how your Prometheus scrapes them; match the pod label
+the number of concurrent calls one Presidio pod should carry. With the default
+of two workers per pod, eight lets about four calls queue on each worker before
+KEDA adds a replica. That trades some scan latency under load for fewer
+replicas. Lower the threshold to cut queueing at the cost of more pods. The
+label that selects the adapter's pods depends on how your Prometheus scrapes
+them; match the pod label
 `app.kubernetes.io/name: ai-gateway-v2-scanning-adapter`. The metric appears
 only after Presidio's first call, and until then `fallback` holds the replica
 count.

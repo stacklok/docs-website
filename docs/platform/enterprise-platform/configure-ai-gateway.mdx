@@ -14,7 +14,7 @@ See [AI Gateway](../../ai-gateway/index.mdx) for providers, routing, screening,
 and budgets.
 
 For the legacy AI Gateway, see
-[Configure the legacy gateway](./legacy/configure-ai-gateway.mdx).
+[Configure the legacy AI Gateway](./legacy/configure-ai-gateway.mdx).
 
 ## Prerequisites
 
@@ -148,7 +148,8 @@ Complete the following sequence before sending production traffic:
    Set `directory.groupsResolutionIssuer` to the issuer the directory knows your
    users under, usually your corporate identity provider's issuer. Requests that
    use a virtual API key resolve their owner's groups through it. Without it,
-   only user budgets apply to those requests.
+   only user budgets apply to those requests. List the same issuer in
+   `enterprise-manager.directory.issuers`, or the gateway refuses every request.
 
    Set `enterprise-manager.grpc.callerAuth.clusterOidcIssuer` to your cluster's
    ServiceAccount token issuer. The Enterprise Manager verifies the gateway's
@@ -172,7 +173,7 @@ Complete the following sequence before sending production traffic:
 
 4. **Optionally turn on model access**, so callers can use only the models their
    directory grants cover. See
-   [Route models and control access](../../ai-gateway/model-routing.mdx).
+   [Control model access](../../ai-gateway/control-model-access.mdx).
 
 5. **Verify** that the gateway pods are ready:
 
@@ -212,8 +213,10 @@ ai-gateway-v2:
 
 `parentRefs` is required when the route is enabled. Set `hostname`: without it,
 the route matches every hostname the listener accepts. The route's request
-timeout follows `lifecycle.maxStreamDuration`, 15 minutes by default, so a
-supported long stream is never cut short at the route.
+timeout equals `lifecycle.maxStreamDuration`, 15 minutes by default. The route
+starts timing when it receives the request, before authentication and budget
+admission, so a stream that runs close to that limit can be cut off at the route
+before the gateway ends it.
 
 Check that the route has `Accepted` and `ResolvedRefs` set to `True`:
 
@@ -304,7 +307,7 @@ Gateway's connectivity state through the
 
 ```bash
 curl -X PUT \
-  https://<ENTERPRISE_MANAGER_URL>/api/v1/platform-settings/gateways/ai-gateway/connectivity \
+  <ENTERPRISE_MANAGER_URL>/api/v1/platform-settings/gateways/ai-gateway/connectivity \
   -H "Authorization: Bearer <ADMIN_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"state": "disconnected"}'

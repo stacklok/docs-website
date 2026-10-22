@@ -62,10 +62,32 @@ Audit events identify a provider by its `kind`.
    ```
 
    The `models` list is the route table. See
-   [Route models and control access](./model-routing.mdx) for how the gateway
-   matches a request to a provider.
+   [Route models to providers](./model-routing.mdx) for how the gateway matches
+   a request to a provider.
 
-3. Upgrade the release and wait for the rollout to finish:
+3. Confirm that each model has a price in the pricing catalog. The gateway
+   refuses requests for a model with no catalog entry, even when the provider
+   credential works. Look up the entry by its catalog provider and model:
+
+   ```bash
+   curl -s <ENTERPRISE_MANAGER_URL>/v1/budgets/pricing \
+     -H "Authorization: Bearer <ADMIN_TOKEN>" \
+     | jq '.spec.entries[] | select(.provider == "openai" and .model == "gpt-5-mini")'
+   ```
+
+   Replace `<ENTERPRISE_MANAGER_URL>` with the Enterprise Manager API
+   [base URL](../platform/enterprise-platform/enterprise-manager-api.mdx#base-url)
+   and `<ADMIN_TOKEN>` with a
+   [platform administrator's access token](../platform/enterprise-platform/enterprise-manager-api.mdx#authenticate).
+   An entry with a rate block, such as `openai`, means the model is priced. If
+   the command prints nothing, or the entry has `"unpriced": true`, price the
+   model first. See
+   [Update the pricing catalog](./budgets-and-pricing.mdx#update-the-pricing-catalog)
+   for the request, and
+   [Match provider kinds to catalog entries](./budgets-and-pricing.mdx#match-provider-kinds-to-catalog-entries)
+   for the catalog provider name of each `kind`.
+
+4. Upgrade the release and wait for the rollout to finish:
 
    ```bash
    helm upgrade <RELEASE_NAME> <CHART> -n <NAMESPACE> -f values.yaml
@@ -76,8 +98,10 @@ Audit events identify a provider by its `kind`.
    previous pods keep serving. See
    [How configuration changes apply](../platform/enterprise-platform/configure-ai-gateway.mdx#how-configuration-changes-apply).
 
-4. Send a request through the gateway to confirm the credential works end to
-   end:
+5. Send a request through the gateway to confirm the credential works end to
+   end. Send it as a caller with an applicable [budget](./manage-budgets.mdx)
+   and, if model access is on, a
+   [grant for the model](./control-model-access.mdx):
 
    ```bash
    curl -s https://<AI_GATEWAY_HOST>/v1/chat/completions \
@@ -85,6 +109,10 @@ Audit events identify a provider by its `kind`.
      -H "Content-Type: application/json" \
      -d '{"model": "gpt-5-mini", "messages": [{"role": "user", "content": "ping"}]}'
    ```
+
+   A completion confirms the credential, route, and price. A `402` means the
+   caller has no budget with capacity, and a `403` means the caller has no grant
+   for the model.
 
 ## Provider specifics
 
@@ -234,7 +262,7 @@ kubectl delete secret ai-gateway-v2-openai -n <NAMESPACE>
 
 ## Next steps
 
-- [Route models and control access](./model-routing.mdx) to understand how
-  requests reach a provider and to limit models per group.
-- [Budgets and pricing](./budgets-and-pricing.mdx) to publish prices for the
-  models you route.
+- [Control model access](./control-model-access.mdx) to decide which users and
+  groups can call the models you added.
+- [Route models to providers](./model-routing.mdx) to understand how requests
+  reach a provider.

@@ -1,9 +1,9 @@
 ---
-title: Route models and control access
+title: Route models to providers
 sidebar_label: Model routing
 description:
-  Map model names onto providers, limit which models each user or group can
-  call, and understand retries and timeouts on the AI Gateway.
+  Map model names onto providers, list the models each caller can use, and
+  understand retries and timeouts on the AI Gateway.
 ---
 
 A _route_ maps a requested model name to the provider that serves it. In the AI
@@ -29,7 +29,7 @@ ai-gateway-v2:
         key: api-key
     - kind: anthropic
       baseUrl: https://api.anthropic.com
-      models: ['claude-sonnet-5']
+      models: ['claude-sonnet-4-5']
       credentialSecretRef:
         name: ai-gateway-v2-anthropic
         key: api-key
@@ -49,42 +49,15 @@ arrived on, so a client calls each model through an API its provider speaks. See
 Within one client API, a model name maps to exactly one provider. Listing the
 same model under two providers that share an API, such as `anthropic` and
 `bedrock-anthropic`, is a configuration error. Use distinct model names for the
-two, such as `claude-sonnet-5` and `us.anthropic.claude-sonnet-5`.
+two, such as `claude-sonnet-4-5` and `us.anthropic.claude-sonnet-4-5`. The
+gateway has no weighted routing across providers and no failover to a second
+provider.
 
 There is no default route. A request for a model that no provider lists returns
 `404`, so only the models you list are reachable.
 
-## Control which models each caller can use
-
-_Model access_ limits each caller to the models their directory grants cover.
-With model access on, the gateway refuses a request for a model the caller has
-no grant for with `403`, before it calls any provider. The model discovery
-endpoints list only the models the caller can use.
-
-Grants come from _model sets_, named collections of models that you manage on
-the **Models** page in the console's administration experience and grant to
-users or groups. The **All Users** set is held by every active user. It starts
-out granting every model, so turning model access on changes nothing until you
-narrow it.
-
-Turn model access on in the chart values:
-
-```yaml title="values.yaml"
-ai-gateway-v2:
-  modelAccess:
-    enabled: true
-```
-
-Model access uses the same receiver, token, and certificate authority as budget
-enforcement, and the directory connection used for virtual API keys. The chart
-refuses to render when one of these is missing. See
-[Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx)
-for the platform values it depends on.
-
-Model access fails closed for both requests and discovery calls. If the gateway
-can't get a decision for a request, it refuses the request. If it can't get a
-decision for a discovery call, it returns `503` with `model access unavailable`
-instead of the full model list.
+To limit which models each user or group can call, see
+[Control model access](./control-model-access.mdx).
 
 ## Discover models
 
@@ -125,11 +98,6 @@ The gateway applies one fixed resilience policy to every provider:
 Budget admission runs once per request, before the provider call, and the
 request is charged once for the usage the provider reports. Retries don't add
 charges.
-
-## Limits worth knowing
-
-- Each model is served by one provider. The gateway has no weighted routing
-  across providers and no failover to a second provider.
 
 ## Next steps
 

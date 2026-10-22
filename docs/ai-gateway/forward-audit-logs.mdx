@@ -61,7 +61,7 @@ one model emits none.
 
 ```json
 {
-  "time": "2026-10-16T14:22:31.418Z",
+  "time": "2026-10-16T14:22:31Z",
   "level": "INFO",
   "msg": "audit_event",
   "logger": "audit",
@@ -89,6 +89,7 @@ one model emits none.
       "dialect": "anthropic-messages",
       "streaming": true,
       "duration_ms": 8421,
+      "terminal_stage": "delivery",
       "reason_code": "delivered",
       "usage_present": true,
       "input_tokens": 1834,
@@ -102,7 +103,8 @@ one model emits none.
 canonical subject, and `virtual_key_id` identifies the virtual key on
 virtual-key requests. Directory group labels named in `directory.groupLabels`,
 such as `department`, are added alongside them. A rejected authentication event
-carries no subjects.
+carries no subjects, except an `auth_identity_unresolved` refusal, which names
+the verified caller in `user`.
 
 **Targets** carry `model`, `provider`, and `route`, each only once the gateway
 has resolved it. `provider` is the provider `kind` from the gateway
@@ -116,13 +118,16 @@ address or user agent.
 tracing is on, `trace_id` and `span_id` for OpenTelemetry correlation. The
 gateway also returns `request_id` to the client in the `X-Request-ID` response
 header. Authentication events add `auth_method`: `jwt`, `virtual_key`, or
-`unknown`.
+`unknown`, and `reason_code`, which says why authentication failed, such as
+`auth_identity_unresolved`.
 
 Interaction events add `interaction_id`, `http_method`, `dialect`, `streaming`,
-`duration_ms`, `reason_code`, and `usage_present`, plus `input_tokens` and
-`output_tokens` when the provider reported usage. `reason_code` says what ended
-the interaction, such as `delivered` or `governance_denied`. When a governance
-hook denies or fails a request, `hook` names the hook entry.
+`duration_ms`, `terminal_stage`, `reason_code`, and `usage_present`, plus
+`input_tokens` and `output_tokens` when the provider reported usage.
+`terminal_stage` is the stage the interaction ended in: `validation`, `routing`,
+`governance`, `provider`, `metering`, or `delivery`. `reason_code` says what
+ended it, such as `delivered` or `governance_denied`. When a governance hook
+denies or fails a request, `hook` names the hook entry.
 
 Required governance hooks can report annotations under `hook_annotations`, keyed
 by hook entry name. The budgets entries report the charged subject and amount,
@@ -135,6 +140,13 @@ and the `scanning` entry reports the entity types it acted on, such as
 
 The **Kubernetes API audit log** covers control-plane activity such as `kubectl`
 calls and Helm upgrades. Configure it through the API server audit policy.
+
+**Operational failure records** go to the gateway's standard error, separate
+from audit events. A record can name the caller by directory email and, by
+default, includes a bounded parsed error message to make failures easier to
+diagnose. `failureLogs.level` sets their severity: `warn` (the default),
+`error`, or `debug`. When log retention or access can't accommodate personal
+data, set `failureLogs.includeMessage` to `false` to drop the message.
 
 **Conversation content** reaches no audit event. Screening sends prompt text to
 Presidio and AWS Bedrock for analysis. Snapshot capture, configured with the

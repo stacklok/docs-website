@@ -556,11 +556,6 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
     className: 'enterprise-only enterprise-only--tooltip-below',
   },
   {
-    type: 'ref',
-    id: 'platform/enterprise-platform/configure-ai-gateway',
-    label: 'Configure and deploy',
-  },
-  {
     type: 'doc',
     id: 'ai-gateway/providers-and-models',
     label: 'Model providers',
@@ -568,7 +563,12 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
   {
     type: 'doc',
     id: 'ai-gateway/model-routing',
-    label: 'Model routing and access',
+    label: 'Model routing',
+  },
+  {
+    type: 'doc',
+    id: 'ai-gateway/control-model-access',
+    label: 'Model access',
   },
   { type: 'doc', id: 'ai-gateway/manage-budgets', label: 'Manage budgets' },
   'ai-gateway/budgets-and-pricing',
@@ -611,11 +611,6 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
         type: 'doc',
         id: 'ai-gateway/legacy/index',
         label: 'Overview and deployment identification',
-      },
-      {
-        type: 'doc',
-        id: 'platform/enterprise-platform/legacy/configure-ai-gateway',
-        label: 'Configure and deploy',
       },
       {
         type: 'doc',

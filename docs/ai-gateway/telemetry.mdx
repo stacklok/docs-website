@@ -51,11 +51,12 @@ To share one collector across the platform, set
 global endpoint when it has no local one.
 
 Tracing samples every request by default. To cut span volume, set
-`telemetry.tracing.samplingRate` to the fraction of root spans to keep, between
-`0.0` and `1.0`. The default, `0`, keeps every root span. The gateway always
-keeps a request whose inbound `traceparent` is sampled, whatever the rate. A
-cost platform fed by these spans sees only the sampled requests, so it no longer
-counts all traffic.
+`telemetry.tracing.samplingRate` to the fraction of requests to keep, between
+`0.0` and `1.0`. The rate applies to requests with no inbound trace context and
+to requests whose inbound `traceparent` marks them unsampled. The default, `0`,
+keeps every request. The gateway always keeps a request whose inbound
+`traceparent` is sampled, whatever the rate. A cost platform fed by these spans
+sees only the sampled requests, so it no longer counts all traffic.
 
 ### Send traces to a separate destination
 
@@ -91,6 +92,11 @@ the headers on every OTLP signal, so the chart refuses them while OTLP metrics
 push is on, locally or through `global.stacklok.telemetry.otlp`. Scrape metrics
 with [Prometheus](#scrape-metrics-with-prometheus) instead, or relay traces
 through your own collector that holds the credential.
+
+Each export waits up to 30 seconds for the destination. If the destination can
+take longer to respond, raise `telemetry.tracing.exportTimeoutSeconds` above its
+worst-case response time. Otherwise the gateway can send the same batch twice,
+and the destination counts those spans twice.
 
 ## Scrape metrics with Prometheus
 
@@ -138,8 +144,31 @@ ai-gateway-v2:
 ```
 
 A value outside `permitted` becomes `other`, which keeps the number of metric
-series bounded however the header varies. Per-user and per-request identifiers
-belong on spans instead.
+series bounded however the header varies. Per-request identifiers belong on
+[spans](#add-request-headers-to-spans) instead.
+
+### Label usage by caller
+
+To break usage down by who made the request, map verified token claims under
+`telemetry.claimLabels`. The gateway reads each claim from the signed token, or
+for a virtual API key, from its owner's directory record, so a caller can't set
+the value:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  telemetry:
+    claimLabels:
+      - claim: sub
+        attribute: user_id
+      - claim: department
+        attribute: department
+```
+
+Without `permitted`, the claim value passes through unchanged. A per-user label
+such as `user_id` creates one metric series per user and stores personal data in
+your metrics store, so confirm that your retention and access controls allow it.
+You can configure up to 10 entries. A claim that changes per token or session,
+such as `jti`, `nonce`, or `sid`, requires `permitted`.
 
 Request rate, latency, and status codes come from the standard
 `http.server.request.duration` histogram, labeled with `http.route` and
@@ -216,10 +245,24 @@ knows those owners under. The chart refuses to render `groupLabels` without it.
 ### How labels appear
 
 Labels appear as attributes on request spans under their own names and under
-`subjects` on audit records. They're kept off metrics because per-caller values
-would multiply metric series. The gateway forwards each label to its governance
-checks as a header, such as `X-Department`, and removes that header before the
-request reaches the provider.
+`subjects` on audit records. Group labels stay off metrics because per-caller
+values would multiply metric series. To label token usage by caller, see
+[Label usage by caller](#label-usage-by-caller). The gateway forwards each label
+to its governance checks as a header, such as `X-Department`, and removes that
+header before the request reaches the provider.
+
+To put a label on spans under a different attribute name, such as the one your
+cost platform expects, map it under `telemetry.groupLabelAttributes`. The span
+then carries the label under that name instead of its own. Each `label` must
+also be listed in `directory.groupLabels`, or the gateway refuses to start:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  telemetry:
+    groupLabelAttributes:
+      - label: department
+        attribute: cz.context.department
+```
 
 When a caller belongs to two derived groups with different values for the same
 label, the gateway omits that label and logs a warning naming it.
