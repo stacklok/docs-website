@@ -11,8 +11,8 @@ Configure the platform chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `stacklok-enterprise-platform`. Chart version: `0.23.0`. Generated from
-the platform source at `v0.23.0`.
+Chart: `stacklok-enterprise-platform`. Chart version: `0.24.0`. Generated from
+the platform source at `v0.24.0`.
 
 ## Values
 
@@ -83,7 +83,8 @@ with internet access; the probe fails in an air-gapped environment.
 **Default:** `false`
 
 Run preflight checks in a Helm hook Job and fail installation or upgrade if a
-check fails. Requires the preflight image pull credentials and hook RBAC.
+check fails. Requires global.replicated.dockerconfigjson (without it the image
+pull fails and the install hangs) and cluster-scoped read RBAC.
 
 ### `preflight.image.repository`
 
@@ -138,8 +139,8 @@ CPU limit for the preflight enforcement Job.
 
 **Default:** `"256Mi"`
 
-Memory limit for the preflight enforcement Job. Increase this for clusters whose
-collected resource inventory exceeds the default capacity.
+Memory limit for the preflight enforcement Job. Increase it on large clusters;
+usage scales with namespace and resource count.
 
 ### `toolhive-registry-server.preflightDatabaseUri`
 
@@ -157,15 +158,8 @@ rendered preflight Secret. Empty disables the probe.
 
 **Default:** `{"automount":true,"create":true}`
 
-enterprise-manager runs as a ServiceAccount of its own rather than the
-namespace's `default` one. connector-gateway admits exactly this subject to its
-internal API (internalApi.allowedSubjects), which can revoke any user's stored
-upstream tokens; deriving `default` there would admit every pod in the namespace
-that runs as it. The chart's RBAC bindings follow serviceAccountName, and
-automount keeps the in-cluster API access the `default` SA gave it (Directory,
-leader election). The ServiceAccount is named after the release
-(&#60;release&#62;-enterprise-manager, or the release name when it already
-contains "enterprise-manager"); renaming it requires setting
+Dedicated Enterprise Manager ServiceAccount; Connector Gateway's internal API
+admits exactly this subject. Renaming it requires setting
 connector-gateway.internalApi.allowedSubjects to match.
 
 ### `enterprise-manager.grpc.insecure`
@@ -174,9 +168,8 @@ connector-gateway.internalApi.allowedSubjects to match.
 
 **Default:** `false`
 
-Skip caller authentication on the shared gRPC service for local development. TLS
-remains controlled by grpc.tls.enabled. The umbrella requires this to agree with
-Connector Gateway's directory.insecure setting.
+Skip caller authentication on the shared gRPC service (development only; TLS is
+grpc.tls.enabled). Must agree with Connector Gateway's directory.insecure.
 
 ### `enterprise-manager.grpc.callerAuth.clusterOidcIssuer`
 
@@ -205,10 +198,9 @@ enabled for development.
 
 </details>
 
-ServiceAccount subjects allowed to call the directory's identity RPCs. Include
-Connector Gateway, the API key service, and any AI Gateway main processors that
-call these methods. The default includes AI Gateway v2 when enabled. An override
-replaces the list, so retain every required caller.
+ServiceAccount subjects allowed to call the directory's identity RPCs: Connector
+Gateway, the API key service, and AI Gateway main processors. An override
+replaces the default (AI Gateway v2 when enabled), so keep every caller.
 
 ### `enterprise-manager.grpc.callerAuth.acknowledgeNoApiKeyServiceCaller`
 
@@ -218,8 +210,7 @@ replaces the list, so retain every required caller.
 
 Bypass the umbrella check requiring an API key service caller in
 saSubjectAllowlist. Enable only when virtual keys are disabled or that service
-deliberately uses an insecure directory connection. This setting affects only
-the umbrella guard.
+deliberately uses an insecure directory connection.
 
 ### `enterprise-manager.grpc.callerAuth.gatewaySaSubjectAllowlist`
 
@@ -228,8 +219,8 @@ the umbrella guard.
 **Default:** `[]`
 
 ServiceAccount subjects allowed to call gateway registration RPCs, including
-EnsureConnectorGateway. With caller authentication enabled, include the
-Connector Gateway subject so it can register at startup.
+EnsureConnectorGateway. With caller authentication enabled, include Connector
+Gateway's subject or the gateway aborts its startup.
 
 ### `enterprise-manager.grpc.callerAuth.credentialSaSubjectAllowlist`
 
@@ -256,10 +247,9 @@ all callers.
 
 </details>
 
-ServiceAccount subjects allowed to submit metering events. The default derives
-Connector Gateway's subject from the release name and namespace when that
-gateway is enabled. If a ServiceAccount override changes the subject, set the
-actual subject; the umbrella rejects drift while the default remains in use.
+ServiceAccount subjects allowed to submit metering events. Defaults to Connector
+Gateway's derived subject when it is enabled; set the actual subject if a
+ServiceAccount override changes it.
 
 ### `enterprise-manager.grpc.callerAuth.httpSaSubjectAllowlist`
 
@@ -287,10 +277,9 @@ actual subject; the umbrella rejects drift while the default remains in use.
 
 </details>
 
-ServiceAccount subjects allowed to poll Gateway connectivity state over HTTP.
-Defaults derive subjects for enabled AI Gateway operators, Connector Gateway,
-and AI Gateway v2 when global.stacklok.enterpriseManager.url is set. Override
-with the actual subjects when ServiceAccount naming differs.
+ServiceAccount subjects allowed to poll Gateway connectivity over HTTP. Defaults
+derive enabled gateways' subjects when global.stacklok.enterpriseManager.url is
+set; override when naming differs.
 
 ### `enterprise-manager.grpc.callerAuth.workloadTrustSaSubjectAllowlist`
 
@@ -313,9 +302,7 @@ with the actual subjects when ServiceAccount naming differs.
 </details>
 
 ServiceAccount subjects allowed to fetch workload trust snapshots. Defaults
-derive subjects for the enabled AI Gateway operator and AI Gateway v2. Override
-with the actual subjects when ServiceAccount naming differs; disabled gateways
-contribute no entry.
+derive enabled AI Gateways' subjects; override when naming differs.
 
 ### `enterprise-manager.grpc.tls.enabled`
 
@@ -475,10 +462,8 @@ Timeout for Connector endpoint verification, expressed as a Go duration such as
 
 **Default:** `[]`
 
-CIDR ranges allowed by Enterprise Manager's Connector reachability check despite
-its private-address deny-list. Empty applies the deny-list without exceptions.
-Allow only required internal ranges; loopback, link-local, and cloud metadata
-addresses remain unsuitable exceptions.
+CIDR ranges exempted from the Connector reachability check's private-address
+deny-list. Never exempt loopback, link-local, or cloud metadata addresses.
 
 ### `toolhive-cloud-ui.enterpriseManagerUrl`
 
@@ -486,9 +471,10 @@ addresses remain unsuitable exceptions.
 
 **Default:** `""`
 
-Base URL of Enterprise Manager's directory and administration HTTP API, for
-example http://enterprise-manager.toolhive-system:9090. Set the address of your
-deployed Service to enable the console pages backed by this API.
+Enterprise Manager HTTP API base URL, e.g.
+http://enterprise-manager.toolhive-system:9090. Empty inherits
+global.stacklok.enterpriseManager.url. Either source enables the console pages
+backed by it and Directory session authorization.
 
 ### `toolhive-cloud-ui.connectorGatewayUrl`
 
@@ -505,11 +491,9 @@ default dict) -}}http://{{ .Release.Name }}-connector-gateway-control-plane.{{
 
 </details>
 
-Base URL of Connector Gateway's control-plane API used by the console. The
-default derives the Service address on port 8090 when the gateway is enabled.
-The umbrella checks it against the rendered Service; supply the actual URL when
-Service naming or ports differ. Empty hides the console's user-facing Connectors
-pages.
+Connector Gateway control-plane API URL for the console. Defaults to the derived
+Service address when the gateway is enabled; set it when naming or ports differ.
+Empty hides the Connectors pages.
 
 ### `connector-gateway.enabled`
 
@@ -527,16 +511,10 @@ global.stacklok is null.
 
 **Default:** `{"deriveEnterpriseManagerSubject":true,"enabled":true}`
 
-The internal API is on whenever the gateway is installed: deleting a Connection
-calls it to revoke the user's orphaned upstream token, and Connector tool
-refresh calls it too. With internalApi.allowedSubjects empty the gateway chart
-admits enterprise-manager's own ServiceAccount (see
-enterprise-manager.serviceAccount above), and enterprise-manager derives the
-internal Service's address. connector-gateway-internal-api-guard.yaml refuses
-the render when a rename, a moved port, a disabled internal API or a mismatched
-audience would leave the two sides disagreeing. With networkPolicy.enabled and
-allowExternalEgress false, the gateway also needs egress to the kube-apiserver
-for the ServiceAccount signing keys, or every Disconnect answers 502.
+Internal API Enterprise Manager calls to revoke upstream tokens and refresh
+Connector tools; it must stay enabled. With networkPolicy.enabled and
+allowExternalEgress false, allow egress to the kube-apiserver or every
+Disconnect returns 502.
 
 ### `ai-gateway-v2.enabled`
 
@@ -568,26 +546,15 @@ Install the Bedrock guardrails adapter and enable the gateway's guardrails hook.
 Configure the Bedrock guardrail ID, version, and region, plus the shared webhook
 TLS identity or chart-local overrides.
 
-### `stacklok`
-
-**Type:** `object`
-
-**Default:** `{}`
-
-Reserved top-level vendor values. Put settings shared with subcharts under
-global.stacklok, which Helm propagates to every dependency.
-
 ### `global.stacklok.sessionHeaders`
 
 **Type:** `list`
 
 **Default:** `[]`
 
-Ordered request headers used to correlate conversations across gateways and
-Enterprise Manager. The first non-empty header wins. Empty uses
-x-claude-code-session-id, x-mecatl-root-session-id, x-mecatl-session-id, and
-session-id, in that order. A configured list replaces the defaults. Changing the
-list rolls the Envoy data plane and its main processor on reconciliation.
+Ordered request headers used to correlate conversations; the first non-empty
+wins. Empty uses x-claude-code-session-id, x-mecatl-root-session-id,
+x-mecatl-session-id, session-id. Changing it rolls the Envoy data plane.
 
 ### `global.stacklok.directoryGrpcEndpoint`
 
@@ -595,11 +562,13 @@ list rolls the Envoy data plane and its main processor on reconciliation.
 
 **Default:** `""`
 
-Enterprise Manager directory gRPC address used for group-label telemetry, such
-as enterprise-manager.toolhive-system.svc:9091. Authorize each calling main
-processor in enterprise-manager.grpc.callerAuth.saSubjectAllowlist. Labels
-depend on the directory's label configuration and the gateway's permitted label
-names.
+Enterprise Manager directory gRPC address on its cleartext listener, for
+group-label telemetry, e.g. enterprise-manager.toolhive-system.svc:9091.
+Authorize each calling main processor in
+enterprise-manager.grpc.callerAuth.saSubjectAllowlist. AI Gateway v2 inherits it
+when its directory.endpoint is empty and directory.insecure is true, and under
+caller authentication then needs directory.tokenProjection.enabled and its
+ServiceAccount in that allowlist.
 
 ### `global.stacklok.directoryGrpcInsecure`
 
@@ -619,8 +588,7 @@ directory that requires caller authentication refuses these calls.
 `{"platformSettings":{"connectivityPollIntervalSeconds":5},"url":""}`
 
 Shared Enterprise Manager HTTP configuration propagated to adopting subcharts.
-Configure directory gRPC and the console's Enterprise Manager URL through their
-separate settings.
+Configure directory gRPC through directoryGrpcEndpoint.
 
 ### `global.stacklok.enterpriseManager.url`
 
@@ -629,8 +597,9 @@ separate settings.
 **Default:** `""`
 
 Enterprise Manager HTTP base URL, without a path suffix. Callers append their
-endpoint paths. Empty disables features that require this address, including
-Gateway connectivity enforcement.
+endpoint paths. The console inherits it when
+toolhive-cloud-ui.enterpriseManagerUrl is empty. Empty disables features that
+require this address, including Gateway connectivity enforcement.
 
 ### `global.stacklok.enterpriseManager.platformSettings`
 
@@ -670,6 +639,15 @@ redacting detection action.
 Enable the experimental administration endpoint for exporting budget spend as
 CSV.
 
+### `global.stacklok.experiments.workspace.enabled`
+
+**Type:** `bool`
+
+**Default:** `false`
+
+Enable the experimental Workspace pages in the cloud UI. Subject to the
+release-channel guard: it stays off on the Stable channel.
+
 ### `global.stacklok.aiGateway.enabled`
 
 **Type:** `bool`
@@ -696,6 +674,17 @@ set connectorGatewayId and authServerIssuer.
 
 Install the AI Gateway v2 data plane. Enabling both AI Gateway implementations
 requires acknowledgeBothDataPlanes and distinct front doors.
+
+### `global.stacklok.aiGatewayV2.url`
+
+**Type:** `string`
+
+**Default:** `""`
+
+AI Gateway v2's public URL, e.g. https://ai-gateway.example.com. The console
+reads models and health from it, and shows it in the CLI setup command.
+ai-gateway-v2's httpRoute.hostname defaults to its host. A local
+toolhive-cloud-ui.gatewayProxyUrl or httpRoute.hostname wins.
 
 ### `global.stacklok.acknowledgeBothDataPlanes`
 
@@ -769,7 +758,7 @@ client_id, azp, and appid.
 
 Allow a clientClaim outside the supported list. Configure only when the IdP's
 claim reliably identifies the requesting client; a claim shared across clients
-can defeat client validation.
+can defeat client validation. Supply a boolean.
 
 ### `global.stacklok.primaryIdp.subjectClaim`
 
@@ -778,7 +767,8 @@ can defeat client validation.
 **Default:** `""`
 
 Token claim Connector Gateway's primary-IdP upstream resolves user subjects on.
-Empty uses sub; Microsoft Entra ID needs oid.
+Empty uses sub, or oid on Microsoft Entra ID; must equal the matching directory
+issuer's binding_claim.
 
 ### `global.stacklok.primaryIdp.allowPrivateIps`
 

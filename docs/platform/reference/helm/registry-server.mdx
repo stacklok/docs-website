@@ -12,8 +12,8 @@ Configure the Registry Server chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `toolhive-registry-server`. Chart version: `0.23.0`. Generated from the
-platform source at `v0.23.0`.
+Chart: `toolhive-registry-server`. Chart version: `0.24.0`. Generated from the
+platform source at `v0.24.0`.
 
 ## Values
 
@@ -23,13 +23,9 @@ platform source at `v0.23.0`.
 
 **Default:** `{"podDisruptionBudget":{"minAvailable":1}}`
 
-High availability for the registry server. The replica count stays on the
-upstream chart value (`upstream.replicaCount`) — this overlay cannot rewrite it.
-Every replica serves the API; the Kubernetes source watch runs only on the
-leader (leader election), and catalog sync claims work through PostgreSQL row
-locks, so replicas do not sync the same source twice. This overlay renders a
-PodDisruptionBudget whenever upstream.replicaCount is above 1; a budget over a
-single replica would block every node drain.
+High availability for the registry server. Set the replica count with
+`upstream.replicaCount`; every replica serves the API, and a PodDisruptionBudget
+renders only above one replica.
 
 ### `ha.podDisruptionBudget.minAvailable`
 
@@ -67,12 +63,10 @@ podAntiAffinity:
 
 </details>
 
-Spread registry-server replicas across nodes and zones. Preferred, not required,
-so it never blocks scheduling and does nothing at one replica. Setting your own
-`upstream.affinity` merges with this map; set `podAntiAffinity: null` to drop
-the default. The selector labels are what the upstream chart renders under
-`alias: upstream` (Helm renames an aliased dependency's .Chart.Name); component
-keeps it off the toolhive-operator pods, which share the same alias name.
+Preferred spread of registry-server replicas across nodes and zones. Your own
+`upstream.affinity` merges with this; set `podAntiAffinity: null` to drop it.
+Selector labels must match the upstream pods (`upstream` alias name; component
+excludes toolhive-operator pods, which share it).
 
 ### `upstream.fullnameOverride`
 
@@ -91,7 +85,7 @@ deployment and Service the name registry-api.
 <summary>Default value</summary>
 
 ```yaml
-image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-enterprise/registry-api:0.23.0
+image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-enterprise/registry-api:0.24.0
 ```
 
 </details>
@@ -113,9 +107,7 @@ Replicated image proxy with enterprise-pull-secret.
 
 **Default:** `false`
 
-Enable a NetworkPolicy for the registry-api pod. Default off: regulated
-customers running a default-deny CNI policy engine (Kyverno
-`add-network-policy`, OPA Gatekeeper) opt in explicitly.
+Enable a NetworkPolicy for the registry-api pod.
 
 ### `networkPolicy.allowExternalEgress`
 
@@ -123,20 +115,9 @@ customers running a default-deny CNI policy engine (Kyverno
 
 **Default:** `true`
 
-Allow ALL egress traffic. NOTE: NetworkPolicies are additive, so this does not
-merely "not restrict" egress — it GRANTS allow-all egress to this pod,
-OVERRIDING any cluster-wide default-deny egress policy (Kyverno
-`add-network-policy`, Gatekeeper) that would otherwise apply.
-`networkPolicy.enabled: true` with this left true is NOT a locked-down workload
-— it only adds an ingress restriction.
-
-Recommended default nonetheless: the PostgreSQL host
-(upstream.config.database.host / global.postgres.host) is known at template
-time, but sync sources (git/API) are customer-configured and not enumerable here
-— this chart has no way to know your actual sources at template time, so a fixed
-allow-list would be a guess. Set to false and populate `egress` below to
-actually lock this pod down (it holds the Postgres DSN, so this matters more
-than usual).
+Allow all egress. NetworkPolicies are additive, so true GRANTS allow-all egress
+and overrides a cluster default-deny. Set false and populate `egress` to lock
+the pod down.
 
 ### `networkPolicy.egress`
 
@@ -144,10 +125,9 @@ than usual).
 
 **Default:** `[]`
 
-Additional egress rules (Kubernetes NetworkPolicyEgressRule shape), applied when
-allowExternalEgress is false. Must cover DNS (UDP/TCP 53), the PostgreSQL
-backend, and every git/API sync source this registry actually pulls from —
-omitting one doesn't fail loudly, the registry just can't reach it.
+Egress rules (NetworkPolicyEgressRule shape) used when allowExternalEgress is
+false. Must cover DNS, PostgreSQL, and every sync source; a missing one fails
+silently.
 
 ## Related information
 
