@@ -6,10 +6,11 @@ description:
   spend through the Enterprise Manager API.
 ---
 
-A _budget_ caps model spend in USD for a directory user or group. Before the AI
-Gateway calls a provider, it asks the budgets service in the Enterprise Manager
-to admit the request. After the response, it reports the provider's usage so the
-service can charge it.
+A _budget_ caps model spend in USD for a directory user, group, or
+[service account](../platform/enterprise-directory/service-accounts.mdx). Before
+the AI Gateway calls a provider, it asks the budgets service in the Enterprise
+Manager to admit the request. After the response, it reports the provider's
+usage so the service can charge it.
 
 Use [Budgets](manage-budgets.mdx) in the console for routine administration. Use
 the REST API for automation, bulk import, and pricing. To connect the gateway to
@@ -29,7 +30,9 @@ connect a gateway that serves traffic, either
 directory users without an explicit budget, or create budgets individually. Use
 the [bulk import](#import-in-bulk) for an existing user and group inventory.
 
-The organization default applies only to resolved directory users.
+The organization default applies only to resolved directory users. It never
+funds a service account, so give each service account its own budget or add it
+to a group that has one.
 
 ## Create budgets
 
@@ -41,11 +44,11 @@ In the examples on this page, replace `<ENTERPRISE_MANAGER_URL>` with its
 and `<ADMIN_TOKEN>` with a
 [platform administrator's access token](../platform/enterprise-platform/enterprise-manager-api.mdx#authenticate).
 
-The API identifies a budget by scope and subject. `scope` is `user` or `group`.
-`subject_id` is the user's directory UUID or the directory group's UUID. Find a
-user's UUID in the `id` field that `GET /v1/users` returns. That endpoint
-accepts an `email` filter. `limit_usd` is a decimal string and `period` is
-`day`, `month`, or `year`.
+The API identifies a budget by scope and subject. `scope` is `user`, `group`, or
+`service_account`. `subject_id` is the directory UUID of the user, group, or
+service account. Find a user's UUID in the `id` field that `GET /v1/users`
+returns. That endpoint accepts an `email` filter. `limit_usd` is a decimal
+string and `period` is `day`, `month`, or `year`.
 
 ### Set an organization default
 
@@ -64,7 +67,7 @@ explicit budget preserves their current-period usage.
 
 ### Update one budget
 
-Use the user or group endpoint to create or update one budget:
+Use the user, group, or service account endpoint to create or update one budget:
 
 ```bash
 curl -X PUT <ENTERPRISE_MANAGER_URL>/v1/budgets/users/<USER_UUID> \
@@ -76,6 +79,11 @@ curl -X PUT <ENTERPRISE_MANAGER_URL>/v1/budgets/groups/<GROUP_UUID> \
   -H "Authorization: Bearer <ADMIN_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"limit_usd": "500.000000000", "period": "month", "precedence": 1}'
+
+curl -X PUT <ENTERPRISE_MANAGER_URL>/v1/budgets/service-accounts/<SERVICE_ACCOUNT_UUID> \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"limit_usd": "20.000000000", "period": "month"}'
 ```
 
 Group budgets use 1-based `precedence`. See
@@ -112,11 +120,13 @@ means re-read and retry.
 
 The gateway charges budgets in this order:
 
-1. The user's explicit budget, or the organization default.
+1. The caller's own budget. For a user without one, the organization default.
 2. The first group budget with remaining capacity, ordered by ascending
    `precedence`.
 
-The gateway denies the request when no applicable budget has capacity.
+A service account has no organization default, so it draws only on its own
+budget and its groups' budgets. The gateway denies the request when no
+applicable budget has capacity.
 
 ## Update the pricing catalog
 

@@ -299,6 +299,76 @@ ai-gateway-v2:
 A missing egress rule fails closed: governance calls can't complete, so every
 request is refused with `503` or `504`.
 
+## Accept service account workloads
+
+Kubernetes workloads call the gateway as
+[service accounts](../enterprise-directory/service-accounts.mdx), using trusted
+issuers that an administrator adds in the console. Once `directory.endpoint` is
+set, the gateway polls the directory for those issuers every 30 seconds, set by
+`directory.workloadTrust.pollInterval`, and fetches each issuer's public keys.
+Complete these steps before the first workload calls the gateway:
+
+1. **Keep the gateway on the issuer allowlist.** The platform chart adds the
+   gateway's ServiceAccount to
+   `enterprise-manager.grpc.callerAuth.workloadTrustSaSubjectAllowlist`. If you
+   set that list yourself, include
+   `system:serviceaccount:<NAMESPACE>:<RELEASE_NAME>-ai-gateway-v2`, or the
+   gateway accepts no workload.
+
+2. **Confirm the gateway can read this cluster's keys.** For an issuer of the
+   cluster the gateway runs in, the gateway reads keys from the Kubernetes API.
+   The chart binds the `system:service-account-issuer-discovery` ClusterRole to
+   the gateway's ServiceAccount for that read, which most distributions grant to
+   no one by default. Keep that binding if a policy tool reviews
+   ClusterRoleBindings.
+
+3. **Allow egress to the key sources** when `networkPolicy.allowExternalEgress`
+   is `false`. The cluster's own keys come from the API server's endpoint
+   addresses, often on port `6443`. List them:
+
+   ```bash
+   kubectl get endpointslices -n default \
+     -l kubernetes.io/service-name=kubernetes
+   ```
+
+   Then add a rule for each address:
+
+   ```yaml title="values.yaml"
+   ai-gateway-v2:
+     networkPolicy:
+       egress:
+         - to:
+             - ipBlock:
+                 cidr: <API_SERVER_ENDPOINT_IP>/32
+           ports:
+             - protocol: TCP
+               port: 6443
+   ```
+
+   Admitting the `kubernetes.default` Service address on port `443` isn't
+   enough, because most network plugins evaluate egress after rewriting that
+   address to an endpoint. An issuer with a JWKS URL needs its host on port
+   `443`, which the provider rule already admits. A missing rule doesn't affect
+   readiness or users' traffic. The gateway logs
+   `ai-gateway-v2: workload trust dropped` and refuses that issuer's workloads.
+
+4. **Plan one issuer per cluster.** An issuer added with **The cluster SEP runs
+   in** is valid only when every gateway runs in the same cluster as the
+   workloads it serves. Each gateway reads that issuer's keys from its own
+   cluster, and clusters commonly share the default issuer URL, so one such
+   issuer would accept every cluster's tokens. When gateways or workloads span
+   clusters, register each cluster as **Another issuer** with its own public
+   issuer URL and a JWKS URL or uploaded JWKS.
+
+5. **Rotate signing keys in this order** for an issuer with a JWKS URL or an
+   uploaded JWKS:
+   1. Publish or upload the new public key alongside the current one.
+   2. Wait at least 15 minutes before signing tokens with the new key. A gateway
+      that can't refresh an issuer's keys keeps using its cached copy for up to
+      15 minutes.
+   3. Keep the retired key in the JWKS for at least 60 minutes after the last
+      token signed with it, the longest token lifetime the gateway accepts.
+
 ## Disconnect the gateway
 
 An administrator can stop all model traffic without a redeploy by setting the AI

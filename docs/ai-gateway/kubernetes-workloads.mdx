@@ -1,0 +1,160 @@
+---
+title: Call the AI Gateway from Kubernetes workloads
+sidebar_label: Kubernetes workloads
+description:
+  Authenticate a Kubernetes workload to the AI Gateway as its service account
+  with a projected ServiceAccount token, and handle the gateway's refusals.
+---
+
+A workload running in Kubernetes calls the AI Gateway as its
+[service account](../platform/enterprise-directory/service-accounts.mdx) by
+sending a projected ServiceAccount token. Kubernetes issues the token to the pod
+and replaces it before it expires, so the workload holds no long-lived
+credential.
+
+## Prerequisites
+
+- **An active service account bound to the ServiceAccount your pod runs as.** An
+  administrator creates it, binds it, and grants it models and a budget. See
+  [Service accounts](../platform/enterprise-directory/service-accounts.mdx).
+- **The trusted issuer's audience**, which defaults to
+  `stacklok-enterprise-platform`. Your administrator can confirm it on the
+  **Trusted issuers** tab in the console.
+- **The AI Gateway host** and the names of the models the account can use. Model
+  discovery isn't available to service accounts, so the workload names its model
+  in each request.
+
+## Mount a token for the gateway
+
+Add a projected token volume to the pod spec and mount it into the container
+that calls the gateway:
+
+```yaml title="deployment.yaml"
+spec:
+  template:
+    spec:
+      serviceAccountName: <SERVICE_ACCOUNT_NAME>
+      containers:
+        - name: <CONTAINER_NAME>
+          image: <IMAGE>
+          volumeMounts:
+            - name: ai-gateway-token
+              mountPath: /var/run/secrets/ai-gateway
+              readOnly: true
+      volumes:
+        - name: ai-gateway-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  # highlight-next-line
+                  audience: stacklok-enterprise-platform
+                  # highlight-next-line
+                  expirationSeconds: 1800
+```
+
+Set `audience` to the trusted issuer's audience. The token carries it as its
+only audience, and the gateway refuses a token with any other audience or with
+more than one. Use this audience for the AI Gateway alone. Any service that
+receives the token can present it to the gateway until it expires, so request a
+separate token with its own audience for every other service the workload calls.
+The default token Kubernetes mounts for the API server is refused.
+
+Set `expirationSeconds` to `1800`. The gateway refuses a token with more than 60
+minutes of lifetime left, and Kubernetes requires at least `600`. The kubelet
+writes a fresh token to the file before the current one expires.
+
+## Send requests
+
+Read the token from the file for each request and send it in the
+`Authorization: Bearer` header. The gateway accepts a workload token only in
+that header. Send it only to the gateway's HTTPS endpoint.
+
+```bash
+curl https://<AI_GATEWAY_HOST>/v1/chat/completions \
+  -H "Authorization: Bearer $(cat /var/run/secrets/ai-gateway/token)" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<MODEL_NAME>","messages":[{"role":"user","content":"Reply with pong"}]}'
+```
+
+OpenAI SDKs send their API key in this header, so pass the token as the key with
+`https://<AI_GATEWAY_HOST>/v1` as the base URL. Anthropic SDKs use this header
+when you pass the token as the auth token instead of the API key, with
+`https://<AI_GATEWAY_HOST>/anthropic` as the base URL. In both cases, read the
+file again before each request or create the client per request, because the
+kubelet replaces the token and the previous one expires.
+
+Treat the token as a password until it expires. Don't log it, print it, or send
+it anywhere except the gateway.
+
+## Handle errors
+
+The gateway refuses a request before it calls a provider, and it charges no
+budget for a refused request:
+
+| Status | Message contains                                       | Meaning                                                                                                                                            |
+| ------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `401`  | `unauthenticated`                                      | The token failed verification: wrong audience, more than 60 minutes of lifetime left, expired, or from an issuer that isn't trusted or is disabled |
+| `402`  | `budget exhausted` or `no applicable budget`           | The account's budgets are spent, or none applies to it                                                                                             |
+| `403`  | `identity not resolved by the directory`               | The token is valid, but no active service account is bound to this ServiceAccount                                                                  |
+| `403`  | `model not permitted`                                  | The account has no grant for the requested model                                                                                                   |
+| `403`  | `model discovery is not available to service accounts` | The workload called a model list endpoint                                                                                                          |
+| `503`  | `service temporarily unavailable`                      | The gateway can't reach the directory. Retry after the `Retry-After` delay                                                                         |
+
+The workload sees only these messages. An administrator finds the details in the
+AI Gateway's [audit events](./forward-audit-logs.mdx), where each refused
+sign-in is an authentication event:
+
+- `auth_method` set to `workload` with `reason_code`
+  `auth_invalid_workload_token` means the token came from a trusted issuer but
+  failed a check, such as its audience or lifetime.
+- `auth_method` set to `jwt` with `reason_code` `auth_invalid_jwt` means the
+  gateway has no enabled issuer for the token, so check the issuer's status and
+  URL on the **Trusted issuers** tab.
+- `reason_code` `auth_identity_unresolved` is a `403` for a valid token. The
+  event names the ServiceAccount in its `service_account` subject, in the form
+  `system:serviceaccount:<NAMESPACE>:<NAME>`, with its UID in
+  `service_account_uid`.
+
+For an unresolved identity, the Enterprise Manager records why the directory
+found no account. It counts each refusal in the
+`stacklok.enterprise_manager.directory.workload.resolutions` metric with a
+`reason` attribute, such as `no_binding`, `account_inactive`, or
+`trust_disabled`, and logs the same reason at debug level with the namespace,
+name, and UID.
+
+## Next steps
+
+- [Manage budgets](./manage-budgets.mdx) to raise a service account's budget.
+- [Control model access](./control-model-access.mdx) to grant the account
+  another model.
+
+## Related information
+
+- [Service accounts](../platform/enterprise-directory/service-accounts.mdx) for
+  bindings, activation, and revocation.
+- [Client endpoints](../platform/enterprise-platform/configure-ai-gateway.mdx#client-endpoints)
+  for the base URL of each API format.
+
+## Troubleshooting
+
+<details>
+<summary>Requests fail with 401 after the workload runs for a while</summary>
+
+The workload is sending a token it read earlier, which has since expired. Read
+the token file before each request.
+
+</details>
+
+<details>
+<summary>Requests fail with 401 right after an issuer is added</summary>
+
+Gateways install a new issuer on their next poll of the directory, every 30
+seconds by default. Retry after the poll. If requests still fail, an
+administrator checks the gateway logs for
+`ai-gateway-v2: workload trust dropped`, whose `reason` says why the gateway
+didn't install the issuer, such as `key_fetch_failed` when an egress rule is
+missing. See
+[Accept service account workloads](../platform/enterprise-platform/configure-ai-gateway.mdx#accept-service-account-workloads).
+
+</details>
