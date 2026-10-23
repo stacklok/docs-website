@@ -12,8 +12,8 @@ Configure the Enterprise Manager chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `enterprise-manager`. Chart version: `0.23.0`. Generated from the
-platform source at `v0.23.0`.
+Chart: `enterprise-manager`. Chart version: `0.24.0`. Generated from the
+platform source at `v0.24.0`.
 
 ## Values
 
@@ -23,11 +23,9 @@ platform source at `v0.23.0`.
 
 **Default:** `{"install":true,"keep":true}`
 
-CRD installation configuration. The CRDs (ClusterPlatformRole,
-ClusterPlatformRoleBinding, PlatformRoleBinding, ToolHiveAuthorizationPolicy)
-are wrapped by `helm-crd-wrapper` into regular Helm templates so they can be
-updated via `helm upgrade` (the Helm-native `crds/` directory does install but
-never upgrades).
+CRD installation (ClusterPlatformRole, ClusterPlatformRoleBinding,
+PlatformRoleBinding, ToolHiveAuthorizationPolicy). Rendered as templates so
+`helm upgrade` updates them.
 
 ### `crds.install`
 
@@ -35,9 +33,7 @@ never upgrades).
 
 **Default:** `true`
 
-Render and install the platform/toolhive enterprise CRDs. Set to false to skip
-CRD installation (e.g. when CRDs are managed out-of-band or installed by a
-separate chart).
+Render and install the CRDs. Set false when CRDs are managed out-of-band.
 
 ### `crds.keep`
 
@@ -45,8 +41,8 @@ separate chart).
 
 **Default:** `true`
 
-Add the "helm.sh/resource-policy: keep" annotation to CRDs so they (and the
-custom resources they back) survive `helm uninstall`.
+Annotate CRDs with "helm.sh/resource-policy: keep" so they and their custom
+resources survive `helm uninstall`.
 
 ### `replicaCount`
 
@@ -73,15 +69,9 @@ replicaCount: 2
 
 </details>
 
-High availability. Bundles replica count, a PodDisruptionBudget, and pod
-anti-affinity together so they can't drift apart — specifically, so a PDB can
-never be enabled without enough replicas to back it. A PDB with minAvailable
-&#62;= the actual replica count blocks every voluntary disruption forever (node
-drains, cluster upgrades, cluster-autoscaler scale-down all wait on a budget
-Kubernetes can never satisfy while evicting a pod). The chart refuses to render
-if ha.enabled is true with fewer than 2 replicas. Safe to enable: the
-enterprise-manager already supports multiple replicas via leader election (see
-the leader-election Lease RBAC below).
+High availability: replica count, PodDisruptionBudget and pod anti-affinity
+together. The chart refuses ha.enabled with fewer than 2 replicas, since a PDB
+that cannot be satisfied blocks every node drain.
 
 ### `ha.enabled`
 
@@ -89,9 +79,8 @@ the leader-election Lease RBAC below).
 
 **Default:** `false`
 
-Enable HA mode: replicaCount above is ignored in favor of ha.replicaCount, a
-PodDisruptionBudget is created, and pod anti-affinity spreads replicas across
-nodes and zones.
+Enable HA mode: uses ha.replicaCount, creates a PodDisruptionBudget, and spreads
+replicas across nodes and zones.
 
 ### `ha.replicaCount`
 
@@ -115,11 +104,8 @@ Minimum number of pods that must remain available.
 
 **Default:** `"soft"`
 
-Pod anti-affinity preset spreading replicas across nodes: "soft" (preferred —
-schedules even if it can't spread) or "hard" (required — refuses to schedule a
-replica on a node that already has one). Spreading across zones is always
-preferred, never required, so a single-zone cluster still schedules every
-replica.
+Node anti-affinity: "soft" (preferred) or "hard" (required). Zone spreading is
+always preferred, so a single-zone cluster still schedules.
 
 ### `image.repository`
 
@@ -134,12 +120,9 @@ image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-ent
 
 </details>
 
-Container image repository. Enterprise build produced by `_release-image.yml`,
-then promoted to the platform tag by release.yml. Served to customers via
-Replicated's image proxy. Customers running their own mirror override this in
-their values file. `task version-bump` rewrites the trailing `:<tag>` via a
-regex anchored on `ghcr.io/stacklok/stacklok-enterprise/<name>:` — that anchor
-still matches inside this longer proxy URL.
+Container image repository. Override to use your own mirror. `task version-bump`
+rewrites the trailing `:<tag>` via a regex anchored on
+`ghcr.io/stacklok/stacklok-enterprise/<name>:`; keep that substring.
 
 ### `image.tag`
 
@@ -163,13 +146,8 @@ Image pull policy
 
 **Default:** `[]`
 
-Extra image pull Secrets to apply to the enterprise-manager pod. On Replicated
-installs, the SDK injects `global.replicated.dockerconfigjson` and creates an
-`enterprise-pull-secret` Secret in the release namespace; the
-`enterprise-manager.imagePullSecrets` helper auto-detects that injection and
-merges the SDK secret in front of anything listed here, so customers do NOT need
-to add `enterprise-pull-secret` themselves. Use this list only for additional,
-customer-supplied registries.
+Extra image pull Secrets for the pod. On Replicated installs the SDK pull secret
+is added automatically; list only additional registries here.
 
 ### `nameOverride`
 
@@ -226,14 +204,9 @@ generated using the fullname template)
 
 **Default:** `true`
 
-Specifies whether RBAC resources should be created (ClusterRole,
-ClusterRoleBinding for cluster-wide CRD and events.k8s.io access; Role,
-RoleBinding for leader-election Lease and core Event access in the release
-namespace; and, when directory.enabled with issuers configured, a pinned
-secret-reader Role + RoleBinding per referenced namespace so the ServiceAccount
-can read each directory.issuers[].scim_bearer_token_ref Secret). Set to false if
-you manage RBAC externally or use a pre-existing ServiceAccount with the
-required permissions already bound.
+Create the ClusterRole/Role bindings the manager needs, including the
+per-namespace Secret reader Roles for directory issuers. Set false when RBAC is
+managed externally.
 
 ### `podAnnotations`
 
@@ -322,9 +295,7 @@ Container target port (enterprise-manager default: 9090)
 
 **Default:** `9091`
 
-Port for the shared gRPC server (default 9091; matches the in-pod
-ENTERPRISE_MANAGER_GRPC_ADDR listener). Serves directory.v1 today and any future
-gRPC module. Consumed cross-cluster by connector-gateway.
+Port for the shared cleartext gRPC server, used by connector-gateway.
 
 ### `grpc`
 
@@ -364,10 +335,8 @@ tls:
 
 </details>
 
-Shared gRPC server exposure. The modulith runs ONE gRPC server on the grpc port;
-every module (directory today, others later) registers onto it. These knobs are
-port/server-scoped, not directory-specific: they govern who may reach the shared
-port and whether caller auth is enforced for it.
+Shared gRPC server settings. They apply to every gRPC module on the port, not
+only the directory.
 
 ### `grpc.startupProbe`
 
@@ -375,10 +344,7 @@ port and whether caller auth is enforced for it.
 
 **Default:** `{"enabled":true,"failureThreshold":30,"periodSeconds":2}`
 
-gRPC startup probe: gates the pod "started" on the shared gRPC server's overall
-health (the only free probe slot — HTTP /readyz keeps the readiness/drain role).
-Verifies the gRPC listener is actually serving at boot. Disable by setting
-enabled: false.
+gRPC startup probe on the shared server's health.
 
 ### `grpc.insecure`
 
@@ -386,9 +352,8 @@ enabled: false.
 
 **Default:** `false`
 
-Skip caller authentication on the shared gRPC service for local development. TLS
-is configured separately through grpc.tls.enabled. Restrict access with
-grpc.networkPolicy when using this bypass.
+Skip caller authentication on the gRPC port (development only). Restrict access
+with grpc.networkPolicy when enabled.
 
 ### `grpc.callerAuth`
 
@@ -409,14 +374,8 @@ workloadTrustSaSubjectAllowlist: []
 
 </details>
 
-Caller authentication (RFC D7) for the shared gRPC port. Set
-callerAuth.clusterOidcIssuer (with insecure=false) to require inbound callers to
-present a cluster ServiceAccount token. clusterOidcIssuer is shared by every
-gRPC module on the port; each module then checks its own audience
-("directory-service" for directory, "metering-ingest" for metering) and its own
-allowlist below. Empty issuer leaves the gate fail-closed ("not configured" →
-every call rejected unless insecure=true). Port-scoped, not any one module's
-setting.
+Caller authentication for the shared gRPC port. Each module checks its own
+audience and allowlist below.
 
 ### `grpc.callerAuth.clusterOidcIssuer`
 
@@ -425,8 +384,7 @@ setting.
 **Default:** `""`
 
 Cluster OIDC issuer URL used to verify projected ServiceAccount tokens. Empty
-leaves authenticated directory and metering calls denied unless grpc.insecure is
-enabled for development.
+denies every authenticated gRPC call unless grpc.insecure is true.
 
 ### `grpc.callerAuth.saSubjectAllowlist`
 
@@ -434,53 +392,17 @@ enabled for development.
 
 **Default:** `[]`
 
-Allowed ServiceAccount "sub" values for the directory.v1 gRPC surface (audience
-"directory-service"), e.g.
-"system:serviceaccount:&#60;namespace&#62;:some-caller". Maps to
-ENTERPRISE_MANAGER_DIRECTORY_GRPC_SA_ALLOWLIST (comma-joined). Empty rejects all
-callers when the gate is on.
+ServiceAccount subjects allowed on the general directory.v1 RPCs, e.g.
+"system:serviceaccount:&#60;namespace&#62;:&#60;release&#62;-connector-gateway".
+Empty rejects all callers. Entries are rendered through `tpl`; empty results are
+dropped.
 
-THIS is the list connector-gateway needs. Every directory RPC the gateway issues
-today — ResolveIdentity, GetUserConnectorConfigs, SetUserConnectorConfig,
-ClearUserConnectorConfig, GetAccessibleConnectors — is on the general set, so
-this list alone governs those. It is NOT the gateway's only entry any more: its
-startup registration call lands on gatewaySaSubjectAllowlist below, which a
-caller-gated install must populate too (credentialSaSubjectAllowlist still has
-no gateway caller).
-
-⚠️ connector-gateway is NOT the only caller on this list. ai-gateway's
-api-key-service calls ValidateKey — also on the general set — on EVERY
-virtual-key request, so an install running both needs BOTH subjects here. Naming
-only connector-gateway authorizes that one caller and 503s every virtual-key
-request ("key store temporarily unavailable"): a total outage of virtual keys,
-not a degraded feature, and invisible until traffic hits it. Its subject is
+⚠️ With ai-gateway installed, also add
 "system:serviceaccount:&#60;namespace&#62;:&#60;AIGateway CR
-name&#62;-api-key-service". The stacklok-enterprise-platform umbrella fails the
-render on that gap (apiKeyServiceCallerAuthGuard); a STANDALONE
-enterprise-manager install has no global tree to read and gets no such guard —
-this note is the only warning it gets.
-
-Its subject is the ServiceAccount NAME the gateway chart renders:
-"system:serviceaccount:&#60;namespace&#62;:&#60;release&#62;-connector-gateway",
-or the bare "system:serviceaccount:&#60;namespace&#62;:connector-gateway" when
-the release name already contains the chart name. fullnameOverride,
-serviceAccount.name, and the 63-character truncation all change it, so read it
-off the cluster rather than assuming.
-
-Left EMPTY on purpose: empty is the fail-closed default. A gateway missing from
-this list authenticates fine and is then refused PermissionDenied on every call
-— distinct from the Unauthenticated a token problem produces, so the status code
-tells you which half to fix.
-
-⚠️ ai-gateway's main processor belongs here too once group-label metadata is on;
-its subject is "system:serviceaccount:&#60;namespace&#62;:&#60;AIGateway CR
-name&#62;-main-processor", which no chart can default. Omitting it FAILS OPEN:
-labels are absent, every request still succeeds, and the only signal is
-outcome="error" on stacklok.ai_gateway.group_label.resolves.
-
-Each entry is rendered through `tpl` with .Release and .Values.global in scope,
-so an entry may derive its subject from Release identity; an entry that renders
-empty is dropped.
+name&#62;-api-key-service", or every virtual-key request fails with 503. A
+standalone install has no render guard for this. Add "&#60;AIGateway CR
+name&#62;-main-processor" too when group-label metadata is on; omitting it
+silently drops the labels.
 
 ### `grpc.callerAuth.credentialSaSubjectAllowlist`
 
@@ -488,29 +410,13 @@ empty is dropped.
 
 **Default:** `[]`
 
-Allowed ServiceAccount "sub" values for the ONE directory.v1 gRPC method that
-returns decrypted secret material (ResolveSecretRef), e.g.
-"system:serviceaccount:&#60;namespace&#62;:connector-gateway". Delivered on the
-app-config ConfigMap as directory.credentialGRPCSAAllowlist (comma-joined), the
-same way saSubjectAllowlist is. Deliberately NOT inherited from
-saSubjectAllowlist above, which in a full install also names workloads that must
-never read a credential back. Empty rejects all callers on that method while
-every other directory.v1 method keeps serving.
+ServiceAccount subjects allowed to call ResolveSecretRef, which returns
+decrypted credentials. Not inherited from saSubjectAllowlist. Empty refuses only
+that RPC.
 
-⚠️ connector-gateway belongs here when its embedded auth server sources the
-primary IdP from the Directory catalog: it resolves the reserved primary-idp
-ManagedSecret through ResolveSecretRef to build the login upstream, so
-activation CANNOT succeed without this grant. A gateway that reads no credential
-back needs no entry here, and naming it would grant the ability to read
-decrypted credential material back for nothing in return — omit it there.
-
-Whatever workload does land here reaches this gate only over grpc.tls below:
-ResolveSecretRef refuses a non-TLS peer regardless of who the caller is (two
-independent gates).
-
-Left EMPTY on purpose. Empty is the fail-closed default, and naming a subject
-here grants a workload the ability to read decrypted credential material back —
-an operator decision about their install, not a chart default.
+⚠️ Every subject listed here can read credential plaintext. Add
+connector-gateway only when it sources the primary IdP from the Directory
+catalog. Callers must also use grpc.tls.
 
 ### `grpc.callerAuth.gatewaySaSubjectAllowlist`
 
@@ -518,35 +424,12 @@ an operator decision about their install, not a chart default.
 
 **Default:** `[]`
 
-Allowed ServiceAccount "sub" values for the install-wide gateway-facing
-directory.v1 RPCs (EnsureConnectorGateway, ListAllConnectors,
-ListAllIdentityProviders), e.g.
-"system:serviceaccount:&#60;namespace&#62;:connector-gateway". Delivered on the
-app-config ConfigMap as directory.gatewayGRPCSAAllowlist (comma-joined), the
-same way saSubjectAllowlist is. A third set rather than part of
-saSubjectAllowlist because one of the three is a WRITE (minting gateway rows)
-and the other two return every Connector's auth strategy and every Provider's
-managed_secret_id across the install — none of which should follow from
-membership in the flat list (callers are scoped per method). Empty rejects all
-callers on those three while every other directory.v1 method keeps serving.
+ServiceAccount subjects allowed on the install-wide gateway RPCs
+(EnsureConnectorGateway, ListAllConnectors, ListAllIdentityProviders). Empty
+refuses only those three.
 
-connector-gateway IS the caller: it calls EnsureConnectorGateway at startup to
-register itself, so a caller-gated install needs its subject named HERE as well
-as on saSubjectAllowlist above — the two lists are separate sets and neither
-entry substitutes for the other.
-
-⚠️ With clusterOidcIssuer set, a missing entry here does NOT degrade one call:
-startup registration is refused PermissionDenied, which aborts the gateway's
-Run(), so connector-gateway fails to start.
-
-The subject to name is the same one saSubjectAllowlist above documents, derived
-the same way; read it off the cluster rather than assuming.
-
-Still DEFAULTS EMPTY, even with a live caller: empty is the fail-closed default,
-and these RPCs return every Connector's auth strategy and every Provider's
-managed_secret_id across the install, so which workload may call them stays an
-operator decision about their install rather than a chart default. Documenting
-the subject above is not shipping it enabled.
+⚠️ With clusterOidcIssuer set, connector-gateway must be listed here as well as
+in saSubjectAllowlist, or it fails to start.
 
 ### `grpc.callerAuth.workloadTrustSaSubjectAllowlist`
 
@@ -554,19 +437,11 @@ the subject above is not shipping it enabled.
 
 **Default:** `[]`
 
-Allowed ServiceAccount "sub" values for the directory.v1
-GetWorkloadTrustSnapshot RPC, which serves the workload trusts a gateway
-verifies workload credentials against. Delivered on the app-config ConfigMap as
-directory.workloadTrustGRPCSAAllowlist (comma-joined). Its callers are the
-ai-gateway operator
+ServiceAccount subjects allowed to call GetWorkloadTrustSnapshot: the ai-gateway
+operator
 ("system:serviceaccount:&#60;namespace&#62;:&#60;release&#62;-upstream") and
-Sprout (the ai-gateway-v2 chart's ServiceAccount). Membership admits no other
-directory.v1 RPC.
-
-Each entry is rendered through `tpl` with .Release and .Values.global in scope,
-so an entry may derive its subject from Release identity; an entry rendering
-empty is dropped. Empty refuses every caller on this RPC, so workload
-credentials are denied, while every other directory.v1 method keeps serving.
+Sprout. Entries are rendered through `tpl`; empty results are dropped. Empty
+denies workload credentials.
 
 ### `grpc.callerAuth.meteringSaSubjectAllowlist`
 
@@ -574,11 +449,9 @@ credentials are denied, while every other directory.v1 method keeps serving.
 
 **Default:** `[]`
 
-Allowed ServiceAccount "sub" values for the metering.v1 UsageIngest gRPC surface
-(audience "metering-ingest"), e.g.
-"system:serviceaccount:&#60;namespace&#62;:connector-gateway". Maps to
-ENTERPRISE_MANAGER_METERING_GRPC_SA_ALLOWLIST (comma-joined). Empty rejects all
-callers when the gate is on.
+ServiceAccount subjects allowed on the metering.v1 UsageIngest gRPC surface,
+e.g. "system:serviceaccount:&#60;namespace&#62;:connector-gateway". Empty
+rejects all callers when the gate is on.
 
 ### `grpc.callerAuth.httpSaSubjectAllowlist`
 
@@ -586,22 +459,10 @@ callers when the gate is on.
 
 **Default:** `[]`
 
-Allowed ServiceAccount "sub" values for the enterprise-manager's HTTP routes
-that accept a cluster ServiceAccount token (audience "enterprise-manager").
-Today that is the Gateway connectivity poll (GET
-.../platform-settings/gateways/&#123;gateway&#125;/connectivity), e.g.
-"system:serviceaccount:&#60;namespace&#62;:&#60;release&#62;-upstream" (the
-ai-gateway OPERATOR is the poller for issue #4470 — it mirrors the result into a
-ConfigMap every main-processor pod reads through the Kubernetes API, rather than
-each main-processor replica polling config-server itself) or
-"system:serviceaccount:&#60;namespace&#62;: connector-gateway" (issue #4471). A
-new caller is admitted by adding its subject here, not by minting an audience.
-NOT a gRPC surface — it reuses the same cluster OIDC bundle (clusterOidcIssuer
-above) that gates the gRPC callers on this page, because the trust domain
-(audience-bound cluster ServiceAccount tokens, never the customer IdP) is
-identical. Maps to ENTERPRISE_MANAGER_HTTP_SA_ALLOWLIST (comma-joined). Empty
-means no workload can call these routes; they fall back to customer-IdP auth
-only.
+ServiceAccount subjects allowed on HTTP routes that accept a cluster
+ServiceAccount token (audience "enterprise-manager"), such as the Gateway
+connectivity poll. Verified against clusterOidcIssuer. Empty leaves those routes
+on customer-IdP auth only.
 
 ### `grpc.tls`
 
@@ -624,20 +485,9 @@ targetPort: 9443
 
 </details>
 
-Second, TLS-terminated gRPC listener, ADDITIVE alongside the cleartext one
-(service.grpcPort). The same modules register onto both servers and both share
-one health registry, so enabling this adds a port — it does not convert or
-retire the existing one, and unmigrated callers (api-key-service, sprout) keep
-working untouched.
-
-Required for the directory's credential RPC (ResolveSecretRef), which returns
-decrypted plaintext and refuses a non-TLS peer per the directory caller and
-transport gates design doc — so the chart REFUSES to render
-directory.kek.enabled with this off, and there is deliberately no
-acknowledgement escape (a service mesh terminates TLS in its sidecar, so the
-peer still arrives without TLS and every resolution still fails). false (the
-default) leaves this chart's rendered output identical to before this feature
-existed, for every install that does not enable the KEK.
+Additional TLS gRPC listener alongside the cleartext one. Required by
+directory.kek.enabled: ResolveSecretRef refuses non-TLS peers, and a service
+mesh does not satisfy that.
 
 ### `grpc.tls.enabled`
 
@@ -654,9 +504,7 @@ containerPort, and volume mount.
 
 **Default:** `9443`
 
-Service port for the TLS gRPC listener. Clients dial
-&#60;fullname&#62;.&#60;namespace&#62;.svc.cluster.local:&#60;port&#62;, which
-is one of the dnsNames the Certificate below requests.
+Service port for the TLS gRPC listener.
 
 ### `grpc.tls.targetPort`
 
@@ -664,10 +512,8 @@ is one of the dnsNames the Certificate below requests.
 
 **Default:** `9443`
 
-Container port the in-pod TLS gRPC listener binds to. Rendered as a NAMED
-containerPort (grpc-tls): a Kubernetes NetworkPolicy resolves a named port
-against container ports and not the Service's, so a Service-only port would
-leave the policy denying every connection.
+Container port for the TLS listener. Rendered as the named port grpc-tls, which
+the NetworkPolicy matches on.
 
 ### `grpc.tls.issuerRef`
 
@@ -675,18 +521,9 @@ leave the policy denying every connection.
 
 **Default:** `{"kind":"ClusterIssuer","name":""}`
 
-cert-manager issuer for the serving certificate. Dedicated to this listener
-rather than shared with global.webhooks.issuerRef: that issuer is the ai-gateway
-operator's webhook CA trust, and this leaf's CA is what gRPC clients
-(connector-gateway) mount as their trust root — two different trust chains that
-must be rotatable independently.
-
-Set this or existingSecret below (existingSecret wins if both are set, and no
-Certificate is rendered at all). The chart refuses to render with NEITHER: it
-never mints its own key material, because `lookup` makes no cluster call under
-`helm template`, so a GitOps sync would issue a fresh CA on every reconcile
-while every client still trusts the old one — the lesson learned on the
-directory KEK.
+cert-manager issuer for the serving certificate, separate from
+global.webhooks.issuerRef. Set this or existingSecret; the chart never generates
+its own CA.
 
 ### `grpc.tls.issuerRef.kind`
 
@@ -694,11 +531,8 @@ directory KEK.
 
 **Default:** `"ClusterIssuer"`
 
-"ClusterIssuer" (recommended) or "Issuer". A namespaced Issuer must live in the
-release namespace, and cert-manager cannot resolve one cross-namespace — the
-Certificate then hangs unissued and, because the mount is optional, the pod
-starts and refuses at startup with a missing-keypair error rather than pointing
-at the Issuer.
+"ClusterIssuer" (recommended) or "Issuer". An Issuer must be in the release
+namespace.
 
 ### `grpc.tls.existingSecret`
 
@@ -706,12 +540,9 @@ at the Issuer.
 
 **Default:** `""`
 
-Operator-supplied serving certificate, by Secret name, in the RELEASE namespace
-(bring-your-own: an existing PKI, a cloud CA sync, sealed secrets). Must carry
-`tls.crt` and `tls.key`, and its SANs must cover the Service name clients dial.
-When set, no Certificate is rendered and no issuer is needed — but nothing
-renews it either: an operator rotation is picked up within about ten seconds and
-needs no restart, yet nothing prompts one.
+Existing TLS Secret (`tls.crt`, `tls.key`) in the release namespace. Takes
+precedence over issuerRef. Its SANs must cover the Service name, and nothing
+renews it; rotations are picked up without a restart.
 
 ### `grpc.tls.duration`
 
@@ -719,9 +550,7 @@ needs no restart, yet nothing prompts one.
 
 **Default:** `"2160h"`
 
-cert-manager Certificate duration/renewBefore. Only consulted in issuerRef mode.
-The server watches the keypair on disk and picks up a rotation within about ten
-seconds, with no pod restart.
+cert-manager Certificate duration/renewBefore (issuerRef mode only).
 
 ### `grpc.networkPolicy.enabled`
 
@@ -729,13 +558,9 @@ seconds, with no pod restart.
 
 **Default:** `false`
 
-Add an ingress NetworkPolicy restricting the shared grpc ports (the cleartext
-one, plus the tls port above when tls.enabled) to allowed clients. Load-bearing
-whenever insecure=true (the only caller guard until D7), and load-bearing
-alongside TLS too: TLS authenticates the server and encrypts the channel, it
-does not bound which workloads may connect. Restricts the whole port, so it
-governs every gRPC module on it. Required (no escape) alongside
-directory.kek.enabled.
+Add an ingress NetworkPolicy restricting the gRPC ports to allowed clients.
+Required with directory.kek.enabled, and strongly recommended with
+grpc.insecure.
 
 ### `grpc.networkPolicy.allowedClientSelector`
 
@@ -743,9 +568,7 @@ directory.kek.enabled.
 
 **Default:** `{}`
 
-Pod-label selector for permitted gRPC clients (the connector-gateway pods; their
-labels are owned by the gateway chart, #1928). Empty selector means "no pods
-allowed" — set it when enabling.
+Pod-label selector for permitted gRPC clients. An empty selector allows no pods.
 
 ### `webhookTLS`
 
@@ -754,12 +577,8 @@ allowed" — set it when enabling.
 **Default:**
 `{"duration":"2160h","enabled":false,"port":443,"renewBefore":"720h","targetPort":8443}`
 
-Second, TLS-terminated listener on the shared HTTP server (issue #2569),
-additive alongside the plain listener (service.port) — for inbound callers that
-only ever dial HTTPS. Today that's the ai-gateway budgets webhook dispatcher;
-the plain listener and its existing callers (config-server, directory, the
-budgets admin API) are unaffected either way. false (the default) leaves this
-chart's behavior identical to before this feature existed.
+Additional TLS listener on the HTTP server, used by the ai-gateway budgets
+webhook. The plain listener is unaffected.
 
 ### `webhookTLS.enabled`
 
@@ -776,8 +595,8 @@ mount.
 
 **Default:** `443`
 
-Service port for the TLS listener. The ai-gateway operator's budgetsWebhook.port
-value must match this exactly.
+Service port for the TLS listener. Must match the ai-gateway operator's
+budgetsWebhook.port.
 
 ### `webhookTLS.targetPort`
 
@@ -793,7 +612,8 @@ Container port the in-pod HTTPS listener binds to.
 
 **Default:** `"2160h"`
 
-cert-manager Certificate duration/renewBefore.
+cert-manager Certificate duration/renewBefore. The issuer is
+global.webhooks.issuerRef.
 
 ### `webhookAuth`
 
@@ -801,11 +621,8 @@ cert-manager Certificate duration/renewBefore.
 
 **Default:** `{"audience":""}`
 
-Inbound webhook call authentication (audience-bound ServiceAccount token
-validation), consumed by internal/app/webhookauth. An unset audience leaves that
-middleware fail-closed — every webhook call is rejected — so this MUST be set,
-and MUST match the ai-gateway operator's budgetsWebhook.audience value exactly,
-before enabling webhookTLS above for real traffic.
+Webhook caller authentication. `audience` MUST match the ai-gateway operator's
+budgetsWebhook.audience; empty rejects every webhook call.
 
 ### `resources`
 
@@ -814,9 +631,7 @@ before enabling webhookTLS above for real traffic.
 **Default:**
 `{"limits":{"cpu":"2","memory":"1Gi"},"requests":{"cpu":"500m","memory":"512Mi"}}`
 
-Resource limits and requests for the container. Sized for budgets
-(classification sweeps, capture) and the directory module on top of the base
-server.
+Resource limits and requests for the container.
 
 ### `livenessProbe`
 
@@ -868,24 +683,8 @@ Readiness probe configuration (returns 503 during shutdown drain)
 
 **Default:** `45`
 
-Grace period the kubelet allows between SIGTERM and SIGKILL. This is the
-outermost of three nested shutdown windows and has to cover the two inside it,
-or the process is killed part-way through its shutdown sequence:
-
-1. The server's own sequence: a short hold with the listeners still open while
-   readiness reports 503, so in-flight requests finish and clients stop being
-   routed here before any connection closes, then the connection drain. 5s + 30s
-   = 35s (defaultPreShutdownDelay and drainTimeout, exposed as ShutdownBudget in
-   internal/app/httpserver/server.go).
-2. The controller-runtime manager's GracefulShutdownTimeout, which is how long
-   it waits for that sequence before letting the process exit. Derived from the
-   above in internal/app/manager.go: 40s.
-3. This value, 45s, which must cover the manager's window.
-
-Kubernetes' default is 30s. That is shorter than the 30s drain alone, and
-shorter than the manager's window, so it would SIGKILL mid-drain and reintroduce
-exactly the reset connections the hold exists to prevent. Lower this only
-alongside the two Go durations above.
+Grace period between SIGTERM and SIGKILL. Must exceed the manager's 40s shutdown
+window; lowering it can kill the process mid-drain.
 
 ### `idpConfig`
 
@@ -906,11 +705,8 @@ rolesClaim: ''
 
 </details>
 
-IdP and OIDC configuration projected into the application ConfigMap. The issuer
-comes from `global.stacklok.primaryIdp.issuer`, shared with the console and
-Connector Gateway. Configure Enterprise Manager's token audience with
-`idpConfig.audience`; the remaining settings below apply to Enterprise Manager
-independently of the primary IdP settings.
+IdP settings for Enterprise Manager. The issuer comes from
+`global.stacklok.primaryIdp.issuer`.
 
 ### `idpConfig.audience`
 
@@ -968,8 +764,8 @@ consumed by enterprise-manager yet.
 
 **Default:** `[]`
 
-Additional OIDC issuers whose tokens are also accepted (opt-in; empty =
-single-issuer mode). Each entry requires issuer and audience fields.
+Additional OIDC issuers whose tokens are also accepted. Each entry requires
+issuer and audience.
 
 ### `signingConfig`
 
@@ -1010,11 +806,9 @@ Client polling cadence (duration string, e.g. "5m")
 
 **Default:** `""`
 
-Canonical URI of this resource server, advertised via GET
-/.well-known/oauth-protected-resource (RFC 9728). Clients use this to discover
-the authorization server before acquiring a token. Required for the discovery
-endpoint to return 200; omitting it causes 503 responses. Example:
-"https://config.platform.example.com"
+Canonical URI of this resource server, advertised at
+/.well-known/oauth-protected-resource. Empty makes that endpoint return 503.
+Example: "https://config.platform.example.com"
 
 ### `clientID`
 
@@ -1022,12 +816,8 @@ endpoint to return 200; omitting it causes 503 responses. Example:
 
 **Default:** `""`
 
-OIDC client ID of the public (PKCE, no secret) application registered by the
-administrator for CLI and desktop clients. Advertised via GET
-/.well-known/toolhive-configuration so clients can bootstrap a PKCE auth flow
-from only the server URL. Safe to expose — public clients carry no secret. Omit
-to leave client_id out of the discovery document. Example:
-"00000000-0000-0000-0000-000000000000"
+Public (PKCE) OIDC client ID for CLI and desktop clients, advertised at
+/.well-known/toolhive-configuration. Empty omits it.
 
 ### `configFile`
 
@@ -1035,9 +825,8 @@ to leave client_id out of the discovery document. Example:
 
 **Default:** `""`
 
-Path to the enterprise configuration JSON file (optional; empty = no targets)
-Use this when the file is mounted externally. Mutually exclusive with
-enterpriseConfig.
+Path to an externally mounted enterprise configuration JSON file. Mutually
+exclusive with enterpriseConfig.
 
 ### `enterpriseConfig`
 
@@ -1045,26 +834,19 @@ enterpriseConfig.
 
 **Default:** `{}`
 
-Inline enterprise configuration (ServerConfig). When non-empty, rendered as JSON
-into a ConfigMap and mounted at
-/etc/enterprise-manager/enterprise-config/enterprise-config.json.
-ENTERPRISE_MANAGER_CONFIG_FILE is set automatically. Mutually exclusive with
-configFile.
-
-Each directive wraps a value with enforcement: "enforced" (mandatory) or
-"default" (advisory).
+Inline enterprise configuration (ServerConfig), rendered into a mounted
+ConfigMap. Mutually exclusive with configFile. Each directive sets enforcement:
+"enforced" (mandatory) or "default" (advisory).
 
 ```yaml
 enterpriseConfig:
-  # Enforce a specific MCP registry API URL.
   registry:
     value:
-      api_url: 'https://api.registry.example.com/registry/toolhive' # registry API URL for ToolHive clients (thv CLI/desktop) — scoped to one registry
-      # server_api_url: "https://api.registry.example.com"          # registry-server API root for the cloud-UI web console (/v1 + /registry/{name}/v0.1 paths)
-      # allow_private_ip: true                                       # allow private IPs in registry responses
+      api_url: 'https://api.registry.example.com/registry/toolhive' # for thv CLI/desktop
+      # server_api_url: "https://api.registry.example.com"          # for the cloud-UI web console
+      # allow_private_ip: true
     enforcement: 'enforced'
 
-  # OpenTelemetry settings.
   telemetry:
     value:
       otel_endpoint: 'https://otel.example.com'
@@ -1081,7 +863,6 @@ enterpriseConfig:
     value: false
     enforcement: 'enforced'
 
-  # Custom CA certificate (PEM inline or fetched from URL).
   ca_certificate:
     value:
       pem: |
@@ -1091,29 +872,25 @@ enterpriseConfig:
       # url: "https://pki.example.com/ca.pem"   # alternative: fetch by URL
     enforcement: 'enforced'
 
-  # Inject environment variables into every MCP server container.
+  # Environment variables injected into every MCP server container.
   build_env:
     value:
       HTTP_PROXY: 'http://proxy.example.com:3128'
       NO_PROXY: 'localhost,127.0.0.1'
     enforcement: 'default'
 
-  # Hide the help menu (?) in the desktop app.
   help_menu:
     value: false
     enforcement: 'enforced'
 
-  # Hide the built-in playground in the desktop app.
   playground:
     value: false
     enforcement: 'enforced'
 
-  # Hide the built-in AI assistant in the cloud UI.
   assistant:
     value: false
     enforcement: 'enforced'
 
-  # Client behaviour when the config server is unreachable.
   # policy: "warn" | "block_new"
   degraded_mode:
     policy: 'block_new'
@@ -1127,21 +904,9 @@ enterpriseConfig:
 
 **Default:** `{}`
 
-Inline app-level configuration (AppConfig: database, signing, idp, budgets,
-directory, and manager settings), deep-merged over the document the chart
-auto-builds from the granular values below (idpConfig, database, signingConfig,
-directory, grpc/webhookAuth/webhookTLS, resourceURL, clientID,
-defaultRoles.install) — keys set here always win on conflict. The merged result
-renders as YAML into a ConfigMap mounted at
-/etc/enterprise-manager/app-config/app-config.yaml, and
-`ENTERPRISE_MANAGER_APP_CONFIG_FILE` is set automatically — this is the binary's
-only configuration-loading path, it reads no other `ENTERPRISE_MANAGER_*` env
-var for these settings. Secrets (database passwords, the signing key, the
-directory HMAC key) are never part of this value — they stay as discrete env
-vars/Secret mounts (database.existingSecret, signingConfig.existingSecret,
-directory.hmac.existingSecret). Independent of enterpriseConfig above (that is
-customer-facing policy, served over HTTP; this is internal app wiring) — never
-merged into one document.
+Inline AppConfig, deep-merged over the document the chart builds from the values
+below; keys set here win. Secrets never go here; they stay in the existingSecret
+values.
 
 ```yaml
 appConfig:
@@ -1177,10 +942,9 @@ user: ''
 
 </details>
 
-PostgreSQL database configuration for the directory service and other persistent
-modules. When global.postgres.host is set and database.host is empty, the global
-value is used as fallback. Per-module database name, user, and migration
-credentials have no global equivalent and must always be set at this level.
+PostgreSQL configuration for the directory and other persistent modules.
+Connection fields fall back to global.postgres.\*; name, users and migration
+credentials must be set here.
 
 ### `database.host`
 
@@ -1188,8 +952,8 @@ credentials have no global equivalent and must always be set at this level.
 
 **Default:** `""`
 
-host: when empty, falls back to global.postgres.host (if set). When neither is
-set the DB-backed modules are skipped entirely at runtime.
+Falls back to global.postgres.host. With neither set, DB-backed modules are
+skipped.
 
 ### `database.port`
 
@@ -1197,7 +961,7 @@ set the DB-backed modules are skipped entirely at runtime.
 
 **Default:** `0`
 
-port: 0 = use global.postgres.port if set, otherwise 5432
+0 uses global.postgres.port, otherwise 5432.
 
 ### `database.user`
 
@@ -1205,12 +969,9 @@ port: 0 = use global.postgres.port if set, otherwise 5432
 
 **Default:** `""`
 
-user: the application DB role for normal operations
-(SELECT/INSERT/UPDATE/DELETE). MUST be a plain, non-superuser role without
-BYPASSRLS, distinct from the migration user — the directory module's RLS
-isolation relies on the app role being subject to the user_isolation policy.
-Reusing superuser or migration credentials here silently voids RLS and allows
-cross-user data access.
+Application DB role. MUST be a non-superuser without BYPASSRLS, distinct from
+the migration user; otherwise RLS is silently void and users can read each
+other's data.
 
 ### `database.sslMode`
 
@@ -1218,7 +979,7 @@ cross-user data access.
 
 **Default:** `""`
 
-sslMode: falls back to global.postgres.sslMode when empty.
+Falls back to global.postgres.sslMode.
 
 ### `database.existingSecret`
 
@@ -1226,8 +987,8 @@ sslMode: falls back to global.postgres.sslMode when empty.
 
 **Default:** `""`
 
-auth: pre-create a Secret with key `postgres-password`, then set existingSecret
-to its name. Falls back to global.postgres.existingSecret.
+Secret holding the password under existingSecretKey. Falls back to
+global.postgres.existingSecret.
 
 ### `database.dynamicAuth`
 
@@ -1235,18 +996,13 @@ to its name. Falls back to global.postgres.existingSecret.
 
 **Default:** `{}`
 
-dynamicAuth: AWS RDS IAM authentication in place of a static password. Falls
-back to global.postgres.dynamicAuth when unset. Mutually exclusive with
-existingSecret in practice — set one or the other, not both. The same auth mode
-applies to the app, migration, and admin roles; each still needs
-`GRANT rds_iam TO <role>` and IAM policy access provisioned by the operator.
+AWS RDS IAM authentication instead of existingSecret, for the app, migration and
+admin roles. Falls back to global.postgres.dynamicAuth. Each role needs
+`GRANT rds_iam`.
 
 ```yaml
 awsRdsIam:
-  region:
-    'us-east-1' # prefer an explicit region: "detect" re-resolves
-    # via EC2 instance metadata on every token mint and
-    # makes IMDS reachability a hard boot dependency.
+  region: 'us-east-1' # prefer explicit; "detect" makes IMDS a boot dependency
 ```
 
 ### `database.admin`
@@ -1256,19 +1012,10 @@ awsRdsIam:
 **Default:**
 `{"existingSecret":"","existingSecretKey":"postgres-admin-password","user":""}`
 
-admin: BYPASSRLS credentials for the directory module's admin pool used for
-cross-user reads (AdminListUserConnectorConfigs, the admin Connection reads) and
-for Delete connector, which must read every User's Connections to revoke the
-upstream tokens its cascade orphans. Without it, Delete connector answers 503
-naming database.admin and deletes nothing. Pre-create a Secret with key
-`postgres-admin-password`, then set existingSecret to its name.
-
-PREREQUISITE: the migration user (database.migration.user) must hold SUPERUSER
-or CREATEROLE to apply BYPASSRLS to the admin role at boot. On managed Postgres
-services (AWS RDS, Google Cloud SQL) the migration user is typically not a full
-superuser — pre-grant BYPASSRLS to the admin role directly before deploying
-(e.g. `ALTER ROLE <admin_user> BYPASSRLS`) so the boot-time ALTER ROLE succeeds.
-When unset, AdminListUserConnectorConfigs returns an error.
+BYPASSRLS role for the directory's cross-user reads and Delete connector.
+Without it those return errors (Delete connector answers 503). The migration
+user needs SUPERUSER or CREATEROLE to grant BYPASSRLS; on managed Postgres, run
+`ALTER ROLE <admin_user> BYPASSRLS` beforehand.
 
 ### `telemetry`
 
@@ -1288,15 +1035,9 @@ otlp:
 
 </details>
 
-OTLP metrics push, independent of the always-on Prometheus pull path scraped
-from :8080/metrics. Off by default: enabling it adds a second sdkmetric.Reader
-that pushes the same metrics to an OTLP collector, without changing the
-Prometheus registry or port in any way. Composes with
-global.stacklok.telemetry.otlp (#4409) field by field: `endpoint` coalesces
-(this chart's own value wins when set, else the global endpoint is used); every
-boolean below is ADDITIVE with its global counterpart (true if either is true) —
-there is no local setting that forces a signal off while the global default
-turns it on.
+OTLP push, in addition to Prometheus on :8080/metrics. Combines with
+global.stacklok.telemetry.otlp: the local endpoint wins, and each boolean is
+true if either side is true.
 
 ### `telemetry.otlp.enabled`
 
@@ -1313,7 +1054,7 @@ Enable the OTLP metrics push reader.
 **Default:** `""`
 
 OTLP collector endpoint (host:port), e.g. "otel-collector:4318". Required when
-otlp.enabled, otlp.tracingEnabled, or otlp.loggingEnabled is true.
+any OTLP signal is enabled.
 
 ### `telemetry.otlp.insecure`
 
@@ -1329,8 +1070,7 @@ Use a plaintext (non-TLS) connection to the collector.
 
 **Default:** `false`
 
-Push traces to the OTLP collector above, and wrap the HTTP and gRPC servers with
-span instrumentation. Requires endpoint to be set.
+Push traces to the OTLP collector.
 
 ### `telemetry.otlp.loggingEnabled`
 
@@ -1338,8 +1078,7 @@ span instrumentation. Requires endpoint to be set.
 
 **Default:** `false`
 
-Push slog records to the OTLP collector above, in addition to the existing
-stderr output. Requires endpoint to be set.
+Push logs to the OTLP collector, in addition to stderr.
 
 ### `defaultRoles.install`
 
@@ -1347,13 +1086,9 @@ stderr output. Requires endpoint to be set.
 
 **Default:** `true`
 
-Let the enterprise manager seed the built-in reader and writer
-ClusterPlatformRole instances at startup (create-if-absent, once leader). Passed
-to the operator via ENTERPRISE_MANAGER_SEED_DEFAULT_ROLES. Disable to hand role
-ownership to GitOps; the operator will then not create them. WARNING: Deleting a
-built-in role while install=true is not durable — the operator recreates it on
-next start. Set install=false to permanently suppress a role, or unbind
-principals via ToolhiveAuthorizationPolicy.
+Seed the built-in reader and writer ClusterPlatformRoles at startup. While true,
+a deleted built-in role is recreated on restart; set false to manage roles via
+GitOps.
 
 ### `admissionGuard.enabled`
 
@@ -1361,16 +1096,9 @@ principals via ToolhiveAuthorizationPolicy.
 
 **Default:** `true`
 
-Deploy the bind-verb ValidatingAdmissionPolicy that blocks privilege escalation
-via PlatformRoleBindings: it requires the requester to hold the `bind` verb on
-each referenced ClusterPlatformRole. Requires Kubernetes 1.30+ — the manifests
-are additionally gated on the VAP v1 API being present, so on older clusters
-they render to nothing and the guard is NOT installed. To grant `bind`, create a
-Kubernetes ClusterRole with `apiGroups: [platform.enterprise.stacklok.com]`,
-`resources: [clusterplatformroles]`, `resourceNames: [<ROLE_NAME>]`, and
-`verbs: [bind]`. Assign it to the requester with a RoleBinding in the
-PlatformRoleBinding's namespace, or a ClusterRoleBinding for a
-ClusterPlatformRoleBinding.
+Deploy the ValidatingAdmissionPolicy that requires the `bind` verb on each
+ClusterPlatformRole a PlatformRoleBinding references. Requires Kubernetes 1.30+;
+on older clusters the guard is silently NOT installed.
 
 ### `budgets`
 
@@ -1396,9 +1124,7 @@ classifier:
 
 </details>
 
-Budgets module configuration beyond the app-config defaults. Only the
-conversation classifier is exposed here; every other budgets knob is either a
-chart-derived value or an appConfig override.
+Budgets module settings.
 
 ### `budgets.classifier`
 
@@ -1423,24 +1149,11 @@ taxonomy: []
 
 </details>
 
-Conversation classifier. It reads captured conversations and labels them against
-an operator-defined taxonomy by calling THIS platform's own AI Gateway on a
-dedicated virtual key — never a model provider directly, since the receiver's
-recursion guard only sees traffic that came through the gateway.
-
-Gated twice, and BOTH must hold before the classifier is enabled:
-
-1.  global.stacklok.experiments.insightsClassification.enabled, channel-guarded
-    — the same toggle that mounts the capture route, so labels are never enabled
-    without the conversations they read; and
-2.  baseURL AND existingSecret set here.
-
-The second gate is load-bearing, not defensive: the manager REFUSES TO BOOT when
-classification is enabled without a base URL, a key, a taxonomy, and an
-instruction (Config.validateClassification), so deriving enablement from the
-experiment toggle alone would turn enabling capture into a crash-loop on every
-install that has not provisioned them. Leaving baseURL or existingSecret unset
-here keeps capture working and the classifier off.
+Conversation classifier, which labels captured conversations by calling this
+platform's own AI Gateway. Enabled only when
+global.stacklok.experiments.insightsClassification.enabled is true AND baseURL
+and existingSecret are set; when enabled, instruction and taxonomy are required
+or the manager refuses to boot.
 
 ### `budgets.classifier.baseURL`
 
@@ -1448,18 +1161,9 @@ here keeps capture working and the classifier off.
 
 **Default:** `""`
 
-Base URL of this platform's own AI Gateway, including the version segment its
-OpenAI-compatible surface is served under (e.g.
-"http://ai-gateway.envoy-ai-gateway-system.svc.cluster.local/v1"). No default:
-every deployment's gateway lives at a different address, and a guessed one would
-fail at construction rather than at render.
-
-An https:// URL needs `caBundle` below unless the gateway's certificate is
-already verifiable by this pod's system trust store. A cert-manager issued
-certificate is not, and note the gateway's own CRD permits exactly one listener
-— so a gateway that terminates TLS for external traffic has no plaintext
-in-cluster port to offer instead, and https:// plus a bundle is the normal shape
-rather than the exception.
+Base URL of this platform's AI Gateway, including the version segment, e.g.
+"http://ai-gateway.envoy-ai-gateway-system.svc.cluster.local/v1". An https://
+URL usually needs caBundle.
 
 ### `budgets.classifier.model`
 
@@ -1467,10 +1171,8 @@ rather than the exception.
 
 **Default:** `""`
 
-Model id passed on every classifier call. Must be the EXACT string an
-AIGatewayRoute rule on baseURL matches on (RouteMatch.Model is an exact match,
-so an OpenRouter-style "vendor/model" slug's "/" is significant). Empty applies
-the module's own default, the model the classification experiment selected.
+Model id sent on every call. Must exactly match an AIGatewayRoute model. Empty
+uses the module default.
 
 ### `budgets.classifier.contextWindowTokens`
 
@@ -1478,11 +1180,8 @@ the module's own default, the model the classification experiment selected.
 
 **Default:** `0`
 
-Advertised input budget, in tokens, for `model`. Overrides the classifier's own
-probe of GET &#123;baseURL&#125;/models. Set this whenever the gateway's
-context-window catalog carries no entry for `model` — an unresolved window fails
-classifier construction rather than guessing a ceiling, so classification stays
-off until one or the other resolves.
+Input token budget for `model`. Set it when the gateway's catalog has no context
+window for the model, or the classifier stays off.
 
 ### `budgets.classifier.existingSecret`
 
@@ -1490,10 +1189,7 @@ off until one or the other resolves.
 
 **Default:** `""`
 
-Name of a pre-created Secret holding the classifier's directory-issued virtual
-key IN FULL (the `slk_...` string). One secret, not two: the receiver's
-recursion-guard id is derived from this key's own shortID segment, so there is
-nothing else to provision or keep in sync.
+Pre-created Secret holding the classifier's full virtual key (`slk_...`).
 
 ### `budgets.classifier.existingSecretKey`
 
@@ -1509,34 +1205,9 @@ Key within existingSecret holding the virtual key.
 
 **Default:** `{"key":"ca.crt","secretName":""}`
 
-CA bundle used to verify `baseURL`'s serving certificate. Point this at the
-Secret holding the CA that issued the GATEWAY's certificate — with a
-cert-manager CA issuer that is the shared issuer CA; with a SelfSigned issuer,
-which mints a separate root per certificate, it is the gateway's own certificate
-Secret (its `ca.crt` entry).
-
-Deliberately the same shape as the webhook CA bundle the ai-gateway
-main-processor mounts to verify THIS platform's receiver: same Secret mount,
-same `ca.crt` default key. The two are the same problem in one deployment
-pointing opposite ways, so reuse the certificates already in play rather than
-provisioning a second set.
-
-Leaving secretName empty is correct for a plaintext baseURL or a
-publicly-trusted gateway; the manager warns at boot if baseURL is https:// and
-nothing here is set, because the alternative is every classify call failing the
-handshake and being recorded as retrying/transient — which reads as a flaky
-model rather than a trust problem. The Secret is mounted only when the
-classifier is actually enabled (the insightsClassification experiment, which is
-itself off on the Stable channel, plus baseURL and existingSecret). Setting
-secretName alone renders nothing: there would be no process reading the bundle.
-The mount is `optional`, so a Secret that does not exist yet lets the pod start
-and surface the classifier's own error naming the unreadable path, rather than
-parking it in ContainerCreating with nothing said about certificates.
-Classification then stays off and the budget.classification.wired gauge
-reports 0.
-
-The CA pool is built once at startup, so a rotated CA needs a pod restart even
-though the mounted file updates on its own.
+CA that issued the gateway's certificate, for an https:// baseURL that system
+roots cannot verify. Mounted only when the classifier is enabled. A rotated CA
+needs a pod restart.
 
 ### `budgets.classifier.caBundle.secretName`
 
@@ -1552,8 +1223,7 @@ Name of an existing Secret holding the issuing CA in PEM form.
 
 **Default:** `"ca.crt"`
 
-Key within that Secret. cert-manager writes the issuing CA to `ca.crt`, which is
-why that is the default.
+Key within that Secret.
 
 ### `budgets.classifier.allowInsecureTLS`
 
@@ -1561,10 +1231,8 @@ why that is the default.
 
 **Default:** `false`
 
-Skip verification of `baseURL`'s certificate entirely. DEV/TEST ONLY. The
-classifier sends whole conversations, so an unverified peer is an exfiltration
-path, not merely a weaker connection. It exists because a SelfSigned issuer
-leaves a local cluster with no shared CA to pin against.
+Skip TLS verification of baseURL. DEV/TEST ONLY: the classifier sends whole
+conversations, so an unverified peer can exfiltrate them.
 
 ### `budgets.classifier.instruction`
 
@@ -1572,22 +1240,8 @@ leaves a local cluster with no shared CA to pin against.
 
 **Default:** `""`
 
-The judge instruction the classifier composes every prompt with. REQUIRED
-whenever the classifier is enabled: there is no built-in instruction, so an
-enabled classifier with this empty refuses the boot rather than prompting a
-model with no instruction at all. Versioned here rather than as a Go constant so
-an operator can iterate on it — every conversation classified afterward carries
-the new prompt digest, no code change or version bump. Takes effect the moment
-it is set, whether or not the classifier itself is enabled yet, so an
-instruction staged ahead of enablement is never silently dropped.
-
-The conversation is concatenated BELOW this text, and it is captured end-user
-content rather than anything the operator wrote. Keep the data/instruction
-boundary explicit, as the example does. The response schema's per-facet enums
-are what actually bound the damage — a model cannot emit a label outside its
-facet's closed set however it is steered — but an instruction that says where
-the evidence ends is the difference between a conversation influencing a label
-and a conversation redirecting the judge.
+Instruction every classifier prompt starts with. The conversation is appended
+below it and is untrusted, so state that it is data.
 
 instruction: | You are classifying one engineering conversation against the
 taxonomy below. Choose exactly one label per facet.
@@ -1606,26 +1260,9 @@ one-sentence rationale citing what in the conversation decided your answer.
 
 **Default:** `[]`
 
-The taxonomy the classifier judges conversations against: a list of facets, each
-with a name and its closed set of labels. REQUIRED whenever the classifier is
-enabled, for the same reason `instruction` is — this module compiles in no
-taxonomy, so an enabled classifier with this empty refuses the boot.
-
-FREE FORM. Facet names are not drawn from any list this chart or the module
-knows: classify by discipline and product, by team and cost centre, by anything
-the deployment cares to measure. A facet name only has to be non-empty and free
-of surrounding whitespace, since it is rendered as a prompt section header and
-as a property key in the model's strict response schema.
-
-The one structural requirement is per facet: every facet must declare an
-"unknown" label, the model's escape hatch for "nothing in the conversation
-decides this". A missing "unknown" label, a duplicate facet or label name, or a
-facet with no labels refuses the boot rather than silently omitting the facet —
-and does so regardless of whether the classifier is enabled, so a typo staged
-ahead of enablement surfaces immediately.
-
-Editing a label or a gloss changes the taxonomy digest, and every conversation
-classified afterward records the new one.
+Free-form list of facets, each with a closed set of labels. Every facet must
+include an "unknown" label; an invalid taxonomy refuses boot even while the
+classifier is disabled.
 
 ```yaml
 taxonomy:
@@ -1672,15 +1309,15 @@ kek:
   externallyManagedNetworkPolicy: false
   externallyManagedRBAC: false
   generate: false
+kubernetesSecretRefs:
+  allowed: []
 oktaReconcilers: []
 scimExternalBaseURL: ''
 ```
 
 </details>
 
-Directory service configuration. The directory service provisions users and
-groups from SCIM 2.0 IdPs and exposes them over admin REST and gRPC. Off by
-default (D17). Set enabled=true to activate the directory wiring.
+Directory service: provisions users and groups from SCIM 2.0 IdPs.
 
 ### `directory.enabled`
 
@@ -1688,9 +1325,7 @@ default (D17). Set enabled=true to activate the directory wiring.
 
 **Default:** `false`
 
-Enable the directory service. When false (the default), no new ports, env vars,
-ConfigMaps, or NetworkPolicy rules are rendered. Existing deployments are
-unaffected until this is explicitly set to true.
+Enable the directory service.
 
 ### `directory.scimExternalBaseURL`
 
@@ -1698,13 +1333,8 @@ unaffected until this is explicitly set to true.
 
 **Default:** `""`
 
-External base URL used in SCIM Location headers and member
-$ref values.
-Required in production — prevents host-header injection (OWASP A03).
-Set to the externally reachable HTTPS URL of the enterprise-manager.
-When left empty, non-loopback requests receive RELATIVE Location/$ref
-URIs (safe — there is no host-header fallback — but some SCIM clients expect
-absolute URLs, so set this whenever issuers are configured). Example:
+External HTTPS base URL used in SCIM Location headers and member $ref values.
+Set it whenever issuers are configured; empty yields relative URIs. Example:
 "https://platform.company.com"
 
 ### `directory.connectorGateway`
@@ -1725,16 +1355,10 @@ url: ''
 
 </details>
 
-The directory's calls to the connector-gateway, used to refresh a Connector's
-stored tool list (POST /v1/connectors/&#123;id&#125;/tools/refresh). url serves
-Connectors with a shared credential, controlPlaneUrl serves Connectors that
-authenticate per user. Leave both empty to leave refresh unconfigured: it then
-answers 503, and reads of the stored list keep working.
-
-Setting url projects a ServiceAccount token bound to tokenAudience into the pod.
-The gateway accepts it only when the audience matches ITS internalApi.audience
-AND this pod's ServiceAccount subject is in ITS internalApi.allowedSubjects, so
-both must be set on the connector-gateway chart too.
+Connector-gateway endpoints used to refresh a Connector's tool list. Derived
+automatically in an umbrella install. With no gateway and both URLs empty,
+refresh answers 503. The gateway must accept this pod's token audience and
+ServiceAccount subject.
 
 ### `directory.connectorGateway.url`
 
@@ -1742,20 +1366,10 @@ both must be set on the connector-gateway chart too.
 
 **Default:** `""`
 
-Origin of the connector-gateway's INTERNAL API listener, not the control-plane
-URL the Console uses. E.g.
+Origin of the connector-gateway's internal API, e.g.
 http://&#60;release&#62;-connector-gateway-internal.&#60;namespace&#62;.svc:8091.
-Plain HTTP is accepted in-cluster: the token is audience-bound and short-lived,
-and the requests carry ids and tool names only. Besides tool refresh, it is how
-deleting a Connection revokes the user's orphaned upstream token at the gateway;
-with no url that token stays stored and is reused when the user reconnects.
-
-Empty derives the address of the connector-gateway in the same release when
-global.stacklok.connectorGateway.enabled is true and serviceAccount.create is
-true (the umbrella default): the gateway derives this chart's ServiceAccount
-subject into its internalApi.allowedSubjects. Set it explicitly when the
-gateway's fullnameOverride, nameOverride or internalApi.port differ from their
-defaults.
+Also used to revoke upstream tokens when a Connection is deleted. Set explicitly
+if the gateway's name overrides or internalApi.port are non-default.
 
 ### `directory.connectorGateway.gatewayId`
 
@@ -1763,10 +1377,8 @@ defaults.
 
 **Default:** `""`
 
-Id of the Gateway url reaches. Upstream-token revocation names it in every
-request and needs it to tell a Connection on another Gateway apart. Empty uses
-global.stacklok.connectorGatewayId; with url set and neither, the chart refuses
-to render.
+Id of the Gateway url reaches. Empty uses global.stacklok.connectorGatewayId;
+with url set and neither, the chart refuses to render.
 
 ### `directory.connectorGateway.controlPlaneUrl`
 
@@ -1774,14 +1386,10 @@ to render.
 
 **Default:** `""`
 
-Origin of the connector-gateway's user-facing CONTROL-PLANE API, e.g.
-http://&#60;release&#62;-connector-gateway-control-plane.&#60;namespace&#62;:8090
-(the same address the Console's connectorGatewayUrl names). A per-user Connector
-(auth upstreamInject, tokenExchange, awsSts, obo or xaa) has no shared
-credential, so its tools are listed through the gateway's user tools route as
-the Admin who asked, forwarding the Admin's own bearer token; nothing else is
-mounted or stored for it. Empty leaves such a refresh answering 422. Plain HTTP
-is accepted in-cluster on the same terms as the Console's own calls to this API.
+Origin of the connector-gateway's control-plane API, e.g.
+http://&#60;release&#62;-connector-gateway-control-plane.&#60;namespace&#62;:8090.
+Used to list tools for per-user Connectors. Set explicitly if the gateway's name
+overrides or controlPlane.port are non-default.
 
 ### `directory.connectorGateway.tokenAudience`
 
@@ -1798,8 +1406,7 @@ internalApi.audience.
 
 **Default:** `600`
 
-Lifetime of the projected token. The kubelet rotates it in place and the client
-re-reads it on every call.
+Lifetime of the projected token, in seconds.
 
 ### `directory.connectorGateway.timeout`
 
@@ -1807,8 +1414,7 @@ re-reads it on every call.
 
 **Default:** `""`
 
-Optional per-call timeout (a Go duration, e.g. 30s) for both url and
-controlPlaneUrl. Empty uses the client default (20s).
+Per-call timeout (Go duration). Empty uses 20s.
 
 ### `directory.connectorVerification`
 
@@ -1816,37 +1422,11 @@ controlPlaneUrl. Empty uses the client default (20s).
 
 **Default:** `{"enabled":true}`
 
-Controls whether a go-live Connector write (draft: false) is verified (a live
-TCP egress dial to the endpoint, plus a login-completeness check) before being
-persisted as available, or refused into failure (issue #3539). Default true,
-which requires the manager pod to have outbound TCP (and DNS resolution) to
-every Connector endpoint it verifies — an install prerequisite on a
-default-deny-egress cluster, not just a symptom of leaving this on. Set enabled:
-false only as an operator escape hatch if verification produces false failures
-your network topology can't satisfy — blocked egress, split-horizon DNS, an
-endpoint that refuses bare TCP from unknown sources, or a private/in-cluster
-address (see internal/directory/infra/reachability/checker.go). With enabled:
-false, the live-egress leg always passes with no dial (login-completeness still
-applies, though nothing yet fails it in a shipped install), matching the
-pre-#3539 "the Admin said this is finished" behavior for every write from that
-point on.
-
-This does NOT retroactively heal a Connector already stored as failure: status
-is computed only inside Create/Update, and there is no background worker to
-re-evaluate existing rows. An already-failed Connector stays withheld until an
-Admin re-saves it (which then succeeds against the bypassed check) or an
-operator runs
-`UPDATE directory.connectors SET status = 'available' WHERE status = 'failure'`
-directly.
-
-A Connector with allowPrivateIps: true gets NO deny-list evaluation on either
-leg while this is disabled: validateTargetEndpoint already skips its check for
-that flag at write time (by design — the flag exists to permit exactly this),
-and the dial-time deny-list this flag is deliberately blind to (see
-ConnectorReachabilityChecker's doc comment) is the one leg that WOULD still
-catch a denied address — and this setting removes it install-wide. If you rely
-on this escape hatch for Connectors using allowPrivateIps, treat it as a
-temporary measure.
+Verify a go-live Connector write (TCP dial to the endpoint) before marking it
+available. Requires egress and DNS from the manager pod to every Connector
+endpoint. Disabling also removes the dial-time private-address deny-list for
+Connectors with allowPrivateIps, and does not re-evaluate Connectors already
+marked failed.
 
 ### `directory.issuers`
 
@@ -1854,65 +1434,28 @@ temporary measure.
 
 **Default:** `[]`
 
-Per-issuer configuration list. Each entry enables one SCIM IdP (Okta, Entra,
-Google Workspace, …). An empty list is valid for initial deployments where no
-IdP has been configured yet. Keys match the Go struct JSON tags and each entry
-is serialized verbatim into the issuers ConfigMap mounted at
-/etc/enterprise-manager/directory/issuers.json. That file is read once, at
-startup, and validated there: a malformed entry aborts the boot rather than
-degrading a running pod. A helm upgrade that changes this list therefore rolls
-the Deployment, so the new configuration is read and validated by a fresh pod
-while the old ReplicaSet keeps serving until it is ready. Reordering this list
-does NOT roll the pod: the entries are serialised individually and sorted, so
-the document depends on the set of issuers and not on the order they appear
-here. One consequence to know about: the issuers[N] index in a boot-validation
-failure counts entries in the sorted file, so for the one error that carries no
-issuer id (a missing `id`) the index may not match this list's position.
-issuers: - id: "okta-prod" # URL-safe path segment ([a-zA-Z0-9._-]+) issuer_url:
-"https://company.okta.com" # OIDC discovery base URL (https only) audience:
-"enterprise-manager" # expected aud claim in admin tokens binding_claim: "uid" #
-JWT claim carrying the stable user ID provisioning_attribute: "externalId" #
-SCIM attr written at provision time (default: "externalId")
-scim_bearer_token_ref: # K8s Secret holding the SCIM static bearer token
-namespace: "stacklok" name: "directory-scim-token-okta" key: "token"
-group_variables: # SCIM user attributes to mint UserGroups from - "department" #
-bare path: label derived from it - path:
+SCIM issuers, one per IdP. Validated at startup; a malformed entry stops the
+boot. Changes roll the Deployment. issuers: - id: "okta-prod" # URL-safe path
+segment ([a-zA-Z0-9._-]+) issuer_url: "https://company.okta.com" # OIDC
+discovery base URL (https only) audience: "enterprise-manager" # expected aud
+claim in admin tokens binding_claim: "uid" # JWT claim carrying the stable user
+ID provisioning_attribute: "externalId" # SCIM attr written at provision time
+(default: "externalId") scim_bearer_token_ref: # K8s Secret holding the SCIM
+static bearer token namespace: "stacklok" name: "directory-scim-token-okta" key:
+"token" group_variables: # SCIM user attributes to mint UserGroups from -
+"department" # bare path: label derived from it - path:
 "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:costCenter" label:
 "cost_center" # label its UserGroups carry - id: "entra-prod" issuer_url:
 "https://login.microsoftonline.com/&#60;tenant-id&#62;/v2.0" audience:
 "enterprise-manager" binding_claim: "oid" # Entra's immutable user object ID
 provisioning_attribute: "externalId" # ONLY after remapping externalId to
 objectId in Entra (below) scim_bearer_token_ref: namespace: "stacklok" name:
-"directory-scim-token-entra" key: "token" Microsoft Entra ID needs an Entra-side
-change. binding_claim and provisioning_attribute must name the same identifier,
-and Entra's default SCIM attribute mapping sources externalId from mailNickname,
-not from the objectId the oid claim carries. Left as is, an issuer with
-binding_claim "oid" refuses every user Entra provisions (400 invalidValue) and
-stores none of them. In the Entra enterprise application, under Provisioning
-&#62; Attribute mappings &#62; Provision Microsoft Entra ID Users, map objectId
-to externalId, then set provisioning_attribute explicitly to confirm it. An
-Entra v2.0 issuer (issuer_url on login.microsoftonline.com,
-login.microsoftonline.us or login.partner.microsoftonline.cn) that leaves
-provisioning_attribute unset boots with a WARN naming this. See the Microsoft
-Entra ID section of docs/customer/install-helm.md. group_variables is the only
-surface that enables generated UserGroups: one group per distinct value the
-attribute carries on this issuer's active users, compared with surrounding
-whitespace trimmed and letter case folded, so "Marketing" and "marketing" are
-one group whose membership is the union of both. Membership is kept in step with
-the user table hourly. There is no Admin equivalent — an Admin governs the
-resulting groups but cannot cause them to exist. Paths are written in SCIM
-attribute path notation, so an extension attribute carries its full URN, and a
-malformed one refuses the boot. `label` is the ONE place a label is authored: a
-SCIM path carries schema URNs and camel case, so the label is a separate
-lower-case dotted name. A bare path takes the label derived from its attribute,
-so "costCenter" becomes "cost_center", and two entries claiming one label refuse
-the boot. The platform stores the label as group metadata. Consumers read it
-over the identity RPCs and decide for themselves what to do with it. Two things
-to know before turning it on. There is no cardinality cap, so nominating a
-per-user attribute such as userName mints one group per user. And removing a
-variable does not delete its groups immediately: they drain on the next cycle
-and are deleted 90 days later, which is the window to notice a typo before every
-budget and grant attached to them is lost.
+"directory-scim-token-entra" key: "token" Entra: map objectId to externalId in
+the app's SCIM attribute mappings, or every user provisioned with binding_claim
+"oid" is refused. See the Microsoft Entra ID section of
+docs/customer/install-helm.md. group_variables creates one UserGroup per
+distinct (case-insensitive) value. There is no cardinality cap, and groups of a
+removed variable are deleted 90 days later along with their budgets and grants.
 
 ### `directory.oktaReconcilers`
 
@@ -1920,93 +1463,63 @@ budget and grant attached to them is lost.
 
 **Default:** `[]`
 
-Outbound Okta directory reconcilers, one per provisioned issuer.
-
-A reconciler replaces inbound SCIM for its issuer: instead of Okta calling a
-SCIM endpoint you have to expose to the internet, the enterprise-manager calls
-the Okta Management API outbound and writes the result into its own SCIM surface
-over loopback. Nothing about the directory becomes reachable from outside the
-cluster.
-
-Enabling a reconciler CHANGES how its issuer authenticates SCIM. That issuer
-must omit scim_bearer_token_ref above — while the reconciler runs, the only
-accepted credential is a token the pod generates at startup, holds in memory,
-and accepts only from loopback. An issuer configured with both, or with neither,
-refuses to start. This is deliberate: a static token would leave an externally
-presentable credential for a surface that is supposed to have none.
-
-The issuer must also use binding_claim: uid and the default
-provisioning_attribute: externalId. Both name the immutable Okta user id, which
-is what runtime token resolution and provisioning have to agree on; anything
-else provisions users who then fail to resolve at sign-in.
-
-Prerequisites in Okta, per reconciler:
-
-- An OAuth service application with private_key_jwt client authentication,
-  granted okta.apps.read, okta.groups.read, okta.schemas.read, and
-  okta.users.read.
-- A custom admin role whose resource set contains the application, each selected
-  group, and each selected group's users collection.
-- A Kubernetes Secret in this cluster holding that service app's private key and
-  key id. The chart renders a get-only Role pinned to it by name.
+Outbound Okta reconcilers, one per issuer, replacing inbound SCIM. The issuer
+must omit scim_bearer_token_ref and use binding_claim: uid with the default
+provisioning_attribute. Okta needs a private_key_jwt service app
+(okta.apps/groups/schemas/users.read) and a custom admin role covering the app
+and selected groups.
 
 ```yaml
 oktaReconcilers:
   - enabled: true
-    # The directory.issuers[] entry this reconciler provisions into.
     issuerID: 'okta-prod'
-    # The Okta organization origin. HTTPS, no path — this is the one host
-    # every Management API request is pinned to. Not necessarily the same
-    # URL as the issuer, which may be a custom authorization server.
+    # Okta org origin (HTTPS, no path); may differ from the issuer URL.
     orgURL: 'https://company.okta.com'
-    # The application whose assigned users are the complete population.
+    # Application whose assigned users are the full population.
     appID: '0oa1abcdEFGHijkl2m3n'
-    # The service application's OAuth client id.
     clientID: '0oa9zyxwVUTSrqpo8n7m'
-    # The Secret holding the private_key_jwt signing key and its key id.
-    # Both keys live in one Secret so a rotation replaces them together.
     privateKeySecretRef:
       namespace: 'stacklok'
       name: 'directory-okta-reconciler-credentials'
       privateKeyKey: 'private-key.pem'
       keyIDKey: 'key-id'
-    # How often a full reconciliation runs. Default 15m, minimum 1m.
-    # Convergence is source-consistency delay plus cycle runtime, so this is
-    # roughly the worst-case lag between an Okta change and the platform.
+    # Default 15m, minimum 1m.
     interval: '15m'
-    # The fraction of the currently active, reconciler-owned population one
-    # cycle may deactivate before the whole plan is refused.
-    #
-    # DEFAULT 1 — off. A percentage cannot express "an unusual number of
-    # departures" in a small tenant: a tenth of five users is less than one
-    # person, so one ordinary departure would be refused, and a refusal
-    # discards the whole plan, blocking unrelated creates and updates too.
-    #
-    # Set it below 1 only on a population large enough for a percentage to
-    # mean something, and remember allowEmptyPopulation below already
-    # refuses the catastrophic case on its own.
+    # Max fraction of active users one cycle may deactivate. 1 (default)
+    # disables the check.
     maxDeactivationRatio: 1
-    # Whether an empty desired population is valid while active users
-    # exist. Default false. An intentional full deactivation needs BOTH
-    # this true and maxDeactivationRatio 1.
+    # Allow an empty population while active users exist.
     allowEmptyPopulation: false
-    # Log raw Okta API response bodies. Default false, and effective only
-    # when the process log level is also debug. THE OUTPUT CONTAINS
-    # IDENTITY AND PROFILE DATA for your whole assigned population — this
-    # is a short-lived diagnostic, not a setting to leave on.
+    # Debug only: logs identity and profile data for the whole population.
     logRawOktaAPIData: false
-    # The Okta groups to project into the directory as user groups. This is
-    # explicit Stacklok configuration; it does not read or modify Okta
-    # Group Push. A group's members are intersected with the application
-    # population, so a member who is not assigned to the application is not
-    # projected. Select by stable id (survives renames) or by exact,
-    # case-sensitive name.
+    # Okta groups to project, by id or exact name.
     selectedGroups:
       - id: '00g1abcdEFGHijkl2m3n'
-        # Optional. Fails the cycle if the group has since been renamed,
-        # rather than silently projecting a group you no longer recognise.
+        # Optional: fail the cycle if the group was renamed.
         expectedName: 'Platform Engineering'
       - name: 'Data Science'
+```
+
+### `directory.kubernetesSecretRefs`
+
+**Type:** `object`
+
+**Default:** `{"allowed":[]}`
+
+Kubernetes Secrets a Connector or identity provider credential may reference.
+Each entry admits a namespace, optionally limited to `names`. Requires
+directory.kek.enabled, and the release namespace is refused. Each namespace must
+exist before install.
+
+⚠️ Every Platform Admin can read any allowlisted Secret, so use whole-namespace
+entries only for dedicated namespaces.
+
+```yaml
+kubernetesSecretRefs:
+  allowed:
+    - namespace: 'connector-secrets'
+      names: ['github-token', 'jira-token']
+    - namespace: 'external-secrets-sync'
 ```
 
 ### `directory.hmac`
@@ -2015,28 +1528,12 @@ oktaReconcilers:
 
 **Default:** `{"existingSecret":"","existingSecretKey":"hmac-key"}`
 
-Virtual-key HMAC secret. The directory module hashes virtual API key secret
-material with this HMAC-SHA256 key before storing/looking it up in Postgres.
-Only consumed when directory.enabled is true.
+HMAC key used to hash virtual API keys. Empty existingSecret lets the app create
+"&#60;release&#62;-directory-hmac" itself. To bring your own, name a Secret with
+a key of at least 32 bytes.
 
-By default (existingSecret empty) the key is SELF-MANAGED: on boot the app
-get-or-creates a Secret named "&#60;release&#62;-directory-hmac" in the release
-namespace, generating a 256-bit key once with crypto/rand and reusing it across
-replicas and restarts. No operator action is needed. The chart grants the
-ServiceAccount get;create on that one Secret (role-directory-hmac.yaml).
-
-existingSecret is an OPTIONAL override for bring-your-own-key setups (External
-Secrets, AWS Secrets Manager, etc.): set it to the name of a pre-created Secret
-with key `hmac-key` (&#62;= 32 bytes; a shorter key boots but logs a strength
-warning) and the app reads that Secret by reference instead of self-managing
-one. Granting the SA read on that Secret is then the operator's responsibility.
-
-In either mode, if the key cannot be resolved the virtual-key surface fails
-closed (ErrKeyServiceUnconfigured) without taking down SCIM or the rest of the
-service.
-
-Switching modes (or changing existingSecret) after keys have been issued rotates
-the HMAC key, so every previously-issued virtual key stops validating.
+⚠️ Changing modes or existingSecret after keys are issued invalidates every
+existing virtual key.
 
 ### `directory.kek`
 
@@ -2056,24 +1553,10 @@ generate: false
 
 </details>
 
-Key-encryption key (KEK) for the directory's ManagedSecret envelope encryption.
-The KEK seals the per-row DEKs that in turn encrypt stored credentials.
-
-OPTIONAL and OFF by default, and deliberately NOT tied to directory.enabled:
-requiring KEK values whenever the directory is enabled would break every
-existing `directory.enabled: true` install on upgrade. With `enabled: false` no
-Secret, no Role and no app-config `directory.kek` block are rendered, and the
-KEK-dependent surfaces refuse with a typed error while the pod boots normally.
-
-The Secret's value is a JSON map of KEK version to base64-encoded 32-byte key —
-&#123;"1":"…","2":"…"&#125; — under `existingSecretKey`. The HIGHEST version
-present is the active one; there is no activeVersion setting. Keys load once at
-construction, so adding a version is picked up at the next pod restart.
-
-The pod reads this Secret through the Kubernetes API (not a volume mount), so
-the chart renders a namespaced Role granting `get` on secrets pinned by
-resourceNames to this one Secret — no list, no watch, no ClusterRole
-(role-directory-kek.yaml).
+Key-encryption key (KEK) for stored directory credentials. Off by default;
+KEK-dependent features refuse while it is off. The Secret value is a JSON map of
+version to base64 32-byte key; the highest version is active and is loaded on
+pod restart.
 
 ### `directory.kek.enabled`
 
@@ -2081,12 +1564,8 @@ resourceNames to this one Secret — no list, no watch, no ClusterRole
 
 **Default:** `false`
 
-Render the KEK Secret, the pinned reader Role/RoleBinding, and the
-`directory.kek.secretRef` block of the AppConfig ConfigMap.
-
-Turning this on requires choosing exactly one of `existingSecret` or `generate`
-below — the chart refuses to render otherwise, because the two modes have very
-different operational obligations and neither is a safe default to fall into.
+Render the KEK Secret, its reader Role, and the AppConfig reference. Requires
+exactly one of existingSecret or generate.
 
 ### `directory.kek.existingSecret`
 
@@ -2094,16 +1573,8 @@ different operational obligations and neither is a safe default to fall into.
 
 **Default:** `""`
 
-Operator-supplied Secret, by name, in the RELEASE namespace (bring-your-own-key:
-External Secrets, a cloud KMS sync, sealed-secrets, or one created out of band).
-When set the chart does NOT create or overwrite the Secret — it must already
-exist with the version-map value under `existingSecretKey` — but it still
-renders the pinned reader Role, because the coordinates are known and
-same-namespace.
-
-REQUIRED for Argo CD and any `helm template | kubectl apply` pipeline. Chart
-generation is not render-stable under render-and-apply GitOps (see `generate`),
-and this mode is render-stable by construction.
+Existing KEK Secret in the release namespace. REQUIRED for Argo CD and other
+`helm template | kubectl apply` pipelines.
 
 ### `directory.kek.generate`
 
@@ -2111,19 +1582,10 @@ and this mode is render-stable by construction.
 
 **Default:** `false`
 
-Have the chart mint a single version-1 key with crypto/rand on first install,
-preserved across upgrades, uninstall, and reinstall via a `lookup` guard plus
-`helm.sh/resource-policy: keep`.
-
-This is an explicit opt-in rather than the default because the failure mode is
-silent and unrecoverable: under render-and-apply GitOps (Argo CD's default
-rendering mode) `lookup` makes no cluster call, so every sync mints a FRESH key
-under the same version number 1. Every DEK sealed under the previous key is then
-permanently unreadable, and the resulting startup refusal crash-loops the whole
-enterprise-manager. Use `existingSecret` there.
-
-Never work around a rotation by deleting the Secret — add a numbered entry to
-the version map instead.
+Have the chart generate a version-1 key on first install. ⚠️ Under
+render-and-apply GitOps every sync generates a new key and makes stored
+credentials unreadable; use existingSecret there. Never delete the Secret to
+rotate; add a new version.
 
 ### `directory.kek.existingSecretKey`
 
@@ -2131,12 +1593,7 @@ the version map instead.
 
 **Default:** `"kek"`
 
-Key within the KEK Secret holding the JSON version map.
-
-Applies in BOTH modes despite the `existing` prefix: in generate mode the chart
-writes its minted key under this same key name. Renaming it would be a values
-break for anyone already setting it, and values.yaml is this chart's public API,
-so the prefix stays and this note explains it.
+Key within the KEK Secret holding the version map. Applies in both modes.
 
 ### `directory.kek.externallyManagedRBAC`
 
@@ -2144,11 +1601,8 @@ so the prefix stays and this note explains it.
 
 **Default:** `false`
 
-Acknowledge that the KEK reader Role is granted outside this chart. Only
-consulted when `rbac.create` is false, which would otherwise skip the pinned
-Role and leave the pod unable to read the KEK — a startup failure, not a
-degraded surface. Set this only after granting `get` on the KEK Secret to the
-workload's ServiceAccount out of band.
+Set when rbac.create is false and `get` on the KEK Secret is granted out of
+band. Without that grant the pod fails to start.
 
 ### `directory.kek.externallyManagedNetworkPolicy`
 
@@ -2156,13 +1610,8 @@ workload's ServiceAccount out of band.
 
 **Default:** `false`
 
-Acknowledge that ingress to the shared gRPC port is restricted outside this
-chart (a service mesh, a cluster-wide CiliumNetworkPolicy, a cloud firewall).
-Only consulted when `grpc.networkPolicy.enabled` is false, which would otherwise
-leave `ResolveSecretRef` — which returns credential plaintext over a port with
-no TLS — reachable from anywhere in the cluster. Set this only once an
-equivalent restriction is actually in place; it silences the refusal, it does
-not create one.
+Set when grpc.networkPolicy.enabled is false and gRPC ingress is restricted
+another way. It only silences the render check.
 
 ### `nodeSelector`
 
@@ -2202,30 +1651,10 @@ Additional environment variables for the container
 
 **Default:** `{}`
 
-Extra PEM CA bundle the enterprise-manager process should trust in addition to
-the system root store. Use when the OIDC IdP (Keycloak, Dex, corporate IdP
-behind a service mesh, etc.) is fronted by a private/self- signed CA. The bundle
-is APPENDED to the system pool, so public IdPs (Entra, Okta, Auth0) remain
-verifiable without including their roots here.
-
-Reference exactly one of `configMapRef` or `secretRef`. The chart mounts the
-named key at /etc/enterprise-manager/trusted-ca/&#60;key&#62; and sets
-ENTERPRISE_MANAGER_EXTRA_CA_BUNDLE so the binary loads it at startup. Bundle
-load is fail-fast: an unreadable file or PEM with zero certs aborts startup with
-a descriptive error.
-
-THIS is where a private-CA PRIMARY IdP's bundle belongs for enterprise-manager.
-enterprise-manager does NOT read the platform mirror's
-global.stacklok.primaryIdp.caBundleRef: that field is projected into
-connector-gateway and toolhive-cloud-ui, whose OIDC clients take a per-IdP CA,
-while this process trusts one bundle for every outbound TLS connection. The
-trust it gives is the same additive shape (system roots plus this bundle), so
-set BOTH when the primary IdP is served by a private CA — this value for
-enterprise-manager's own OIDC bootstrap, and the mirror's caBundleRef for the
-other two consumers. The private-address guard is different:
-global.stacklok.primaryIdp.allowPrivateIps already reaches the directory
-module's synthesized V2 catalog primary through this chart's AppConfig, with
-nothing to set here.
+Extra PEM CA bundle trusted in addition to system roots, e.g. for an IdP behind
+a private CA. Set exactly one of configMapRef or secretRef; an unreadable or
+empty bundle stops startup. For a private-CA primary IdP set this as well as
+global.stacklok.primaryIdp.caBundleRef, which this chart does not read.
 
 ```yaml
 trustedCABundle:
@@ -2244,9 +1673,7 @@ trustedCABundle:
 
 **Default:** `[]`
 
-Additional volumes to attach to the pod. Rendered verbatim under
-.spec.template.spec.volumes alongside the chart-managed volumes (signing key,
-enterprise config, trusted CA bundle).
+Additional volumes to attach to the pod.
 
 ### `extraVolumeMounts`
 
@@ -2254,9 +1681,7 @@ enterprise config, trusted CA bundle).
 
 **Default:** `[]`
 
-Additional volume mounts to attach to the enterprise-manager container. Rendered
-verbatim under the container's .volumeMounts alongside the chart-managed mounts.
-Names must match an entry in `extraVolumes` (or a chart-managed volume).
+Additional volume mounts for the container. Names must match a volume.
 
 ### `global`
 
@@ -2264,11 +1689,7 @@ Names must match an entry in `extraVolumes` (or a chart-managed volume).
 
 **Default:** `{"webhooks":{"issuerRef":{"kind":"ClusterIssuer","name":""}}}`
 
-Platform-wide values shared across subcharts. When installed under the
-stacklok-enterprise-platform umbrella, the umbrella's `global` block supplies
-these and this default is overridden. Declared here so a standalone
-`helm install` of this chart still has a single, documented knob (and the
-Certificate template resolves without a nil `global`).
+Platform-wide values; the umbrella chart overrides them.
 
 ### `global.webhooks.issuerRef`
 
@@ -2276,12 +1697,9 @@ Certificate template resolves without a nil `global`).
 
 **Default:** `{"kind":"ClusterIssuer","name":""}`
 
-The cert-manager issuer for the budgets webhook receiver's serving cert. This is
-the ONE place to set it. It must be the same issuer whose CA the ai-gateway
-operator trusts via webhooks.caBundleSecret, so the receiver leaf and the
-operator trust share a CA. Required when webhookTLS.enabled is true — the
-Certificate template fails closed if name is empty (e.g. for e2e: --set
-global.webhooks.issuerRef.name=selfsigned-issuer).
+cert-manager issuer for the budgets webhook serving certificate. Required when
+webhookTLS.enabled. Must be the CA the ai-gateway operator trusts via
+webhooks.caBundleSecret.
 
 ### `global.webhooks.issuerRef.kind`
 
@@ -2289,17 +1707,8 @@ global.webhooks.issuerRef.name=selfsigned-issuer).
 
 **Default:** `"ClusterIssuer"`
 
-"ClusterIssuer" (recommended) or "Issuer". `Issuer` is NOT a drop-in swap: a
-namespaced Issuer must live in every namespace that hosts a Certificate
-referencing it. That means the budgets receiver's namespace (Release.Namespace)
-AND — since this is the shared platform identity the ai-gateway operator reuses
-— every namespace hosting an AIGateway CR (the operator issues the
-main-processor and guardrails-adapter leaves into the CR's namespace).
-cert-manager cannot resolve an Issuer cross-namespace, so any out-of-namespace
-leaf hangs with only `status.webhooks[].probeSucceeded=false` as the signal. A
-single cluster-wide ClusterIssuer is the documented best practice for a shared
-trust chain — keep this default unless every such namespace has its own copy of
-the Issuer.
+"ClusterIssuer" (recommended) or "Issuer". An Issuer must exist in every
+namespace with an AIGateway CR as well as the release namespace.
 
 ## Related information
 
