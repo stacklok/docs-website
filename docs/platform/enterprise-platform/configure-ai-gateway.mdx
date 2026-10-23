@@ -198,9 +198,17 @@ Complete the following sequence before sending production traffic:
 ## Publish the endpoint
 
 The AI Gateway serves inference on a `ClusterIP` Service, port `8080`. Publish
-it by attaching an `HTTPRoute` to your Envoy Gateway `Gateway`:
+it by setting its public URL and attaching an `HTTPRoute` to your Envoy Gateway
+`Gateway`:
 
 ```yaml title="values.yaml"
+global:
+  stacklok:
+    aiGatewayV2:
+      enabled: true
+      # highlight-next-line
+      url: 'https://<AI_GATEWAY_HOST>'
+
 ai-gateway-v2:
   httpRoute:
     enabled: true
@@ -208,15 +216,25 @@ ai-gateway-v2:
       - name: <GATEWAY_NAME>
         namespace: <GATEWAY_NAMESPACE>
         sectionName: <LISTENER_NAME>
-    hostname: '<AI_GATEWAY_HOST>'
 ```
 
-`parentRefs` is required when the route is enabled. Set `hostname`: without it,
-the route matches every hostname the listener accepts. The route's request
-timeout equals `lifecycle.maxStreamDuration`, 15 minutes by default. The route
-starts timing when it receives the request, before authentication and budget
-admission, so a stream that runs close to that limit can be cut off at the route
-before the gateway ends it.
+`global.stacklok.aiGatewayV2.url` is the AI Gateway's public URL. The route's
+`hostname` defaults to its host, and the console uses the URL to read the model
+list and gateway health and to build the `thv llm setup` command it shows users.
+The URL must use `https://` or `http://` and name its host by a DNS name, with
+an optional port and path. The chart refuses to render a URL with credentials, a
+query, or a fragment.
+
+A local value wins over the global one: `httpRoute.hostname` for the route, and
+`toolhive-cloud-ui.gatewayProxyUrl` for the console. Without a hostname from
+either, the route matches every hostname the listener accepts. You still
+configure the listener and the DNS record for the host yourself.
+
+`parentRefs` is required when the route is enabled. The route's request timeout
+equals `lifecycle.maxStreamDuration`, 15 minutes by default. The route starts
+timing when it receives the request, before authentication and budget admission,
+so a stream that runs close to that limit can be cut off at the route before the
+gateway ends it.
 
 Check that the route has `Accepted` and `ResolvedRefs` set to `True`:
 
@@ -227,10 +245,6 @@ kubectl get httproute -n <NAMESPACE> -o yaml
 If you place another proxy in front of the Gateway, preserve the request paths
 and authentication headers, pass streamed responses without buffering, and allow
 your longest model requests.
-
-To show this endpoint to users in the console and in the generated
-`thv llm setup` command, set `toolhive-cloud-ui.gatewayProxyUrl` to
-`https://<AI_GATEWAY_HOST>`.
 
 ### Verify authenticated use
 

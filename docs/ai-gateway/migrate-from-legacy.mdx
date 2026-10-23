@@ -32,8 +32,9 @@ Run both only for the migration window. While both run, you're responsible for
 four things the chart can't check:
 
 - **Distinct hostnames.** Give the AI Gateway its own hostname through
-  `httpRoute.hostname`, on a listener the `AIGateway` doesn't serve. If the two
-  routes overlap, nothing decides which gateway serves a request.
+  `global.stacklok.aiGatewayV2.url`, on a listener the `AIGateway` doesn't
+  serve. If the two routes overlap, nothing decides which gateway serves a
+  request.
 - **Matching screening configuration.** Both gateways run the same PII scanning
   and Bedrock Guardrails code with the same defaults, so equivalent `scanning`
   and `guardrails` values screen requests the same way. The AI Gateway screens
@@ -200,9 +201,13 @@ format.
 ## Cut over
 
 1. **Install the AI Gateway alongside the legacy gateway** with
-   `acknowledgeBothDataPlanes`, its own hostname, and the budget and directory
-   connections from
+   `acknowledgeBothDataPlanes`, its own `global.stacklok.aiGatewayV2.url`, and
+   the budget and directory connections from
    [Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx).
+   The console reads its model list and gateway health from the AI Gateway as
+   soon as it's enabled, and shows the AI Gateway URL in its `thv llm setup`
+   command. Remove a `toolhive-cloud-ui.gatewayProxyUrl` that names the legacy
+   gateway in the same change, since a local value wins over the global one.
 2. **Recreate your providers and models** in `providers`, using the
    [configuration map](#map-your-configuration). Turn on the same screening you
    run today, and set `modelAccess.enabled` if you restrict callers with model
@@ -210,11 +215,10 @@ format.
 3. **Verify with a test client.** Send requests through each client API your
    users rely on, streaming and non-streaming, with an account that calls the
    legacy gateway today.
-4. **Move clients.** Set `toolhive-cloud-ui.gatewayProxyUrl` to the AI Gateway
-   URL so the console's setup instructions point there, and have users rerun
-   `thv llm setup`. Point clients that call non-OpenAI models through the
-   OpenAI-compatible API at the provider's own API. Move one group of users at a
-   time.
+4. **Move clients.** Have users rerun the `thv llm setup` command the console
+   shows, which points at the AI Gateway. Point clients that call non-OpenAI
+   models through the OpenAI-compatible API at the provider's own API. Move one
+   group of users at a time.
 5. **Delete the `AIGateway` resource** once no traffic reaches it. Do this
    before step 6, while the AI Gateway operator is still installed, so the
    operator cleans up the resources it created.
