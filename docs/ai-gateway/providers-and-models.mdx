@@ -2,241 +2,267 @@
 title: Connect model providers
 sidebar_label: Model providers
 description:
-  Connect OpenAI, Anthropic, AWS Bedrock, Azure OpenAI, Google Vertex AI, and
-  OpenAI-compatible providers to the AI Gateway, and rotate their credentials.
+  Connect OpenAI, Anthropic, AWS Bedrock, Google Vertex AI, Google AI Studio,
+  and OpenRouter to the AI Gateway, and rotate their credentials.
 ---
 
-A _provider_ defines an upstream API endpoint and its authentication method.
-Declare providers in `spec.providers` on the `AIGateway` resource and store
-credentials in Kubernetes Secrets.
+A _provider_ is an upstream API endpoint, its credential, and the models it
+serves. Declare providers in `providers` and store credentials in Kubernetes
+Secrets.
+
+For the legacy AI Gateway, see
+[legacy gateway provider setup](./legacy/providers-and-models.mdx).
 
 ## Supported providers
 
-| Provider              | `schema`                   | `credentials.type` | Secret key             |
-| --------------------- | -------------------------- | ------------------ | ---------------------- |
-| OpenAI                | `OpenAI`                   | `APIKey`           | `apiKey`               |
-| Anthropic             | `Anthropic`                | `AnthropicAPIKey`  | `apiKey`               |
-| AWS Bedrock           | `AWSBedrock`               | `AWSCredentials`   | none, uses IAM         |
-| Claude on AWS Bedrock | `AWSAnthropic`             | `AWSCredentials`   | none, uses IAM         |
-| Azure OpenAI          | `AzureOpenAI`              | `AzureAPIKey`      | `apiKey`               |
-| Google Vertex AI      | `GCPVertexAI`              | `GCPCredentials`   | `service_account.json` |
-| Google AI Studio      | `GeminiAIStudio`           | `APIKey`           | `apiKey`               |
-| Google Gemini API     | `GoogleGenerativeLanguage` | `APIKey`           | `apiKey`               |
+The provider `kind` decides which client APIs serve its models. The gateway
+doesn't translate between APIs, so a model is reachable only on the APIs its
+provider speaks.
 
-For Azure deployments that authenticate by role, use
-`credentials.type: AzureCredentials` with `region`.
+| Provider              | `kind`              | Client APIs                            | Credential                                   |
+| --------------------- | ------------------- | -------------------------------------- | -------------------------------------------- |
+| OpenAI                | `openai`            | Chat Completions, Responses            | API key                                      |
+| OpenRouter            | `openrouter`        | Chat Completions, Responses            | API key                                      |
+| Anthropic             | `anthropic`         | Anthropic Messages                     | API key                                      |
+| Claude on AWS Bedrock | `bedrock-anthropic` | Anthropic Messages                     | EKS Pod Identity, or an AWS credentials file |
+| Google AI Studio      | `gemini-aistudio`   | Gemini `generateContent` and streaming | API key                                      |
+| Google Vertex AI      | `vertex`            | Gemini `generateContent` and streaming | Service account key                          |
 
-`AWSBedrock` uses the Bedrock Converse API. `AWSAnthropic` uses the Bedrock
-InvokeModel API with Anthropic's native request format and the `awsanthropic`
-pricing family.
+`bedrock-anthropic` calls the Bedrock InvokeModel API with Anthropic's native
+request format and requires `region`. `vertex` uses the Vertex Gemini API and
+requires `project` and `region`.
 
-`GeminiAIStudio` and `GoogleGenerativeLanguage` require `APIKey`. `GCPVertexAI`
-requires `GCPCredentials`, `region`, `projectName`, and `secretRef`. Resource
-validation rejects unsupported schema and credential type combinations.
+Each provider needs `kind`, `baseUrl`, and at least one model. The chart refuses
+to render a provider that is missing one of them or uses an unknown `kind`.
+
+Audit events identify a provider by its `kind`.
 
 ## Add a provider
 
-1. Create the credential Secret:
+1. Create the credential Secret in the platform namespace:
 
    ```bash
-   kubectl create secret generic openai-key \
+   kubectl create secret generic ai-gateway-v2-openai \
      -n <NAMESPACE> \
-     --from-literal=apiKey='<OPENAI_API_KEY>'
+     --from-literal=api-key='<OPENAI_API_KEY>'
    ```
 
-2. Declare the provider on the `AIGateway` resource:
+2. Declare the provider and the models it serves. `credentialSecretRef` names
+   the Secret and the data key that holds the credential:
 
-   ```yaml title="aigateway.yaml"
-   spec:
+   ```yaml title="values.yaml"
+   ai-gateway-v2:
      providers:
-       - name: openai
-         schema: OpenAI
-         endpoint:
-           hostname: api.openai.com
-           port: 443
-         credentials:
-           type: APIKey
-           secretRef:
-             name: openai-key
-             key: apiKey
+       - kind: openai
+         baseUrl: https://api.openai.com
+         models: ['gpt-5', 'gpt-5-mini']
+         credentialSecretRef:
+           name: ai-gateway-v2-openai
+           key: api-key
    ```
 
-3. Add a route that references the provider. Resource validation requires every
-   route to reference a declared provider:
+   The `models` list is the route table. See
+   [Route models to providers](./model-routing.mdx) for how the gateway matches
+   a request to a provider.
 
-   ```yaml title="aigateway.yaml"
-   spec:
-     routes:
-       - name: gpt4o
-         match:
-           model: 'gpt-4o'
-         backendRefs:
-           - provider: openai
-   ```
-
-4. Apply the resource and confirm the operator reconciled it:
+3. Confirm that each model has a price in the pricing catalog. The gateway
+   refuses requests for a model with no catalog entry, even when the provider
+   credential works. Look up the entry by its catalog provider and model:
 
    ```bash
-   kubectl apply -f aigateway.yaml
-   kubectl get aigw -n <NAMESPACE>
+   curl -s <ENTERPRISE_MANAGER_URL>/v1/budgets/pricing \
+     -H "Authorization: Bearer <ADMIN_TOKEN>" \
+     | jq '.spec.entries[] | select(.provider == "openai" and .model == "gpt-5-mini")'
    ```
 
-   The **Providers** column reports ready providers out of total. For detail,
-   read the `ProvidersReady` status condition, whose `message` names the
-   provider that failed:
+   Replace `<ENTERPRISE_MANAGER_URL>` with the Enterprise Manager API
+   [base URL](../platform/enterprise-platform/enterprise-manager-api.mdx#base-url)
+   and `<ADMIN_TOKEN>` with a
+   [platform administrator's access token](../platform/enterprise-platform/enterprise-manager-api.mdx#authenticate).
+   An entry with a rate block, such as `openai`, means the model is priced. If
+   the command prints nothing, or the entry has `"unpriced": true`, price the
+   model first. See
+   [Update the pricing catalog](./budgets-and-pricing.mdx#update-the-pricing-catalog)
+   for the request, and
+   [Match provider kinds to catalog entries](./budgets-and-pricing.mdx#match-provider-kinds-to-catalog-entries)
+   for the catalog provider name of each `kind`.
+
+4. Upgrade the release and wait for the rollout to finish:
 
    ```bash
-   kubectl get aigw <NAME> -n <NAMESPACE> \
-     -o jsonpath='{.status.conditions}' | jq .
+   helm upgrade <RELEASE_NAME> <CHART> -n <NAMESPACE> -f values.yaml
+   kubectl rollout status deployment/<RELEASE_NAME>-ai-gateway-v2 -n <NAMESPACE>
    ```
+
+   If the rollout stalls, the gateway rejected the configuration and the
+   previous pods keep serving. See
+   [How configuration changes apply](../platform/enterprise-platform/configure-ai-gateway.mdx#how-configuration-changes-apply).
 
 5. Send a request through the gateway to confirm the credential works end to
-   end:
+   end. Send it as a caller with an applicable [budget](./manage-budgets.mdx)
+   and, if model access is on, a
+   [grant for the model](./control-model-access.mdx):
 
    ```bash
-   curl -sk https://<GATEWAY_ENDPOINT>/v1/chat/completions \
-     -H "Authorization: Bearer <TOKEN>" \
+   curl -s https://<AI_GATEWAY_HOST>/v1/chat/completions \
+     -H "Authorization: Bearer <ACCESS_TOKEN>" \
      -H "Content-Type: application/json" \
-     -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "ping"}]}'
+     -d '{"model": "gpt-5-mini", "messages": [{"role": "user", "content": "ping"}]}'
    ```
+
+   A completion confirms the credential, route, and price. A `402` means the
+   caller has no budget with capacity, and a `403` means the caller has no grant
+   for the model.
 
 ## Provider specifics
 
 ### Anthropic
 
 ```yaml
-providers:
-  - name: anthropic
-    schema: Anthropic
-    endpoint:
-      hostname: api.anthropic.com
-      port: 443
-    credentials:
-      type: AnthropicAPIKey
-      secretRef:
-        name: anthropic-key
-        key: apiKey
+ai-gateway-v2:
+  providers:
+    - kind: anthropic
+      baseUrl: https://api.anthropic.com
+      models: ['claude-sonnet-5', 'claude-haiku-4-5']
+      credentialSecretRef:
+        name: ai-gateway-v2-anthropic
+        key: api-key
 ```
 
-### AWS Bedrock
+### Claude on AWS Bedrock
 
-Assign the gateway proxy pods an IAM role through IAM roles for service accounts
-(IRSA) or EKS Pod Identity. Grant the role the required Bedrock actions.
+Without a `credentialSecretRef`, the gateway resolves AWS credentials from the
+default AWS credential chain. Associate an IAM role that can invoke the Bedrock
+models with the gateway's ServiceAccount through EKS Pod Identity.
 
 ```yaml
-providers:
-  - name: bedrock
-    schema: AWSBedrock
-    endpoint:
-      hostname: bedrock-runtime.us-east-1.amazonaws.com
-      port: 443
-    credentials:
-      type: AWSCredentials
+ai-gateway-v2:
+  providers:
+    - kind: bedrock-anthropic
+      baseUrl: https://bedrock-runtime.us-east-1.amazonaws.com
       region: us-east-1
+      models: ['us.anthropic.claude-sonnet-5']
+```
+
+To use long-lived keys instead, store an AWS shared credentials file in a
+Secret, reference it with `credentialSecretRef`, and optionally select a profile
+with `awsProfile`. The profile defaults to `default`.
+
+```bash
+kubectl create secret generic ai-gateway-v2-bedrock \
+  -n <NAMESPACE> \
+  --from-file=credentials=<PATH_TO_AWS_CREDENTIALS_FILE>
+```
+
+```yaml
+ai-gateway-v2:
+  providers:
+    - kind: bedrock-anthropic
+      baseUrl: https://bedrock-runtime.us-east-1.amazonaws.com
+      region: us-east-1
+      models: ['us.anthropic.claude-sonnet-5']
+      credentialSecretRef:
+        name: ai-gateway-v2-bedrock
+        key: credentials
+      awsProfile: <AWS_PROFILE>
 ```
 
 ### Google Vertex AI
 
-Vertex AI uses a regional endpoint and Google service account key. Match
-`credentials.region` to the region prefix in the hostname.
-
-Name the Secret data key `service_account.json`.
+Vertex AI authenticates with a Google service account key. Store the key file in
+a Secret and set `project` and `region`. With the global hostname
+`aiplatform.googleapis.com`, set `region: global`. For a regional endpoint, such
+as `us-central1-aiplatform.googleapis.com`, match `region` to the region prefix
+in the hostname.
 
 ```bash
-kubectl create secret generic vertex-sa \
+kubectl create secret generic ai-gateway-v2-vertex \
   -n <NAMESPACE> \
   --from-file=service_account.json=<PATH_TO_SERVICE_ACCOUNT_JSON>
 ```
 
 ```yaml
-providers:
-  - name: vertex
-    schema: GCPVertexAI
-    endpoint:
-      hostname: us-central1-aiplatform.googleapis.com
-      port: 443
-    credentials:
-      type: GCPCredentials
-      region: us-central1
-      projectName: <GCP_PROJECT_NAME>
-      secretRef:
-        name: vertex-sa
+ai-gateway-v2:
+  providers:
+    - kind: vertex
+      baseUrl: https://aiplatform.googleapis.com
+      project: <GCP_PROJECT_ID>
+      region: <GCP_REGION>
+      models: ['gemini-2.5-pro']
+      credentialSecretRef:
+        name: ai-gateway-v2-vertex
+        key: service_account.json
 ```
 
-Service-account keys are the only supported Vertex credential. Workload Identity
-Federation is not supported.
+Service account keys are the only supported Vertex credential. Workload Identity
+Federation isn't supported.
 
 ### Google AI Studio
 
-`GeminiAIStudio` uses Google AI Studio's OpenAI-compatible API and requires only
-an API key.
-
-### OpenAI-compatible providers
-
-Many providers expose an OpenAI-compatible API at a non-standard path.
-OpenRouter, for example, serves chat completions under `/api/v1`. Set
-`schema: OpenAI` and add `pathPrefix`; the prefix replaces the client's `/v1`
-segment, so the upstream path becomes `<PATH_PREFIX>/chat/completions`.
+`gemini-aistudio` uses the Gemini API with an API key:
 
 ```yaml
-spec:
+ai-gateway-v2:
   providers:
-    - name: openrouter
-      schema: OpenAI
-      pathPrefix: /api/v1
-      endpoint:
-        hostname: openrouter.ai
-        port: 443
-      credentials:
-        type: APIKey
-        secretRef:
-          name: openrouter-key
-          key: apiKey
+    - kind: gemini-aistudio
+      baseUrl: https://generativelanguage.googleapis.com
+      models: ['gemini-2.5-flash']
+      credentialSecretRef:
+        name: ai-gateway-v2-gemini
+        key: api-key
 ```
 
-`pathPrefix` is valid only with `schema: OpenAI`. Providers that already carry
-their own prefix, such as `GeminiAIStudio`, must not set it.
+### OpenRouter
 
-Audit and journaling events identify an OpenAI-compatible provider by its
-configured `name`.
+`openrouter` serves OpenRouter's model slugs on the OpenAI Chat Completions and
+Responses APIs. Set `baseUrl` to the host only; the gateway adds OpenRouter's
+`/api/v1` path.
 
-:::warning[Name an OpenRouter provider exactly `openrouter`]
-
-The pricing service resolves OpenRouter rates through the provider name. Use
-`openrouter` so the gateway can price and admit its model slugs. Spend tracking
-supports one OpenRouter provider.
-
-:::
+```yaml
+ai-gateway-v2:
+  providers:
+    - kind: openrouter
+      baseUrl: https://openrouter.ai
+      models: ['deepseek/deepseek-v4-pro', 'moonshotai/kimi-k3']
+      credentialSecretRef:
+        name: ai-gateway-v2-openrouter
+        key: api-key
+```
 
 ## Rotate a credential
 
-Update the Secret in place. No resource edit and no pod restart is needed; the
-gateway picks up Secret changes on its own.
+Update the Secret in place, then restart the gateway so new pods mount the new
+value:
 
 ```bash
-kubectl create secret generic openai-key \
+kubectl create secret generic ai-gateway-v2-openai \
   -n <NAMESPACE> \
-  --from-literal=apiKey='<NEW_OPENAI_API_KEY>' \
+  --from-literal=api-key='<NEW_OPENAI_API_KEY>' \
   --dry-run=client -o yaml | kubectl apply -f -
+kubectl rollout restart deployment/<RELEASE_NAME>-ai-gateway-v2 -n <NAMESPACE>
 ```
 
-Send a test request afterwards to confirm the new credential is in use.
+A `helm upgrade` also rolls the pods. See
+[How configuration changes apply](../platform/enterprise-platform/configure-ai-gateway.mdx#how-configuration-changes-apply).
+Send a test request after the rollout finishes to confirm the new credential is
+in use.
 
 ## Remove a provider
 
-Remove routes that reference the provider, remove the provider, and apply the
-resource.
+Remove the provider entry from `providers`, upgrade the release, and wait for
+the rollout to finish. Delete the provider's Secret only after both commands
+succeed, because pods from the previous ReplicaSet still mount it until the
+rollout completes:
 
 ```bash
-kubectl apply -f aigateway.yaml
-kubectl delete secret openai-key -n <NAMESPACE>
+helm upgrade <RELEASE_NAME> <CHART> -n <NAMESPACE> -f values.yaml
+kubectl rollout status deployment/<RELEASE_NAME>-ai-gateway-v2 -n <NAMESPACE>
+kubectl delete secret ai-gateway-v2-openai -n <NAMESPACE>
 ```
-
-The gateway cleans up the infrastructure it created for that provider
-automatically.
 
 ## Next steps
 
-- [Route models](./model-routing.mdx) to configure weighting and failover.
-- [Budgets and pricing](./budgets-and-pricing.mdx) to publish prices for the
-  models you route.
+- [Control model access](./control-model-access.mdx) to decide which users and
+  groups can call the models you added.
+- [Route models to providers](./model-routing.mdx) to understand how requests
+  reach a provider.

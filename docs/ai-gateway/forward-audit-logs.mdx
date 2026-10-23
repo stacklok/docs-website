@@ -2,278 +2,162 @@
 title: Forward audit logs to your SIEM
 sidebar_label: Audit logs
 description:
-  Enable structured audit events for model requests, detections, and key
-  lifecycle, then ship them to Splunk, Elastic, Kafka, or Loki.
+  Enable AI Gateway audit events for model interactions and rejected sign-ins,
+  then ship them to Splunk, Elastic, Kafka, or Loki.
 ---
 
-The AI Gateway emits structured JSON audit events to pod standard output for
-request admission, detection decisions, virtual key changes, and authentication
-outcomes.
+import AuditShippers from './_partials/_audit-shippers.mdx';
+
+The AI Gateway emits structured JSON audit events to pod standard output. It
+writes one event for each model interaction, one for each rejected
+authentication attempt, and one for each model list request that model access
+filters down to nothing.
+
+Events record decisions and metadata only. They never carry prompts,
+completions, credentials, request or response bodies, token claims, or email
+addresses.
 
 Every event carries the fields required by NIST SP 800-53 controls AU-2, AU-3,
-and AU-8: a unique audit ID, a UTC timestamp, the subject, the component, the
-outcome, an optional target, and an extra block for forensic correlation.
+and AU-8: a unique audit ID, a UTC timestamp, the outcome, the component, the
+source, an optional target, and an extra block for forensic correlation. Events
+for authenticated requests also carry the subject.
+
+For the legacy AI Gateway, see
+[legacy gateway audit logs](./legacy/forward-audit-logs.mdx).
 
 ## Enable audit events
 
-Emission is off by default and is enabled per gateway:
+Audit events are off by default. Turn them on for the gateway:
 
-```yaml title="aigateway.yaml"
-apiVersion: ai-gateway.stacklok.dev/v1alpha1
-kind: AIGateway
-metadata:
-  name: ai-gateway
-spec:
+```yaml title="values.yaml"
+ai-gateway-v2:
   audit:
     enabled: true
 ```
 
-Enabling audit events captures every supported event without sampling. Filter
-and route events in your log pipeline.
+Setting `global.stacklok.audit.enabled: true` also turns them on, and while it's
+`true`, `audit.enabled: false` has no effect. The change applies when the
+gateway pods roll out; see
+[How configuration changes apply](../platform/enterprise-platform/configure-ai-gateway.mdx#how-configuration-changes-apply).
+
+Enabled audit events cover every interaction without sampling, and there are no
+per-event toggles. Filter and route events in your log pipeline.
 
 ## What gets captured
 
-| Event type                         | Fires when                                                   | Outcome         |
-| ---------------------------------- | ------------------------------------------------------------ | --------------- |
-| `aigw.processor.request.blocked`   | A detection blocks a request                                 | denied          |
-| `aigw.processor.request.redacted`  | A request body was masked before forwarding                  | success         |
-| `aigw.processor.response.blocked`  | Response masking failed, so the client got a synthetic error | denied          |
-| `aigw.processor.response.redacted` | A response body was masked before delivery                   | success         |
-| `aigw.processor.detection.logged`  | A passive detector fired, nothing mutated                    | success         |
-| `aigw.processor.body.truncated`    | A request or response body exceeded the size limit           | failure         |
-| `aigw.processor.config.reloaded`   | Configuration was reloaded                                   | success/failure |
-| `aigw.apikey.key.created`          | A virtual key was created                                    | success/error   |
-| `aigw.apikey.key.rotated`          | A virtual key was rotated                                    | success/error   |
-| `aigw.apikey.key.revoked`          | A virtual key was revoked                                    | success/error   |
-| `aigw.apikey.key.updated`          | A key was enabled, disabled, or edited                       | success/error   |
-| `aigw.apikey.authn.failed`         | Token validation failed on an API call                       | failure         |
-| `aigw.apikey.authz.denied`         | The caller lacked the required role                          | denied          |
-| `aigw.apikey.validation.failed`    | An invalid or unknown virtual key was presented              | failure         |
-| `aigw.apikey.ratelimit.exceeded`   | A per-key request rate limit was exceeded                    | denied          |
+| Event type                      | Fires when                                                                                              | Outcome                            |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `aigw.v2.interaction.completed` | An authenticated generation request reaches its final outcome, including an early refusal               | success, denied, failure, or error |
+| `aigw.v2.authentication.failed` | The gateway rejects a credential on a protected route, or can't reach a service it needs to validate it | failure, or error when unreachable |
+| `aigw.v2.models.no_grant`       | Model access filters a non-empty model list to nothing, and the caller receives a `200`                 | denied                             |
 
-Event types use `aigw.<component>.<resource>.<verb>`.
+Interaction events cover the OpenAI Chat Completions, OpenAI Responses,
+Anthropic Messages, and Gemini generate and stream-generate endpoints. A
+streaming interaction emits one event when it finishes, never one per frame.
+Health endpoints emit no events, and a model list request that returns at least
+one model emits none.
 
 ## Event schema
 
 ```json
 {
+  "time": "2026-10-16T14:22:31Z",
+  "level": "INFO",
+  "msg": "audit_event",
+  "logger": "audit",
   "audit_id": "b3d4f7a2-8c11-4f6e-9b0a-1c2d3e4f5a6b",
-  "type": "aigw.processor.request.blocked",
-  "logged_at": "2026-04-20T14:22:31.418Z",
-  "outcome": "denied",
-  "component": "main-processor",
-  "source": { "type": "network", "value": "10.42.0.17" },
-  "subjects": { "user": "alice", "virtual_key_id": "a7Hj3kLm" },
+  "type": "aigw.v2.interaction.completed",
+  "logged_at": "2026-10-16T14:22:31.418Z",
+  "outcome": "success",
+  "component": "v2",
+  "source": { "type": "local", "value": "ai-gateway-v2-6d8f9c7b5-x2k4q" },
+  "subjects": { "user": "00u1a2b3c4d5e6f7g8h9", "department": "engineering" },
   "target": {
-    "type": "llm_request",
-    "model": "gpt-4o",
-    "provider": "openai",
-    "route": "chat-completions"
+    "model": "claude-sonnet-4-6",
+    "provider": "anthropic",
+    "route": "/v1/messages"
   },
   "metadata": {
     "extra": {
+      "schema_version": 1,
       "request_id": "c0ffee01-2a3b-4c5d-6e7f-8091a2b3c4d5",
+      "interaction_id": "7e1d5390-41e5-4f71-b3c2-9a0815793c4a",
       "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
-      "client_ip": "203.0.113.42",
-      "pod": "ai-gateway-main-processor-7f6b9c-x2k4q",
-      "detection_types": ["CREDIT_CARD", "US_SSN"],
-      "action": "block",
-      "body_bytes": 1842
+      "span_id": "00f067aa0ba902b7",
+      "http_method": "POST",
+      "http_status": 200,
+      "dialect": "anthropic-messages",
+      "streaming": true,
+      "duration_ms": 8421,
+      "terminal_stage": "delivery",
+      "reason_code": "delivered",
+      "usage_present": true,
+      "input_tokens": 1834,
+      "output_tokens": 412
     }
   }
 }
 ```
 
-**Subjects** come from authenticated tokens on API events or a trusted upstream
-filter on request-path events. The gateway adds `virtual_key_id` after key
-validation.
+**Subjects** appear only after authentication succeeds. `user` is the caller's
+canonical subject, and `virtual_key_id` identifies the virtual key on
+virtual-key requests. Directory group labels named in `directory.groupLabels`,
+such as `department`, are added alongside them. A rejected authentication event
+carries no subjects, except an `auth_identity_unresolved` refusal, which names
+the verified caller in `user`.
 
-**Targets** use `{type: llm_request, model, provider, route}` on request events
-and `{type: virtual_api_key, key_id, prefix}` on key events. Key events omit
-secret material. Match `target.provider` against these lowercase values:
-`openai`, `anthropic`, `awsbedrock`, `azureopenai`, `gcpvertexai`, and
-`geminiaistudio`.
+**Targets** carry `model`, `provider`, and `route`, each only once the gateway
+has resolved it. `provider` is the provider `kind` from the gateway
+configuration: `openai`, `openrouter`, `anthropic`, `bedrock-anthropic`,
+`gemini-aistudio`, or `vertex`. `route` is the endpoint path template.
 
-**Common extras** are `request_id`, `trace_id` and `span_id` for OpenTelemetry
-correlation, `client_ip`, `user_agent`, `pod`, and the gateway's name and
-namespace.
+**Source** is the gateway pod that wrote the event. Events carry no client IP
+address or user agent.
 
-Detection events add `detection_types` and `action`. `action` is `block`,
-`redact`, or `log-only`. Passive detections use `shadow_types` for detectors in
-shadow mode and `log_only_types` for log-only policy.
+**Common extras** are `schema_version`, `request_id`, `http_status`, and, when
+tracing is on, `trace_id` and `span_id` for OpenTelemetry correlation. The
+gateway also returns `request_id` to the client in the `X-Request-ID` response
+header. Authentication events add `auth_method`: `jwt`, `virtual_key`, or
+`unknown`, and `reason_code`, which says why authentication failed, such as
+`auth_identity_unresolved`.
 
-Request-path events carry `body_bytes`; response-path events carry
-`chunk_bytes`, which is per-chunk for streaming responses and must not be summed
-with `body_bytes` to estimate traffic.
+Interaction events add `interaction_id`, `http_method`, `dialect`, `streaming`,
+`duration_ms`, `terminal_stage`, `reason_code`, and `usage_present`, plus
+`input_tokens` and `output_tokens` when the provider reported usage.
+`terminal_stage` is the stage the interaction ended in: `validation`, `routing`,
+`governance`, `provider`, `metering`, or `delivery`. `reason_code` says what
+ended it, such as `delivered` or `governance_denied`. When a governance hook
+denies or fails a request, `hook` names the hook entry.
 
-## Separate audit records from application logs
+Required governance hooks can report annotations under `hook_annotations`, keyed
+by hook entry name. The budgets entries report the charged subject and amount,
+and the `scanning` entry reports the entity types it acted on, such as
+`detection_types` for a block and `redact_types` for a redaction.
 
-Each event is one line of JSON on the pod's standard output. Every audit record
-carries `"logger":"audit"` and `"msg":"audit_event"`, so shippers should filter
-on that pair to separate audit records from ordinary application logs on the
-same stream.
-
-## Ship them
-
-Each example below filters on those same two keys. Adapt hostnames, credentials,
-and `<NAMESPACE>` for your environment.
-
-### Fluent Bit to Splunk
-
-```conf
-[INPUT]
-    Name              tail
-    Path              /var/log/containers/*<NAMESPACE>*.log
-    Parser            docker
-    Tag               kube.audit.*
-    Refresh_Interval  5
-
-[FILTER]
-    Name    grep
-    Match   kube.audit.*
-    Regex   log .*"logger":"audit".*"msg":"audit_event".*
-
-[FILTER]
-    Name          parser
-    Match         kube.audit.*
-    Key_Name      log
-    Parser        json
-    Reserve_Data  On
-
-[OUTPUT]
-    Name          splunk
-    Match         kube.audit.*
-    Host          <SPLUNK_HEC_HOST>
-    Port          8088
-    Splunk_Token  ${SPLUNK_HEC_TOKEN}
-    TLS           On
-    event_source  aigw-audit
-    event_index   aigw_audit
-```
-
-### Fluent Bit to Elastic
-
-Keep the input and both filters from the Splunk example above, which tag records
-`kube.audit.*`, and swap the output. The `Match` value has to be that same tag,
-or the output receives nothing:
-
-```conf
-[OUTPUT]
-    Name            es
-    Match           kube.audit.*
-    Host            <ELASTICSEARCH_HOST>
-    Port            9200
-    HTTP_User       ${ES_USER}
-    HTTP_Passwd     ${ES_PASSWORD}
-    tls             On
-    Logstash_Format On
-    Logstash_Prefix aigw-audit
-    Replace_Dots    On
-```
-
-### Vector to Kafka
-
-```yaml
-sources:
-  kubernetes_logs:
-    type: kubernetes_logs
-    extra_namespace_label_selector: 'kubernetes.io/metadata.name=<NAMESPACE>'
-
-transforms:
-  parse_json:
-    type: remap
-    inputs: [kubernetes_logs]
-    source: |
-      . = parse_json!(.message)
-      if .logger != "audit" || .msg != "audit_event" { abort }
-
-sinks:
-  kafka:
-    type: kafka
-    inputs: [parse_json]
-    bootstrap_servers: '<KAFKA_BROKERS>'
-    topic: aigw-audit
-    encoding:
-      codec: json
-    compression: snappy
-```
-
-### Promtail to Loki
-
-```yaml
-scrape_configs:
-  - job_name: aigw-audit
-    kubernetes_sd_configs:
-      - role: pod
-    relabel_configs:
-      - source_labels: [__meta_kubernetes_namespace]
-        regex: <NAMESPACE>
-        action: keep
-    pipeline_stages:
-      - json:
-          expressions:
-            logger: logger
-            msg: msg
-            type: type
-            outcome: outcome
-            component: component
-      - match:
-          selector: '{logger!="audit"}'
-          action: drop
-      - labels:
-          type:
-          outcome:
-          component:
-```
-
-### CloudWatch and rsyslog
-
-The CloudWatch agent cannot filter on a JSON key natively. Either ingest
-everything and apply a log-group metric filter:
-
-```text
-{ $.logger = "audit" && $.msg = "audit_event" }
-```
-
-or run Fluent Bit alongside it with the `cloudwatch_logs` output, using the
-filters above so only audit lines reach the dedicated log group.
-
-For rsyslog, match both markers before forwarding:
-
-```conf
-if $msg contains '"logger":"audit"' and $msg contains '"msg":"audit_event"' then {
-    action(type="omfwd"
-           target="<SIEM_HOST>"
-           port="514"
-           protocol="tcp"
-           template="RSYSLOG_SyslogProtocol23Format")
-    stop
-}
-```
-
-## Retention, tamper evidence, and GDPR
-
-Configure retention, tamper evidence, and privacy controls in your ingest and
-storage systems. Use lifecycle policies and write-once storage where your
-compliance requirements call for them.
-
-Apply field-level redaction before events reach long-term storage. The gateway
-does not retain or replay emitted audit events.
+<AuditShippers />
 
 ## Related logs
 
 The **Kubernetes API audit log** covers control-plane activity such as `kubectl`
-calls and operator reconciles. Configure it through the API server audit policy.
+calls and Helm upgrades. Configure it through the API server audit policy.
 
-**Interaction journaling**, configured under `spec.journaling`, captures prompt
-and response content. Audit events capture decisions and reasons without the
-full interaction content.
+**Operational failure records** go to the gateway's standard error, separate
+from audit events. A record can name the caller by directory email and, by
+default, includes a bounded parsed error message to make failures easier to
+diagnose. `failureLogs.level` sets their severity: `warn` (the default),
+`error`, or `debug`. When log retention or access can't accommodate personal
+data, set `failureLogs.includeMessage` to `false` to drop the message.
+
+**Conversation content** reaches no audit event. Screening sends prompt text to
+Presidio and AWS Bedrock for analysis. Snapshot capture, configured with the
+top-level `capture` value, records full request and response bodies for testing.
+It's unset by default; leave it unset in production.
 
 ## Next steps
 
-- [PCI/PII controls](./pci-pii-controls.mdx) to configure the detections these
-  events report.
-- [Screen prompts for injection](./prompt-injection-screening.mdx), whose
-  verdicts also land in this stream.
-- [Collect gateway telemetry](./telemetry.mdx) to export traces and metrics and
-  add directory group labels to the `subjects` on these records.
+- [Detect PCI and PII in prompts](pci-pii-controls.mdx) to configure the
+  scanning hook whose decisions appear in `hook_annotations.scanning`.
+- [Screen prompts for injection](prompt-injection-screening.mdx), whose enforced
+  verdicts also end interactions here.
+- [Collect gateway telemetry](telemetry.mdx) to export traces that join these
+  records on `trace_id`.

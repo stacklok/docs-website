@@ -1,0 +1,103 @@
+---
+title: AI Gateway endpoints reference
+sidebar_label: Endpoints reference
+description:
+  Reference for AI Gateway inference, model discovery, and health endpoints, and
+  the credential headers clients send.
+---
+
+The AI Gateway serves model inference, model discovery, and health checks on one
+HTTP listener. It has no separate management API. Virtual API keys, budgets,
+pricing, and model sets are managed in the console and through the
+[Enterprise Manager API](../platform/enterprise-platform/enterprise-manager-api.mdx).
+See [AI Gateway](./index.mdx) for configuration guides. For the legacy AI
+Gateway's management API, see the
+[legacy gateway API reference](./legacy/api-reference.mdx).
+
+## Base URL
+
+The chart creates a ClusterIP Service named `<RELEASE_NAME>-ai-gateway-v2` in
+the platform namespace, on port `8080`. When the release name already contains
+`ai-gateway-v2`, the Service is named `<RELEASE_NAME>`. These pages use
+`<RELEASE_NAME>-ai-gateway-v2` throughout. The in-cluster base URL is:
+
+```text
+http://<RELEASE_NAME>-ai-gateway-v2.<NAMESPACE>.svc:8080
+```
+
+Clients outside the cluster use the hostname you publish through the shared
+Gateway. See
+[Publish the endpoint](../platform/enterprise-platform/configure-ai-gateway.mdx#publish-the-endpoint).
+For the base URL each client expects, see
+[Client endpoints](../platform/enterprise-platform/configure-ai-gateway.mdx#client-endpoints).
+
+## Inference endpoints
+
+Each endpoint serves the models whose provider speaks that API. The gateway
+forwards the request body in the API format the client sent, changing it only
+when PII redaction replaces matched text, and relays the provider's response,
+including streamed responses.
+
+| Method and path                                     | API                     | Served by provider kinds         |
+| --------------------------------------------------- | ----------------------- | -------------------------------- |
+| `POST /v1/chat/completions`                         | OpenAI Chat Completions | `openai`, `openrouter`           |
+| `POST /v1/responses`                                | OpenAI Responses        | `openai`, `openrouter`           |
+| `POST /v1/messages`                                 | Anthropic Messages      | `anthropic`, `bedrock-anthropic` |
+| `POST /anthropic/v1/messages`                       | Anthropic Messages      | `anthropic`, `bedrock-anthropic` |
+| `POST /v1beta/models/<MODEL>:generateContent`       | Gemini                  | `gemini-aistudio`, `vertex`      |
+| `POST /v1beta/models/<MODEL>:streamGenerateContent` | Gemini streaming        | `gemini-aistudio`, `vertex`      |
+
+The `/anthropic` prefix serves clients that append the API path to a configured
+base URL, such as Claude Code with `ANTHROPIC_BASE_URL` set to
+`https://<AI_GATEWAY_HOST>/anthropic`.
+
+The gateway reads up to 10 MiB of a request body.
+
+## Model discovery endpoints
+
+Clients list models with `GET /v1/models`, `GET /anthropic/v1/models`, and
+`GET /v1beta/models`. For the response shape of each and how model access
+filters them, see [Discover models](./model-routing.mdx#discover-models).
+
+## Health endpoints
+
+The health endpoints require no credential and stay available while the gateway
+is disconnected.
+
+| Method and path | Meaning                            | Response                                     |
+| --------------- | ---------------------------------- | -------------------------------------------- |
+| `GET /healthz`  | The process can serve HTTP         | `200`                                        |
+| `GET /readyz`   | The replica should receive traffic | `200`, or `503` while the replica shuts down |
+
+Metrics are served on a separate port, which the Service does not expose. See
+[Collect gateway telemetry](./telemetry.mdx).
+
+## Authentication
+
+Every inference and discovery request carries one credential. The gateway reads
+it from the first of these that is present:
+
+1. `Authorization: Bearer <CREDENTIAL>`
+2. `x-api-key: <CREDENTIAL>`
+3. `x-goog-api-key: <CREDENTIAL>`
+4. The `key` query parameter
+
+A credential shaped like a JWT is verified by the gateway itself, against the
+signing keys, audience, and optional required scope of the matching identity
+provider in `auth.issuers`. Any other credential is treated as a virtual API key
+and validated by the directory.
+
+When `directory.endpoint` is set, the gateway then looks up every verified
+caller in the directory to resolve their groups. A JWT caller the directory
+doesn't know is refused with `403`.
+
+## Errors
+
+Errors the gateway generates use this body:
+
+```json
+{ "error": { "message": "<MESSAGE>" } }
+```
+
+A provider's own error response, such as a `429` rate limit, is relayed to the
+client unchanged.

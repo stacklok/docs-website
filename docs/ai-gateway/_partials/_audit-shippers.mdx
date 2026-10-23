@@ -1,0 +1,181 @@
+## Separate audit records from application logs
+
+Each event is one line of JSON on the pod's standard output. Every audit record
+carries `"logger":"audit"` and `"msg":"audit_event"`, so shippers should filter
+on that pair to separate audit records from ordinary application logs on the
+same stream.
+
+## Ship them
+
+Each example below filters on those same two keys. Adapt hostnames, credentials,
+and `<NAMESPACE>` for your environment.
+
+### Fluent Bit to Splunk
+
+```conf
+[INPUT]
+    Name              tail
+    Path              /var/log/containers/*<NAMESPACE>*.log
+    multiline.parser  docker, cri
+    Tag               kube.audit.*
+    Refresh_Interval  5
+
+[FILTER]
+    Name    grep
+    Match   kube.audit.*
+    Regex   log "logger":"audit"
+    Regex   log "msg":"audit_event"
+
+[FILTER]
+    Name          parser
+    Match         kube.audit.*
+    Key_Name      log
+    Parser        json
+    Reserve_Data  On
+
+[OUTPUT]
+    Name          splunk
+    Match         kube.audit.*
+    Host          <SPLUNK_HEC_HOST>
+    Port          8088
+    Splunk_Token  ${SPLUNK_HEC_TOKEN}
+    TLS           On
+    event_source  aigw-audit
+    event_index   aigw_audit
+```
+
+A record passes the `grep` filter only when both `Regex` rules match, so the
+filter works whatever order the two keys appear in.
+
+### Fluent Bit to Elastic
+
+Keep the input and both filters from the Splunk example above, which tag records
+`kube.audit.*`, and swap the output. The `Match` value has to be that same tag,
+or the output receives nothing:
+
+```conf
+[OUTPUT]
+    Name            es
+    Match           kube.audit.*
+    Host            <ELASTICSEARCH_HOST>
+    Port            9200
+    HTTP_User       ${ES_USER}
+    HTTP_Passwd     ${ES_PASSWORD}
+    tls             On
+    Logstash_Format On
+    Logstash_Prefix aigw-audit
+    Replace_Dots    On
+```
+
+### Vector to Kafka
+
+```yaml
+sources:
+  kubernetes_logs:
+    type: kubernetes_logs
+    extra_namespace_label_selector: 'kubernetes.io/metadata.name=<NAMESPACE>'
+
+transforms:
+  parse_json:
+    type: remap
+    inputs: [kubernetes_logs]
+    source: |
+      . = parse_json!(.message)
+      if .logger != "audit" || .msg != "audit_event" { abort }
+
+sinks:
+  kafka:
+    type: kafka
+    inputs: [parse_json]
+    bootstrap_servers: '<KAFKA_BROKERS>'
+    topic: aigw-audit
+    encoding:
+      codec: json
+    compression: snappy
+```
+
+### Promtail to Loki
+
+Promtail's `match` stage selects on labels, so this pipeline promotes `logger`
+and `msg` to labels, drops every line that isn't an audit record, then removes
+those two labels.
+
+```yaml
+scrape_configs:
+  - job_name: aigw-audit
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace]
+        regex: <NAMESPACE>
+        action: keep
+      - source_labels:
+          - __meta_kubernetes_pod_uid
+          - __meta_kubernetes_pod_container_name
+        separator: /
+        target_label: __path__
+        replacement: /var/log/pods/*$1/*.log
+    pipeline_stages:
+      - cri: {}
+      - json:
+          expressions:
+            logger: logger
+            msg: msg
+            type: type
+            outcome: outcome
+            component: component
+      - labels:
+          logger:
+          msg:
+      - match:
+          selector: '{logger!="audit"}'
+          action: drop
+      - match:
+          selector: '{msg!="audit_event"}'
+          action: drop
+      - labeldrop:
+          - logger
+          - msg
+      - labels:
+          type:
+          outcome:
+          component:
+```
+
+On nodes that use the Docker runtime, replace `cri: {}` with `docker: {}`.
+Promtail has reached end of life. For new installs, use Grafana Alloy, which
+converts this configuration with `alloy convert --source-format=promtail`.
+
+### CloudWatch and rsyslog
+
+The CloudWatch agent cannot filter on a JSON key natively. Either ingest
+everything and apply a log-group metric filter:
+
+```text
+{ $.logger = "audit" && $.msg = "audit_event" }
+```
+
+or run Fluent Bit alongside it with the `cloudwatch_logs` output, using the
+filters above so only audit lines reach the dedicated log group.
+
+For rsyslog, match both markers before forwarding:
+
+```conf
+if $msg contains '"logger":"audit"' and $msg contains '"msg":"audit_event"' then {
+    action(type="omfwd"
+           target="<SIEM_HOST>"
+           port="514"
+           protocol="tcp"
+           template="RSYSLOG_SyslogProtocol23Format")
+    stop
+}
+```
+
+## Retention, tamper evidence, and GDPR
+
+Configure retention, tamper evidence, and privacy controls in your ingest and
+storage systems. Use lifecycle policies and write-once storage where your
+compliance requirements call for them.
+
+Apply field-level redaction before events reach long-term storage. The gateway
+does not retain or replay emitted audit events.
