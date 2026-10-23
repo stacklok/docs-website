@@ -8,10 +8,10 @@ description:
 
 The legacy AI Gateway is configured through its operator and the `AIGateway`
 resource. The AI Gateway is configured through platform chart values under the
-`ai-gateway-v2` key. Both gateways use the same Enterprise Manager for budgets,
-pricing, virtual API keys, and model access, so users, budgets, and keys carry
-over unchanged. What you move is the gateway configuration and the clients' base
-URLs.
+`ai-gateway-v2` key. Both gateways use the same Enterprise Manager for the
+directory, budgets, pricing, virtual API keys, and model access, so users,
+groups, budgets, and keys carry over unchanged and apply the same way on both.
+What you move is the gateway configuration and the clients' base URLs.
 
 ## Run both side by side
 
@@ -39,8 +39,7 @@ four things the chart can't check:
   and `guardrails` values screen requests the same way. The AI Gateway screens
   only when `scanning.enabled` and `guardrails.enabled` are on, scans requests
   only, and has no `AIPolicy` authorization. Mirror your screening settings on
-  both, and move whole groups of users so each group gets one gateway's
-  behavior.
+  both.
 - **Two route tables.** Each gateway keeps its own model-to-provider mapping. A
   model added to one is missing from the other until you add it there too.
 - **Two sets of workloads.** Both gateways consume cluster resources while
@@ -58,9 +57,7 @@ Shared state behaves as one platform:
   [Turn on model access](./control-model-access.mdx#turn-on-model-access).
 - A user's identity provider token works on both when `auth.issuers` lists the
   same issuer and audience as the `AIGateway`'s `spec.auth.oidc`, with a
-  `bindingClaim` that matches the claim the directory binds that issuer on. The
-  AI Gateway also requires every token caller to be
-  [provisioned in the directory](#behavior-differences).
+  `bindingClaim` that matches the claim the directory binds that issuer on.
 - A PII result cache can share one Redis or Valkey. Each release keeps its
   entries under its own keys.
 - **Disconnect AI Gateway** in **Platform Settings** stops traffic on both.
@@ -191,27 +188,11 @@ an AI Gateway equivalent:
   calls an Anthropic, Bedrock, Gemini, or Vertex AI model through
   `/v1/chat/completions` today moves to that provider's API. See
   [Client endpoints](../platform/enterprise-platform/configure-ai-gateway.mdx#client-endpoints).
-- **Token callers must be in the directory.** With `directory.endpoint` set, the
-  AI Gateway looks up every identity provider token caller in the directory and
-  refuses a caller it can't resolve with `403` and the audit reason
-  `auth_identity_unresolved`. That covers a user SCIM hasn't provisioned yet, an
-  inactive user, and a token without the claim the directory binds on. Confirm
-  that
-  [SCIM provisioning](../platform/enterprise-directory/scim-provisioning.mdx)
-  covers every user who calls the gateway before you move them. A virtual API
-  key's owner is checked when the key is validated, so virtual keys need no
-  extra step.
 - **Unknown models are refused.** A model no provider lists returns `404`. When
   no provider serves the Responses API or Gemini streaming at all, those
   endpoints return `501`. Listing the same model twice for the same client API
   fails startup.
 - **Gemini discovery.** Gemini models are listed only on `GET /v1beta/models`.
-- **Budget denials keep their status.** An exhausted budget, or a caller with no
-  applicable budget, returns `402`. Other governance denials return `403`. An
-  unreachable or slow budgets service returns `503` or `504`, and an error or
-  malformed reply returns `502`.
-- **Usage gates completion.** On a streamed response, the gateway holds the
-  final chunk until the usage report is recorded.
 - **Guardrails can't screen the Responses API.** With Bedrock Guardrails in
   `Enforce` mode and the default `unscreenableContentPolicy: Deny`,
   `/v1/responses` requests, such as those from Codex, are refused. See
@@ -231,8 +212,8 @@ format.
    run today, and set `modelAccess.enabled` if you restrict callers with model
    sets.
 3. **Verify with a test client.** Send requests through each client API your
-   users rely on, streaming and non-streaming, with a test account that has a
-   budget and that SCIM has provisioned in the directory.
+   users rely on, streaming and non-streaming, with an account that calls the
+   legacy gateway today.
 4. **Move clients.** Set `toolhive-cloud-ui.gatewayProxyUrl` to the AI Gateway
    URL so the console's setup instructions point there, and have users rerun
    `thv llm setup`. Point clients that call non-OpenAI models through the
