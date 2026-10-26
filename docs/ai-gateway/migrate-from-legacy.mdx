@@ -29,12 +29,17 @@ global:
 ```
 
 Run both only for the migration window. While both run, you're responsible for
-four things the chart can't check:
+five things the chart can't check:
 
 - **Distinct hostnames.** Give the AI Gateway its own hostname through
   `global.stacklok.aiGatewayV2.url`, on a listener the `AIGateway` doesn't
   serve. If the two routes overlap, nothing decides which gateway serves a
   request.
+- **A Gateway that outlives the legacy gateway.** Attach the AI Gateway's
+  `httpRoute` to a Gateway that your own Envoy Gateway installation serves,
+  whose GatewayClass differs from the `AIGateway`'s
+  `spec.gateway.gatewayClassName`. The cutover deletes that GatewayClass and
+  removes the Envoy Gateway controller the legacy gateway installs.
 - **Matching screening configuration.** Both gateways run the same PII scanning
   and Bedrock Guardrails code with the same defaults, so equivalent `scanning`
   and `guardrails` values screen requests the same way. The AI Gateway screens
@@ -218,14 +223,44 @@ format.
 4. **Move clients.** Have users rerun the `thv llm setup` command the console
    shows, which points at the AI Gateway. Point clients that call non-OpenAI
    models through the OpenAI-compatible API at the provider's own API. Move one
-   group of users at a time.
-5. **Delete the `AIGateway` resource** once no traffic reaches it. Do this
-   before step 6, while the AI Gateway operator is still installed, so the
-   operator cleans up the resources it created.
+   group of users at a time. Move platform callers too. When the budgets
+   classifier is on, set `enterprise-manager.budgets.classifier.baseURL` to the
+   AI Gateway URL with the `/v1` path. See the
+   [Enterprise Manager Helm reference](../platform/reference/helm/enterprise-manager.mdx).
+5. **Delete the `AIGateway` resource** once no traffic reaches it. Confirm that
+   the legacy gateway's `aigw_token_usage_total` metric stops growing, see
+   [legacy gateway telemetry](./legacy/telemetry.mdx). Delete the resource while
+   the AI Gateway operator is still installed, so the operator cleans up the
+   resources it created, including the GatewayClass named in
+   `spec.gateway.gatewayClassName`. Wait until
+   `kubectl get aigateway --all-namespaces` lists no resources before you
+   continue. With a GitOps tool such as Flux or Argo CD, commit and reconcile
+   this step on its own, before you commit step 6.
 6. **Disable the legacy gateway.** Set
    `global.stacklok.aiGateway.enabled: false`, remove
    `global.stacklok.acknowledgeBothDataPlanes` in the same change, and upgrade.
-   Then delete the provider Secrets that only the `AIGateway` used.
+   In the same change, remove the values that only the legacy gateway reads:
+   - The legacy gateway's ServiceAccounts in
+     `enterprise-manager.grpc.callerAuth.saSubjectAllowlist`, such as
+     `<AIGATEWAY_NAME>-api-key-service` and `<AIGATEWAY_NAME>-main-processor`,
+     and the operator's `<RELEASE_NAME>-upstream` in `httpSaSubjectAllowlist`.
+     While the legacy gateway is enabled, the chart can refuse to render without
+     the `-api-key-service` subject, so remove it in this change.
+   - `global.stacklok.directoryGrpcEndpoint`. Keep it only when the AI Gateway
+     inherits it, which happens when `ai-gateway-v2.directory.endpoint` is empty
+     and `ai-gateway-v2.directory.insecure` is `true`.
+   - Overrides under `enterprise-ai-gateway-operator`, such as
+     `upstream.modelAccessWebhook`.
+   - `toolhive-cloud-ui.gatewayApiUrl`. The console reads it only when the AI
+     Gateway isn't installed.
+
+   Then delete the provider Secrets that only the `AIGateway` used and that no
+   `providers[].credentialSecretRef` names. Remove what you created for the
+   legacy gateway outside the chart too: its LoadBalancer Service and DNS
+   records, Pod Identity associations for its ServiceAccounts, any external
+   autoscaler for its Presidio pool, and dashboards and alerts on
+   `aigw_token_usage_total`. The `aigateways` and `aipolicies` CRDs stay
+   installed, and the upgrade removes the `aigateway.envoyproxy.io` CRDs.
 
 ## Next steps
 
@@ -235,3 +270,30 @@ format.
   providers.
 - [Control model access](./control-model-access.mdx) to restrict models per
   group.
+
+## Troubleshooting
+
+<details>
+<summary>The `AIGateway` stays in Terminating</summary>
+
+The operator removes the `AIGateway`'s finalizer after it deletes the
+GatewayClass named in `spec.gateway.gatewayClassName` and the guardrails
+adapter's ClusterRoleBinding. If the legacy gateway was disabled before the
+operator finished, nothing removes the finalizer, and the legacy workloads keep
+running. Remove the finalizers yourself, then delete the leftover cluster-scoped
+resources:
+
+```bash
+kubectl patch aigateway <AIGATEWAY_NAME> -n <NAMESPACE> \
+  --type merge -p '{"metadata":{"finalizers":[]}}'
+kubectl patch gatewayclass <GATEWAY_CLASS_NAME> \
+  --type merge -p '{"metadata":{"finalizers":[]}}'
+kubectl delete gatewayclass <GATEWAY_CLASS_NAME> --ignore-not-found
+kubectl delete clusterrolebinding \
+  <NAMESPACE>-<AIGATEWAY_NAME>-guardrails-adapter-issuer-discovery \
+  --ignore-not-found
+```
+
+Kubernetes then deletes the workloads the `AIGateway` and the GatewayClass own.
+
+</details>
