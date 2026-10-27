@@ -1026,15 +1026,37 @@ dcrConfig:
 #### Re-register a dropped upstream client
 
 ToolHive caches the client it registers and reuses it across restarts. Each time
-the proxy starts, ToolHive checks the cached client at the upstream's token
-endpoint. If the upstream answers `invalid_client`, ToolHive registers a new
-client and replaces the cached one automatically.
+the proxy starts, ToolHive checks the cached client at the upstream. If the
+upstream rejects it, ToolHive registers a new client and replaces the cached one
+automatically.
 
-That check can't detect every dropped registration. Some upstreams answer a
-request from a dropped public client as if it were still registered, and the
-check can't verify `private_key_jwt` clients. In those cases the stale client ID
-is only rejected when a user signs in through the browser. To force a fresh
-registration, set or change `rotationKey` in `dcrConfig`:
+Choose how ToolHive runs that check with `registrationProbe` in `dcrConfig`:
+
+| Value                     | How ToolHive checks the cached client                                                                                                                                                                                                                                                                                |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tokenEndpoint` (default) | Redeems a random authorization code at the token endpoint and treats an `invalid_client` answer as a dropped registration. This works only for upstreams that authenticate the client before they validate the code, and it skips `private_key_jwt` clients.                                                         |
+| `authorizationEndpoint`   | Sends an authorization request for the cached client without following redirects. A direct `400`, `401`, or `403` response with a JSON error of `invalid_client`, `unauthorized_client`, or `invalid_request` counts as a dropped registration. An HTML error page or a bare gateway status keeps the cached client. |
+| `none`                    | Skips the check. Use this for upstreams that shouldn't receive probe traffic. The only way to replace the registration is to change `rotationKey`.                                                                                                                                                                   |
+
+Use `authorizationEndpoint` for upstreams whose token endpoint answers
+`invalid_grant` for any client ID, live or dropped. The probe sends no client
+credentials, so it also covers `private_key_jwt` clients. The upstream sees one
+abandoned authorization request each time the proxy starts.
+
+```yaml title="MCPExternalAuthConfig: probe the authorization endpoint"
+dcrConfig:
+  discoveryUrl: 'https://mcp.example.com/.well-known/oauth-authorization-server'
+  # highlight-next-line
+  registrationProbe: authorizationEndpoint
+```
+
+If the probe wrongly reports a live client as dropped, ToolHive registers a new
+client at every start, and startup fails when that registration also fails. If
+you see repeated registrations, switch back to `tokenEndpoint` or set `none`.
+
+When the configured probe can't tell that a registration was dropped, the stale
+client ID is only rejected when a user signs in through the browser. To force a
+fresh registration, set or change `rotationKey` in `dcrConfig`:
 
 ```yaml title="MCPExternalAuthConfig: rotate the DCR client"
 dcrConfig:
