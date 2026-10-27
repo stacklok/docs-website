@@ -29,6 +29,7 @@ automatically.
 | `Skill`       | `Skill::"<skill_uri>"`        | A skill resource (used for `skills/get`). The exact skill URI is used verbatim as the entity ID                                                                                        |
 | `FeatureType` | `FeatureType::"<feature>"`    | A feature category entity. Values: `tool`, `prompt`, `resource`. Not currently used for authorization; list operations are handled via [response filtering](#list-operation-filtering) |
 | `THVGroup`    | `THVGroup::"<group_name>"`    | A group membership entity. Used with Cedar's `in` operator for [group-based policies](#group-membership)                                                                               |
+| `Backend`     | `Backend::"<backend_id>"`     | The backend a tool came from on a VirtualMCPServer. Used with Cedar's `in` operator for [backend-scoped policies](#backend-scoped-tools-on-a-virtualmcpserver)                         |
 
 ## Cedar actions
 
@@ -493,21 +494,67 @@ resource in MCP::"my-server-name"
 The server name matches the name of the MCPServer, MCPRemoteProxy, or container
 name in the ToolHive deployment.
 
-:::warning[Doesn't scope per-backend on a VirtualMCPServer]
+:::warning[On a VirtualMCPServer, MCP is the vMCP's own name]
 
-When the Cedar policy is configured on a `VirtualMCPServer`'s own
-`authServerConfig` (rather than on each backend's individual `MCPAuthzConfig`),
-the `MCP` entity name is the **VirtualMCPServer's own name**, not the name of
-any backend it aggregates. Every resource entity gets the same single
-`MCP::"<vmcp-name>"` parent, regardless of which backend the tool actually came
-from. A policy like `resource in MCP::"my-backend-name"` never matches anything
-in this case, and because Cedar denies by default, every tool from every backend
-is silently hidden. To restrict a policy to one backend's tools from a
-VirtualMCPServer's own Cedar config, match on the resolved tool name instead,
-since vMCP's default conflict-resolution prefixes each tool with its backend ID
-(for example, `resource.name like "my-backend-name_*"`), or configure the policy
-on that backend's own `MCPAuthzConfig` instead, where `MCP::"<backend-name>"`
-does resolve correctly.
+When the Cedar policy is configured on a `VirtualMCPServer` (rather than on each
+backend's individual `MCPAuthzConfig`), the `MCP` entity name is the
+**VirtualMCPServer's own name**, not the name of any backend it aggregates. A
+policy like `resource in MCP::"my-backend-name"` never matches anything in this
+case, and because Cedar denies by default, every tool from every backend is
+silently hidden. To scope a policy to one backend's tools, use the `Backend`
+entity described in the next section.
+
+:::
+
+### Backend-scoped tools on a VirtualMCPServer
+
+On a VirtualMCPServer, each aggregated tool has a second parent: a `Backend`
+entity for the backend the tool came from. The tool keeps its
+`MCP::"<vmcp-name>"` parent, so policies scoped to the vMCP still match.
+
+```text
+Tool::"search"
+  -> MCP::"main-vmcp"
+  -> Backend::"github-mcp"
+```
+
+Use `resource in Backend::"<backend_id>"` to authorize every tool from one
+backend without listing tools or relying on their advertised names:
+
+```text
+// Allow the engineering group to call any tool from the github-mcp backend
+permit(
+  principal in THVGroup::"engineering",
+  action == Action::"call_tool",
+  resource in Backend::"github-mcp"
+);
+```
+
+In Kubernetes, the backend ID is the name of the backend's MCPServer,
+MCPRemoteProxy, or MCPServerEntry resource. vMCP takes it from the aggregated
+tool on the server side, never from the tool name or client input, so renaming
+or prefixing a tool doesn't change which backend it belongs to. vMCP applies the
+same backend ID when it filters `tools/list` responses and when it authorizes
+`tools/call` requests.
+
+A direct `resource in Backend::"..."` policy doesn't need an entry in
+`entities_json`. Define a `Backend` entity there only when a policy needs its
+attributes or a parent hierarchy, for example to group several backends under
+one parent.
+
+Backend scoping applies to tools only. Resources and prompts have only the
+`MCP::"<vmcp-name>"` parent.
+
+:::warning[Composite tools have no backend]
+
+[Composite tools](../guides-vmcp/composite-tools.mdx) can span several backends,
+so they have no `Backend` parent, and neither a backend-scoped `permit` nor a
+backend-scoped `forbid` matches them. If another policy permits a composite
+tool, a backend-scoped `forbid` doesn't stop its workflow steps from calling
+that backend, because vMCP doesn't authorize the steps as separate tool calls.
+To restrict access to a backend, write the restriction as a condition on your
+`permit` policies instead of as a backend-scoped `forbid`, and authorize
+composite tools separately by their `Tool` entity.
 
 :::
 
