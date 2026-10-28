@@ -167,7 +167,7 @@ def load_failures(artifact_path: Path) -> list[Failure]:
                         "the Playwright artifact is too large"
                     )
                 if re.fullmatch(
-                    r"playwright-report/data/[^/]+\.md", info.filename
+                    r"(?:playwright-report/data/)?[^/]+\.md", info.filename
                 ):
                     if info.file_size > MAX_DETAIL_BYTES:
                         raise ArtifactValidationError(

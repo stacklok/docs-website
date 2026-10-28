@@ -92,6 +92,28 @@ class VisualFailureSummaryTests(unittest.TestCase):
             with self.assertRaises(ArtifactValidationError):
                 load_failures(archive_path)
 
+    def test_loads_compact_details_without_report_images(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive_path = write_artifact(
+                root, {"failure.md": PIXEL_FAILURE}
+            )
+
+            self.assertEqual(len(load_failures(archive_path)), 1)
+
+    def test_deduplicates_full_and_compact_failure_details(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive_path = write_artifact(
+                root,
+                {
+                    "playwright-report/data/failure.md": PIXEL_FAILURE,
+                    "failure.md": PIXEL_FAILURE,
+                },
+            )
+
+            self.assertEqual(len(load_failures(archive_path)), 1)
+
     def test_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
