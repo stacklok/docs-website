@@ -1,18 +1,22 @@
 ---
 title: Filesystem MCP server guide
 sidebar_label: Filesystem
-description: Using the Filesystem MCP server with ToolHive for file access.
+description:
+  Mount local files and directories with the Filesystem MCP server in ToolHive.
 ---
-
-import useBaseUrl from '@docusaurus/useBaseUrl';
-import ThemedImage from '@theme/ThemedImage';
 
 ## Overview
 
 The
 [Filesystem MCP server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
 provides access to the local filesystem, allowing AI agents to read and write
-files as part of their workflows.
+files as part of their workflows. Use it to try ToolHive volume mounts with a
+local directory.
+
+Run the server from its npm package, `@modelcontextprotocol/server-filesystem`.
+It is not included in the built-in ToolHive registry, so add it as a custom
+server. ToolHive builds a container from the package and runs it with your
+volume mounts and permissions.
 
 :::note
 
@@ -23,38 +27,25 @@ does not provide filesystem access, or for demonstrating MCP capabilities.
 
 :::
 
-## Metadata
-
-<MCPMetadata name='filesystem' />
-
 ## Usage
 
 <Tabs groupId='mode' queryString='mode'>
 <TabItem value='ui' label='UI' default>
 
-Select the `filesystem` MCP server in the ToolHive registry.
+[Add a custom local server](../guides-ui/run-mcp-servers.mdx#from-a-source-package)
+with these settings:
+
+- **Protocol**: `npx`
+- **Package name**: `@modelcontextprotocol/server-filesystem@2.0.1`
+- **Name**: `filesystem`
+- **Transport protocol**: **stdio**
+- **Command arguments**: `/projects`
 
 In the **Storage volumes** section,
-[add local files or folders](../guides-ui/configure-mcp-servers.mdx#storage-volumes)
-to expose to the MCP server. In the drop-down, choose whether to mount the
-volume as read-only or read-write.
-
-:::note
-
-By default, the server expects files to be located in `/projects`. If you use a
-different container path, you must update the command arguments to replace
-`/projects` with your custom path.
-
-:::
-
-<ThemedImage
-  alt='Filesystem MCP server UI'
-  sources={{
-    light: useBaseUrl('/img/toolhive/mcp-guides/filesystem-mcp-ui-light.webp'),
-    dark: useBaseUrl('/img/toolhive/mcp-guides/filesystem-mcp-ui-dark.webp'),
-  }}
-  title='Filesystem MCP server UI'
-/>
+[add a local directory](../guides-ui/configure-mcp-servers.mdx#storage-volumes)
+with `/projects` as its container path. Choose read-only or read-write access
+for the mount. If you choose a different container path, use that path in the
+command arguments too.
 
 :::tip[Security tip]
 
@@ -64,53 +55,63 @@ add any hosts or ports to completely restrict its outbound network access.
 
 :::
 
+Click **Install server** to build the container and start the server.
+
 </TabItem>
 <TabItem value='cli' label='CLI'>
 
 [Mount a directory](../guides-cli/filesystem-access.mdx) from the host
-filesystem to the MCP server using the default container path:
+filesystem to the MCP server and pass its container path as an allowed
+directory:
 
 ```bash
-thv run --volume /path/to/host/directory:/projects filesystem
+thv run --name filesystem --transport stdio --permission-profile none \
+  --volume <HOST_DIRECTORY>:/projects \
+  npx://@modelcontextprotocol/server-filesystem@2.0.1 -- /projects
 ```
-
-:::note
-
-By default, the server expects files to be located in `/projects`. If you use a
-different container path, you must update the command arguments to replace
-`/projects` with your custom path.
-
-:::
 
 Mount multiple files or directories by repeating the `--volume` flag. This
 example mounts a directory under `/projects` and a file under `/data`, and
 updates the command arguments accordingly:
 
 ```bash
-thv run \
-  --volume /path/to/host/directory1:/projects/dir1 \
-  --volume /path/to/host/file.txt:/data/file.txt:ro \
-  filesystem -- /projects /data
+thv run --name filesystem --transport stdio --permission-profile none \
+  --volume <HOST_DIRECTORY>:/projects/dir1 \
+  --volume <HOST_FILE>:/data/file.txt:ro \
+  npx://@modelcontextprotocol/server-filesystem@2.0.1 -- /projects /data
 ```
 
 :::tip
 
-The server does not require any network access, and ToolHive
-[isolates its network access](../guides-cli/network-isolation.mdx) by default
-using the registry's profile, which already blocks all outbound traffic. No
-extra flags are needed, but you can pass `--permission-profile none` explicitly
-if you want to make that restriction obvious in your command.
+The `--permission-profile none` flag blocks outbound network access with
+ToolHive's [network isolation](../guides-cli/network-isolation.mdx), which is
+enabled by default. The `--volume` flags grant access to the specified host
+paths. Passing paths after `--` tells the Filesystem MCP server which container
+directories it can access.
 
 :::
 
 </TabItem>
 <TabItem value='k8s' label='Kubernetes'>
 
-Create a Kubernetes manifest to deploy the Filesystem MCP server with a
-[persistent volume](../guides-k8s/run-mcp-k8s.mdx#mount-a-volume).
+Deploy the Filesystem MCP server with an existing persistent volume claim (PVC).
+First, [build a container image](../guides-cli/build-containers.mdx) from the
+npm package and push it to a registry your cluster can pull from. Replace
+`<REGISTRY_NAMESPACE>` with your GitHub Container Registry namespace:
 
-Update the `podTemplateSpec` section to include your specific volume claim and
-mount path:
+```bash
+thv build --tag "ghcr.io/<REGISTRY_NAMESPACE>/filesystem:2.0.1" \
+  npx://@modelcontextprotocol/server-filesystem@2.0.1
+docker push "ghcr.io/<REGISTRY_NAMESPACE>/filesystem:2.0.1"
+```
+
+Build on a machine with the same CPU architecture as your cluster's nodes. For a
+private image, configure
+[image pull credentials](../guides-k8s/deploy-operator.mdx#pull-workload-images-from-a-private-registry).
+
+Create `filesystem.yaml` with your image reference and PVC name. The PVC must
+exist in the `toolhive-system` namespace. This example mounts its contents at
+`/projects` and grants the server read-only access:
 
 ```yaml {14-17,20-23} title="filesystem.yaml"
 apiVersion: toolhive.stacklok.dev/v1beta1
@@ -119,33 +120,29 @@ metadata:
   name: filesystem
   namespace: toolhive-system
 spec:
-  image: mcp/filesystem:1.0.2
+  image: ghcr.io/<REGISTRY_NAMESPACE>/filesystem:2.0.1
   transport: stdio
   proxyPort: 8080
   args:
-    - '/projects' # Update if you use a different mountPath below
+    - /projects
   podTemplateSpec:
     spec:
       volumes:
-        - name: my-mcp-data
+        - name: filesystem-data
           persistentVolumeClaim:
-            claimName: my-mcp-data-claim
+            claimName: <PVC_NAME>
       containers:
         - name: mcp
           volumeMounts:
-            - mountPath: /projects/my-mcp-data
-              name: my-mcp-data
+            - mountPath: /projects
+              name: filesystem-data
               readOnly: true
 ```
 
-:::note
+Keep `args` aligned with `mountPath` if you change the container directory. Set
+`readOnly: false` to allow the server to write files to the volume.
 
-If you change the mount path from `/projects`, you must also update the `args`
-section to include the path.
-
-:::
-
-Apply the manifest to your Kubernetes cluster:
+Apply the manifest:
 
 ```bash
 kubectl apply -f filesystem.yaml
@@ -169,5 +166,12 @@ server:
   minimize resource usage and improve performance.
 - Use read-only mounts for directories or files that do not need to be modified
   by the AI agent to prevent accidental changes.
-- Network isolation blocks the server's outbound network access by default,
-  since the filesystem MCP server does not require any network connectivity.
+- Enable network isolation in the UI or use `--permission-profile none` in the
+  CLI to block outbound network access.
+
+## Next steps
+
+- [Connect an AI client](../guides-cli/client-configuration.mdx) and try the
+  sample prompts. Writing files requires a read-write mount.
+- [Hide sensitive files](../guides-cli/thvignore.mdx) within mounted
+  directories.
