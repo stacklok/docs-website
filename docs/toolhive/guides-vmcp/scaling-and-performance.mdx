@@ -154,6 +154,13 @@ rebuilds the session from stored metadata and reconnects to backends, so clients
 do not need to reinitialize. Without Redis, an evicted session is lost and the
 client must reinitialize.
 
+When a client explicitly terminates a session (an HTTP `DELETE` on the session),
+the vMCP pod that handles the request removes the session from its cache and
+closes its backend connections immediately. Sessions that end without a `DELETE`
+stay in the cache until their TTL expires and a later eviction removes them, and
+copies cached on other replicas are released the next time those replicas look
+up the session.
+
 To serve more than 1,000 concurrent sessions per replica, add vMCP replicas and
 configure Redis session storage. Total capacity scales as `replicas × 1,000`.
 
@@ -180,6 +187,25 @@ Estimate the requirement as `concurrent_sessions × backends_per_session`, plus
 overhead for incoming client connections. The default Linux soft `nofile` limit
 is typically 1,024; raise it in the container spec or at the node level if you
 expect to serve hundreds of sessions aggregating multiple backends.
+
+### Resource URI and template limits
+
+vMCP bounds the resource URIs and URI templates it matches so that a single
+client or backend can't exhaust a pod's CPU or memory:
+
+- **Client resource URIs:** a URI longer than 2,048 bytes in a `resources/read`,
+  `resources/subscribe`, or `completion/complete` request isn't matched against
+  resource templates. A URI that exactly equals a backend's concrete resource
+  URI or template string still resolves at any length.
+- **Backend resource templates:** vMCP drops a template that is longer than
+  1,024 bytes, has more than 8 variables, or whose prefix modifiers (such as
+  `{id:10}`) total more than 256 characters. The backend's other templates stay
+  available.
+- **Backend resource URIs:** vMCP drops a listed resource whose URI can't be
+  parsed, and keeps the backend's other resources.
+
+vMCP logs a warning for each URI or template it skips. If a backend's resources
+are missing from the aggregated list, check the vMCP pod logs.
 
 ### Redis sizing
 

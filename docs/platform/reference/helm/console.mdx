@@ -11,8 +11,8 @@ Configure the console chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `toolhive-cloud-ui`. Chart version: `0.22.0`. Generated from the platform
-source at `e71926418e98c7598815d0abf07039d3c1646f21`.
+Chart: `toolhive-cloud-ui`. Chart version: `0.25.0`. Generated from the platform
+source at `v0.25.0`.
 
 ## Values
 
@@ -42,13 +42,9 @@ replicaCount: 2
 
 </details>
 
-High availability. Bundles replica count, a PodDisruptionBudget, and pod
-anti-affinity together so they can't drift apart — specifically, so a PDB can
-never be enabled without enough replicas to back it. A PDB with minAvailable
-&#62;= the actual replica count blocks every voluntary disruption forever (node
-drains, cluster upgrades, cluster-autoscaler scale-down all wait on a budget
-Kubernetes can never satisfy while evicting a pod). The chart refuses to render
-if ha.enabled is true with fewer than 2 replicas.
+High availability: replica count, PodDisruptionBudget and anti-affinity
+together. The render fails if ha.enabled is true with fewer than 2 replicas,
+since a PDB without spare replicas blocks every node drain.
 
 ### `ha.enabled`
 
@@ -56,9 +52,8 @@ if ha.enabled is true with fewer than 2 replicas.
 
 **Default:** `false`
 
-Enable HA mode: replicaCount above is ignored in favor of ha.replicaCount, a
-PodDisruptionBudget is created, and pod anti-affinity spreads replicas across
-nodes and zones.
+Enable HA mode: uses ha.replicaCount, creates a PodDisruptionBudget, and spreads
+replicas across nodes and zones.
 
 ### `ha.replicaCount`
 
@@ -82,11 +77,8 @@ Minimum number of pods that must remain available.
 
 **Default:** `"soft"`
 
-Pod anti-affinity preset spreading replicas across nodes: "soft" (preferred —
-schedules even if it can't spread) or "hard" (required — refuses to schedule a
-replica on a node that already has one). Spreading across zones is always
-preferred, never required, so a single-zone cluster still schedules every
-replica.
+Node anti-affinity: "soft" (preferred) or "hard" (required). Zone spreading is
+always preferred only.
 
 ### `image.repository`
 
@@ -101,13 +93,7 @@ image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-ent
 
 </details>
 
-Image repository. Enterprise build produced by `_release-toolhive-cloud-ui.yml`
-(Next.js multi-stage build over the source in enterprise/toolhive-cloud-ui/),
-then promoted to the platform tag by release.yml. Served to customers via
-Replicated's image proxy. Customers running their own mirror override this in
-their values file. `task version-bump` rewrites the trailing `:<tag>` via a
-regex anchored on `ghcr.io/stacklok/stacklok-enterprise/<name>:` — that anchor
-still matches inside this longer proxy URL.
+Image repository. Override to pull from your own mirror.
 
 ### `image.tag`
 
@@ -115,8 +101,7 @@ still matches inside this longer proxy URL.
 
 **Default:** `""`
 
-Image tag (defaults to .Chart.AppVersion when empty, which tracks /VERSION via
-`task version-bump`).
+Image tag (defaults to .Chart.AppVersion when empty).
 
 ### `image.pullPolicy`
 
@@ -132,13 +117,8 @@ Pull from registry if available, use local image if not
 
 **Default:** `[]`
 
-Extra image pull Secrets to apply to the cloud-ui pod. On Replicated installs,
-the SDK injects `global.replicated.dockerconfigjson` and creates an
-`enterprise-pull-secret` Secret in the release namespace; the
-`toolhive-cloud-ui.imagePullSecrets` helper auto-detects that injection and
-merges the SDK secret in front of anything listed here, so customers do NOT need
-to add `enterprise-pull-secret` themselves. Use this list only for additional,
-customer-supplied registries.
+Extra image pull Secrets for the cloud-ui pod. On Replicated installs the SDK
+pull secret is added automatically; list only additional registries here.
 
 ### `nameOverride`
 
@@ -252,11 +232,8 @@ Security context for the container
 
 **Default:** `{"nextCache":{"sizeLimit":""},"tmp":{"sizeLimit":""}}`
 
-emptyDir volumes mounted at /tmp and /app/.next/cache so the container keeps
-working under the read-only root filesystem above. Next.js's standalone server
-writes to both at runtime (general tmp usage, and the built-in image optimizer's
-disk cache for next/image). sizeLimit is a Kubernetes resource-quantity string;
-empty means unbounded.
+Size limits for the writable emptyDir volumes at /tmp and /app/.next/cache,
+which Next.js needs under the read-only root filesystem. Empty means unbounded.
 
 ### `service.type`
 
@@ -443,12 +420,8 @@ Affinity rules for pod assignment
 
 **Default:** `{"allowExternalEgress":true,"egress":[],"enabled":false}`
 
-NetworkPolicy. Off by default. Turning this on matters most for clusters running
-a default-deny policy engine (Kyverno's add-network-policy, OPA Gatekeeper):
-those engines auto-attach a deny-all NetworkPolicy to any pod that has none of
-its own, so a chart that ships zero NetworkPolicy silently loses whatever
-traffic that engine decides to block. Shipping our own explicit policy — even a
-permissive one — means the cluster no longer treats this pod as unmanaged.
+NetworkPolicy, off by default. Enable it on clusters whose policy engine
+attaches a deny-all policy to pods that have none.
 
 ### `networkPolicy.allowExternalEgress`
 
@@ -456,13 +429,8 @@ permissive one — means the cluster no longer treats this pod as unmanaged.
 
 **Default:** `true`
 
-Allow all egress traffic. Recommended default: every outbound destination this
-app calls is a customer-configured URL (apiBaseUrl,
-global.stacklok.primaryIdp.issuer, enterpriseManagerUrl, gatewayApiUrl, redisUrl
-/ redisUrlExistingSecret) that can point in-cluster or external — this chart has
-no way to know your actual values at template time, so a fixed allow-list here
-would be a guess. Set to false to lock egress down to exactly your deployment's
-destinations via the egress list below.
+Allow all egress traffic. Every destination is a URL you configure, so set false
+and list them in `egress` to lock egress down.
 
 ### `networkPolicy.egress`
 
@@ -470,10 +438,9 @@ destinations via the egress list below.
 
 **Default:** `[]`
 
-Additional egress rules (Kubernetes NetworkPolicyEgressRule shape), applied when
-allowExternalEgress is false. Must cover DNS (UDP/TCP 53) plus every destination
-you've actually configured above — omitting one doesn't fail loudly, the app
-just can't reach it.
+Egress rules (NetworkPolicyEgressRule shape) applied when allowExternalEgress is
+false. Must cover DNS and every configured destination; a missing one fails
+silently.
 
 ### `apiBaseUrl`
 
@@ -489,15 +456,9 @@ Base URL of the Registry Server API. Required.
 
 **Default:** `{"additionalProviders":[]}`
 
-OpenID Connect (OIDC) and OAuth configuration. The primary provider's issuer,
-client credentials, and scopes come from `global.stacklok.primaryIdp`, shared
-with Enterprise Manager and Connector Gateway. For an IdP served by a private
-certificate authority, set `global.stacklok.primaryIdp.caBundleRef` with exactly
-one of `secretRef` or `configMapRef`, plus `key` (default `ca.crt`). The chart
-mounts that certificate bundle and sets `NODE_EXTRA_CA_CERTS`, extending Node's
-default trusted roots. Restart the pods after changing the bundle's contents.
-Changing the reference name or key triggers a rollout automatically. The console
-permits private IdP addresses.
+OIDC configuration. The primary provider comes from
+`global.stacklok.primaryIdp`, including its private-CA `caBundleRef`. Restart
+the pods after changing the CA bundle's contents.
 
 ### `oidc.additionalProviders`
 
@@ -505,8 +466,7 @@ permits private IdP addresses.
 
 **Default:** `[]`
 
-Additional OIDC providers (opt-in; empty = single-provider mode). Each entry is
-rendered as OIDC_ADDITIONAL_PROVIDERS (JSON array) in the pod.
+Additional OIDC providers. Empty means single-provider mode.
 
 ### `betterAuth`
 
@@ -533,8 +493,8 @@ Generate a value with `openssl rand -base64 32`.
 
 **Default:** `""`
 
-Name of an existing Secret holding the token encryption secret. Takes precedence
-over secret above (rendered via secretKeyRef instead of a plaintext env var).
+Existing Secret holding the token encryption secret. Takes precedence over
+`secret`.
 
 ### `betterAuth.existingSecretKey`
 
@@ -550,8 +510,8 @@ Key within existingSecret holding the token encryption secret.
 
 **Default:** `""`
 
-Public URL of the console, used for authentication callbacks. Required. Must be
-externally reachable since the browser uses it during sign-in.
+Public, browser-reachable URL of the console, used for authentication callbacks.
+Required.
 
 ### `enterpriseManagerUrl`
 
@@ -559,10 +519,9 @@ externally reachable since the browser uses it during sign-in.
 
 **Default:** `""`
 
-Base URL of Enterprise Manager, required for the administration experience. The
-console uses it for feature flags, configuration, and directory operations. When
-empty, administration pages fail with "No enterprise-manager API URL
-configured." There is no fallback URL.
+Base URL of Enterprise Manager. Required for the administration pages, which
+fail without it. Empty inherits global.stacklok.enterpriseManager.url. Once set,
+only an active Directory profile may sign in.
 
 ### `gatewayApiUrl`
 
@@ -570,14 +529,11 @@ configured." There is no fallback URL.
 
 **Default:** `""`
 
-LLM Gateway management API URL — server-to-server endpoint used by the cloud-UI
-for budget management, model catalog, etc. (calls /v1/budgets, /v1/models). NOT
-shown to end users. When set, takes effect via the GATEWAY_API_URL env var. May
-also be served by the config server's `gateway.api_url` directive; when both are
-set, the config-server value wins. Required (here or via the config server) for
-the "My Usage" page. NOTE: do not also set any of the vars below via .Values.env
-— the typed blocks emit before the env[] passthrough and produce a duplicate env
-entry.
+Legacy AI Gateway management API URL, server-to-server (models, liveness). Read
+only when AI Gateway v2 isn't installed (`global.stacklok.aiGatewayV2.enabled`);
+then required, here or via the config server's `gateway.api_url` (which wins),
+for the gateway pages. Do not also set GATEWAY\_\* vars in `env`: that
+duplicates the entry.
 
 ### `gatewayProxyUrl`
 
@@ -585,12 +541,11 @@ entry.
 
 **Default:** `""`
 
-User-facing LLM Gateway proxy URL — the public proxy endpoint baked into the
-`thv llm setup --gateway-url <url>` command and shown in the "My Usage"
-connection banner. Typically distinct from gatewayApiUrl above. When set, takes
-effect via the GATEWAY_PROXY_URL env var. May also be served by the config
-server's `gateway.proxy_url` directive; when both are set, the config-server
-value wins.
+Public AI Gateway proxy URL shown in the CLI setup command and the "My Usage"
+banner. With AI Gateway v2 installed it is also the console's gateway backend,
+so it must reach AI Gateway v2. Empty inherits `global.stacklok.aiGatewayV2.url`
+while AI Gateway v2 is installed. The config server's `gateway.proxy_url` wins
+over both when set.
 
 ### `connectorGatewayUrl`
 
@@ -598,34 +553,10 @@ value wins.
 
 **Default:** `""`
 
-Base URL of the per-user Connector Gateway control-plane API (the
-`/v1/users/me/gateway/...` endpoints the "Connectors" pages call). When set,
-takes effect via the CONNECTOR_GATEWAY_API_URL env var; the nav entry +
-`/tools/connectors*`/`/neo/setup*` routes are hidden while it is unset. Setting
-this alone is no longer sufficient to turn the feature on: those surfaces also
-require the connector-gateway install toggle
-(global.stacklok.connectorGateway.enabled at Helm render time, mirrored into the
-mounted AppConfig) to resolve true.
-
-Address the CONTROL-PLANE Service, not the data-plane one: connector-gateway
-serves this API on its own port behind `<fullname>-control-plane`
-(controlPlane.port, default 8090) — e.g.
-http://&#60;release&#62;-connector-gateway-control-plane.&#60;namespace&#62;:8090.
-The data-plane Service (`<fullname>`, port 8443) serves /gw/mcp and will not
-answer these routes.
-
-Unlike its sibling URL values above, this one is `tpl`-EVALUATED before it
-reaches the env var (deployment.yaml). That is what lets the umbrella chart hand
-this subchart a template string deriving the address from
-`global.stacklok.connectorGateway.enabled` — the component's own install toggle
-— rather than requiring an operator to set the same fact twice and get it
-silently wrong in either direction. A literal URL has no template actions and
-passes through unchanged, so nothing about setting this by hand changes.
-
-Standalone default stays empty: with no umbrella above it, no safe cross-chart
-default exists (Service name/namespace and control-plane port are
-deployment-specific), and an empty value keeps the feature hidden rather than
-pointing the UI at a Service that may not exist.
+Connector Gateway control-plane API URL, e.g.
+http://&#60;release&#62;-connector-gateway-control-plane.&#60;namespace&#62;:8090
+(not the data-plane Service). The Connectors pages also need
+global.stacklok.connectorGateway.enabled. The value is `tpl`-evaluated.
 
 ### `thvCliOidcIssuerUrl`
 
@@ -669,17 +600,10 @@ redirect URI registered with your IdP; empty uses the CLI default of 8666.
 
 **Default:** `""`
 
-Optional Redis connection URL for server-side caching (currently used to cache
-SKILL.md previews pulled from OCI artifacts). External Redis only — the chart
-does not deploy a Redis instance. The SKILL.md preview is Redis-gated: when
-unset (or when Redis is unreachable) the cloud-ui hides the preview entirely
-rather than re-pulling on every request. Example:
-"redis://:password@redis.example.com:6379/0"
-
-The URL embeds the Redis password. Prefer redisUrlExistingSecret below, which
-keeps the whole connection string (and its embedded credential) out of the
-rendered pod spec / Helm release object; redisUrl is kept for backward
-compatibility with existing installs that already set it directly.
+External Redis URL for server-side caching, e.g.
+"redis://:password@redis.example.com:6379/0". Without it the SKILL.md preview is
+hidden. The URL embeds the password in the pod spec; prefer
+redisUrlExistingSecret.
 
 ### `redisUrlExistingSecret`
 
@@ -687,9 +611,7 @@ compatibility with existing installs that already set it directly.
 
 **Default:** `""`
 
-Name of an existing Secret holding the full Redis connection URL. Takes
-precedence over redisUrl above (rendered via secretKeyRef instead of a plaintext
-env var).
+Existing Secret holding the full Redis URL. Takes precedence over redisUrl.
 
 ### `redisUrlExistingSecretKey`
 
@@ -706,11 +628,8 @@ Key within redisUrlExistingSecret holding the connection URL.
 **Default:**
 `{"config":{"enabled":false,"json":{}},"faviconUrl":"","logoUrl":"","name":""}`
 
-Branding. Prefer the file-based `config` block below — it carries the app name,
-logo, favicon, and design tokens together as one payload. The legacy
-`name`/`logoUrl`/`faviconUrl` fields are also supported (they wire directly to
-env vars and skip the ConfigMap mount), useful for quick one-off overrides; when
-both are set, values from `config.json` win.
+Branding. Prefer the file-based `config` block; `config.json` values win over
+`name`/`logoUrl`/`faviconUrl`.
 
 ### `branding.config`
 
@@ -718,9 +637,8 @@ both are set, values from `config.json` win.
 
 **Default:** `{"enabled":false,"json":{}}`
 
-File-based branding configuration mounted at `/etc/branding/config.json` and
-read by the console on each request. Set `config.json` to a branding object with
-`app_name`, `logo_url`, `favicon_url`, and `design_tokens`.
+Branding JSON mounted at `/etc/branding/config.json`: `app_name`, `logo_url`,
+`favicon_url` and `design_tokens`.
 
 ### `branding.name`
 
@@ -728,9 +646,7 @@ read by the console on each request. Set `config.json` to a branding object with
 
 **Default:** `""`
 
-Simple-override path (no ConfigMap required). Wires to BRAND_NAME,
-BRAND_LOGO_URL, FAVICON_URL env vars. Overridden by `config.json` when both are
-present.
+Simple overrides without a ConfigMap. Overridden by `config.json`.
 
 ### `env`
 
@@ -738,8 +654,7 @@ present.
 
 **Default:** `[]`
 
-Additional env vars (escape hatch for experimental/uncommitted config). Prefer
-structured keys above when available.
+Additional env vars. Prefer the structured keys above.
 
 ### `envFrom`
 

@@ -1,0 +1,302 @@
+---
+title: Migrate from the legacy AI Gateway
+sidebar_label: Migrate from the legacy gateway
+description:
+  Move model traffic from the legacy AI Gateway to the current AI Gateway, with
+  a side-by-side window, a configuration map, and a cutover checklist.
+---
+
+The legacy AI Gateway is configured through its operator and the `AIGateway`
+resource. The AI Gateway is configured through platform chart values under the
+`ai-gateway-v2` key. Both gateways use the same Enterprise Manager for the
+directory, budgets, pricing, virtual API keys, and model access, so users,
+groups, budgets, and keys carry over unchanged and apply the same way on both.
+What you move is the gateway configuration and the clients' base URLs.
+
+## Run both side by side
+
+A platform normally runs one gateway, and the chart refuses to render with both
+enabled. For a migration window, enable both and acknowledge it:
+
+```yaml title="values.yaml"
+global:
+  stacklok:
+    aiGateway:
+      enabled: true
+    aiGatewayV2:
+      enabled: true
+    acknowledgeBothDataPlanes: true
+```
+
+Run both only for the migration window. While both run, you're responsible for
+five things the chart can't check:
+
+- **Distinct hostnames.** Give the AI Gateway its own hostname through
+  `global.stacklok.aiGatewayV2.url`, on a listener the `AIGateway` doesn't
+  serve. If the two routes overlap, nothing decides which gateway serves a
+  request.
+- **An Envoy Gateway that outlives the legacy gateway.** The AI Gateway has no
+  ingress of its own and attaches its `httpRoute` to a Gateway. Use a Gateway
+  served by your own Envoy Gateway installation, with a GatewayClass other than
+  the `AIGateway`'s `spec.gateway.gatewayClassName`. The cutover deletes that
+  GatewayClass and uninstalls the Envoy Gateway controller bundled with the
+  legacy operator, so a route attached there stops serving traffic.
+- **Matching screening configuration.** Both gateways run the same PII scanning
+  and Bedrock Guardrails code with the same defaults, so equivalent `scanning`
+  and `guardrails` values screen requests the same way. The AI Gateway screens
+  only when `scanning.enabled` and `guardrails.enabled` are on, scans requests
+  only, and has no `AIPolicy` authorization. Mirror your screening settings on
+  both.
+- **Two route tables.** Each gateway keeps its own model-to-provider mapping. A
+  model added to one is missing from the other until you add it there too.
+- **Two sets of workloads.** Both gateways consume cluster resources while
+  installed, including separate Presidio pools when both scan for PII. Both
+  report the same `stacklok_ai_gateway_presidio_*` metrics, so scope dashboards,
+  alerts, and autoscalers by the pod label `app.kubernetes.io/name`.
+
+Shared state behaves as one platform:
+
+- Spend from both gateways charges the same budgets.
+- A virtual API key works on both.
+- Model sets restrict callers on each gateway that enforces them. The legacy
+  gateway enforces them when its model-access webhook is enabled. The AI Gateway
+  enforces them when `modelAccess.enabled` is on, which is off by default. See
+  [Turn on model access](./control-model-access.mdx#turn-on-model-access).
+- A user's identity provider token works on both when `auth.issuers` lists the
+  same issuer and audience as the `AIGateway`'s `spec.auth.oidc`, with a
+  `bindingClaim` that matches the claim the directory binds that issuer on.
+- A PII result cache can share one Redis or Valkey. Each release keeps its
+  entries under its own keys.
+- **Disconnect AI Gateway** in **Platform Settings** stops traffic on both.
+
+Set `acknowledgeBothDataPlanes` in your own values only, and remove it in the
+same change that disables the gateway you're retiring.
+
+## Map your configuration
+
+The `AIGateway` fields map to `ai-gateway-v2` values as follows. Settings that
+size the legacy gateway's own components, such as `spec.gateway.proxy` and each
+component's `replicas` and `resources`, have no direct equivalent. Size the AI
+Gateway with its own `replicaCount` and `resources` values.
+
+| `AIGateway` field                                                                                      | AI Gateway value                                                                                                      |
+| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `spec.providers[]`                                                                                     | `providers[]` with `kind`, `baseUrl`, `models`, `credentialSecretRef`, `region`, `project`, `awsProfile`              |
+| `schema: OpenAI`                                                                                       | `kind: openai`                                                                                                        |
+| `schema: OpenAI` with the OpenRouter `pathPrefix`                                                      | `kind: openrouter`                                                                                                    |
+| `schema: Anthropic`                                                                                    | `kind: anthropic`                                                                                                     |
+| `schema: AWSAnthropic`                                                                                 | `kind: bedrock-anthropic`                                                                                             |
+| `schema: GCPVertexAI`                                                                                  | `kind: vertex`, for Gemini models only                                                                                |
+| `schema: GeminiAIStudio`, `schema: GoogleGenerativeLanguage`                                           | `kind: gemini-aistudio`                                                                                               |
+| `schema: AWSBedrock`, `schema: AzureOpenAI`                                                            | Not supported                                                                                                         |
+| `spec.routes[].match.model`                                                                            | The model's entry in its provider's `providers[].models`                                                              |
+| `spec.routes[].inputSchema`                                                                            | Not supported. Clients call each model on its provider's API, see [Behavior differences](#behavior-differences)       |
+| `spec.routes[].backendRefs[].weight` and `.priority`                                                   | Not supported                                                                                                         |
+| `spec.resilience.retry`                                                                                | Not configurable                                                                                                      |
+| `spec.resilience.passiveHealthCheck`, `circuitBreaker`                                                 | Not supported                                                                                                         |
+| `spec.resilience.upstreamConnection`, `spec.gateway.bufferLimit`, and `spec.gateway.connectionLimit`   | Not configurable                                                                                                      |
+| `spec.gateway.streamTimeouts.maxStreamDuration`                                                        | `lifecycle.maxStreamDuration`                                                                                         |
+| `spec.gateway.timeouts`, `spec.gateway.streamTimeouts.streamIdleTimeout`, and `spec.routes[].timeouts` | Not configurable                                                                                                      |
+| `spec.gateway.listeners` and `tls`                                                                     | `httpRoute.*` on your existing Gateway                                                                                |
+| `spec.auth.oidc`                                                                                       | `auth.issuers`, with a `bindingClaim` for each issuer                                                                 |
+| `spec.auth.oidc.claimToHeaders`                                                                        | `telemetry.claimLabels`, for token usage labels                                                                       |
+| `spec.auth.virtualAPIKeys`                                                                             | `directory.endpoint`, `directory.tokenProjection.enabled`, and `directory.groupsResolutionIssuer`                     |
+| `spec.auth.authz`, `spec.auth.workloadIssuers`, `spec.policies`, and `AIPolicy`                        | Not supported                                                                                                         |
+| `spec.gateway.stripHeaders`                                                                            | Not supported                                                                                                         |
+| `spec.processor` and `nerProvider`                                                                     | `scanning.*`                                                                                                          |
+| `spec.processor.requestAction`                                                                         | `scanning.requestAction` and `scanning.entityActions`, with lowercase `block`, `redact`, or `log-only`                |
+| `spec.processor.responseAction`                                                                        | Not supported                                                                                                         |
+| `spec.processor.placeholder`                                                                           | `scanning.placeholder`                                                                                                |
+| `spec.processor.nerProvider.failureAction`                                                             | `scanning.ner.failureAction`                                                                                          |
+| `spec.processor.extractionFailureAction`                                                               | `scanning.extractionFailureAction`, with lowercase `block` or `continue`                                              |
+| `spec.processor.mutationFailureAction`                                                                 | `scanning.mutationFailureAction`, with lowercase `block` or `continue`                                                |
+| `spec.processor.nerProvider.resultCache`                                                               | `scanning.resultCache`                                                                                                |
+| `spec.guardrails`                                                                                      | `guardrails.*`                                                                                                        |
+| `spec.audit.enabled`                                                                                   | `audit.enabled`                                                                                                       |
+| `spec.monitoring.otelCollector`                                                                        | `telemetry.otlp.*`, plus `telemetry.tracing.enabled` for spans                                                        |
+| `spec.monitoring.tokenMetrics.prometheusAddr`                                                          | `telemetry.prometheus.enabled` and `telemetry.metrics.port`                                                           |
+| `spec.monitoring.tokenMetrics.labels`                                                                  | `telemetry.headerLabels` for headers the caller sends, or `telemetry.claimLabels` for headers set by `claimToHeaders` |
+| `spec.monitoring.spanAttributes`                                                                       | `telemetry.spanAttributes`                                                                                            |
+| `spec.monitoring.groupLabelAttributes`                                                                 | `telemetry.groupLabelAttributes`                                                                                      |
+| `spec.monitoring.grafanaDashboards`                                                                    | Not supported                                                                                                         |
+| `spec.networkPolicies`                                                                                 | `networkPolicy.*`                                                                                                     |
+| `spec.journaling`                                                                                      | Not supported                                                                                                         |
+| `spec.webhooks`                                                                                        | Not supported                                                                                                         |
+| Operator `upstream.budgetsWebhook.*` values                                                            | `budgets.endpoint` and `budgets.tokenProjection`                                                                      |
+| Operator `upstream.modelAccessWebhook.*` values                                                        | `modelAccess.enabled`                                                                                                 |
+
+The legacy gateway turns on group label lookup with the platform value
+`global.stacklok.directoryGrpcEndpoint`. The AI Gateway uses
+`directory.endpoint` with `directory.tokenProjection.enabled` and
+`directory.groupsResolutionIssuer`, and resolves only the labels you list in
+`directory.groupLabels`. See
+[Attribute traffic to organizational groups](telemetry.mdx#attribute-traffic-to-organizational-groups).
+
+Token usage is recorded under a different metric. The legacy gateway's
+`aigw_token_usage_total` corresponds to `stacklok_ai_gateway_token_usage_total`,
+which adds `provider`, `implementation`, and `cache_type` labels, so update
+dashboards and billing queries before you move traffic. The counts also differ.
+Input includes cache reads and writes, which raises input for Anthropic and
+Bedrock models that use prompt caching, so price `cache_read` and
+`cache_creation` at the provider's cache rates. Gemini output includes thinking
+tokens. For a virtual API key, a `department` claim label comes from the key
+owner's directory group, so add `department` to `directory.groupLabels`. See
+[Record token usage](telemetry.mdx#record-token-usage).
+
+Provider credentials stay in Kubernetes Secrets. Reference each one with
+`providers[].credentialSecretRef`, which names a Secret and the key that holds
+the credential. The chart refuses inline credentials. You can reference the
+Secrets your `AIGateway` uses today when the key holds the credential in the
+format its provider kind expects. On Amazon EKS, Bedrock and Bedrock Guardrails
+access needs a Pod Identity association for the AI Gateway's own
+ServiceAccounts. See [Connect model providers](./providers-and-models.mdx).
+
+The legacy gateway's ServiceAccounts don't carry over to the Enterprise Manager
+allowlists. The platform chart adds the AI Gateway's ServiceAccount by default,
+but if you set `enterprise-manager.grpc.callerAuth.saSubjectAllowlist` or
+`httpSaSubjectAllowlist` yourself, your list replaces the default. Add
+`system:serviceaccount:<NAMESPACE>:<RELEASE_NAME>-ai-gateway-v2` to both, or the
+AI Gateway refuses every request. When the release name already contains
+`ai-gateway-v2`, the ServiceAccount is named after the release alone.
+
+## What the AI Gateway does not support
+
+Check your `AIGateway` for these features before you migrate. None of them has
+an AI Gateway equivalent:
+
+- Weighted or priority backends, and failover between providers. Each model is
+  served by exactly one provider.
+- Configurable retries, passive health checks, and circuit breaking. Upstream
+  retries use fixed, built-in bounds.
+- The AWS Bedrock Converse API and Azure OpenAI providers, and non-Gemini models
+  on Google Vertex AI.
+- PII scanning of responses. Scanning covers requests. The legacy gateway scans
+  responses whenever `spec.processor` is configured, applying `requestAction`
+  when `responseAction` is unset.
+- Interaction journaling.
+- The legacy gateway's [management API](./legacy/api-reference.mdx) (`/v1/info`,
+  `/v1/me`, and the MCP server catalog). The AI Gateway serves `GET /v1/models`
+  on its inference listener.
+- `AIPolicy` authorization, role-based authorization rules, and workload issuers
+  (`spec.auth.workloadIssuers`).
+- Custom webhooks and an operator-defined header strip list.
+- Hot reload. Configuration and credential changes apply through a rolling
+  restart.
+
+## Behavior differences
+
+- **Each client uses its own API.** The AI Gateway forwards requests in the
+  format the client sent and doesn't translate between APIs. OpenAI and
+  OpenRouter models are served on `/v1/chat/completions` and `/v1/responses`.
+  Anthropic and Bedrock models are served on `/v1/messages` and
+  `/anthropic/v1/messages`. Gemini and Vertex AI models are served on `/v1beta`.
+  The legacy gateway accepts OpenAI-format requests for every model by default
+  (`inputSchema: OpenAI`) and translates them for the provider. A client that
+  calls an Anthropic, Bedrock, Gemini, or Vertex AI model through
+  `/v1/chat/completions` today moves to that provider's API. See
+  [Client endpoints](../platform/enterprise-platform/configure-ai-gateway.mdx#client-endpoints).
+- **Unknown models are refused.** A model no provider lists returns `404`. When
+  no provider serves the Responses API or Gemini streaming at all, those
+  endpoints return `501`. Listing the same model twice for the same client API
+  fails startup.
+- **Gemini discovery.** Gemini models are listed only on `GET /v1beta/models`.
+
+See the [endpoints reference](./endpoints-reference.mdx) for the error response
+format.
+
+## Cut over
+
+1. **Install the AI Gateway alongside the legacy gateway** with
+   `acknowledgeBothDataPlanes`, its own `global.stacklok.aiGatewayV2.url`, and
+   the budget and directory connections from
+   [Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx).
+   The console reads its model list and gateway health from the AI Gateway as
+   soon as it's enabled, and shows the AI Gateway URL in its `thv llm setup`
+   command. Remove a `toolhive-cloud-ui.gatewayProxyUrl` that names the legacy
+   gateway in the same change, since a local value wins over the global one.
+2. **Recreate your providers and models** in `providers`, using the
+   [configuration map](#map-your-configuration). Turn on the same screening you
+   run today, and set `modelAccess.enabled` if you restrict callers with model
+   sets.
+3. **Verify with a test client.** Send requests through each client API your
+   users rely on, streaming and non-streaming, with an account that calls the
+   legacy gateway today.
+4. **Move clients.** Have users rerun the `thv llm setup` command the console
+   shows, which points at the AI Gateway. Point clients that call non-OpenAI
+   models through the OpenAI-compatible API at the provider's own API. Move one
+   group of users at a time.
+5. **Delete the `AIGateway` resource** once no traffic reaches it. On the legacy
+   gateway's Envoy proxy, confirm that `envoy_http_downstream_rq_total` stops
+   growing and `envoy_http_downstream_rq_active` reaches zero. Leave out the
+   `eg-ready-http` and `eg-stats-http` values of the
+   `envoy_http_conn_manager_prefix` label, which count readiness probes and
+   metric scrapes. The request count includes rejected requests that consume no
+   tokens, so it also catches clients that still call the legacy gateway and
+   fail. See [legacy gateway telemetry](./legacy/telemetry.mdx). Delete the
+   resource while the AI Gateway operator is still installed, so the operator
+   cleans up the resources it created, including the GatewayClass named in
+   `spec.gateway.gatewayClassName`. Wait until
+   `kubectl get aigateway --all-namespaces` lists no resources before you
+   continue. With a GitOps tool such as Flux or Argo CD, commit and reconcile
+   this step on its own, before you commit step 6.
+6. **Disable the legacy gateway.** Set
+   `global.stacklok.aiGateway.enabled: false`, remove
+   `global.stacklok.acknowledgeBothDataPlanes` in the same change, and upgrade.
+   In the same change, remove the values that only the legacy gateway reads:
+   - The legacy gateway's ServiceAccounts in
+     `enterprise-manager.grpc.callerAuth.saSubjectAllowlist`, such as
+     `<AIGATEWAY_NAME>-api-key-service` and `<AIGATEWAY_NAME>-main-processor`,
+     and the operator's `<RELEASE_NAME>-upstream` in `httpSaSubjectAllowlist`.
+     While the legacy gateway is enabled, the chart can refuse to render without
+     the `-api-key-service` subject, so remove it in this change.
+   - `global.stacklok.directoryGrpcEndpoint`. Keep it only when the AI Gateway
+     inherits it, which happens when `ai-gateway-v2.directory.endpoint` is empty
+     and `ai-gateway-v2.directory.insecure` is `true`.
+   - Overrides under `enterprise-ai-gateway-operator`, such as
+     `upstream.modelAccessWebhook`.
+   - `toolhive-cloud-ui.gatewayApiUrl`. The console reads it only when the AI
+     Gateway isn't installed.
+
+   Then delete the provider Secrets that only the `AIGateway` used and that no
+   `providers[].credentialSecretRef` names. Remove what you created for the
+   legacy gateway outside the chart too: its LoadBalancer Service and DNS
+   records, Pod Identity associations for its ServiceAccounts, any external
+   autoscaler for its Presidio pool, and dashboards and alerts on
+   `aigw_token_usage_total`. The `aigateways` and `aipolicies` CRDs stay
+   installed, and the upgrade removes the `aigateway.envoyproxy.io` CRDs.
+
+## Next steps
+
+- [Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx)
+  to set up the gateway.
+- [Connect model providers](./providers-and-models.mdx) to recreate your
+  providers.
+- [Control model access](./control-model-access.mdx) to restrict models per
+  group.
+
+## Troubleshooting
+
+<details>
+<summary>The `AIGateway` stays in Terminating</summary>
+
+The operator removes the `AIGateway`'s finalizer after it deletes the
+GatewayClass named in `spec.gateway.gatewayClassName` and the guardrails
+adapter's ClusterRoleBinding. If the legacy gateway was disabled before the
+operator finished, nothing removes the finalizer, and the legacy workloads keep
+running. Remove the finalizers yourself, then delete the leftover cluster-scoped
+resources:
+
+```bash
+kubectl patch aigateway <AIGATEWAY_NAME> -n <NAMESPACE> \
+  --type merge -p '{"metadata":{"finalizers":[]}}'
+kubectl patch gatewayclass <GATEWAY_CLASS_NAME> \
+  --type merge -p '{"metadata":{"finalizers":[]}}'
+kubectl delete gatewayclass <GATEWAY_CLASS_NAME> --ignore-not-found
+kubectl delete clusterrolebinding \
+  <NAMESPACE>-<AIGATEWAY_NAME>-guardrails-adapter-issuer-discovery \
+  --ignore-not-found
+```
+
+Kubernetes then deletes the workloads the `AIGateway` and the GatewayClass own.
+
+</details>

@@ -364,6 +364,9 @@ def build_message(content, pr_url, login_to_slack_id):
     a single consolidated line for contributors who were deliberately
     not sent a review request.
 
+    Reference-only syncs include the linked headline, scope bullets,
+    and an optional owner, without review duties or an owner warning.
+
     The owner line comes before the reviewer list because "who merges
     this" is the question the message exists to answer; a five-person
     reviewer list with no named owner is what produced multi-day stalls.
@@ -386,6 +389,16 @@ def build_message(content, pr_url, login_to_slack_id):
         # Tolerate a bare login string in place of the documented
         # object form rather than dropping the owner line entirely.
         owner_login = owner.strip()
+
+    if content.get("reference_only") is True:
+        if owner_login:
+            lines.extend([
+                "",
+                "*Owner:* {}".format(
+                    reviewer_tag(owner_login, login_to_slack_id)
+                ),
+            ])
+        return "\n".join(lines)
 
     # ----- reviewers -----
     # Rendered before the owner line is emitted, because the owner's

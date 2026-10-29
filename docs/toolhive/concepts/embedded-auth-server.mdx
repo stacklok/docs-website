@@ -203,9 +203,29 @@ the stored upstream access token has expired, ToolHive automatically refreshes
 it using the stored refresh token before forwarding the request. Your MCP
 session continues without re-authentication.
 
+ToolHive also refreshes when the stored upstream ID token has expired, even if
+the access token is still valid. This keeps the ID token current for providers
+like Microsoft Entra ID, which issue ID tokens that expire before the access
+token, and for features that use the upstream ID token, such as token exchange.
+If the provider omits a new ID token from the refresh response, ToolHive keeps
+the existing one and doesn't retry until the access token next expires. A failed
+ID token refresh doesn't interrupt the session, because the access token is
+still valid.
+
 If the refresh token is also expired or has been revoked by the upstream
 provider, ToolHive returns a `401` response, prompting re-authentication through
 the OAuth flow.
+
+ToolHive also checks the upstream credential when an MCP client redeems its own
+ToolHive refresh token. Before issuing new tokens, the embedded authorization
+server reads the session's stored upstream tokens and refreshes any that have
+expired. If the upstream credential is no longer usable (for example, the
+provider rejects the refresh with `invalid_grant`, or no upstream refresh token
+is stored), the token endpoint responds with HTTP `400` and `invalid_grant`.
+This sends the client through a full authorization instead of looping on
+refreshed tokens that still fail with `401`. When the outcome is uncertain, such
+as a network error, a `5xx` or `429` response from the provider, or a check that
+takes longer than 10 seconds, ToolHive issues the new tokens.
 
 ## Key characteristics
 
@@ -216,7 +236,8 @@ the OAuth flow.
   support CIMD (such as VS Code) use it automatically.
 - **Dynamic Client Registration (DCR):** Supports OAuth 2.0 DCR (RFC 7591) as a
   fallback for clients that do not support CIMD. MCP clients register
-  automatically with no manual configuration in ToolHive.
+  automatically with no manual configuration in ToolHive. A client cap and a
+  rate limit on `/oauth/register` bound how many clients can register.
 - **Direct upstream redirect:** Redirects clients directly to the upstream
   provider for authentication (for example, GitHub or Atlassian).
 - **Configurable signing keys:** JWTs are signed with keys you provide,

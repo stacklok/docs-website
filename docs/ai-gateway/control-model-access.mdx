@@ -1,0 +1,159 @@
+---
+title: Control model access
+sidebar_label: Model access
+description:
+  Limit which models each user or group can call through the AI Gateway with
+  model sets, then verify access with an allowed and a disallowed caller.
+---
+
+_Model access_ limits each caller to the models their directory grants cover.
+With model access on, the gateway refuses a request for a model the caller has
+no grant for with `403`, before it calls any provider. The model discovery
+endpoints list only the models the caller can use.
+
+This guide walks through restricting a set of models to one group: turn model
+access on, create a model set, grant it to the group, narrow the default that
+every user holds, and verify the result.
+
+## How access is decided
+
+Grants come from _model sets_, named collections of models that you manage on
+the **Models** page in the console's administration experience. A caller can use
+a model when any of these sets includes it:
+
+- The **All Users** set, which every active user holds without a grant.
+- A set granted to the user directly.
+- A set granted to a group the user belongs to, including through nested groups.
+
+Grants only add access. No grant takes access away, and there's no priority
+order between sets. To restrict a model to one group, remove it from **All
+Users** and grant it to that group through another set.
+
+**All Users** starts out granting every model, so turning model access on
+changes nothing until you narrow it.
+
+Access is separate from spend. A caller also needs an applicable budget; see
+[Budgets and pricing](./budgets-and-pricing.mdx). Grant changes apply on the
+caller's next request, including requests that use a virtual API key, without
+reissuing keys.
+
+## Turn on model access
+
+Turn model access on in the chart values:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  modelAccess:
+    enabled: true
+```
+
+Model access uses the same receiver, token, and certificate authority as budget
+enforcement, and the directory connection used for virtual API keys. The chart
+refuses to render when one of these is missing. See
+[Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx#bring-it-up-in-this-order)
+for the platform values it depends on.
+
+Model access fails closed for both requests and discovery calls. If the gateway
+can't get a decision for a request, it refuses the request. If it can't get a
+decision for a discovery call, it returns `503` with `model access unavailable`
+instead of the full model list.
+
+## Create a model set
+
+1. In the console, select **Administration** under **Experience** in the account
+   menu, then open **Models**.
+2. Select **Add Model Set**, enter a **Name**, such as `Frontier models`, and an
+   optional description, then create the set.
+3. On the set's **Models** tab, select **Edit models**.
+4. Select the models the set covers, then select **Save changes**. To include
+   every model the gateway serves, including models you add later, select **All
+   models** instead.
+
+## Grant the set to a group
+
+1. Open the set and select the **Groups** tab.
+2. Select **Grant to group**, search for the group, and grant the set.
+
+To grant the set to individual users, use **Grant to user** on the **Users**
+tab.
+
+## Narrow the All Users set
+
+Grant the restricted models to every group that needs them before you narrow
+**All Users**. Narrowing it removes access from every user without another grant
+in a single change.
+
+1. On the **Models** page, open **All Users**.
+2. Select **Edit models** and clear **All models**.
+3. Select the models every user should keep, or none, then select **Save
+   changes**.
+
+Once **All Users** lists individual models, a model you add to a provider later
+reaches no one until you add it to a set.
+
+## Verify access
+
+Use two test callers that each have an applicable budget: one in the group you
+granted the set to, and one outside it. Get an access token for each, and pick a
+model that's in the new set and no longer in **All Users**.
+
+List the models each caller can use:
+
+```bash
+curl -s https://<AI_GATEWAY_HOST>/v1/models \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" | jq -r '.data[].id'
+```
+
+The model appears for the granted caller and is missing for the other.
+
+Then send the same request as each caller:
+
+```bash
+curl -i https://<AI_GATEWAY_HOST>/v1/chat/completions \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<MODEL_NAME>","messages":[{"role":"user","content":"Reply with pong"}]}'
+```
+
+The granted caller gets a `200` with a completion. The other caller gets a `403`
+with `model not permitted`, and the gateway doesn't call the provider or charge
+a budget.
+
+If you [forward audit logs](./forward-audit-logs.mdx), the refused request
+appears as an `aigw.v2.interaction.completed` event with `outcome` set to
+`denied` and `hook` set to `model-access`.
+
+## Next steps
+
+- [Manage budgets](./manage-budgets.mdx) so the callers you granted models to
+  can spend on them.
+- [Route models to providers](./model-routing.mdx) to change which provider
+  serves each model.
+
+## Related information
+
+- [Discover models](./model-routing.mdx#discover-models) for the response shape
+  of each discovery endpoint.
+- [Users and groups](../platform/enterprise-directory/users-and-groups.mdx) for
+  the directory groups you grant sets to.
+
+## Troubleshooting
+
+<details>
+<summary>A caller still gets a model after you narrow All Users</summary>
+
+Another set still grants it. Check the sets granted to the caller directly and
+to each group they belong to, including parent groups. Access is the union of
+every grant, so removing the model from one set has no effect while another set
+includes it.
+
+</details>
+
+<details>
+<summary>Discovery returns 503 with model access unavailable</summary>
+
+The gateway can't reach the Enterprise Manager for a decision. Check the gateway
+logs and the budgets receiver connection in
+[Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx#bring-it-up-in-this-order).
+
+</details>

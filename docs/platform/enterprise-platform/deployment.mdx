@@ -49,7 +49,8 @@ Enable each required component in `values.yaml`. All component flags default to
 | `enterprise-manager.directory.enabled`     | The directory service: users, groups, connectors, secrets, and virtual keys. Needs `enterpriseManager` and a PostgreSQL database you provide |
 | `cloudUi`                                  | Console (Next.js application)                                                                                                                |
 | `registryServer`                           | Registry Server, backed by an external PostgreSQL database you provide                                                                       |
-| `global.stacklok.aiGateway.enabled`        | AI Gateway operator and its custom resource definitions                                                                                      |
+| `global.stacklok.aiGateway.enabled`        | Legacy AI Gateway: the AI Gateway operator and its custom resource definitions                                                               |
+| `global.stacklok.aiGatewayV2.enabled`      | AI Gateway. Enable either this or the legacy AI Gateway, except during a migration window                                                    |
 | `global.stacklok.connectorGateway.enabled` | Connector Gateway. Also requires `global.stacklok.connectorGatewayId` and `global.stacklok.authServerIssuer`                                 |
 
 The gateway flags belong under `global.stacklok`. The console's chart
@@ -256,8 +257,8 @@ either:
   pass or absent as fail, not "already present is a problem." If you're
   reinstalling over a previous release, check
   `kubectl get crd | grep -E 'aigateway|toolhive'` for version conflicts by
-  hand. The pattern covers the AI Gateway CRDs as well, which install separately
-  when `global.stacklok.aiGateway.enabled` is set.
+  hand. The pattern covers the legacy AI Gateway CRDs as well, which install
+  separately when `global.stacklok.aiGateway.enabled` is set.
 
 ## Deploy with Helm
 
@@ -672,8 +673,11 @@ pods reach the Enterprise Manager's gRPC ports. It admits these pods, all from
 the release namespace:
 
 - Connector Gateway pods, on both gRPC ports
-- The AI Gateway's API key service and main processor, on the cleartext port
-- The AI Gateway main processor and operator, on the webhook port, when
+- AI Gateway pods, on both gRPC ports, and on the webhook port when
+  `webhookTLS.enabled` is `true`
+- The legacy AI Gateway's API key service and main processor, on the cleartext
+  port
+- The legacy AI Gateway main processor and operator, on the webhook port, when
   `webhookTLS.enabled` is `true`
 
 NetworkPolicies are additive, so the `grpc.networkPolicy` policy in the example
@@ -769,7 +773,8 @@ The following components inherit `global.redis`:
 | Enable flag                                | How it uses the global default                                                                                                                                                             |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `toolhiveOperator`                         | Default session storage for `MCPServer`, `MCPRemoteProxy`, and `VirtualMCPServer` (vMCP) workloads that have no explicit `spec.sessionStorage`. The per-resource setting always overrides. |
-| `global.stacklok.aiGateway.enabled`        | NER scan-result caching when an `AIGateway` enables the cache                                                                                                                              |
+| `global.stacklok.aiGatewayV2.enabled`      | NER scan-result caching when `scanning.resultCache.enabled` is `true`                                                                                                                      |
+| `global.stacklok.aiGateway.enabled`        | Legacy AI Gateway NER scan-result caching when an `AIGateway` enables the cache                                                                                                            |
 | `global.stacklok.connectorGateway.enabled` | Required session storage for the gateway's embedded authorization server. See [Configure the Connector Gateway](./configure-connector-gateway.mdx)                                         |
 
 The embedded auth server's token storage is configured separately through
@@ -930,8 +935,8 @@ If you enable gateways, also publish and verify their client endpoints:
 
 - [Connector Gateway endpoints](./configure-connector-gateway.mdx#publish-and-verify-the-endpoints)
   include the MCP endpoint and authorization-server routes.
-- [AI Gateway endpoints](./configure-ai-gateway.mdx#publish-and-verify-the-endpoints)
-  serve model inference through the Envoy proxy.
+- [AI Gateway endpoint](./configure-ai-gateway.mdx#publish-the-endpoint) serves
+  model inference through an `HTTPRoute` on your Envoy Gateway.
 
 Gateway API Services can remain cluster-internal for console access. The linked
 guides explain when these Services are created and how to publish them

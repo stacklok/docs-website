@@ -14,20 +14,19 @@ connector's authentication type defines.
 ## Choose an authentication type
 
 Every connector has exactly one authentication type. The console supports the
-first five types in the table below. Configure `awsSts`, `obo`, and `xaa`
-through the
+first six types in the table below. Configure `awsSts` and `xaa` through the
 [Enterprise Manager API](../platform/enterprise-platform/enterprise-manager-api.mdx).
 
-| Console label                  | API `type`        | What the gateway sends                                                                     | Needs                                      |
-| ------------------------------ | ----------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------ |
-| **None**                       | `none`            | No credential                                                                              | Nothing                                    |
-| **Bearer token**               | `bearerToken`     | A static token in the `Authorization` header                                               | A secret                                   |
-| **Header injection**           | `headerInjection` | A static value in a header you name                                                        | A secret                                   |
-| **Upstream identity provider** | `upstreamInject`  | The calling user's own OAuth token, collected through a per-user consent flow              | A connector identity provider              |
-| **Token exchange (RFC 8693)**  | `tokenExchange`   | A token obtained by exchanging the caller's token at call time                             | A token endpoint; a secret is optional     |
-| API only                       | `awsSts`          | AWS SigV4-signed requests using temporary credentials from AWS STS web-identity federation | An identity provider; no secret            |
-| API only                       | `obo`             | A Microsoft Entra ID token from the On-Behalf-Of (OBO) flow                                | An identity provider and a secret          |
-| API only                       | `xaa`             | A token from the cross-app access (ID-JAG) flow                                            | An identity provider; secrets are optional |
+| Console label                          | API `type`        | What the gateway sends                                                                     | Needs                                      |
+| -------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------ |
+| **None**                               | `none`            | No credential                                                                              | Nothing                                    |
+| **Bearer token**                       | `bearerToken`     | A static token in the `Authorization` header                                               | A secret                                   |
+| **Header injection**                   | `headerInjection` | A static value in a header you name                                                        | A secret                                   |
+| **Upstream identity provider**         | `upstreamInject`  | The calling user's own OAuth token, collected through a per-user consent flow              | A connector identity provider              |
+| **Token exchange (RFC 8693)**          | `tokenExchange`   | A token obtained by exchanging the caller's token at call time                             | A token endpoint; a secret is optional     |
+| **Microsoft Entra on-behalf-of (OBO)** | `obo`             | A Microsoft Entra ID token from the On-Behalf-Of (OBO) flow                                | An identity provider and a secret          |
+| API only                               | `awsSts`          | AWS SigV4-signed requests using temporary credentials from AWS STS web-identity federation | An identity provider; no secret            |
+| API only                               | `xaa`             | A token from the cross-app access (ID-JAG) flow                                            | An identity provider; secrets are optional |
 
 Use these guidelines to pick a type:
 
@@ -38,9 +37,9 @@ Use these guidelines to pick a type:
   identity.
 - Use **Upstream identity provider** when the backend should act as each user,
   for example a SaaS MCP server that requires the user's own OAuth grant.
-- Use **Token exchange (RFC 8693)**, `obo`, `xaa`, or `awsSts` when the backend
-  trusts your identity provider and accepts a token derived from the caller's
-  identity.
+- Use **Token exchange (RFC 8693)**, **Microsoft Entra on-behalf-of (OBO)**,
+  `xaa`, or `awsSts` when the backend trusts your identity provider and accepts
+  a token derived from the caller's identity.
 
 ## Set up the prerequisites in order
 
@@ -71,17 +70,43 @@ connector. Create them in this order:
      users authorize against.
    - **Token exchange (RFC 8693)**: enter the **Token URL** and **Client ID**,
      and optionally an audience, scopes, and a **Client secret reference**.
+   - **Microsoft Entra on-behalf-of (OBO)**: choose the **Upstream identity
+     provider** whose user tokens the gateway exchanges, enter the **Tenant ID**
+     and **Client ID**, set an **Audience**, **Scopes**, or both, and choose the
+     **Client secret reference**. Set **Authority** only for a non-public
+     Microsoft Entra cloud, and **Token cache skew** to change how long before
+     expiry the gateway stops reusing an exchanged token.
 3. Select **Save**, or **Save and verify** for a draft or broken connector.
    Saving verifies the connector; see
    [Verify and publish a connector](./connectors.mdx#verify-and-publish-a-connector).
 
 ## How users authorize connectors
 
-For an **Upstream identity provider** connector, each user selects **Connect**
-on the connector in the console and completes consent with the provider. The
-Connector Gateway stores the authorization, and the connector shows **Reconnect
-required** after it expires. See
-[Support users' connector access](./support-connector-access.mdx).
+Users connect to connectors themselves, in the console's user experience:
+
+1. Under **Connectors**, the user opens a connector listed under **Available**.
+2. The user selects **Connect**. For a connector that acts as the user, a
+   sign-in window opens and the user completes consent with the identity
+   provider.
+3. The connector moves to **Enabled**, and the gateway serves its tools to every
+   MCP client the user signs in with.
+
+MCP clients also prompt for authorization. When a client connects to the
+gateway, its sign-in includes a consent step for each enabled connector the user
+hasn't authorized yet.
+
+Connectors that use **Upstream identity provider**, **Token exchange
+(RFC 8693)**, **Microsoft Entra on-behalf-of (OBO)**, `awsSts`, or `xaa` act as
+the user. The gateway forwards or exchanges the user's own token on each call,
+so the backend sees the individual user. Connectors that use **None**, **Bearer
+token**, or **Header injection** connect immediately, with no backend-specific
+sign-in.
+
+The gateway's authorization server stores each user's session and upstream
+tokens. When the upstream tokens can no longer be used, the connector shows
+**Reconnect required**. See
+[Support users' connector access](./support-connector-access.mdx) for every
+connection state.
 
 Each stored authorization is bound to the identity provider configuration that
 issued it. Changing any of these settings makes every user of that provider
@@ -91,10 +116,10 @@ authorize again on their next connection:
 - The requested scopes or additional authorization parameters
 - The redirect URI, which derives from `global.stacklok.authServerIssuer`
 
-Affected users see **Reconnect required** and select **Reconnect** to authorize
-again. Rotating the provider's client secret leaves stored authorizations
-intact. The gateway keeps the stored authorizations, so if you revert the
-change, users' existing authorizations work again without another consent step.
+Affected users see **Reconnect required**. Rotating the provider's client secret
+leaves stored authorizations intact. The gateway keeps the stored
+authorizations, so if you revert the change, users' existing authorizations work
+again without another consent step.
 
 ## Next steps
 

@@ -81,6 +81,8 @@ export async function fetchServerData(
       `Failed to fetch data for MCP server "${serverName}":`,
       error
     );
-    throw new Error('Failed to fetch MCP server data. See logs for details.');
+    throw new Error('Failed to fetch MCP server data. See logs for details.', {
+      cause: error,
+    });
   }
 }

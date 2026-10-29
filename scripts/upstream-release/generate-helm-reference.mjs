@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: Copyright 2026 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Run against the release checkout, never the moving upstream default branch:
+// Generate reference pages from a release checkout:
 // node scripts/upstream-release/generate-helm-reference.mjs --id toolhive --clone <dir> --tag <tag>
+// Add --check to validate a source checkout without writing pages.
 // Requires helm-docs 1.14.2 on PATH. Other projects without `helm` entries are a no-op.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -183,6 +184,28 @@ function renderDefault(value) {
   return `<details>\n<summary>Default value</summary>\n\n${fence}yaml\n${content}\n${fence}\n\n</details>`;
 }
 
+function descriptionFor(row) {
+  return row.Description || row.SourceDescription || row.AutoDescription;
+}
+
+export function validateDescriptions(charts) {
+  const errors = [];
+  for (const { chart, rows } of charts) {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      errors.push(`No Helm values found for ${chart.source}`);
+      continue;
+    }
+    for (const row of rows) {
+      if (!descriptionFor(row)?.trim()) {
+        errors.push(
+          `Missing description for ${chart.source}/values.yaml: ${row.Key}`
+        );
+      }
+    }
+  }
+  if (errors.length) throw new Error(errors.join('\n'));
+}
+
 export function renderPage(
   chart,
   metadata,
@@ -191,15 +214,9 @@ export function renderPage(
   tag,
   publicSources = true
 ) {
-  if (!Array.isArray(rows) || rows.length === 0) {
-    throw new Error(`No Helm values found for ${chart.source}`);
-  }
+  validateDescriptions([{ chart, rows }]);
   const fields = rows.map((row) => {
-    const description =
-      row.Description || row.SourceDescription || row.AutoDescription;
-    if (!description?.trim()) {
-      throw new Error(`Missing description for ${chart.source}: ${row.Key}`);
-    }
+    const description = descriptionFor(row);
     return `### \`${row.Key}\`\n\n**Type:** \`${row.Type}\`\n\n${renderDefault(row.Default || row.AutoDefault)}\n\n${renderDescription(description)}`;
   });
   const source = `https://github.com/${repo}/blob/${encodeURIComponent(tag)}/${chart.source}/values.yaml`;
@@ -232,13 +249,17 @@ ${chart.related.map(({ label, href }) => `- [${label}](${href})`).join('\n')}
 
 function main(argv) {
   const args = {};
-  for (let i = 0; i < argv.length; i += 2) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--check') {
+      args.check = true;
+      continue;
+    }
     if (!['--id', '--clone', '--tag'].includes(argv[i]) || !argv[i + 1]) {
       throw new Error(
-        'Usage: generate-helm-reference.mjs --id <project> --clone <dir> --tag <tag>'
+        'Usage: generate-helm-reference.mjs --id <project> --clone <dir> [--tag <tag>] [--check]'
       );
     }
-    args[argv[i].slice(2)] = argv[i + 1];
+    args[argv[i].slice(2)] = argv[++i];
   }
   const { projects } = yaml.parse(
     fs.readFileSync(
@@ -250,14 +271,14 @@ function main(argv) {
   if (!project) throw new Error(`Unknown project: ${args.id}`);
   if (!project.helm?.length) return;
   const tag = args.tag || project.version;
-  if (!args.clone || !tag)
+  if (!args.clone || (!args.check && !tag))
     throw new Error('Helm generation requires --clone and a release tag');
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'helm-reference-'));
   try {
     // Copy only documentation inputs: helm-docs must never overwrite upstream READMEs.
     // Prepare every page before replacing outputs, so incomplete annotations fail early.
-    const pages = project.helm.map((chart, index) => {
+    const inputs = project.helm.map((chart, index) => {
       const dir = path.join(tmp, String(index));
       fs.mkdirSync(dir);
       for (const file of ['Chart.yaml', 'values.yaml']) {
@@ -296,20 +317,30 @@ function main(argv) {
         fs.readFileSync(path.join(dir, 'Chart.yaml'), 'utf8')
       );
       return {
-        page: chart.page,
-        content: renderPage(
-          chart,
-          metadata,
-          JSON.parse(output).map((row) => ({
-            ...row,
-            SourceDescription: descriptions.get(row.Key),
-          })),
-          project.repo,
-          tag,
-          project.public_sources !== false
-        ),
+        chart,
+        metadata,
+        rows: JSON.parse(output).map((row) => ({
+          ...row,
+          SourceDescription: descriptions.get(row.Key),
+        })),
       };
     });
+    validateDescriptions(inputs);
+    if (args.check) {
+      console.log(`Helm descriptions validated for ${inputs.length} chart(s).`);
+      return;
+    }
+    const pages = inputs.map(({ chart, metadata, rows }) => ({
+      page: chart.page,
+      content: renderPage(
+        chart,
+        metadata,
+        rows,
+        project.repo,
+        tag,
+        project.public_sources !== false
+      ),
+    }));
     for (const { page, content } of pages) {
       const destination = path.join(repoRoot, page);
       fs.mkdirSync(path.dirname(destination), { recursive: true });

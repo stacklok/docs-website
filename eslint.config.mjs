@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import globals from 'globals';
 import pluginJs from '@eslint/js';
 import tseslint from 'typescript-eslint';
-import pluginReact from 'eslint-plugin-react';
+import eslintReact from '@eslint-react/eslint-plugin';
 import eslintConfigPrettier from 'eslint-config-prettier';
 import * as mdx from 'eslint-plugin-mdx';
 
@@ -23,12 +23,26 @@ export default [
       'docs/ai-gateway/reference/api-endpoints/',
     ],
   },
+  // Configuration for Algolia's crawler runtime, maintained in its editor
+  { ignores: ['internal/search/crawler.config.js'] },
   { files: ['**/*.{js,mjs,cjs,ts,jsx,tsx}'] },
   { languageOptions: { globals: globals.node } },
 
   pluginJs.configs.recommended,
   ...tseslint.configs.recommended,
-  pluginReact.configs.flat.recommended,
+  {
+    ...eslintReact.configs['recommended-typescript'],
+    rules: {
+      ...eslintReact.configs['recommended-typescript'].rules,
+      // Preserve checks from eslint-plugin-react's recommended preset.
+      '@eslint-react/no-missing-component-display-name': 'error',
+      '@eslint-react/no-missing-context-display-name': 'error',
+      '@eslint-react/jsx-no-children-prop': 'error',
+      '@eslint-react/jsx-no-comment-textnodes': 'error',
+      '@eslint-react/dom-no-unknown-property': 'error',
+      '@eslint-react/dom-no-unsafe-target-blank': 'error',
+    },
+  },
   eslintConfigPrettier,
 
   // Configs for .mdx files
@@ -40,8 +54,10 @@ export default [
     }),
     rules: {
       ...mdx.flat.rules,
-      'react/no-unescaped-entities': 'off',
-      'react/jsx-no-undef': ['error', { allowGlobals: true }],
+      // ESLint 10 tracks JSX component references, including MDX globals.
+      'no-undef': 'error',
+      // MDX JSX expressions compile into the page component's render body.
+      '@eslint-react/rules-of-hooks': 'off',
       'mdx/remark': 'off', // remark-lint's auto-fix clobbers MDX formatting
     },
     languageOptions: {
@@ -65,18 +81,12 @@ export default [
   // Config for _partials with JSX props
   {
     files: ['docs/**/_partials/*.mdx'],
+    languageOptions: {
+      globals: { props: 'readonly' },
+    },
     rules: {
       'no-unused-expressions': 'off',
       '@typescript-eslint/no-unused-expressions': 'off',
-      'no-undef': 'off',
-    },
-  },
-
-  {
-    settings: {
-      react: {
-        version: 'detect',
-      },
     },
   },
 ];

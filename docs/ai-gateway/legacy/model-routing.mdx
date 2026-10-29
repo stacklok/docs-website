@@ -1,0 +1,156 @@
+---
+title: Route models (legacy gateway)
+sidebar_label: Model routing
+description:
+  Map model names onto providers with a default route, weighted load balancing,
+  priority failover, retries, and timeouts on the legacy AI Gateway.
+---
+
+:::info[Legacy gateway]
+
+This page covers the legacy AI Gateway, which runs through the AI Gateway
+operator and `AIGateway` resources. For the current AI Gateway, see
+[Route models to providers](../model-routing.mdx). To check which gateway you
+run, see [Identify your deployment](./index.mdx#identify-your-deployment).
+
+:::
+
+A _route_ maps a requested model name to one or more providers. Configure routes
+under `spec.routes` to change model providers without updating clients.
+
+## Route a specific model
+
+```yaml title="aigateway.yaml"
+spec:
+  routes:
+    - name: gpt4o
+      match:
+        model: 'gpt-4o'
+      backendRefs:
+        - provider: openai
+    - name: claude
+      match:
+        model: 'claude-sonnet-4-6'
+      backendRefs:
+        - provider: anthropic
+```
+
+## Add a default route
+
+A route with no `match` block catches every model that no other route claims. At
+most one route may omit `match`, and route names must be unique.
+
+```yaml
+spec:
+  routes:
+    - name: default
+      backendRefs:
+        - provider: openai
+```
+
+If you omit a default route, the gateway denies requests for unmatched models.
+Use this behavior to allow only explicitly routed models.
+
+## Spread traffic across providers
+
+Give each backend a `weight` to split traffic proportionally. Here roughly three
+quarters of the traffic goes to OpenAI:
+
+```yaml
+spec:
+  routes:
+    - name: default
+      backendRefs:
+        - provider: openai
+          weight: 3
+        - provider: anthropic
+          weight: 1
+```
+
+## Fail over to another provider
+
+Use `priority` for active-passive failover. Lower values are preferred, so all
+traffic goes to priority `0` until that provider stops answering:
+
+```yaml
+spec:
+  routes:
+    - name: default
+      backendRefs:
+        - provider: openai
+          weight: 1
+          priority: 0
+        - provider: anthropic
+          weight: 1
+          priority: 1
+```
+
+:::warning[Failover needs retries configured]
+
+Configure `spec.resilience.retry` with `priority`. A failed request reaches the
+next priority only during a retry.
+
+:::
+
+## Configure retries, health checks, and timeouts
+
+`spec.resilience` applies to the whole gateway. Each sub-block is optional.
+
+```yaml title="aigateway.yaml"
+spec:
+  resilience:
+    retry:
+      numRetries: 2
+      numAttemptsPerPriority: 1
+      retryOn:
+        triggers: [5xx, gateway-error, reset, connect-failure]
+      perRetryTimeout: 10s
+    passiveHealthCheck:
+      consecutive5xxErrors: 5
+      baseEjectionTime: 30s
+      maxEjectionPercent: 10
+  gateway:
+    timeouts:
+      requestTimeout: 60s
+```
+
+**Retries.** `numRetries` caps attempts per request, from 0 to 10.
+`numAttemptsPerPriority` is how many attempts happen against one priority group
+before moving to the next, so the default of `1` switches provider on every
+retry. `retryOn.triggers` accepts `5xx`, `gateway-error`, `reset`,
+`connect-failure`, and `retriable-status-codes`; at least one trigger is
+required whenever `numRetries` is above zero. Listing `retriable-status-codes`
+additionally requires a non-empty `retryOn.httpStatusCodes`. `perRetryTimeout`
+bounds a single attempt. The whole request, across every attempt, is bounded by
+`spec.gateway.timeouts.requestTimeout` for the gateway default, or
+`spec.routes[].timeouts.requestTimeout` to override it on one route. Those sit
+outside `spec.resilience`.
+
+**Passive health checks** eject a misbehaving provider from the pool for
+`baseEjectionTime` after `consecutive5xxErrors` consecutive failures, with
+`maxEjectionPercent` limiting how much of the pool can be ejected at once.
+
+**Circuit breaking** is available under `spec.resilience.circuitBreaker` to cap
+concurrent connections, queued requests, in-flight requests, and in-flight
+retries, so a retry storm cannot exhaust upstream capacity.
+
+## How retries interact with budgets
+
+The gateway evaluates budgets before retries and charges the request once.
+Provider retries do not add charges, and budget denials are not retried.
+
+## Limits worth knowing
+
+- A gateway supports up to 20 providers and 120 routes.
+- The gateway supports approximately 15 distinct combinations of backends and
+  timeouts. Routes that share a combination are consolidated.
+- A configuration that exceeds this limit reports `RoutesValid=False` with
+  reason `TooManyRouteRules` and preserves the previous working routes.
+
+## Next steps
+
+- [Budgets and pricing](../budgets-and-pricing.mdx) to price every model you
+  have routed. An unpriced model is refused.
+- [Screen prompts for injection](./prompt-injection-screening.mdx) and
+  [PCI/PII controls](./pci-pii-controls.mdx) to decide what content is allowed
+  through these routes.

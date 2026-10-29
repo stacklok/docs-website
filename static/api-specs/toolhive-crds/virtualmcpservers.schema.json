@@ -13,7 +13,7 @@
   "x-kubernetes-scope": "Namespaced",
   "properties": {
     "spec": {
-      "description": "VirtualMCPServerSpec defines the desired state of VirtualMCPServer",
+      "description": "VirtualMCPServerSpec defines the desired state of VirtualMCPServer\n\nDeeper cross-reference checks (every referenced upstream provider must\nexist, and no reference to the mandatory first provider) were previously\nexpressed as CEL on this struct but were removed because they pushed the\ncluster's x-kubernetes-validations cost budget over the per-schema limit\nin realistic deployments where upstreamProviders is unbounded. The same\ninvariants are re-checked at reconciliation time by\nvalidateAuthServerUpstreamFilter in the VirtualMCPServer controller, which\nsurfaces a terminal AuthServerConfigValidated=False condition — only the\nkubectl-apply-time feedback is lost, not the safety.",
       "properties": {
         "authServerConfig": {
           "description": "AuthServerConfig configures an embedded OAuth authorization server.\nWhen set, the vMCP server acts as an OIDC issuer, drives users through\nupstream IDPs, and issues ToolHive JWTs. The embedded AS becomes the\nIncomingAuth OIDC provider — its issuer must match IncomingAuth.OIDCConfigRef\nso that tokens it issues are accepted by the vMCP's incoming auth middleware.\nWhen nil, IncomingAuth uses an external IDP and behavior is unchanged.",
@@ -547,6 +547,32 @@
               "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
               "type": "string"
             },
+            "registrationRateLimit": {
+              "description": "RegistrationRateLimit bounds the unauthenticated /oauth/register\nendpoint with a token bucket: up to maxTokens registrations at once,\nrefilled at maxTokens per refillPeriod. For a sustained rate of R per\nsecond with a burst of B, set maxTokens to B and refillPeriod to B/R;\nfor example, 10 per minute with a burst of 3 is maxTokens 3,\nrefillPeriod 18s. If omitted, defaults to 1 registration per second\nwith a burst of 5 (maxTokens 5, refillPeriod 5s). The limit is per\nreplica, so the effective rate is the configured rate multiplied by the\nreplica count. Every successful registration stores a client, so a\nhigher rate fills storage.maxDCRClients sooner, and with maxDCRClients\n0 this limit is the only bound on stored clients.",
+              "properties": {
+                "maxTokens": {
+                  "description": "MaxTokens is the maximum number of tokens (bucket capacity).\nThis is also the burst size: the maximum number of requests that can be served\ninstantaneously before the bucket is depleted.",
+                  "format": "int32",
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "refillPeriod": {
+                  "description": "RefillPeriod is the duration to fully refill the bucket from zero to maxTokens.\nThe effective refill rate is maxTokens / refillPeriod tokens per second.\nFormat: Go duration string (e.g., \"1m0s\", \"30s\", \"1h0m0s\").",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "maxTokens",
+                "refillPeriod"
+              ],
+              "type": "object",
+              "x-kubernetes-validations": [
+                {
+                  "message": "registrationRateLimit.refillPeriod must be positive",
+                  "rule": "duration(self.refillPeriod) > duration('0s')"
+                }
+              ]
+            },
             "signingKeySecretRefs": {
               "description": "SigningKeySecretRefs references Kubernetes Secrets containing signing keys for JWT operations.\nSupports key rotation by allowing multiple keys (oldest keys are used for verification only).\nIf not specified, an ephemeral signing key will be auto-generated (development only -\nJWTs will be invalid after restart).",
               "items": {
@@ -577,7 +603,7 @@
                 "description": "SPIFFETrustDomainConfig declares one SPIFFE trust domain accepted by the\nembedded authorization server. Configuration is not authentication: no\nlive X.509-SVID or JWT-SVID validation exists yet, so a declared trust\ndomain does not by itself let any workload authenticate — RunConfig.Validate\n(pkg/authserver/config.go) currently hard-rejects any non-empty\nspiffeTrustDomains at authserver startup via validateSPIFFENotYetEnforced,\na deliberate placeholder until real SVID verification lands.",
                 "properties": {
                   "bundleSource": {
-                    "description": "BundleSource declares exactly one future trust-bundle source. It is\nvalidated for shape only; fetching or loading a bundle from it is a\nlater step.",
+                    "description": "BundleSource declares exactly one trust-bundle source and is validated for\nshape here. The standalone file loader exists, but is not wired into SPIFFE\nauthentication.",
                     "properties": {
                       "endpoint": {
                         "description": "Endpoint declares a HTTPS SPIFFE Bundle Endpoint. Required when Type is\n\"bundle_endpoint\".",
@@ -603,10 +629,40 @@
                         ],
                         "type": "object"
                       },
+                      "file": {
+                        "description": "File declares a SPIFFE trust bundle projected from a ConfigMap.\nRequired when Type is \"file\".",
+                        "properties": {
+                          "configMapKey": {
+                            "description": "ConfigMapKey is the key within the ConfigMap holding the SPIFFE JWKS\ntrust-bundle document. It must not be \".\" or start with \"..\".",
+                            "maxLength": 253,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9._-]+$",
+                            "type": "string",
+                            "x-kubernetes-validations": [
+                              {
+                                "rule": "self != '.' && !self.startsWith('..')"
+                              }
+                            ]
+                          },
+                          "configMapName": {
+                            "description": "ConfigMapName is the name of the ConfigMap containing the trust bundle.",
+                            "maxLength": 253,
+                            "minLength": 1,
+                            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "configMapKey",
+                          "configMapName"
+                        ],
+                        "type": "object"
+                      },
                       "type": {
                         "description": "Type selects the trust-bundle source.",
                         "enum": [
                           "bundle_endpoint",
+                          "file",
                           "workload_api"
                         ],
                         "type": "string"
@@ -624,6 +680,10 @@
                       {
                         "message": "endpoint configuration must be set if and only if type is 'bundle_endpoint'",
                         "rule": "self.type == 'bundle_endpoint' ? has(self.endpoint) : !has(self.endpoint)"
+                      },
+                      {
+                        "message": "file configuration must be set if and only if type is 'file'",
+                        "rule": "self.type == 'file' ? has(self.file) : !has(self.file)"
                       },
                       {
                         "message": "workloadAPI configuration must be set if and only if type is 'workload_api'",
@@ -676,6 +736,12 @@
             "storage": {
               "description": "Storage configures the storage backend for the embedded auth server.\nIf not specified, defaults to in-memory storage.",
               "properties": {
+                "maxDCRClients": {
+                  "description": "MaxDCRClients caps the number of live clients created by Dynamic Client\nRegistration (/oauth/register). At the cap, registration fails with HTTP\n503 until a client expires; no existing client is evicted. If omitted,\ndefaults to 10000. Operator-configured and CIMD clients are not counted.\nOn Redis the count is shared by every replica; with memory storage each\nreplica keeps its own count.\n\nA client never used for a token exchange lives 24 hours, so a caller\nregistering at the full registrationRateLimit keeps up to\nrate x replicas x 86400 unused clients alive; at the default rate one\nreplica fills the default cap in about 2.8 hours.\n\n0 means unlimited. The endpoint is unauthenticated, so 0 leaves stored\nclients bounded only by the per-replica registrationRateLimit, about\n86400 per replica per day at the default rate. Use 0 only temporarily,\nfor example while an existing client population above the cap drains;\na large finite value, such as two to three times the observed live\nclient count, keeps some protection.",
+                  "format": "int32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
                 "redis": {
                   "description": "Redis configures the Redis storage backend.\nRequired when type is \"redis\".",
                   "properties": {
@@ -1253,6 +1319,21 @@
                             "pattern": "^https://[^\\s?#]+[^/\\s?#]$",
                             "type": "string"
                           },
+                          "registrationProbe": {
+                            "description": "RegistrationProbe selects how ToolHive checks the cached upstream client\nat start. tokenEndpoint (the default) redeems a random authorization\ncode with the cached client and reads invalid_client as \"registration\ngone\"; it decides only for upstreams that authenticate the client\nbefore validating the grant. authorizationEndpoint sends an\nauthorization request for the cached client without following\nredirects and reads a direct 400, 401 or 403 that carries an RFC 6749\nJSON error object (error invalid_client, unauthorized_client or\ninvalid_request) as \"gone\" (RFC 6749 §4.1.2.1), for upstreams whose\ntoken endpoint answers invalid_grant for any client_id; an HTML page or\na bare gateway status is not a verdict. A false rejection re-registers\nat every start and, when registration also fails, fails startup. none\nskips the check; the registration is then retired only through\nRotationKey.",
+                            "enum": [
+                              "tokenEndpoint",
+                              "authorizationEndpoint",
+                              "none"
+                            ],
+                            "type": "string"
+                          },
+                          "rotationKey": {
+                            "description": "RotationKey is an optional operator-chosen label that is part of the\ncached registration's identity but is never sent to the upstream.\nChange it to make the proxies register a fresh client at their next\nstart instead of reusing the cached one: for example after the\nupstream has dropped the registration, or when a rotation is required.\nAt start ToolHive checks the cached client at the upstream (see\nRegistrationProbe) and registers a new one by itself when the upstream\nrejects it. Where the configured probe cannot tell, the stale client_id\nmay only be rejected in the user's browser, and changing this key is\nthe remedy. The previous registration's row stays in storage, and\nupstream refresh tokens bound to the previous client_id stop\nrefreshing, so affected users sign in again.",
+                            "maxLength": 64,
+                            "pattern": "^[A-Za-z0-9._-]+$",
+                            "type": "string"
+                          },
                           "softwareId": {
                             "description": "SoftwareID is the RFC 7591 \"software_id\" registration metadata value,\nidentifying the client software independent of any particular\nregistration instance. Typically a UUID or short identifier.",
                             "maxLength": 255,
@@ -1301,6 +1382,10 @@
                       },
                       "insecureAllowHTTP": {
                         "description": "InsecureAllowHTTP permits plain-HTTP authorization and token endpoint URLs\nfor this upstream. Only for in-cluster development environments (e.g. an\nOAuth2 provider served over HTTP in a kind cluster) where TLS is not\navailable. Never set this in production.",
+                        "type": "boolean"
+                      },
+                      "omitScopeOnRefresh": {
+                        "description": "OmitScopeOnRefresh stops the scope parameter from being sent on\nrefresh_token grant requests to the upstream provider's token endpoint.\nScopes are still sent on the authorization request.\nBy default (false), the configured scopes are sent on refresh as well,\nwhich some providers require to avoid narrowing the refreshed token.\nSet it for providers that reject scope on refresh, such as Salesforce\n(\"invalid_request - scope parameter not supported\").",
                         "type": "boolean"
                       },
                       "redirectUri": {
@@ -1548,6 +1633,21 @@
                             "pattern": "^https://[^\\s?#]+[^/\\s?#]$",
                             "type": "string"
                           },
+                          "registrationProbe": {
+                            "description": "RegistrationProbe selects how ToolHive checks the cached upstream client\nat start. tokenEndpoint (the default) redeems a random authorization\ncode with the cached client and reads invalid_client as \"registration\ngone\"; it decides only for upstreams that authenticate the client\nbefore validating the grant. authorizationEndpoint sends an\nauthorization request for the cached client without following\nredirects and reads a direct 400, 401 or 403 that carries an RFC 6749\nJSON error object (error invalid_client, unauthorized_client or\ninvalid_request) as \"gone\" (RFC 6749 §4.1.2.1), for upstreams whose\ntoken endpoint answers invalid_grant for any client_id; an HTML page or\na bare gateway status is not a verdict. A false rejection re-registers\nat every start and, when registration also fails, fails startup. none\nskips the check; the registration is then retired only through\nRotationKey.",
+                            "enum": [
+                              "tokenEndpoint",
+                              "authorizationEndpoint",
+                              "none"
+                            ],
+                            "type": "string"
+                          },
+                          "rotationKey": {
+                            "description": "RotationKey is an optional operator-chosen label that is part of the\ncached registration's identity but is never sent to the upstream.\nChange it to make the proxies register a fresh client at their next\nstart instead of reusing the cached one: for example after the\nupstream has dropped the registration, or when a rotation is required.\nAt start ToolHive checks the cached client at the upstream (see\nRegistrationProbe) and registers a new one by itself when the upstream\nrejects it. Where the configured probe cannot tell, the stale client_id\nmay only be rejected in the user's browser, and changing this key is\nthe remedy. The previous registration's row stays in storage, and\nupstream refresh tokens bound to the previous client_id stop\nrefreshing, so affected users sign in again.",
+                            "maxLength": 64,
+                            "pattern": "^[A-Za-z0-9._-]+$",
+                            "type": "string"
+                          },
                           "softwareId": {
                             "description": "SoftwareID is the RFC 7591 \"software_id\" registration metadata value,\nidentifying the client software independent of any particular\nregistration instance. Typically a UUID or short identifier.",
                             "maxLength": 255,
@@ -1571,6 +1671,10 @@
                         "description": "IssuerURL is the OIDC issuer URL for automatic endpoint discovery.\nMust be a valid HTTPS URL.",
                         "pattern": "^https://.*$",
                         "type": "string"
+                      },
+                      "omitScopeOnRefresh": {
+                        "description": "OmitScopeOnRefresh stops the scope parameter from being sent on\nrefresh_token grant requests to the upstream provider's token endpoint.\nScopes are still sent on the authorization request.\nBy default (false), the configured scopes are sent on refresh as well,\nwhich some providers require to avoid narrowing the refreshed token.\nSet it for providers that reject scope on refresh, such as Salesforce\n(\"invalid_request - scope parameter not supported\").",
+                        "type": "boolean"
                       },
                       "redirectUri": {
                         "description": "RedirectURI is the callback URL where the upstream IdP will redirect after authentication.\nWhen not specified, defaults to `{resourceUrl}/oauth/callback` where `resourceUrl` is the\nURL associated with the resource (e.g., MCPServer or vMCP) using this config.\nIts hostname must match the browser-facing authorization endpoint (`issuer`, or\n`authorizationEndpointBaseUrl` when set): the callback is bound to the browser that\nstarted the login by a host-only cookie, so a different host rejects every browser login.",
@@ -1791,6 +1895,67 @@
               "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.jwtBearer) || !has(self.inboundGrants.jwtBearer.issuerPolicies) || self.inboundGrants.jwtBearer.issuerPolicies.all(policy, self.inboundGrants.jwtBearer.issuerPolicies.filter(other, other.issuerRef == policy.issuerRef).size() == 1)"
             }
           ]
+        },
+        "authServerUpstreamFilter": {
+          "description": "AuthServerUpstreamFilter optionally narrows the multi-upstream\nauthorization chain per-request based on the first upstream's resolved\nidentity, so principals only walk the upstream providers they are\nentitled to. Lives beside AuthServerConfig (rather than nested in it)\nbecause the shared EmbeddedAuthServerConfig type is also used by\nMCPExternalAuthConfig, where multi-upstream filtering has no meaning.\n\nWhen nil, every request walks the full upstream chain in configured\norder — the behavior from before the filter hook existed. The filter\nonly controls which OAuth credentials are collected during login;\nbackend and tool authorization remain Cedar's responsibility.",
+          "properties": {
+            "claim": {
+              "description": "Claim is the exact top-level JWT/OIDC claim name to read group\nmembership from on the first upstream's resolved principal. Defaults\nto \"groups\" when empty. Nested claims (e.g. Keycloak's\nrealm_access.roles) are not supported and must be flattened to a\ntop-level string array by the identity provider.\n\nThe value is read from the identity the first upstream resolves: an\nOIDC upstream fills it from the validated ID token, a pure OAuth2\nupstream from the userinfo response. Groups carried only in an access\ntoken never reach it. Before enabling the filter, configure the first\nupstream to include the claim in its ID token or userinfo response,\nand request any required scopes. A missing claim fails the\nauthorization (defaultUpstreams covers a valid-but-empty claim and\nunmatched groups, not an absent one), so enabling the filter before\nthe provider emits the claim locks every principal out.",
+              "maxLength": 253,
+              "minLength": 1,
+              "type": "string"
+            },
+            "defaultUpstreams": {
+              "description": "DefaultUpstreams is used when the claim is a valid empty array or\nwhen no rule matches. When omitted, no optional upstreams are added —\nthe mandatory first upstream remains but the authorization walks no\nfurther. Every entry must name a configured\nauthServerConfig.upstreamProviders provider other than the mandatory\nfirst provider; those cross-reference checks are enforced at\nreconciliation time rather than by CEL (CEL cost-budget constraints\nmoved the check into the Go filter constructor; see the top-level CEL\nrules on VirtualMCPServerSpec for the shape invariants that remain at\nadmission time).",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array",
+              "x-kubernetes-list-type": "set"
+            },
+            "rules": {
+              "description": "Rules assigns groups to upstream provider subsets. A principal matches\na rule if any of its groups appears in the rule's groups list\n(any-of / OR semantics). Multiple matching rules are combined by\nunion — the effective chain contains every upstream from every\nmatching rule, deduplicated and in configured order.",
+              "items": {
+                "description": "UpstreamFilterGroupRule pairs a set of principal group names with the set\nof non-first upstream provider names those principals are entitled to walk.",
+                "properties": {
+                  "groups": {
+                    "description": "Groups is the set of principal group names this rule matches. Matching\nis case-sensitive and exact. Per-element emptiness and duplicate\ndetection are enforced at reconciliation time by the Go filter\nconstructor, which runs again before the auth server starts.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "type": "array",
+                    "x-kubernetes-list-type": "set"
+                  },
+                  "upstreamProviders": {
+                    "description": "UpstreamProviders lists the non-first upstream provider names to\ninclude in the chain when this rule matches. Every entry must name a\nconfigured authServerConfig.upstreamProviders provider other than the\nmandatory first provider; these cross-reference checks are enforced at\nreconciliation time rather than by CEL (CEL cost-budget constraints\nmoved the check into the Go filter constructor). Per-element emptiness\nand duplicates are also enforced at reconciliation time.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "type": "array",
+                    "x-kubernetes-list-type": "set"
+                  }
+                },
+                "required": [
+                  "groups",
+                  "upstreamProviders"
+                ],
+                "type": "object"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array",
+              "x-kubernetes-list-type": "atomic"
+            }
+          },
+          "required": [
+            "rules"
+          ],
+          "type": "object"
         },
         "config": {
           "description": "Config is the Virtual MCP server configuration.\nThe audit config from here is also supported, but not required.",
@@ -3234,7 +3399,7 @@
               "type": "object"
             },
             "passthroughHeaders": {
-              "description": "PassthroughHeaders is an allowlist of incoming client request header names\nforwarded verbatim to all backends. Captured at the vMCP incoming edge by\nheaderforward.CaptureMiddleware and consumed once at session creation\nwhen the per-session backend client's HeaderForwardConfig is built. Names\nmust not be in the restricted set (Host, hop-by-hop, X-Forwarded-*, etc.).",
+              "description": "PassthroughHeaders is an allowlist of incoming client request header names\nforwarded verbatim to all backends. Captured per request at the vMCP\nincoming edge by headerforward.CaptureMiddleware: tool calls, resource\nreads and prompt gets carry the values from the request that triggered\nthem, and a header absent on that request is not forwarded. Session-scoped\nwork (the session's backend connections, its advertised capability list,\nand background capability resyncs) uses the values from the request that\ncreated the session. Names must not be in the restricted set (Host,\nhop-by-hop, X-Forwarded-*, etc.).",
               "items": {
                 "type": "string"
               },
@@ -3963,6 +4128,14 @@
         {
           "message": "embeddingServerRef provisions a managed TEI server and cannot be combined with optimizer.embeddingProvider 'openai'; openai mode uses embeddingService directly",
           "rule": "!(has(self.embeddingServerRef) && has(self.config) && has(self.config.optimizer) && has(self.config.optimizer.embeddingProvider) && self.config.optimizer.embeddingProvider == 'openai')"
+        },
+        {
+          "message": "authServerUpstreamFilter requires authServerConfig to be set",
+          "rule": "!has(self.authServerUpstreamFilter) || has(self.authServerConfig)"
+        },
+        {
+          "message": "authServerUpstreamFilter requires at least two configured upstream providers",
+          "rule": "!has(self.authServerUpstreamFilter) || (has(self.authServerConfig) && has(self.authServerConfig.upstreamProviders) && size(self.authServerConfig.upstreamProviders) >= 2)"
         }
       ]
     },

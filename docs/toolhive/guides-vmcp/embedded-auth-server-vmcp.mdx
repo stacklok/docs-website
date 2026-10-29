@@ -67,7 +67,8 @@ When multiple upstream providers are configured, the auth server chains
 authorization flows sequentially. The user is redirected to each provider in
 order, and the auth server stores each provider's tokens before moving to the
 next. After the final provider completes, the auth server issues a single JWT to
-the client.
+the client. To send each user through only the providers their groups need, see
+[Filter upstream providers by group](#filter-upstream-providers-by-group).
 
 ## How the references link by name
 
@@ -104,8 +105,8 @@ VirtualMCPServer or an MCPServer. The key differences for vMCP are:
   VirtualMCPServer resource under `authServerConfig`, rather than in a separate
   `MCPExternalAuthConfig` resource.
 - **Multiple upstream providers:** vMCP supports multiple upstream providers
-  with sequential authorization chaining. MCPServer is limited to a single
-  upstream provider.
+  with sequential authorization chaining, optionally filtered per user by group.
+  MCPServer is limited to a single upstream provider.
 - **Flexible outgoing strategies:** vMCP uses `upstreamInject` or
   `tokenExchange` with `subjectProviderName` to route stored tokens to the
   correct backends. MCPServer swaps the token automatically because it has a
@@ -231,6 +232,76 @@ the deprecated location is planned for the release after the deprecation cycle.
 
 :::
 
+### Filter upstream providers by group
+
+By default, every user signs in to every upstream provider in order. When
+different teams use different backends, for example only the sales team uses a
+Salesforce backend, add `spec.authServerUpstreamFilter` to choose the providers
+each user signs in to based on their groups. Users skip the providers their
+groups don't need, and ToolHive collects no tokens for those providers.
+
+The first provider in `upstreamProviders` is mandatory: every user signs in to
+it, and ToolHive reads the user's groups from the identity it returns. The
+filter then picks which of the remaining providers to add:
+
+```yaml title="VirtualMCPServer: filter upstream providers by group"
+spec:
+  authServerConfig:
+    issuer: https://auth.example.com
+    upstreamProviders:
+      - name: okta # mandatory first provider
+        type: oidc
+        # ...
+      - name: github
+        type: oauth2
+        # ...
+      - name: salesforce
+        type: oauth2
+        # ...
+  # highlight-start
+  authServerUpstreamFilter:
+    claim: groups
+    rules:
+      - groups: ['engineering']
+        upstreamProviders: ['github']
+      - groups: ['sales', 'sales-ops']
+        upstreamProviders: ['salesforce']
+  # highlight-end
+```
+
+With this configuration, a member of `engineering` signs in to Okta and GitHub,
+a member of both `engineering` and `sales` signs in to all three, and a user in
+neither group signs in to Okta only.
+
+| Field              | Description                                                                                                                                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `claim`            | Top-level claim that holds the user's groups as a string array. Defaults to `groups`. Nested claims, such as Keycloak's `realm_access.roles`, aren't supported.                                                    |
+| `rules`            | Required, at least one rule. A rule matches when any of the user's groups appears in its `groups` list (exact, case-sensitive). The user signs in to every provider from every matching rule, in configured order. |
+| `defaultUpstreams` | Providers to use when the claim is an empty array or no rule matches. When omitted, those users sign in to the first provider only.                                                                                |
+
+Every name in `rules[].upstreamProviders` and `defaultUpstreams` must be a
+configured provider other than the first one. The filter requires
+`authServerConfig` with at least two upstream providers; the API server rejects
+the resource otherwise. The VirtualMCPServer controller checks the provider
+names at reconcile time and sets `AuthServerConfigValidated=False` when one is
+unknown or names the first provider.
+
+:::warning[Make sure the first provider emits the groups claim]
+
+ToolHive reads the claim from the first provider's validated ID token (OIDC) or
+userinfo response (OAuth 2.0). Groups that appear only in an access token aren't
+read. If the claim is missing, authorization fails, so enabling the filter
+before the provider emits the claim locks every user out. Configure the provider
+to include the claim, and request any scopes it requires, before you add the
+filter.
+
+:::
+
+The filter only controls which upstream tokens ToolHive collects at sign-in. A
+backend that relies on a skipped provider's token has no token for that user, so
+pair the filter with [Cedar policies](./authentication.mdx#authorize-requests)
+to control which backends and tools each user can access.
+
 ### Handle non-standard provider responses
 
 Not every provider returns tokens and identity in the standard shape. Three
@@ -327,6 +398,31 @@ For an explanation of how ToolHive resolves CIMD documents and why the OAuth
 provider never sees the MCP client's CIMD URL, see
 [Client ID Metadata Document (CIMD)](../concepts/embedded-auth-server.mdx#client-id-metadata-document-cimd).
 
+### Limit Dynamic Client Registration
+
+The embedded authorization server caps the number of live DCR clients (default
+`10000`) and rate-limits `/oauth/register` (default 1 registration per second
+with a burst of 5, per replica). To change these limits, set
+`storage.maxDCRClients` and `registrationRateLimit` under
+`spec.authServerConfig`:
+
+```yaml title="VirtualMCPServer: DCR limits"
+spec:
+  authServerConfig:
+    registrationRateLimit:
+      maxTokens: 10
+      refillPeriod: 10s
+    storage:
+      type: redis
+      maxDCRClients: 25000
+      redis:
+        # ...
+```
+
+For client expiry rules, sizing guidance, and the HTTP responses at each limit,
+see
+[Limit Dynamic Client Registration](../guides-k8s/embedded-auth-server-k8s.mdx#limit-dynamic-client-registration).
+
 ### Allow confidential DCR clients
 
 To configure a VirtualMCPServer for confidential DCR, set
@@ -380,6 +476,16 @@ All four fields are required. Delegate clients are independent of
 client. For local development, a plain-HTTP loopback issuer also works when you
 set `insecureAllowConfidentialOverLoopbackHTTP: true`; ToolHive rejects a
 plain-HTTP non-loopback issuer.
+
+To revoke a delegate client, remove its entry from `delegateClients`. Each vMCP
+replica serves only the delegate clients its own configuration declares, and
+answers requests from any other delegate client in storage with
+`invalid_client`, as if the client were unknown. Access tokens already issued to
+the removed client stay valid until they expire. With Redis storage, the
+client's record stays in Redis; to delete it, remove the
+`<KEY_PREFIX>client:<CLIENT_ID>` key. During a rolling update, replicas still
+running the previous configuration answer a newly added delegate client with
+`invalid_client` until they're replaced.
 
 To accept subject tokens minted by an external OIDC issuer, pair this with an
 `inboundGrants.tokenExchange.issuerPolicies` entry. For why delegation exists,
@@ -471,11 +577,18 @@ registration endpoint bypasses discovery, so keep the authorization endpoint,
 token endpoint, and scopes in the parent `oauth2Config`. With `dcrConfig`,
 ToolHive obtains the client ID and secret from the DCR response.
 
-| Field                             | Description                                                                                                                                     |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dcrConfig.discoveryUrl`          | HTTPS URL of an RFC 8414 or OpenID Connect discovery document.                                                                                  |
-| `dcrConfig.registrationEndpoint`  | HTTPS URL of the RFC 7591 registration endpoint.                                                                                                |
-| `dcrConfig.initialAccessTokenRef` | Optional reference to a Secret whose value ToolHive sends as a bearer token when it calls the registration endpoint. Requires `name` and `key`. |
+| Field                             | Description                                                                                                                                                                                                                                        |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dcrConfig.discoveryUrl`          | HTTPS URL of an RFC 8414 or OpenID Connect discovery document.                                                                                                                                                                                     |
+| `dcrConfig.registrationEndpoint`  | HTTPS URL of the RFC 7591 registration endpoint.                                                                                                                                                                                                   |
+| `dcrConfig.initialAccessTokenRef` | Optional reference to a Secret whose value ToolHive sends as a bearer token when it calls the registration endpoint. Requires `name` and `key`.                                                                                                    |
+| `dcrConfig.registrationProbe`     | How ToolHive checks the cached client at start: `tokenEndpoint` (default), `authorizationEndpoint`, or `none`; see [Re-register a dropped upstream client](../guides-k8s/embedded-auth-server-k8s.mdx#re-register-a-dropped-upstream-client).      |
+| `dcrConfig.rotationKey`           | Optional label (1-64 letters, digits, `.`, `_`, or `-`). Change it to force a fresh registration at the next start; see [Re-register a dropped upstream client](../guides-k8s/embedded-auth-server-k8s.mdx#re-register-a-dropped-upstream-client). |
+
+To stop sending `scope` on refresh token requests to providers that reject it,
+such as Salesforce, set `omitScopeOnRefresh: true` on the upstream's
+`oidcConfig` or `oauth2Config`. See
+[Omit scopes on token refresh](../guides-k8s/embedded-auth-server-k8s.mdx#omit-scopes-on-token-refresh).
 
 ### Select the token endpoint auth method
 

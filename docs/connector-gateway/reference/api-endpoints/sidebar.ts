@@ -41,6 +41,12 @@ const sidebar: SidebarsConfig = {
           label: "List a Connector's Tools",
           className: "api-method get",
         },
+        {
+          type: "doc",
+          id: "connector-gateway/reference/api-endpoints/get-my-served-tool-catalogue",
+          label: "Get the caller's served tool catalogue",
+          className: "api-method get",
+        },
       ],
     },
   ],
