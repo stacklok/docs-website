@@ -36,6 +36,8 @@ function resolveArtifacts(t, artifacts, { unavailable = false } = {}) {
           name: 'Visual regression / Playwright visual snapshots',
           conclusion: 'failure',
           html_url: 'https://github.com/example/docs/actions/runs/1/job/2',
+          started_at: '2026-10-30T17:00:00Z',
+          completed_at: '2026-10-30T17:05:00Z',
         },
       ],
     })
@@ -93,12 +95,14 @@ const fullReport = {
   expired: false,
   id: 10,
   size_in_bytes: 55_544_517,
+  created_at: '2026-10-30T17:04:00Z',
 };
 const compactReport = {
   name: 'visual-failure-details',
   expired: false,
   id: 20,
   size_in_bytes: 21_006,
+  created_at: '2026-10-30T17:03:00Z',
 };
 
 test('selects compact details ahead of a large full report', (t) => {
@@ -134,4 +138,47 @@ test('preserves the failure conclusion when artifact parsing fails', (t) => {
   const { result, outputs } = resolveArtifacts(t, '{malformed');
   assert.notEqual(result.status, 0);
   assert.equal(outputs.artifact_id, undefined);
+});
+
+test('uses the current full report ahead of prior-attempt compact details', (t) => {
+  const { result, outputs } = resolveArtifacts(t, [
+    { ...compactReport, created_at: '2026-10-30T16:55:00Z' },
+    fullReport,
+  ]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(outputs.artifact_id, '10');
+});
+
+test('uses the fallback when a rerun produces no new artifacts', (t) => {
+  const { result, outputs } = resolveArtifacts(t, [
+    { ...compactReport, created_at: '2026-10-30T16:55:00Z' },
+    { ...fullReport, created_at: '2026-10-30T16:56:00Z' },
+  ]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(outputs.artifact_id, '');
+});
+
+test('selects current compact details when older compact details appear first', (t) => {
+  const { result, outputs } = resolveArtifacts(t, [
+    { ...compactReport, id: 19, created_at: '2026-10-30T16:55:00Z' },
+    compactReport,
+  ]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(outputs.artifact_id, '20');
+});
+
+test('rejects artifacts uploaded after the current visual job finished', (t) => {
+  const { result, outputs } = resolveArtifacts(t, [
+    { ...compactReport, created_at: '2026-10-30T17:10:00Z' },
+  ]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(outputs.artifact_id, '');
+});
+
+test('rejects artifacts with no creation timestamp', (t) => {
+  const { result, outputs } = resolveArtifacts(t, [
+    { ...compactReport, created_at: undefined },
+  ]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(outputs.artifact_id, '');
 });

@@ -103,8 +103,22 @@ jobs:
             echo "conclusion=$CONCLUSION"
             echo "job_url=$JOB_URL"
           } >> "$GITHUB_OUTPUT"
+          JOB_STARTED_AT="$(jq -r '[.jobs[] | select(.name == "Visual regression / Playwright visual snapshots")][0].started_at // ""' "$JOBS_FILE")"
+          JOB_COMPLETED_AT="$(jq -r '[.jobs[] | select(.name == "Visual regression / Playwright visual snapshots")][0].completed_at // ""' "$JOBS_FILE")"
           gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" > "$ARTIFACTS_FILE"
-          jq '.artifacts = ([.artifacts[] | select(.name == "visual-failure-details" and .expired == false)] + [.artifacts[] | select(.name == "playwright-report" and .expired == false)])' "$ARTIFACTS_FILE" > "$ARTIFACTS_FILE.selected"
+          # A run's artifacts include prior attempts. GitHub returns these
+          # timestamps in UTC; accept only files created during this job.
+          jq --arg started_at "$JOB_STARTED_AT" --arg completed_at "$JOB_COMPLETED_AT" '
+            .artifacts = [.artifacts[] | select(
+              .expired == false and
+              $started_at != "" and $completed_at != "" and
+              .created_at >= $started_at and .created_at <= $completed_at
+            )] |
+            .artifacts = (
+              [.artifacts[] | select(.name == "visual-failure-details")] +
+              [.artifacts[] | select(.name == "playwright-report")]
+            )
+          ' "$ARTIFACTS_FILE" > "$ARTIFACTS_FILE.selected"
           mv "$ARTIFACTS_FILE.selected" "$ARTIFACTS_FILE"
           ARTIFACT_ID="$(jq -r '.artifacts[0].id // ""' "$ARTIFACTS_FILE")"
           ARTIFACT_SIZE="$(jq -r '.artifacts[0].size_in_bytes // "0"' "$ARTIFACTS_FILE")"
