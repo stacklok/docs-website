@@ -21,6 +21,7 @@ const config: Config = {
   tagline: 'Run, govern, and secure your AI agents, tools, and models',
   favicon: 'img/stacklok-favicon.svg',
   plugins: [
+    '@docsearch/docusaurus-adapter',
     [
       'vercel-analytics',
       {
@@ -402,15 +403,15 @@ const config: Config = {
         },
       },
     },
-    algolia: {
+    docsearch: {
       appId: '5VBG92C77M',
-      apiKey: 'd47061076173b8f8974c70dd94efb676',
-      indexName: 'stacklok',
+      apiKey: '95606dace0984ad5f2e16f4b4bf0699a',
+      indices: [{ name: 'stacklok' }],
       askAi: {
-        indexName: 'stacklok-markdown',
-        apiKey: 'd47061076173b8f8974c70dd94efb676',
-        appId: '5VBG92C77M',
-        assistantId: '7acHoXQLOA6U',
+        agentId: '08e651d3-71c6-4394-85e9-71450ee93578',
+        promptSuggestions: {
+          indexName: 'stacklok-markdown_prompt_suggestions',
+        },
       },
       contextualSearch: true,
     },
