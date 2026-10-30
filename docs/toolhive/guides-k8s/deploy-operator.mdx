@@ -306,10 +306,41 @@ resource can still point at a different Redis instance. `existingSecretKey`
 defaults to `redis-password` when omitted; set it when your Secret stores the
 password under a different key.
 
-This default applies only to the simple password-authenticated Redis used for
-horizontal scaling. It does not configure Sentinel, TLS, or ACL users. For those
-use cases, configure session storage explicitly on each workload as described in
-[Redis session storage](./redis-session-storage.mdx).
+To connect to a Redis endpoint that requires TLS, enable `tls` on the default.
+The operator verifies the server certificate against the system roots, or
+against a CA certificate you provide in a Secret:
+
+```yaml title="values.yaml"
+operator:
+  defaultRedis:
+    addr: redis.example.com:6380
+    existingSecret: redis-password
+    existingSecretKey: password
+    # highlight-start
+    tls:
+      enabled: true
+      caCertSecretRef:
+        name: redis-ca
+        key: ca.crt
+    # highlight-end
+```
+
+Omit `caCertSecretRef` to verify against the system roots. `key` defaults to
+`ca.crt`. TLS requires a Redis address, and the chart fails to render if you set
+a CA Secret without `tls.enabled: true`. The CA Secret must exist in each
+workload's namespace, not the operator namespace. If the Secret or key is
+missing, affected pods stay in `ContainerCreating` with `FailedMount` events;
+run `kubectl describe pod` in the workload namespace to find the missing
+reference.
+
+Workloads load the CA certificate when they start. If you rotate the certificate
+in the same Secret, restart the affected workloads to pick it up. A workload
+with its own `spec.sessionStorage` uses only its own settings, including TLS,
+and ignores the default entirely.
+
+The default covers a single password-authenticated Redis address, with optional
+TLS. For Sentinel or ACL users, configure session storage explicitly on each
+workload as described in [Redis session storage](./redis-session-storage.mdx).
 
 :::enterprise
 

@@ -1028,7 +1028,9 @@ dcrConfig:
 ToolHive caches the client it registers and reuses it across restarts. Each time
 the proxy starts, ToolHive checks the cached client at the upstream. If the
 upstream rejects it, ToolHive registers a new client and replaces the cached one
-automatically.
+automatically. To repeat this check while the proxy runs, set
+`registrationProbeInterval` (see
+[Re-check the registration while running](#re-check-the-registration-while-running)).
 
 Choose how ToolHive runs that check with `registrationProbe` in `dcrConfig`:
 
@@ -1041,7 +1043,8 @@ Choose how ToolHive runs that check with `registrationProbe` in `dcrConfig`:
 Use `authorizationEndpoint` for upstreams whose token endpoint answers
 `invalid_grant` for any client ID, live or dropped. The probe sends no client
 credentials, so it also covers `private_key_jwt` clients. The upstream sees one
-abandoned authorization request each time the proxy starts.
+abandoned authorization request each time the proxy starts, and on each periodic
+check if you set `registrationProbeInterval`.
 
 ```yaml title="MCPExternalAuthConfig: probe the authorization endpoint"
 dcrConfig:
@@ -1070,6 +1073,35 @@ ToolHive uses it only to identify the cached registration and never sends it to
 the upstream. When the value changes, the proxy registers a new client at its
 next start. Upstream refresh tokens issued to the previous client stop working,
 so affected users must sign in again.
+
+#### Re-check the registration while running
+
+By default, a registration that the upstream drops while the proxy runs stays in
+use until the proxy restarts. To detect and replace it without a restart, set
+`registrationProbeInterval` in `dcrConfig` to a duration of at least `1m`. An
+interval between `5m` and `15m` suits most upstreams:
+
+```yaml title="MCPExternalAuthConfig: re-check the DCR client every 10 minutes"
+dcrConfig:
+  discoveryUrl: 'https://mcp.example.com/.well-known/oauth-authorization-server'
+  # highlight-next-line
+  registrationProbeInterval: 10m
+```
+
+On each check, ToolHive re-reads the cached registration and checks it with the
+configured `registrationProbe`. It replaces a rejected registration and
+registers a new client if the cached one is missing. When the resulting client
+differs from the one in use, including when another replica already replaced it,
+the proxy switches to the new client without restarting.
+
+Every replica runs its own checks. Each check sends at most one probe request to
+the upstream (none when `registrationProbe` is `none`), plus a registration
+request when the probe rejects the client. With the `tokenEndpoint` probe, each
+check appears in the upstream's logs as a failed code redemption.
+
+A re-registration presents the initial access token the pod read at start. If
+your upstream issues single-use initial access tokens, restart the proxy to
+recover from a dropped registration.
 
 ### Omit scopes on token refresh
 
