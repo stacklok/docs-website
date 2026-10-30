@@ -146,7 +146,8 @@ jobs:
     needs: [authorize, generate]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      id-token: write
     outputs:
       updated: ${{ steps.commit.outputs.updated }}
       head_sha: ${{ steps.commit.outputs.head_sha }}
@@ -207,11 +208,20 @@ jobs:
         with:
           ref: ${{ needs.authorize.outputs.head_sha }}
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
+
+      - name: Get baseline publication token from OctoSTS
+        id: octo-sts
+        uses: octo-sts/action@f603d3be9d8dd9871a265776e625a27b00effe05 # v1.1.1
+        with:
+          scope: stacklok/docs-website
+          identity: visual-baselines
+          domain: octo-sts.stacklok.dev
 
       - name: Commit validated baseline data
         id: commit
         env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
           ARTIFACT_DIR: ${{ runner.temp }}/visual-baselines
           HEAD_REF: ${{ needs.authorize.outputs.head_ref }}
           HEAD_SHA: ${{ needs.authorize.outputs.head_sha }}
@@ -238,11 +248,11 @@ jobs:
             exit 0
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "stacklok-octosts[bot]"
+          git config user.email "327033170+stacklok-octosts[bot]@users.noreply.github.com"
           git config --local core.hooksPath /dev/null
           git commit --no-verify -m "Update visual baselines for ${HEAD_SHA:0:12}"
-          git push origin "HEAD:$HEAD_REF"
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin "HEAD:$HEAD_REF"
           echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "updated=true" >> "$GITHUB_OUTPUT"
 
