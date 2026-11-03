@@ -19,7 +19,11 @@ pull artifacts from an internal registry, see
 
 Before deploying, ensure you have:
 
-- A Kubernetes cluster (1.30 or later)
+- A Kubernetes cluster running 1.30 or later. The chart declares
+  `kubeVersion: ">=1.30.0-0"` with no upper bound, so Helm accepts any newer
+  release, including provider builds with a version suffix such as
+  `v1.31.4-eks-...`. Nodes can be `linux/amd64`, `linux/arm64`, or a mix; see
+  [Container images](#container-images).
 - An ingress or gateway controller to publish the components, plus DNS records
   and TLS certificates for the hostnames you expose the console, Enterprise
   Manager, and Registry Server on. The chart creates Services but no ingress,
@@ -70,6 +74,47 @@ Operator. Use
 MCP servers and remote proxies, and the
 [Virtual MCP Server guides](../../toolhive/guides-vmcp/index.mdx) for Virtual
 MCP Server (vMCP) gateways.
+
+### Container images
+
+Every platform image is a multi-architecture image for `linux/amd64` and
+`linux/arm64`, so one tag runs on x86 and Arm nodes. Stacklok-built images are
+served through the Replicated proxy at
+`image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-enterprise/<IMAGE>:<VERSION>`,
+where `<VERSION>` is the chart's `appVersion`.
+
+| Component (enable flag)                                        | Images (`<IMAGE>`)                                                                                                                                                                           |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ToolHive Operator (`toolhiveOperator`)                         | `operator`, plus `proxyrunner`, `vmcp`, and `registry-api`, which the operator starts when you create `MCPServer`, `VirtualMCPServer`, and `MCPRegistry` resources                           |
+| Enterprise Manager (`enterpriseManager`)                       | `toolhive-enterprise`                                                                                                                                                                        |
+| Console (`cloudUi`)                                            | `cloud-ui`                                                                                                                                                                                   |
+| Registry Server (`registryServer`)                             | `registry-api`                                                                                                                                                                               |
+| Connector Gateway (`global.stacklok.connectorGateway.enabled`) | `connector-gateway`                                                                                                                                                                          |
+| AI Gateway (`global.stacklok.aiGatewayV2.enabled`)             | The AI Gateway image, plus `ai-gateway-main-processor` when `scanning` or `guardrails` is enabled and `presidio-analyzer` when `scanning` is enabled                                         |
+| Legacy AI Gateway (`global.stacklok.aiGateway.enabled`)        | `ai-gateway-operator`, `ai-gateway-controller`, `ai-gateway-extproc`, `ai-gateway-main-processor`, `envoy-gateway`, `presidio-analyzer`, `envoy-ratelimit`, and `ai-gateway-api-key-service` |
+| Preflight enforcement (`preflight.enforce: true`)              | `preflight-runner`, run as a pre-install and pre-upgrade hook Job; see [enforce preflight checks](#optional-enforce-preflight-checks-in-cluster)                                             |
+
+The install portal's image list for your release gives the exact repository name
+of every image, including the AI Gateway image.
+
+The online install also runs the Replicated SDK (it appears as
+`stacklok-license-manager-*` pods), pulled from
+`proxy.replicated.com/library/replicated-sdk-image`. It is enabled with
+`replicated.enabled` and is turned off for
+[air-gapped installs](./airgap-install.mdx).
+
+A minimal install that enables `toolhiveOperator`, `enterpriseManager`,
+`cloudUi`, and `registryServer` starts with `operator`, `toolhive-enterprise`,
+`cloud-ui`, `registry-api`, and the Replicated SDK image. The operator pulls
+`proxyrunner` and `vmcp` later, when you create MCP server and vMCP resources,
+so include them when you allowlist or mirror images. Optional features, such as
+rate limiting and virtual API keys on the legacy AI Gateway, pull their images
+only once you turn them on.
+
+Image digests change with every release. To read them, use the image list the
+[install portal](https://install.stacklok.com) prints for your release, or
+resolve each tag with `crane digest` as shown in
+[Verify the distribution](./verify-artifacts.mdx#step-2-resolve-the-image-digest).
 
 This guide uses the `stacklok-system` namespace. Adjust the commands if you use
 a different namespace. Run MCP server workloads in separate namespaces from the
@@ -525,6 +570,16 @@ own:
   ownership or by any `GRANT` on the schema. Without it the Enterprise Manager
   exits at startup with `permission denied to create role`.
 
+The chart creates no database login roles: you provision every role it connects
+as, including the optional admin role described below and the
+[Registry Server's role](./configure-registry-server.mdx#database-roles). Names
+such as `em_app`, `em_migrator`, and `em_admin` are examples; use any names and
+set them in `database.user`, `database.migration.user`, and
+`database.admin.user`. At startup, the Enterprise Manager creates only internal
+`NOLOGIN` roles and grants them to the application and admin roles. The Registry
+Server's first migration likewise creates its `NOLOGIN`
+`toolhive_registry_server` role.
+
 ```yaml title="values.yaml (add alongside the other enterprise-manager keys)"
 enterprise-manager:
   # Required whenever the directory service is on: the chart pins a
@@ -583,6 +638,54 @@ ALTER ROLE em_admin BYPASSRLS;
 
 The startup error names a "database bootstrap Job" if you miss this. No such Job
 ships with the chart; the `ALTER ROLE` above is the whole remedy.
+
+#### AWS RDS IAM authentication
+
+On Amazon RDS or Aurora PostgreSQL, the Enterprise Manager can authenticate with
+short-lived IAM tokens in place of passwords. Set `database.dynamicAuth` and
+leave the `existingSecret` fields empty:
+
+```yaml title="values.yaml"
+enterprise-manager:
+  database:
+    dynamicAuth:
+      awsRdsIam:
+        # Set the region explicitly. "detect" reads it from the EC2 instance
+        # metadata service, which then becomes a startup dependency.
+        region: 'us-east-1'
+```
+
+The Enterprise Manager falls back to `global.postgres.dynamicAuth` when its own
+`database.dynamicAuth` is empty. The same IAM configuration covers the
+application, migration, and admin roles.
+
+IAM authentication replaces only the password. Each role must still exist with
+the attributes described above, and each one needs the `rds_iam` role:
+
+```sql
+GRANT rds_iam TO em_app;
+GRANT rds_iam TO em_migrator;
+GRANT rds_iam TO em_admin; -- only if you set database.admin.user
+```
+
+The Enterprise Manager pod also needs AWS credentials that allow
+`rds-db:connect` for each of these users, for example through IAM roles for
+service accounts (IRSA) or EKS Pod Identity on its service account.
+
+`global.postgres.dynamicAuth` applies to the Enterprise Manager only. To use IAM
+authentication for the Registry Server, set `dynamicAuth` on its own database
+block, grant `rds_iam` to its database user (and to its migration user, if
+separate), and omit the `THV_REGISTRY_DATABASE_PASSWORD` environment variable:
+
+```yaml title="values.yaml"
+toolhive-registry-server:
+  upstream:
+    config:
+      database:
+        dynamicAuth:
+          awsRdsIam:
+            region: 'us-east-1'
+```
 
 #### Encrypting stored credentials
 
