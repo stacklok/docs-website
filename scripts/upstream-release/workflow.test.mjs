@@ -197,10 +197,15 @@ for (const annotated of [true, false]) {
 for (const message of [
   'Release v0.60.0',
   'Release v0.60.0\n\nRelease-Triggered-By: renovate',
+  'Release v0.60.0\n\nRelease-Triggered-By: Renovate',
+  'Release v0.60.0\n\nRelease-Triggered-By: StacklokBot',
   'Release v0.60.0\n\nRelease-Triggered-By: toolhive-release-app[bot]',
   'Release v0.60.0\n\nRelease-Triggered-By: app/toolhive-release-app',
   'Release v0.60.0\n\nRelease-Triggered-By: invalid login',
   'Release v0.60.0\n\nRelease-Triggered-By: alice\nRelease-Triggered-By: bob',
+  'Release v0.60.0\n\nRelease-Triggered-By: alice\nRelease-Triggered-By:',
+  'Release v0.60.0\n\nRelease-Triggered-By:\nRelease-Triggered-By: alice',
+  'Release v0.60.0\n\nRelease-Triggered-By: alice\nRelease-Triggered-By: \t',
   'Release v0.60.0\n\nDocumentation mentions Release-Triggered-By: alice',
 ]) {
   test(`falls back to the release PR merger for unusable metadata: ${JSON.stringify(message)}`, (t) => {
@@ -243,4 +248,24 @@ test('leaves the owner unresolved when all sources are bots', (t) => {
   const meta = resolveOwner(t, { message: '', merger: 'app/release-bot' });
   assert.equal(meta.owner, null);
   assert.equal(meta.owner_source, null);
+});
+
+for (const source of ['releaseAuthor', 'merger', 'commitAuthor']) {
+  test(`rejects mixed-case bots in the ${source} fallback`, (t) => {
+    const meta = resolveOwner(t, {
+      message: '',
+      releaseAuthor: 'app/release-bot',
+      merger: 'app/release-bot',
+      commitAuthor: 'app/release-bot',
+      [source]: 'Renovate',
+    });
+    assert.equal(meta.owner, null);
+  });
+}
+
+test('preserves the case of a human initiator login', (t) => {
+  const meta = resolveOwner(t, {
+    message: 'Release v0.60.0\n\nRelease-Triggered-By: ChrisJBurns',
+  });
+  assert.equal(meta.owner, 'ChrisJBurns');
 });
