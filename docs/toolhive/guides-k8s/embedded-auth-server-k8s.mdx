@@ -832,8 +832,34 @@ oauth2Config:
   tokenEndpointAuthMethod: client_secret_basic
 ```
 
-Allowed values are `none`, `client_secret_basic`, and `client_secret_post`. DCR
-clients continue to use the method negotiated at registration time.
+Allowed values are `none`, `client_secret_basic`, and `client_secret_post`.
+
+With [`dcrConfig`](#use-dynamic-client-registration-with-an-upstream-provider),
+ToolHive picks a method from the upstream's advertised
+`token_endpoint_auth_methods_supported`, preferring `client_secret_basic`, then
+`client_secret_post`, then `none`, and registers with it. Some upstreams
+advertise `client_secret_basic` but read client credentials only from the
+request body, so every code exchange fails with an error such as
+`invalid_client: Missing client_id`. For these upstreams, set
+`tokenEndpointAuthMethod` alongside `dcrConfig` to choose the method ToolHive
+registers with:
+
+```yaml title="MCPExternalAuthConfig: DCR with a chosen auth method"
+oauth2Config:
+  authorizationEndpoint: 'https://mcp.example.com/authorize'
+  tokenEndpoint: 'https://mcp.example.com/token'
+  # highlight-next-line
+  tokenEndpointAuthMethod: client_secret_post
+  dcrConfig:
+    discoveryUrl: 'https://mcp.example.com/.well-known/oauth-authorization-server'
+```
+
+ToolHive refuses to start when the upstream's discovery metadata lists supported
+methods that don't include the configured one, when you set `none` and the
+upstream doesn't advertise S256 PKCE, or when the registration response names a
+different method. If ToolHive cached a registration made with a different
+method, it replaces that registration with a new one at the next start, so you
+don't need to change `rotationKey`.
 
 ### Trust a private CA for the upstream provider
 
