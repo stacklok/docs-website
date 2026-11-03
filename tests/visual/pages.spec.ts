@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test, type Page } from '@playwright/test';
-import { captureBothThemes, captureElementBothThemes } from './fixtures';
+import {
+  captureBothThemes,
+  captureColorScheme,
+  captureElementBothThemes,
+} from './fixtures';
 
 /**
  * The documented representative-page matrix for issue #1163. Keep this
@@ -32,16 +36,20 @@ test('home page', async ({ page }, testInfo) => {
   await captureBothThemes(page, testInfo, 'Home page');
 });
 
-test('theme preview page', async ({ page }, testInfo) => {
-  await gotoSuccessful(page, '/theme-preview');
-  // Mermaid diagrams render client-side and asynchronously — wait for
-  // both of the page's diagrams to finish before capturing, or the
-  // snapshot flakes between "still rendering" and "done".
-  await expect(page.locator('.docusaurus-mermaid-container svg')).toHaveCount(
-    2
-  );
-  await captureBothThemes(page, testInfo, 'Theme preview page');
-});
+for (const scheme of ['light', 'dark'] as const) {
+  test(`theme preview page - ${scheme}`, async ({ page }, testInfo) => {
+    // Mermaid rerenders asynchronously when the theme changes. Start each
+    // page in its final theme so full-page capture cannot measure the page
+    // while a theme switch temporarily removes a diagram.
+    await page.emulateMedia({ colorScheme: scheme });
+    await gotoSuccessful(page, '/theme-preview');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', scheme);
+    await expect(page.locator('.docusaurus-mermaid-container svg')).toHaveCount(
+      2
+    );
+    await captureColorScheme(page, testInfo, 'Theme preview page', scheme);
+  });
+}
 
 for (const { section, path } of NAV_PAGES) {
   test(`navigation loads - ${section}`, async ({ page }) => {

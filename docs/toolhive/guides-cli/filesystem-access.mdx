@@ -141,31 +141,25 @@ For more details on permission profiles and network permissions, see
 
 ## Examples
 
-Below are some examples of how to use file system access with some common MCP
-servers in the ToolHive registry.
-
-:::tip
-
-The example MCP servers below don't require network access, and they have
-restricted permission profiles in the ToolHive registry. To further secure these
-examples, add the `--isolate-network` flag to block network access entirely.
-This ensures the MCP server can only access the file system as specified in your
-profile or volume mounts.
-
-:::
+These examples use the Filesystem and Memory MCP servers from the ToolHive
+registry. Both use explicit permission settings to block outbound network
+access.
 
 ### Filesystem MCP server
 
 The
 [Filesystem MCP server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
-lets you read and write files on your host system. By default, it expects paths
-to be mounted under `/projects` inside the container.
+lets you read and write files on your host system. Pass the mounted container
+directories as arguments. The `--permission-profile none` flag blocks outbound
+network access.
 
 Here's how to mount two directories using the `--volume` flag, with one as
 read-only:
 
 ```bash
-thv run --volume ~/documents:/projects/docs:ro --volume ~/code:/projects/code filesystem
+thv run --permission-profile none \
+  --volume ~/documents:/projects/docs:ro --volume ~/code:/projects/code \
+  filesystem -- /projects
 ```
 
 You can achieve the same result using a permission profile. Create a file called
@@ -183,7 +177,8 @@ as they exist on your host, you need to tell the filesystem server which base
 directory to allow. Pass `/home/user` as an argument:
 
 ```bash
-thv run --permission-profile ./filesystem-profile.json filesystem -- /home/user
+thv run --permission-profile ./filesystem-profile.json \
+  filesystem -- /home/user
 ```
 
 ### Memory MCP server
@@ -192,29 +187,16 @@ The
 [Memory MCP server](https://github.com/modelcontextprotocol/servers/tree/main/src/memory)
 uses a local knowledge graph to persist information across chats.
 
-To preserve data between runs, you need to mount a file. First, create an empty
-JSON file, then mount it to the expected location inside the container:
+To preserve data between runs, mount a writable directory and set
+`MEMORY_FILE_PATH` to a file inside it. The server also needs the directory to
+write temporary files when saving the graph:
 
 ```bash
-touch ./memory.json
-thv run --volume ./memory.json:/app/dist/memory.json memory
-```
-
-### SQLite MCP server
-
-The [SQLite MCP server](https://github.com/StacklokLabs/sqlite-mcp) works with
-database files on your host system. By default, it expects to find a database
-file at `/database.db` inside the container:
-
-```bash
-thv run --volume ~/my-database.db:/database.db sqlite
-```
-
-If you want to place the database file in a different location inside the
-container, use the server's `--db` flag to specify the new path:
-
-```bash
-thv run --volume ~/my-database.db:/data/my-database.db sqlite -- --db /data/my-database.db
+mkdir -p ./memory-data
+thv run --permission-profile none \
+  --volume ./memory-data:/data \
+  --env MEMORY_FILE_PATH=/data/memory.jsonl \
+  memory
 ```
 
 ## Next steps

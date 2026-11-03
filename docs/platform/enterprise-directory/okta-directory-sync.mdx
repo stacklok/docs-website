@@ -24,8 +24,13 @@ for the base configuration.
 Then prepare these Okta resources:
 
 - A target application with the users that you want to synchronize assigned to
-  it. Configure its profile mappings so the application user profile contains
-  every attribute that you want in the directory.
+  it. The reconciler only reads the application, so don't configure a SCIM
+  connection or Group Push on it. Okta's SCIM 2.0 application template is a
+  convenient starting point.
+- Application user profile attributes for the target application. Give each
+  attribute that you want in the directory a SCIM destination, and map its value
+  from the Okta user profile. Include at least `displayName` and the primary
+  email. See [Map user attributes](#map-user-attributes).
 - An OAuth 2.0 service application that uses `private_key_jwt` client
   authentication and the client credentials grant. Register its public JSON Web
   Key (JWK), and retain the corresponding private key and key ID.
@@ -58,6 +63,85 @@ Collect these values before editing the platform configuration:
 | Private key and key ID        | The private key that corresponds to the public JWK registered on the service application, and that JWK's `kid`. You generate these credentials while configuring the Okta service application, then store them in Kubernetes in the next step.                 |
 | Selected group IDs and names  | The Okta groups you want to synchronize in addition to application users. See [Find Okta group IDs](#find-okta-group-ids).                                                                                                                                     |
 | Issuer ID, URL, and audience  | The issuer ID is a short Stacklok configuration name that you choose. The issuer URL and audience must match the Okta authorization server that issues runtime tokens. They are separate from the organization URL used for Management API calls.              |
+
+## Map user attributes
+
+The reconciler builds each user's directory record from the target application's
+user profile. It always sets `userName` from the Okta login. Every other
+attribute comes from an application profile property whose schema entry names a
+SCIM destination in `externalName` and `externalNamespace`. Properties without a
+destination are left out, so a target application without these properties
+produces users with no display name or email.
+
+Define the properties in the target application's user schema, then map their
+values from the Okta user profile. With Terraform, use
+[`okta_app_user_schema_property`](https://registry.terraform.io/providers/okta/okta/latest/docs/resources/app_user_schema_property)
+and
+[`okta_profile_mapping`](https://registry.terraform.io/providers/okta/okta/latest/docs/resources/profile_mapping):
+
+```hcl title="okta-directory-attributes.tf"
+locals {
+  directory_attributes = {
+    displayName = {
+      title              = "Display name"
+      external_name      = "displayName"
+      external_namespace = "urn:ietf:params:scim:schemas:core:2.0:User"
+    }
+    email = {
+      title              = "Primary email"
+      external_name      = "emails.^[primary==true].value"
+      external_namespace = "urn:ietf:params:scim:schemas:core:2.0:User"
+    }
+    department = {
+      title              = "Department"
+      external_name      = "department"
+      external_namespace = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+    }
+  }
+}
+
+data "okta_user_profile_mapping_source" "user" {}
+
+resource "okta_app_user_schema_property" "directory" {
+  for_each = local.directory_attributes
+
+  app_id             = "<TARGET_APPLICATION_ID>"
+  index              = each.key
+  title              = each.value.title
+  type               = "string"
+  external_name      = each.value.external_name
+  external_namespace = each.value.external_namespace
+  master             = "OKTA"
+  scope              = "SELF"
+}
+
+resource "okta_profile_mapping" "directory" {
+  source_id          = data.okta_user_profile_mapping_source.user.id
+  target_id          = "<TARGET_APPLICATION_ID>"
+  delete_when_absent = false
+
+  dynamic "mappings" {
+    for_each = local.directory_attributes
+
+    content {
+      id          = mappings.key
+      expression  = "user.${mappings.key}"
+      push_status = "PUSH"
+    }
+  }
+
+  depends_on = [okta_app_user_schema_property.directory]
+}
+```
+
+Add `costCenter` or other attributes the same way when you
+[create groups from user attributes](./scim-provisioning.mdx#create-groups-from-user-attributes).
+A property that has a value but no SCIM destination holds the user back from
+synchronization (see [Troubleshooting](#troubleshooting)).
+
+Users assigned to the application before you add a mapping keep their existing
+application profiles until Okta re-evaluates them. Refresh those assignments
+after you apply the mapping.
 
 ## Store the service application key
 
@@ -155,6 +239,7 @@ Wait for a reconciliation cycle, then open **User management** in the console.
 Confirm that:
 
 - Users assigned to the target Okta application appear with a SCIM source.
+- Synchronized users have a display name and an email address.
 - Selected Okta groups contain only assigned application users.
 
 User profile, assignment, and selected-group membership changes should appear
@@ -255,6 +340,26 @@ a login that collides with another user's `userName`.
 Correct the application profile mapping or login in Okta. A held-back user is
 not treated as absent for deactivation, and the reconciler retries that user on
 the next cycle.
+
+</details>
+
+<details>
+<summary>Users have no display name or email</summary>
+
+Users appear in **User management** with their Okta login as their name and no
+email, and nothing in the logs reports it. The target application's user profile
+lacks properties with SCIM destinations, or their values aren't mapped (see
+[Map user attributes](#map-user-attributes)).
+
+To confirm, call `GET /api/v1/meta/schemas/apps/<TARGET_APPLICATION_ID>/default`
+in the Okta Management API. The `displayName` and primary email properties need
+an `externalName` value. Then check that an assigned user's application profile,
+from `GET /api/v1/apps/<TARGET_APPLICATION_ID>/users/<OKTA_USER_ID>`, carries
+values for them. Add the missing properties or mappings, refresh existing
+assignments, and wait for the next cycle. Unmapped attributes such as
+`department` and `costCenter` also produce no
+[attribute-derived groups](./scim-provisioning.mdx#create-groups-from-user-attributes)
+and no AI Gateway [group labels](./scim-provisioning.mdx#label-derived-groups).
 
 </details>
 

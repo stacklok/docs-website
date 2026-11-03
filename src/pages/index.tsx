@@ -277,24 +277,6 @@ export default function Home(): ReactNode {
             The OCI Registry MCP server provides tools for querying OCI
             registries and image references.
           </ProductCard>
-          <ProductCard
-            contentType='text'
-            href='https://github.com/StacklokLabs/plotting-mcp'
-            title='Plotting MCP server'
-            linkText='Go to project'
-          >
-            The Plotting MCP server transforms CSV data into beautiful
-            visualizations.
-          </ProductCard>
-          <ProductCard
-            contentType='text'
-            href='https://github.com/StacklokLabs/sqlite-mcp'
-            title='SQLite MCP server'
-            linkText='Go to project'
-          >
-            The SQLite MCP server provides tools and resources that allow you to
-            interact with SQLite databases.
-          </ProductCard>
         </ProductGrid>
 
         <h1 className='text--center'>Other MCP projects</h1>
@@ -384,20 +366,6 @@ export default function Home(): ReactNode {
           >
             A collection of GitHub Actions to install ToolHive and run MCP
             servers in your CI/CD workflows.
-          </ProductCard>
-          <ProductCard
-            contentType='text'
-            href='https://github.com/StacklokLabs/toolhive-buildkite-plugin'
-            title='ToolHive Buildkite Plugin'
-            linkText='Go to project'
-            icon={{
-              src: '/img/mcp-servers/buildkite-logo.svg',
-              alt: 'Buildkite logo',
-              style: { marginLeft: '0.5rem' },
-            }}
-          >
-            A Buildkite plugin to run MCP servers in your CI/CD pipelines using
-            ToolHive.
           </ProductCard>
         </ProductGrid>
       </main>

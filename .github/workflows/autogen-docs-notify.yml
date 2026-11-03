@@ -3,20 +3,14 @@ name: Autogen Docs Slack Notify
 # Notifies the team's #documentation Slack channel when the Upstream
 # Release Docs workflow completes successfully on an `autogen-docs` PR.
 #
-# Triggers on `workflow_run` (not `pull_request_target`) because the
-# augment workflow uses GITHUB_TOKEN to flip the PR draft -> ready, and
-# GitHub suppresses events emitted by GITHUB_TOKEN to prevent loops.
-# The `autogen-docs` label + `renovate[bot]` author guard lives in the
-# "Resolve PR" step rather than the job `if:` because those fields are
-# not on the `workflow_run` payload and must be fetched via `gh pr view`.
+# The publisher emits ready_for_review with its OctoSTS token only after
+# generation, formatting, reviewer assignment, and PR body updates succeed.
+# Check the autogen-docs label and release-bot author before composing a message.
 #
 # SECURITY MODEL
 # --------------
-# `workflow_run` always executes the workflow definition from the
-# DEFAULT BRANCH (main), regardless of which branch the triggering PR
-# is on -- the same guarantee `pull_request_target` provided. This
-# workflow NEVER executes any PR-supplied code; Claude only reads PR
-# metadata via the `gh` CLI.
+# pull_request_target loads the trusted base-branch workflow. This workflow
+# reads PR metadata only and checks out main, never PR-supplied code.
 #
 # The work is split into two steps so the prompt-injectable Claude
 # session can never touch the Slack token or make arbitrary outbound
@@ -55,15 +49,11 @@ name: Autogen Docs Slack Notify
 # directly as an env var below (DOCS_SLACK_CHANNEL_ID), not as a secret.
 # ---------------------------------------------------------------------
 
-# workflow_run is used deliberately here, not as an oversight. See
-# the SECURITY MODEL comment above: it always runs the trusted
-# main-branch definition, never checks out or executes PR-supplied
-# code, and the Claude step has no Slack token or network access
-# beyond `gh`.
+# This privileged workflow reads PR metadata without executing PR code.
 on: # zizmor: ignore[dangerous-triggers]
-  workflow_run:
-    workflows: ['Upstream Release Docs']
-    types: [completed]
+  pull_request_target:
+    types: [ready_for_review]
+    branches: [main]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -81,36 +71,31 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # For workflow_run: only when the augment job succeeded on a
-    # pull_request event (skips workflow_dispatch retries and failures).
-    # workflow_dispatch is gated to the default branch so the workflow
-    # definition in use is always the trusted main-branch version.
-    if: |
+    # Both entry points use trusted main-branch workflow code.
+    if: >-
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'pull_request')
+      (github.event_name == 'pull_request_target' &&
+       github.actor_id == '327033170' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       !startsWith(github.event.pull_request.head.ref, 'sep/references-'))
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       MESSAGE_FILE: ${{ github.workspace }}/.autogen-docs-slack-message.json
     steps:
-      # Resolve the PR number (from the workflow_run payload or the
-      # workflow_dispatch input), verify it carries the autogen-docs
-      # label and was authored by Renovate, then surface number + url
-      # as step outputs. For workflow_dispatch the caller is a human
-      # choosing a specific PR; the label/author guard is skipped.
-      # Sets skip=true and exits cleanly when the PR is out of scope.
+      # Automatic notifications require the release label and a known bot
+      # author. Manual retries select a PR explicitly, as before.
       - name: Resolve PR and check eligibility
         id: pr
         env:
           DISPATCH_PR_NUMBER: ${{ inputs.pr_number }}
-          WORKFLOW_RUN_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PR_NUMBER="$DISPATCH_PR_NUMBER"
           else
-            PR_NUMBER="$WORKFLOW_RUN_PR_NUMBER"
+            PR_NUMBER="$EVENT_PR_NUMBER"
             if [ -z "$PR_NUMBER" ]; then
-              echo "No PR associated with this workflow run; skipping."
+              echo "No PR number in the event; skipping."
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -124,8 +109,9 @@ jobs:
               | jq -r '[.labels[].name] | contains(["autogen-docs"])')
             AUTHOR=$(echo "$PR_JSON" | jq -r '.author.login')
             if [ "$HAS_LABEL" != "true" ] || \
-               ([ "$AUTHOR" != "app/renovate" ] && [ "$AUTHOR" != "renovate[bot]" ]); then
-              echo "PR #$PR_NUMBER is not an autogen-docs renovate PR; skipping."
+               ([ "$AUTHOR" != "app/renovate" ] && [ "$AUTHOR" != "renovate[bot]" ] &&
+                [ "$AUTHOR" != "app/stacklok-octosts" ] && [ "$AUTHOR" != "stacklok-octosts[bot]" ]); then
+              echo "PR #$PR_NUMBER is not an autogen-docs release bot PR; skipping."
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -138,13 +124,12 @@ jobs:
 
       # claude-code-action unconditionally restores trusted .claude/.mcp.json
       # config from the base branch via `git fetch`/`git checkout` before
-      # running Claude, even in agent mode -- it requires a git working tree
-      # to exist. workflow_run always executes from the default branch, so
-      # the checkout below lands trusted code in the workspace.
+      # running Claude, even in agent mode. Check out trusted main explicitly.
       - name: Checkout base branch
         if: steps.pr.outputs.skip != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: main
           persist-credentials: false
       # STEP 1 — Claude composes content only. Tools limited to gh + Write.
       # No Slack token in this step's env; no curl tool. So even a prompt
@@ -164,10 +149,8 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           additional_permissions: |
             actions: read
-          # workflow_run actor is github-actions[bot]; the PR is authored
-          # by renovate[bot]. Both are listed so claude-code-action does
-          # not refuse to run on a bot-initiated context.
-          allowed_bots: 'renovate,github-actions'
+          # OctoSTS publishes the ready_for_review event.
+          allowed_bots: 'renovate,github-actions,stacklok-octosts'
           claude_args: |
             --model claude-opus-5-5
             --max-turns 30

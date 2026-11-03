@@ -65,15 +65,16 @@ function main() {
     { encoding: 'utf-8' }
   ).trim();
 
-  const currentBody = gh([
-    'pr',
-    'view',
-    prNumber,
-    '--json',
-    'body',
-    '-q',
-    '.body',
-  ]);
+  const currentPR = JSON.parse(
+    gh(['pr', 'view', prNumber, '--json', 'body,headRefOid,state'])
+  );
+  if (currentPR.headRefOid !== headSha || currentPR.state !== 'OPEN') {
+    console.log(
+      'PR head or state changed — skipping stale screenshot summary.'
+    );
+    return;
+  }
+  const currentBody = currentPR.body;
 
   let newBody;
   if (summary.startsWith('No visual-regression')) {
