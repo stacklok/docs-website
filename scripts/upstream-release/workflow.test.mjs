@@ -103,3 +103,144 @@ test('stops augmentation when draft conversion fails', (t) => {
   assert.match(result.stderr, /convertPullRequestToDraft/);
   assert.equal(mutation, null);
 });
+
+const ownerStep = job.steps.find((step) => step.id === 'release_meta');
+
+function resolveOwner(
+  t,
+  {
+    message = 'Release v0.60.0 (#7013)\n\nRelease-Triggered-By: jhrozek\n\nCo-authored-by: release bot <bot@example.com>',
+    annotated = true,
+    releaseAuthor = 'app/toolhive-release-app',
+    merger = 'ChrisJBurns',
+    commitAuthor = 'toolhive-release-app[bot]',
+    commitUnavailable = false,
+    tagUnavailable = false,
+  } = {}
+) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'release-owner-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const bin = path.join(root, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(
+    path.join(bin, 'gh'),
+    `#!/bin/sh
+case "$1 $2" in
+  'api repos/stacklok/toolhive/compare/v0.59.0...v0.60.0')
+    printf '%s\\n' '{"commits":[],"total_commits":0}' ;;
+  'api repos/stacklok/toolhive/git/ref/tags/v0.60.0')
+    [ "$TAG_UNAVAILABLE" = false ] || exit 1
+    printf '%s\\n' "$TAG_JSON" ;;
+  'api repos/stacklok/toolhive/git/tags/tag-object')
+    printf '%s\\n' 'release-commit' ;;
+  'api repos/stacklok/toolhive/commits/release-commit')
+    [ "$COMMIT_UNAVAILABLE" = false ] || exit 1
+    printf '%s\\n' "$FIXTURE_COMMIT_JSON" ;;
+  'api repos/stacklok/toolhive/commits/release-commit/pulls')
+    printf '%s\\n' '7013' ;;
+  'release view') printf '%s\\n' "$RELEASE_AUTHOR" ;;
+  'pr view') printf '%s\\n' "$MERGER" ;;
+  *) echo "Unexpected gh call: $*" >&2; exit 1 ;;
+esac
+`,
+    { mode: 0o755 }
+  );
+  const outputFile = path.join(root, 'output');
+  const result = spawnSync('bash', ['-eo', 'pipefail', '-c', ownerStep.run], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      GITHUB_OUTPUT: outputFile,
+      REPO: 'stacklok/toolhive',
+      PREV: 'v0.59.0',
+      NEW: 'v0.60.0',
+      TAG_JSON: JSON.stringify({
+        object: {
+          type: annotated ? 'tag' : 'commit',
+          sha: annotated ? 'tag-object' : 'release-commit',
+        },
+      }),
+      FIXTURE_COMMIT_JSON: JSON.stringify({
+        commit: { message },
+        author: { login: commitAuthor },
+      }),
+      RELEASE_AUTHOR: releaseAuthor,
+      MERGER: merger,
+      COMMIT_UNAVAILABLE: String(commitUnavailable),
+      TAG_UNAVAILABLE: String(tagUnavailable),
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stderr, /Unexpected gh call/);
+  const meta = JSON.parse(
+    fs.readFileSync(path.join(root, '.release-meta.json'), 'utf8')
+  );
+  const output = fs.readFileSync(outputFile, 'utf8');
+  assert.ok(output.includes(`owner=${meta.owner || ''}\n`));
+  assert.ok(output.includes(`owner_source=${meta.owner_source || ''}\n`));
+  return meta;
+}
+
+for (const annotated of [true, false]) {
+  test(`prefers the release initiator for ${annotated ? 'annotated' : 'lightweight'} tags`, (t) => {
+    const meta = resolveOwner(t, { annotated, releaseAuthor: 'publisher' });
+    assert.equal(meta.owner, 'jhrozek');
+    assert.equal(
+      meta.owner_source,
+      'Release-Triggered-By trailer on the tagged commit'
+    );
+  });
+}
+
+for (const message of [
+  'Release v0.60.0',
+  'Release v0.60.0\n\nRelease-Triggered-By: renovate',
+  'Release v0.60.0\n\nRelease-Triggered-By: toolhive-release-app[bot]',
+  'Release v0.60.0\n\nRelease-Triggered-By: app/toolhive-release-app',
+  'Release v0.60.0\n\nRelease-Triggered-By: invalid login',
+  'Release v0.60.0\n\nRelease-Triggered-By: alice\nRelease-Triggered-By: bob',
+  'Release v0.60.0\n\nDocumentation mentions Release-Triggered-By: alice',
+]) {
+  test(`falls back to the release PR merger for unusable metadata: ${JSON.stringify(message)}`, (t) => {
+    const meta = resolveOwner(t, { message });
+    assert.equal(meta.owner, 'ChrisJBurns');
+    assert.equal(meta.owner_source, 'merged release PR stacklok/toolhive#7013');
+  });
+}
+
+test('retains human release author fallback when initiator is absent', (t) => {
+  const meta = resolveOwner(t, { message: '', releaseAuthor: 'publisher' });
+  assert.equal(meta.owner, 'publisher');
+  assert.equal(meta.owner_source, 'release author');
+});
+
+test('falls back to the merger when tagged commit metadata is unavailable', (t) => {
+  const meta = resolveOwner(t, { commitUnavailable: true });
+  assert.equal(meta.owner, 'ChrisJBurns');
+});
+
+test('retains human release author fallback when tag lookup fails', (t) => {
+  const meta = resolveOwner(t, {
+    tagUnavailable: true,
+    releaseAuthor: 'publisher',
+  });
+  assert.equal(meta.owner, 'publisher');
+});
+
+test('retains human tagged commit author fallback when the merger is a bot', (t) => {
+  const meta = resolveOwner(t, {
+    message: '',
+    merger: 'app/release-bot',
+    commitAuthor: 'commit-author',
+  });
+  assert.equal(meta.owner, 'commit-author');
+  assert.equal(meta.owner_source, 'author of the tagged commit');
+});
+
+test('leaves the owner unresolved when all sources are bots', (t) => {
+  const meta = resolveOwner(t, { message: '', merger: 'app/release-bot' });
+  assert.equal(meta.owner, null);
+  assert.equal(meta.owner_source, null);
+});
