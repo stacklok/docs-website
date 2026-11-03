@@ -531,6 +531,53 @@ connector grants. Each connector's
 [connector policy](../../connector-gateway/connector-policies.mdx) determines
 which callers the gateway exposes it to.
 
+## Accept service account workloads
+
+Kubernetes workloads call the gateway's MCP endpoint as
+[service accounts](../enterprise-directory/service-accounts.mdx), using the same
+trusted issuers and accounts as the AI Gateway. The chart turns this on whenever
+the gateway connects to the Enterprise Manager over TLS, as described in
+[Connect the gateway to the Enterprise Manager](#connect-the-gateway-to-the-enterprise-manager).
+It then:
+
+- Binds the `system:service-account-issuer-discovery` ClusterRole to the
+  gateway's ServiceAccount and mounts an API server token, so the gateway can
+  read the signing keys of an issuer added with **This cluster**.
+- Adds the gateway's ServiceAccount to
+  `enterprise-manager.grpc.callerAuth.workloadTrustSaSubjectAllowlist`, so the
+  gateway can fetch the trusted issuers. If you set that list yourself, include
+  `system:serviceaccount:<NAMESPACE>:<RELEASE_NAME>-connector-gateway` alongside
+  the AI Gateway's entry.
+
+The gateway polls the directory for trusted issuers every 30 seconds, set by
+`connector-gateway.enterpriseConfig.workloadIdentity.pollInterval`. A workload
+authenticates once an administrator adds its cluster's issuer and binds an
+active service account to its ServiceAccount. Users' sign-in works as before.
+
+Both gateways share trusted issuers and service accounts, so an account bound
+for the AI Gateway also reaches every connector its groups are granted. Review
+those groups' connector grants. To refuse workload tokens on this gateway, set:
+
+```yaml title="values.yaml"
+global:
+  stacklok:
+    connectorGateway:
+      workloadIdentity:
+        enabled: false
+```
+
+When `connector-gateway.networkPolicy.allowExternalEgress` is `false`, add rules
+to `connector-gateway.networkPolicy.egress` for the key sources: the API
+server's endpoint addresses for an issuer added with **This cluster**, and the
+host of each JWKS URL on port `443`. List the API server's addresses and write
+the rule as shown for the AI Gateway in
+[Accept service account workloads](./configure-ai-gateway.mdx#accept-service-account-workloads).
+Without these rules, the gateway logs `workload trust dropped` and refuses every
+workload token with `401`.
+
+To configure a workload, see
+[Call the Connector Gateway from Kubernetes workloads](../../connector-gateway/kubernetes-workloads.mdx).
+
 ## Turn on tool call recording and observability
 
 Tool call recording, which populates the console's **Tool Usage** screen, is off
@@ -591,6 +638,8 @@ together. This transport carries credentials in cleartext with no caller
 authentication, so reserve it for local testing. The Enterprise Manager refuses
 to start with `grpc.insecure: true` while `directory.kek` is configured, so this
 transport works only on an install without the key-encryption key.
+[Service account workloads](#accept-service-account-workloads) need the TLS
+transport.
 
 ### Override the gateway's name
 
@@ -604,6 +653,7 @@ these values to match:
 | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
 | `enterprise-manager.grpc.callerAuth.saSubjectAllowlist`, `gatewaySaSubjectAllowlist`, `credentialSaSubjectAllowlist`, and `meteringSaSubjectAllowlist` | `system:serviceaccount:<NAMESPACE>:<SERVICE_ACCOUNT_NAME>`           |
 | `enterprise-manager.grpc.callerAuth.httpSaSubjectAllowlist`, only when `global.stacklok.enterpriseManager.url` is set                                  | The same subject, alongside any AI Gateway entry already on the list |
+| `enterprise-manager.grpc.callerAuth.workloadTrustSaSubjectAllowlist`, unless workload tokens are turned off                                            | The same subject, alongside the AI Gateway's entry                   |
 | `toolhive-cloud-ui.connectorGatewayUrl`, which enables the console's **Connectors** pages                                                              | `http://<CONTROL_PLANE_SERVICE>.<NAMESPACE>:<CONTROL_PLANE_PORT>`    |
 | `enterprise-manager.grpc.networkPolicy.allowedClientSelector`, only with `nameOverride`                                                                | `app.kubernetes.io/name: <NAME_OVERRIDE>`                            |
 
@@ -715,11 +765,12 @@ the client registered with `openid` and then requested `offline_access`. Set
 <details>
 <summary>The render fails or the gateway is refused after a name override</summary>
 
-The umbrella chart checks `meteringSaSubjectAllowlist` and
-`toolhive-cloud-ui.connectorGatewayUrl` against the gateway's actual names and
-fails the render when they differ. The error message prints the value to set. No
-check covers `httpSaSubjectAllowlist`, so a stale entry there shows up only as
-refused HTTP calls from the gateway to the Enterprise Manager. See
+The umbrella chart checks `meteringSaSubjectAllowlist`,
+`workloadTrustSaSubjectAllowlist`, and `toolhive-cloud-ui.connectorGatewayUrl`
+against the gateway's actual names and fails the render when they differ. The
+error message prints the value to set. No check covers `httpSaSubjectAllowlist`,
+so a stale entry there shows up only as refused HTTP calls from the gateway to
+the Enterprise Manager. See
 [Override the gateway's name](#override-the-gateways-name).
 
 </details>

@@ -10,7 +10,8 @@ A workload running in Kubernetes calls the AI Gateway as its
 [service account](../platform/enterprise-directory/service-accounts.mdx) by
 sending a projected ServiceAccount token. Kubernetes issues the token to the pod
 and replaces it before it expires, so the workload holds no long-lived
-credential.
+credential. The same token also authenticates the workload to the
+[Connector Gateway](../connector-gateway/kubernetes-workloads.mdx).
 
 ## Prerequisites
 
@@ -38,11 +39,11 @@ spec:
         - name: <CONTAINER_NAME>
           image: <IMAGE>
           volumeMounts:
-            - name: ai-gateway-token
-              mountPath: /var/run/secrets/ai-gateway
+            - name: stacklok-token
+              mountPath: /var/run/secrets/stacklok
               readOnly: true
       volumes:
-        - name: ai-gateway-token
+        - name: stacklok-token
           projected:
             sources:
               - serviceAccountToken:
@@ -56,9 +57,9 @@ spec:
 Set `audience` to the trusted issuer's audience. The token carries it as its
 only audience, and the gateway refuses a token with any other audience or with
 more than one. Request tokens with this audience only for Stacklok Enterprise.
-Any other service that receives such a token can present it to the gateway until
-it expires, so request a separate token with its own audience for every other
-service the workload calls. The gateway also refuses the default token
+Any other service that receives such a token can present it to the gateways
+until it expires, so request a separate token with its own audience for every
+other service the workload calls. The gateway also refuses the default token
 Kubernetes mounts for the API server.
 
 Set `expirationSeconds` to `1800`. The gateway refuses a token with more than 60
@@ -73,7 +74,7 @@ that header. Send it only to the gateway's HTTPS endpoint.
 
 ```bash
 curl https://<AI_GATEWAY_HOST>/v1/chat/completions \
-  -H "Authorization: Bearer $(cat /var/run/secrets/ai-gateway/token)" \
+  -H "Authorization: Bearer $(cat /var/run/secrets/stacklok/token)" \
   -H "Content-Type: application/json" \
   -d '{"model":"<MODEL_NAME>","messages":[{"role":"user","content":"Reply with pong"}]}'
 ```
@@ -86,7 +87,7 @@ file again before each request or create the client per request, because the
 kubelet replaces the token and the previous one expires.
 
 Treat the token as a password until it expires. Don't log it, print it, or send
-it anywhere except the gateway.
+it anywhere except the gateways.
 
 ## Handle errors
 
@@ -134,6 +135,8 @@ name, and UID.
 
 - [Service accounts](../platform/enterprise-directory/service-accounts.mdx) for
   bindings, activation, and revocation.
+- [Call the Connector Gateway from Kubernetes workloads](../connector-gateway/kubernetes-workloads.mdx)
+  to call connector tools with the same token.
 - [Client endpoints](../platform/enterprise-platform/configure-ai-gateway.mdx#client-endpoints)
   for the base URL of each API format.
 

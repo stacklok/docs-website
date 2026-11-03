@@ -529,6 +529,11 @@ const connectorGatewaySidebar: SidebarsConfig[string] = [
     defaultStyle: false,
   },
   'connector-gateway/support-connector-access',
+  {
+    type: 'doc',
+    id: 'connector-gateway/kubernetes-workloads',
+    label: 'Kubernetes workloads',
+  },
 
   {
     type: 'html',
