@@ -18,9 +18,9 @@ credential. The same token also authenticates the workload to the
 - **An active service account bound to the ServiceAccount your pod runs as.** An
   administrator creates it, binds it, and grants it models and a budget. See
   [Service accounts](../platform/enterprise-directory/service-accounts.mdx).
-- **The trusted issuer's audience**, which defaults to
-  `stacklok-enterprise-platform`. Your administrator can confirm it on the
-  **Trusted issuers** tab in the console.
+- **The trusted issuer's audience**, such as `stacklok-enterprise-platform`.
+  Your administrator sets it and can confirm it on the **Trusted issuers** tab
+  in the console.
 - **The AI Gateway host** and the names of the models the account can use. Model
   discovery isn't available to service accounts, so the workload names its model
   in each request.
@@ -49,7 +49,7 @@ spec:
               - serviceAccountToken:
                   path: token
                   # highlight-next-line
-                  audience: stacklok-enterprise-platform
+                  audience: <AUDIENCE>
                   # highlight-next-line
                   expirationSeconds: 1800
 ```
@@ -94,14 +94,14 @@ it anywhere except the gateways.
 The gateway refuses a request before it calls a provider, and it charges no
 budget for a refused request:
 
-| Status | Message contains                                       | Meaning                                                                                                                                            |
-| ------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `401`  | `unauthenticated`                                      | The token failed verification: wrong audience, more than 60 minutes of lifetime left, expired, or from an issuer that isn't trusted or is disabled |
-| `402`  | `budget exhausted` or `no applicable budget`           | The account's budgets are spent, or none applies to it                                                                                             |
-| `403`  | `identity not resolved by the directory`               | The token is valid, but no active service account is bound to this ServiceAccount                                                                  |
-| `403`  | `model not permitted`                                  | The account has no grant for the requested model                                                                                                   |
-| `403`  | `model discovery is not available to service accounts` | The workload called a model list endpoint                                                                                                          |
-| `503`  | `service temporarily unavailable`                      | The gateway can't reach the directory. Retry after the `Retry-After` delay                                                                         |
+| Status | Message contains                                       | Meaning                                                                                                                                                                                |
+| ------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `401`  | `unauthenticated`                                      | The token failed verification: wrong audience, more than 60 minutes of lifetime left, expired, or from an issuer that isn't trusted, is disabled, or that the gateway couldn't install |
+| `402`  | `budget exhausted` or `no applicable budget`           | The account's budgets are spent, or none applies to it                                                                                                                                 |
+| `403`  | `identity not resolved by the directory`               | The token is valid, but no active service account is bound to this ServiceAccount                                                                                                      |
+| `403`  | `model not permitted`                                  | The account has no grant for the requested model                                                                                                                                       |
+| `403`  | `model discovery is not available to service accounts` | The workload called a model list endpoint                                                                                                                                              |
+| `503`  | `service temporarily unavailable`                      | The gateway can't reach the directory. Retry after the `Retry-After` delay                                                                                                             |
 
 The workload sees only these messages. An administrator finds the details in the
 AI Gateway's [audit events](./forward-audit-logs.mdx), where each refused
@@ -111,8 +111,10 @@ sign-in is an authentication event:
   `auth_invalid_workload_token` means the token came from a trusted issuer but
   failed a check, such as its audience or lifetime.
 - `auth_method` set to `jwt` with `reason_code` `auth_invalid_jwt` means the
-  gateway has no enabled issuer for the token, so check the issuer's status and
-  URL on the **Trusted issuers** tab.
+  gateway has no installed issuer for the token: the issuer is missing or
+  disabled, or the gateway couldn't install it. Check the issuer on the
+  **Trusted issuers** tab and the gateway logs for
+  `ai-gateway-v2: workload trust dropped`.
 - `reason_code` `auth_identity_unresolved` is a `403` for a valid token. The
   event names the ServiceAccount in its `service_account` subject, in the form
   `system:serviceaccount:<NAMESPACE>:<NAME>`, with its UID in
