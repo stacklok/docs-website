@@ -17,6 +17,56 @@ const env = {
   RUN_URL: 'https://github.com/stacklok/docs-website/actions/runs/123',
 };
 
+// Synthetic values only; construct them to avoid storing credential-shaped
+// strings in the repository while exercising the real publication boundary.
+const credentials = [
+  ...['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_'].map(
+    (prefix) => prefix + 'A'.repeat(36)
+  ),
+  'github_pat_' + 'B'.repeat(30),
+  'sk-ant-' + 'C'.repeat(30),
+  ...['AKIA', 'ASIA'].map((prefix) => prefix + 'D'.repeat(16)),
+  ...['xoxb-', 'xoxp-', 'xoxa-', 'xoxs-', 'xoxr-'].map(
+    (prefix) => prefix + 'E'.repeat(20)
+  ),
+  ['eyJ' + 'F'.repeat(20), 'eyJ' + 'G'.repeat(20), 'H'.repeat(20)].join('.'),
+];
+const secretResponse = `**Validation passed.**\n\n${credentials.join('\n')}\n\nNormal prose remains.`;
+
+function assertRedacted(body) {
+  for (const credential of credentials) assert.ok(!body.includes(credential));
+  for (const kind of [
+    'GITHUB_TOKEN',
+    'ANTHROPIC_KEY',
+    'AWS_KEY_ID',
+    'SLACK_TOKEN',
+    'JWT',
+  ]) {
+    assert.ok(body.includes(`[REDACTED_${kind}]`));
+  }
+  assert.ok(body.includes('**Validation passed.**'));
+  assert.ok(body.includes('Normal prose remains.'));
+}
+
+test('redacts the pinned action credential formats while preserving the report', () => {
+  assertRedacted(
+    renderSessionReport([{ type: 'result', result: secretResponse }], env)
+  );
+});
+
+test('redacts credentials before truncation can leave a partial token', () => {
+  const headerLength =
+    renderSessionReport([{ type: 'result', result: 'x' }], env).length - 2;
+  const suffix =
+    '\n\n> Report truncated. See the workflow run for the full response.';
+  const cutoff = 60000 - headerLength - suffix.length;
+  const response =
+    'x'.repeat(cutoff - 10) + credentials[0] + ' ' + 'z'.repeat(1000);
+  const body = renderSessionReport([{ type: 'result', result: response }], env);
+  assert.match(body, /Report truncated/);
+  assert.doesNotMatch(body, /ghp_/);
+});
+
 test('publishes only the final result, excluding instructions and tools', () => {
   const body = renderSessionReport(
     [
@@ -139,6 +189,7 @@ test('posts literal response text through JSON and handles unreadable output', (
   const literal = 'Kept `code`, $(shell), "quotes", and\nnewlines.';
   for (const contents of [
     JSON.stringify([{ type: 'result', result: literal }]),
+    JSON.stringify([{ type: 'result', result: secretResponse }]),
     'BROKEN JSON',
     null,
   ]) {
@@ -176,6 +227,8 @@ test('posts literal response text through JSON and handles unreadable output', (
     if (contents === 'BROKEN JSON' || contents === null) {
       assert.match(posted.request.body, /Final response unavailable/);
       assert.doesNotMatch(posted.request.body, /BROKEN JSON/);
+    } else if (contents.includes('Validation passed.')) {
+      assertRedacted(posted.request.body);
     } else {
       assert.ok(posted.request.body.includes(literal));
     }

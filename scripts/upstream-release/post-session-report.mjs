@@ -6,13 +6,34 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
+// Match the credential formats redacted by the pinned claude-code-action's
+// src/github/utils/sanitizer.ts (374f254f5efaf968abfe15d399fd90972e8138b9).
+// Actions log masking does not apply to the GitHub API request body.
+function redactSecrets(content) {
+  return content
+    .replace(/gh[pousr]_[A-Za-z0-9]{36}\b/g, '[REDACTED_GITHUB_TOKEN]')
+    .replace(/github_pat_[A-Za-z0-9_]{11,221}\b/g, '[REDACTED_GITHUB_TOKEN]')
+    .replace(/sk-ant-[A-Za-z0-9_-]{20,}/g, '[REDACTED_ANTHROPIC_KEY]')
+    .replace(
+      /(?:\b|(?<=\\(?:[nrtbf"\\/]|u[0-9a-fA-F]{4}))|(?<=\[[0-9;]*m))(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
+      '[REDACTED_AWS_KEY_ID]'
+    )
+    .replace(/xox[abpsr]-[A-Za-z0-9-]{10,}/g, '[REDACTED_SLACK_TOKEN]')
+    .replace(
+      /eyJ[A-Za-z0-9_-]{10,2000}\.eyJ[A-Za-z0-9_-]{10,4000}\.[A-Za-z0-9_-]{10,2000}\b/g,
+      '[REDACTED_JWT]'
+    );
+}
+
 export function renderSessionReport(messages, env) {
   // Only the SDK's final result is suitable for a PR comment. Assistant
   // messages can contain intermediate narration; never fall back to them.
   const results = Array.isArray(messages) ? messages : [messages];
   const result = results.findLast((message) => message?.type === 'result');
   const response =
-    typeof result?.result === 'string' ? result.result.trim() : '';
+    typeof result?.result === 'string'
+      ? redactSecrets(result.result.trim())
+      : '';
   const label = { generation: 'generation', editorial: 'editorial review' }[
     env.SESSION
   ];
