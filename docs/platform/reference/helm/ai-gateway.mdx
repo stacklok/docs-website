@@ -11,8 +11,8 @@ Configure the AI Gateway chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `ai-gateway-v2`. Chart version: `0.25.0`. Generated from the platform
-source at `v0.25.0`.
+Chart: `ai-gateway-v2`. Chart version: `0.26.0`. Generated from the platform
+source at `v0.26.0`.
 
 ## Values
 
@@ -522,6 +522,14 @@ Upstream providers. `credentialSecretRef` names the Secret and key holding the
 provider's credential, mounted as a file; inline plaintext credentials are
 refused. A provider without one uses the ambient credential chain.
 
+`mock: true` marks an in-cluster fake upstream for load tests. Requests routed
+to it skip the scanning, guardrails and budgets-capture hooks. Model access,
+budget admission, usage metering, audit and telemetry still run. The render
+fails unless `baseUrl` is an in-cluster Service host (`*.svc` or
+`*.svc.cluster.local`), so a real provider cannot lose scanning by mistake. The
+check proves an in-cluster name, not a fake upstream. Keep the mock's namespace
+operator-owned, and never point a mock at a proxy to a real vendor.
+
 ```yaml
 Example:
   providers:
@@ -535,6 +543,10 @@ Example:
       baseUrl: https://bedrock-runtime.us-east-1.amazonaws.com
       region: us-east-1
       models: ['us.anthropic.claude-opus-4-8']
+    - kind: openai
+      mock: true
+      baseUrl: http://mock-llm-provider.mock-llm-provider.svc.cluster.local:8080
+      models: ['mock-gpt-lorem']
 ```
 
 ### `auth`
@@ -804,6 +816,21 @@ Severity of structured operational failure records (warn, error, or debug).
 Include a bounded parsed failure message by default. Set false to log metadata
 only when stderr retention or access cannot accommodate PII.
 
+### `failureLogs.includePrompt`
+
+**Type:** `bool`
+
+**Default:** `false`
+
+Default for `scanning.denyPromptInMessage` and `guardrails.denyPromptInMessage`:
+have both adapters append the request text behind a denial to the deny message
+the gateway logs. A flag set on an adapter wins over this one, in either
+direction. With any enabled adapter's text on, the gateway logs up to 16 KiB of
+a deny cause instead of 1 KiB. The chart refuses to render it with
+`includeMessage: false`. SECURITY: this logs raw user text, including whatever a
+scanner detected (PII, secrets). Off by default; enable it to tune a screen, on
+an install whose log retention and access can hold that text.
+
 ### `audit.enabled`
 
 **Type:** `bool`
@@ -1062,6 +1089,7 @@ adapter:
 allowlist: []
 allowlistMatch: exact
 audience: ''
+denyPromptInMessage: null
 diagnostics:
   includePIIInDebugLogs: false
 enabled: false
@@ -1094,6 +1122,7 @@ presidio:
   maxReplicas: null
   nodeSelector: {}
   podAnnotations: {}
+  pythonExecutable: /opt/chainguard/presidio-analyzer/bin/python3
   recognizers: []
   replicas: 2
   resources:
@@ -1153,6 +1182,17 @@ ClusterRoleBinding, and wire the gateway's scan hook to it.
 
 Audience of the token the gateway presents to the adapter. Empty derives
 `https://<adapter-service>.<release-namespace>.svc`.
+
+### `scanning.denyPromptInMessage`
+
+**Type:** `string`
+
+**Default:** `nil`
+
+Append the request text behind a deny (the text of the matched nodes) to the
+deny message the gateway logs. Unset follows `failureLogs.includePrompt`; set
+true or false to override it for this adapter only. SECURITY: this logs raw user
+text, including what Presidio detected.
 
 ### `scanning.requestAction`
 
@@ -1611,6 +1651,17 @@ Optional image digest, appended as `@<digest>` after the tag.
 
 Image pull policy.
 
+### `scanning.presidio.pythonExecutable`
+
+**Type:** `string`
+
+**Default:** `"/opt/chainguard/presidio-analyzer/bin/python3"`
+
+Interpreter inside the Presidio image that has the analyzer's dependencies. The
+populate-tldextract-cache init container and the startupProbe run it by this
+path. The default matches the shipped Chainguard image; set the matching path
+when `image` points at one that keeps its interpreter elsewhere.
+
 ### `scanning.presidio.replicas`
 
 **Type:** `int`
@@ -1713,8 +1764,12 @@ Minimum Presidio confidence, 0-100, for a detection to count.
 **Default:** `[]`
 
 Custom Pattern recognizers: `name`, `supportedEntity` (UPPER_SNAKE, not a
-built-in), and `patterns` (`name`, RE2 `regex`, `score`) and/or `denyList`,
-optional `contextWords`. Editing this list rolls Presidio.
+built-in), and `patterns` (`name`, `regex`, `score`, optional `syntax`) and/or
+`denyList`, optional `contextWords`. Editing this list rolls Presidio. A `regex`
+must be valid RE2 so a typo fails the render. Set a pattern's `syntax: python`
+to use Python-only constructs such as lookarounds: the chart then skips that
+check, and a pattern Presidio cannot compile fails every analysis, which
+`ner.failureAction` resolves.
 
 ### `guardrails.enabled`
 
@@ -1725,6 +1780,16 @@ optional `contextWords`. Editing this list rolls Presidio.
 Render the guardrails-adapter, including a cluster-scoped ClusterRoleBinding,
 and wire the gateway's `guardrails` hook to it. It screens user text with Amazon
 Bedrock Guardrails after scanning.
+
+### `guardrails.denyPromptInMessage`
+
+**Type:** `string`
+
+**Default:** `nil`
+
+Append the text Bedrock screened behind a deny to the deny message the gateway
+logs. Unset follows `failureLogs.includePrompt`; set true or false to override
+it for this adapter only. SECURITY: this logs raw user text.
 
 ### `guardrails.mode`
 
@@ -1931,7 +1996,8 @@ AWS region of the guardrail, e.g. `us-east-1`. Required.
 **Default:** `{"prompts":[],"regexes":[]}`
 
 Prompts excluded from screening: exact `prompts`, or RE2 `regexes` that match
-anywhere unless anchored (`^ping$`, not `^ping`).
+anywhere unless anchored (`^ping$`, not `^ping`). Each user text part is matched
+on its own.
 
 ### `guardrails.bedrock.credentialsSecretRef`
 
