@@ -143,7 +143,9 @@ Complete the following sequence before sending production traffic:
    is the `host:port` of the directory's gRPC listener, without a scheme. The
    gateway connects to the cleartext listener on port `9091`, so set
    `directory.insecure: true`. It still authenticates every call with its
-   projected ServiceAccount token.
+   projected ServiceAccount token. To accept service account workloads, connect
+   to the TLS listener instead, as described in
+   [Accept service account workloads](#accept-service-account-workloads).
 
    Set `directory.groupsResolutionIssuer` to the issuer the directory knows your
    users under, usually your corporate identity provider's issuer. Requests that
@@ -317,12 +319,41 @@ request is refused with `503` or `504`.
 
 Kubernetes workloads call the gateway as
 [service accounts](../enterprise-directory/service-accounts.mdx), using trusted
-issuers that an administrator adds in the console. Once `directory.endpoint` is
-set, the gateway polls the directory for those issuers every 30 seconds, set by
+issuers that an administrator adds in the console. Once connected to the
+directory, the gateway polls it for those issuers every 30 seconds, set by
 `directory.workloadTrust.pollInterval`, and fetches each issuer's public keys.
 Complete these steps before the first workload calls the gateway:
 
-1. **Keep the gateway on the issuer allowlist.** The platform chart adds the
+1. **Connect to the directory over TLS.** The directory serves trusted issuers
+   only on the Enterprise Manager's TLS gRPC port (`9443`). Over the cleartext
+   listener, the gateway installs no issuer and refuses every workload with
+   `401`, while users and virtual API keys keep working. Turn on the Enterprise
+   Manager's TLS listener, as for the
+   [Connector Gateway](./configure-connector-gateway.mdx#connect-the-gateway-to-the-enterprise-manager),
+   and point the gateway at it:
+
+   ```yaml title="values.yaml"
+   enterprise-manager:
+     grpc:
+       tls:
+         enabled: true
+         existingSecret: 'enterprise-manager-grpc-tls'
+
+   ai-gateway-v2:
+     directory:
+       endpoint: '<ENTERPRISE_MANAGER_SERVICE>.<NAMESPACE>.svc:9443'
+       insecure: false
+       caBundle:
+         secretName: 'enterprise-manager-grpc-ca'
+   ```
+
+   `directory.caBundle.secretName` names a Secret in the gateway's namespace
+   that holds only the CA certificate, under the key `ca.crt`, as described in
+   [Prepare the gateway's secrets](./configure-connector-gateway.mdx#prepare-the-gateways-secrets).
+   The gateway reads it again at every reconnect, so a rotated CA needs no
+   restart.
+
+2. **Keep the gateway on the issuer allowlist.** The platform chart adds the
    gateway's ServiceAccount to
    `enterprise-manager.grpc.callerAuth.workloadTrustSaSubjectAllowlist`. If you
    set that list yourself, include the gateway's subject, by default
@@ -331,14 +362,14 @@ Complete these steps before the first workload calls the gateway:
    include the Connector Gateway's subject when it
    [accepts service account workloads](./configure-connector-gateway.mdx#accept-service-account-workloads).
 
-2. **Confirm the gateway can read this cluster's keys.** For an issuer of the
+3. **Confirm the gateway can read this cluster's keys.** For an issuer of the
    cluster the gateway runs in, the gateway reads keys from the Kubernetes API.
    The chart binds the `system:service-account-issuer-discovery` ClusterRole to
    the gateway's ServiceAccount for that read, which most distributions grant to
    no one by default. Keep that binding if a policy tool reviews
    ClusterRoleBindings.
 
-3. **Allow egress to the key sources** when `networkPolicy.allowExternalEgress`
+4. **Allow egress to the key sources** when `networkPolicy.allowExternalEgress`
    is `false`. The cluster's own keys come from the API server's endpoint
    addresses, often on port `6443`. List them:
 

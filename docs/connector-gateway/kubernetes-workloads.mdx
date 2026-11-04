@@ -82,6 +82,13 @@ curl -i https://<GATEWAY_HOST>/gw/mcp \
 A `200` response means the gateway accepted the token. The token works only on
 the MCP endpoint; the gateway's REST API refuses it with `401`.
 
+The response's `Mcp-Session-Id` header identifies the MCP session. A workload
+that sends HTTP requests itself, instead of through an MCP client library,
+repeats that header and the same `Accept` header on every later request: first
+the `notifications/initialized` notification, then `tools/list` and
+`tools/call`. Without the session header, a `tools/list` or `tools/call` request
+fails, because the gateway treats it as the start of a new session.
+
 Treat the token as a password until it expires. Don't log it, print it, or send
 it anywhere except the gateways.
 
@@ -91,22 +98,26 @@ The gateway serves the account every connector granted to one of its groups that
 uses **None**, **Bearer token**, or **Header injection** authentication, as
 described in
 [What an account can reach](../platform/enterprise-directory/service-accounts.mdx#what-an-account-can-reach).
-For a Cedar-mode connector, its Cedar policy decides, and a policy that reads a
-token claim never admits a service account.
+For a Cedar-mode connector, its Cedar policy decides: a policy with no condition
+on the principal admits every active service account, and a policy that reads a
+token claim admits none. See
+[Cedar-mode connectors](./connector-policies.mdx#cedar-mode-connectors).
 
 A service account has no connections to make or pause. Its `tools/list` response
 includes every tool its groups are allowed on each connector it can reach, and a
-grant or revocation applies on its next request. The gateway sends the backend
-only the connector's own credential, never the workload's token.
+grant or revocation applies on its next request. Each tool's name combines the
+connector's name, a short hash, and the backend's own tool name, so call tools
+by the names `tools/list` returns. The gateway sends the backend only the
+connector's own credential, never the workload's token.
 
 ## Handle errors
 
-| Status | Body                           | Meaning                                                                                                                                                                                                                                                            |
-| ------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `401`  | `invalid token`                | The token failed verification: wrong audience, more than 60 minutes of lifetime left, or expired                                                                                                                                                                   |
-| `401`  | Varies                         | The gateway has no installed issuer for the token, so it handled the request as a user's: the issuer is missing or disabled, or the gateway couldn't install it. Check the issuer on the **Trusted issuers** tab and the gateway logs for `workload trust dropped` |
-| `403`  | `service account not resolved` | The token is valid, but no active service account is bound to this ServiceAccount                                                                                                                                                                                  |
-| `503`  | `directory unavailable`        | The gateway can't reach the directory. Retry after the `Retry-After` delay                                                                                                                                                                                         |
+| Status | Body                           | Meaning                                                                                                                                                                                                                                                                                  |
+| ------ | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `401`  | `invalid token`                | The token failed verification: wrong audience, more than 60 minutes of lifetime left, or expired                                                                                                                                                                                         |
+| `401`  | Varies                         | The gateway has no installed issuer for the token, so it handled the request as a user's: the issuer is missing or disabled, or the gateway couldn't install it. Check the issuer on the **Trusted issuers** tab, then the gateway logs described in [Troubleshooting](#troubleshooting) |
+| `403`  | `service account not resolved` | The token is valid, but no active service account is bound to this ServiceAccount, such as when the account is suspended or deleted                                                                                                                                                      |
+| `503`  | `directory unavailable`        | The gateway can't reach the directory. Retry after the `Retry-After` delay                                                                                                                                                                                                               |
 
 The gateway counts each request that carries a token from a trusted issuer in
 the `stacklok.connector_gateway.workload_identity.resolutions` metric, with an
@@ -143,13 +154,21 @@ the token file before each request.
 </details>
 
 <details>
-<summary>Requests fail with 401 right after an issuer is added</summary>
+<summary>Requests fail with 401 although the issuer is enabled</summary>
 
 The gateway installs a new issuer on its next poll of the directory, every 30
 seconds by default. Retry after the poll. If requests still fail, an
-administrator checks the gateway logs for `workload trust dropped`, whose
-`reason` says why the gateway didn't install the issuer, such as
-`key_fetch_failed` when an egress rule is missing. See
+administrator checks the gateway logs:
+
+- `workload trust snapshot poll failed` means the gateway couldn't fetch the
+  issuers. Its `state` is `PermissionDenied` when the gateway's ServiceAccount
+  is missing from `workloadTrustSaSubjectAllowlist`, and `Unavailable` when it
+  can't reach the directory.
+- `workload trust dropped` means the gateway fetched an issuer but couldn't
+  install it. Its `reason` says why, such as `key_fetch_failed` when an egress
+  rule is missing.
+
+See
 [Accept service account workloads](../platform/enterprise-platform/configure-connector-gateway.mdx#accept-service-account-workloads).
 
 </details>

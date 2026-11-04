@@ -99,7 +99,7 @@ budget for a refused request:
 | ------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `401`  | `unauthenticated`                                      | The token failed verification: wrong audience, more than 60 minutes of lifetime left, expired, or from an issuer that isn't trusted, is disabled, or that the gateway couldn't install |
 | `402`  | `budget exhausted` or `no applicable budget`           | The account's budgets are spent, or none applies to it                                                                                                                                 |
-| `403`  | `identity not resolved by the directory`               | The token is valid, but no active service account is bound to this ServiceAccount                                                                                                      |
+| `403`  | `identity not resolved by the directory`               | The token is valid, but no active service account is bound to this ServiceAccount, such as when the account is suspended or deleted                                                    |
 | `403`  | `model not permitted`                                  | The account has no grant for the requested model                                                                                                                                       |
 | `403`  | `model discovery is not available to service accounts` | The workload called a model list endpoint                                                                                                                                              |
 | `503`  | `service temporarily unavailable`                      | The gateway can't reach the directory. Retry after the `Retry-After` delay                                                                                                             |
@@ -113,9 +113,9 @@ sign-in is an authentication event:
   failed a check, such as its audience or lifetime.
 - `auth_method` set to `jwt` with `reason_code` `auth_invalid_jwt` means the
   gateway has no installed issuer for the token: the issuer is missing or
-  disabled, or the gateway couldn't install it. Check the issuer on the
-  **Trusted issuers** tab and the gateway logs for
-  `ai-gateway-v2: workload trust dropped`.
+  disabled, or the gateway couldn't fetch or install it. Check the issuer on the
+  **Trusted issuers** tab, then the gateway logs described in
+  [Troubleshooting](#troubleshooting).
 - `reason_code` `auth_identity_unresolved` is a `403` for a valid token. The
   event names the ServiceAccount in its `service_account` subject, in the form
   `system:serviceaccount:<NAMESPACE>:<NAME>`, with its UID in
@@ -154,14 +154,23 @@ the token file before each request.
 </details>
 
 <details>
-<summary>Requests fail with 401 right after an issuer is added</summary>
+<summary>Requests fail with 401 although the issuer is enabled</summary>
 
 The gateway installs a new issuer on its next poll of the directory, every 30
 seconds by default. Retry after the poll. If requests still fail, an
-administrator checks the gateway logs for
-`ai-gateway-v2: workload trust dropped`, whose `reason` says why the gateway
-didn't install the issuer, such as `key_fetch_failed` when an egress rule is
-missing. See
+administrator checks the gateway logs:
+
+- `ai-gateway-v2: workload trust snapshot poll failed` means the gateway
+  couldn't fetch the issuers. Its `state` is `FailedPrecondition` when the
+  gateway connects to the directory's cleartext listener instead of TLS,
+  `PermissionDenied` when its ServiceAccount is missing from the issuer
+  allowlist, and `Unavailable` when it can't reach the directory or verify its
+  certificate.
+- `ai-gateway-v2: workload trust dropped` means the gateway fetched an issuer
+  but couldn't install it. Its `reason` says why, such as `key_fetch_failed`
+  when an egress rule is missing.
+
+See
 [Accept service account workloads](../platform/enterprise-platform/configure-ai-gateway.mdx#accept-service-account-workloads).
 
 </details>
