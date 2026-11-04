@@ -15,6 +15,8 @@ import {
   renderPage,
   renderDescription,
   validateDescriptions,
+  resolveHelmCharts,
+  validateHelmInputs,
 } from './generate-helm-reference.mjs';
 
 const chart = {
@@ -89,6 +91,80 @@ test('coverage validation reports every missing value across charts', () => {
       return true;
     }
   );
+});
+
+test('release chart selection supports legacy and current gateway layouts', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'helm-release-layout-'));
+  try {
+    const { projects } = yaml.parse(
+      fs.readFileSync(
+        new URL('../../.github/upstream-projects.yaml', import.meta.url),
+        'utf8'
+      )
+    );
+    const project = projects.find(
+      (p) => p.id === 'stacklok-enterprise-platform'
+    );
+    const metadata = path.join(root, project.helm_version_source);
+    fs.mkdirSync(path.dirname(metadata), { recursive: true });
+    for (const [version, legacy] of [
+      ['0.25.0', true],
+      ['0.26.0', false],
+      ['0.27.0', false],
+      ['0.100.0', false],
+    ]) {
+      fs.writeFileSync(metadata, yaml.stringify({ version }));
+      const charts = resolveHelmCharts(project, root);
+      const sources = charts.map((chart) => chart.source);
+      assert.equal(
+        sources.includes('enterprise/ai-gateway/helm/operator'),
+        legacy
+      );
+      assert.equal(
+        sources.includes('enterprise/ai-gateway/helm/operator-crds'),
+        legacy
+      );
+      assert.equal(sources.includes('enterprise/sprout/helm'), legacy);
+      assert.equal(sources.includes('enterprise/ai-gateway/helm'), !legacy);
+      assert.equal(charts.length, legacy ? 10 : 8);
+      const platform = charts.find((chart) =>
+        chart.page.endsWith('/platform.mdx')
+      );
+      assert.equal(
+        Boolean(platform.description_overrides?.['workspace.production']),
+        !legacy
+      );
+    }
+    fs.writeFileSync(metadata, 'version: invalid\n');
+    assert.throws(
+      () => resolveHelmCharts(project, root),
+      /Invalid Helm release version/
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('missing Helm inputs are reported together before generation', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'helm-missing-inputs-'));
+  try {
+    fs.mkdirSync(path.join(root, 'first'));
+    fs.writeFileSync(path.join(root, 'first/Chart.yaml'), 'name: first\n');
+    fs.writeFileSync(path.join(root, 'first/values.yaml'), '');
+    assert.throws(
+      () =>
+        validateHelmInputs([{ source: 'first' }, { source: 'second' }], root),
+      (error) => {
+        assert.match(error.message, /first\/values.yaml/);
+        assert.match(error.message, /second\/Chart.yaml/);
+        assert.match(error.message, /second\/values.yaml/);
+        assert.doesNotMatch(error.message, /first\/Chart.yaml/);
+        return true;
+      }
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('check mode validates all charts without writing pages or formatting', () => {

@@ -15,6 +15,68 @@ import yaml from 'yaml';
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 
+// Select chart paths from the source release's version, including SHA-based exports.
+export function resolveHelmCharts(project, clone) {
+  const charts = project.helm || [];
+  if (!project.helm_version_source) return charts;
+  const metadata = yaml.parse(
+    fs.readFileSync(path.join(clone, project.helm_version_source), 'utf8')
+  );
+  const version = (value) => {
+    const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/.exec(value);
+    if (!match) throw new Error(`Invalid Helm release version: ${value}`);
+    return match.slice(1, 4).map(Number);
+  };
+  const current = version(metadata.version);
+  const atLeast = (value) => {
+    const target = version(value);
+    for (let i = 0; i < 3; i++) {
+      if (current[i] !== target[i]) return current[i] > target[i];
+    }
+    return true;
+  };
+  return charts
+    .filter((chart) => !chart.before || !atLeast(chart.before))
+    .map((chart) => {
+      const overrides = (chart.release_overrides || [])
+        .filter((override) => atLeast(override.since))
+        .sort((a, b) => {
+          const left = version(a.since);
+          const right = version(b.since);
+          return left[0] - right[0] || left[1] - right[1] || left[2] - right[2];
+        });
+      return overrides.reduce(
+        (resolved, override) => ({
+          ...resolved,
+          ...override,
+          description_overrides: {
+            ...resolved.description_overrides,
+            ...override.description_overrides,
+          },
+        }),
+        chart
+      );
+    });
+}
+
+export function validateHelmInputs(charts, clone) {
+  const missing = charts.flatMap((chart) =>
+    ['Chart.yaml', 'values.yaml']
+      .map((file) => path.join(chart.source, file))
+      .filter((file) => {
+        const input = path.join(clone, file);
+        return (
+          !fs.existsSync(input) ||
+          !fs.statSync(input).isFile() ||
+          !fs.statSync(input).size
+        );
+      })
+  );
+  if (missing.length) {
+    throw new Error(`Missing release Helm inputs:\n${missing.join('\n')}`);
+  }
+}
+
 // Preserve inline code while escaping MDX expressions and JSX in upstream prose.
 export function mdxText(value) {
   return String(value).replace(
@@ -274,11 +336,13 @@ function main(argv) {
   if (!args.clone || (!args.check && !tag))
     throw new Error('Helm generation requires --clone and a release tag');
 
+  const charts = resolveHelmCharts(project, args.clone);
+  validateHelmInputs(charts, args.clone);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'helm-reference-'));
   try {
     // Copy only documentation inputs: helm-docs must never overwrite upstream READMEs.
     // Prepare every page before replacing outputs, so incomplete annotations fail early.
-    const inputs = project.helm.map((chart, index) => {
+    const inputs = charts.map((chart, index) => {
       const dir = path.join(tmp, String(index));
       fs.mkdirSync(dir);
       for (const file of ['Chart.yaml', 'values.yaml']) {
