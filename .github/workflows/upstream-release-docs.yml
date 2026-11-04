@@ -509,8 +509,10 @@ jobs:
           # `renovate[bot]`, while `gh pr view`/`gh release view`
           # return `app/toolhive-release-app` for the same class of
           # identity.
+          # GitHub logins are case-insensitive; preserve their spelling
+          # in outputs while comparing bot names without case sensitivity.
           is_bot() {
-            printf '%s\n' "$1" | grep -qE '(\[bot\]$|^app/|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)'
+            printf '%s\n' "$1" | grep -qiE '(\[bot\]$|^app/|^github-actions|^stacklokbot$|^dependabot|^renovate|^copilot)'
           }
 
           # ---------- compare the release range ----------
@@ -557,8 +559,15 @@ jobs:
             COMMIT_MESSAGE=$(printf '%s' "$COMMIT_JSON" | jq -r '.commit.message // ""' 2>/dev/null || true)
             # Squash merges can separate this trailer from Co-authored-by
             # with a blank line, so inspect the complete commit message.
-            INITIATOR=$(printf '%s\n' "$COMMIT_MESSAGE" \
-              | sed -n 's/^Release-Triggered-By:[[:blank:]]*//p')
+            # Count before extraction: command substitution strips empty
+            # trailing values, which could hide an empty duplicate trailer.
+            INITIATOR_COUNT=$(printf '%s\n' "$COMMIT_MESSAGE" \
+              | grep -c '^Release-Triggered-By:' || true)
+            INITIATOR=""
+            if [ "$INITIATOR_COUNT" -eq 1 ]; then
+              INITIATOR=$(printf '%s\n' "$COMMIT_MESSAGE" \
+                | sed -n 's/^Release-Triggered-By:[[:blank:]]*//p')
+            fi
             # Accept a single GitHub login. Missing, malformed, duplicate,
             # or bot trailers fall through to the existing owner sources.
             if [[ "$INITIATOR" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$ ]] && ! is_bot "$INITIATOR"; then
