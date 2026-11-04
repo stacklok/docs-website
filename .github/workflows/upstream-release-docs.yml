@@ -700,8 +700,19 @@ jobs:
           " 2>/dev/null || true)
           echo "dirs=$DIRS" >> "$GITHUB_OUTPUT"
 
+      # Load the reporter from the same trusted revision as this workflow,
+      # before either session can edit files in the PR checkout.
+      - name: Prepare session reporter
+        id: session_reporter
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          REPORTER=$(mktemp "$RUNNER_TEMP/release-session-report.XXXXXX.mjs")
+          git show "$WORKFLOW_SHA:scripts/upstream-release/post-session-report.mjs" > "$REPORTER"
+          echo "path=$REPORTER" >> "$GITHUB_OUTPUT"
+
       # Dispatch runs do not support Claude's live tracking comments.
-      # Post explicit started/completed comments for reviewers instead.
+      # Publish each final response explicitly after its session finishes.
       - name: Post skill-started comment
         if: github.event_name == 'workflow_dispatch' && steps.eff.outputs.number != ''
         env:
@@ -847,6 +858,20 @@ jobs:
         if: always() && steps.generation_token.outcome == 'success'
         run: git remote set-url origin "https://github.com/$GITHUB_REPOSITORY.git"
 
+      # Publish immediately: editorial overwrites the shared execution file.
+      # Use the job token so reporting does not depend on session credentials.
+      - name: Post generation report
+        if: always() && steps.eff.outputs.number != '' && (steps.skill_gen.outcome == 'success' || steps.skill_gen.outcome == 'failure')
+        continue-on-error: true
+        env:
+          REPORTER: ${{ steps.session_reporter.outputs.path }}
+          EXECUTION_FILE: ${{ steps.skill_gen.outputs.execution_file }}
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+          SESSION: generation
+          SESSION_OUTCOME: ${{ steps.skill_gen.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node "$REPORTER"
+
       # Capture skill_gen's execution stats BEFORE skill_review runs
       # and overwrites the shared execution-output JSON at the
       # canonical claude-code-action location. Lets us report
@@ -899,6 +924,17 @@ jobs:
           scope: stacklok/docs-website
           identity: upstream-release-docs
           domain: octo-sts.stacklok.dev
+
+      # A failure before editorial starts must not publish generation's
+      # response a second time through the action's fallback file output.
+      - name: Clear previous session output
+        if: always() && steps.skill_gen.conclusion == 'success' && steps.review_token.outcome == 'success'
+        env:
+          EXECUTION_FILE: ${{ steps.skill_gen.outputs.execution_file }}
+        run: |
+          if [ -n "$EXECUTION_FILE" ]; then
+            rm -f -- "$EXECUTION_FILE"
+          fi
 
       - name: Run docs-review on skill output (fresh context)
         id: skill_review
@@ -996,6 +1032,18 @@ jobs:
       - name: Clear session Git credentials
         if: always() && steps.review_token.outcome == 'success'
         run: git remote set-url origin "https://github.com/$GITHUB_REPOSITORY.git"
+
+      - name: Post editorial report
+        if: always() && steps.eff.outputs.number != '' && (steps.skill_review.outcome == 'success' || steps.skill_review.outcome == 'failure')
+        continue-on-error: true
+        env:
+          REPORTER: ${{ steps.session_reporter.outputs.path }}
+          EXECUTION_FILE: ${{ steps.skill_review.outputs.execution_file }}
+          PR_NUMBER: ${{ steps.eff.outputs.number }}
+          SESSION: editorial
+          SESSION_OUTCOME: ${{ steps.skill_review.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node "$REPORTER"
 
       # claude-code-action works in a sibling scratch checkout (the
       # .claude-pr/ dir we gitignore) and pushes commits to origin
