@@ -328,8 +328,8 @@ Complete these steps before the first workload calls the gateway:
    only on the Enterprise Manager's TLS gRPC port (`9443`). Over the cleartext
    listener, the gateway installs no issuer and refuses every workload with
    `401`, while users and virtual API keys keep working. Turn on the Enterprise
-   Manager's TLS listener, as for the
-   [Connector Gateway](./configure-connector-gateway.mdx#connect-the-gateway-to-the-enterprise-manager),
+   Manager's TLS listener, as described in
+   [Encrypting stored credentials](./deployment.mdx#encrypting-stored-credentials),
    and point the gateway at it:
 
    ```yaml title="values.yaml"
@@ -341,17 +341,29 @@ Complete these steps before the first workload calls the gateway:
 
    ai-gateway-v2:
      directory:
-       endpoint: '<ENTERPRISE_MANAGER_SERVICE>.<NAMESPACE>.svc:9443'
+       endpoint: '<ENTERPRISE_MANAGER_SERVICE>.<NAMESPACE>.svc.cluster.local:9443'
        insecure: false
        caBundle:
          secretName: 'enterprise-manager-grpc-ca'
    ```
 
+   Use a host name that the Enterprise Manager's gRPC certificate covers. A
+   certificate that cert-manager issues through `grpc.tls.issuerRef` covers
+   every form of the Service name.
+
    `directory.caBundle.secretName` names a Secret in the gateway's namespace
-   that holds only the CA certificate, under the key `ca.crt`, as described in
-   [Prepare the gateway's secrets](./configure-connector-gateway.mdx#prepare-the-gateways-secrets).
-   The gateway reads it again at every reconnect, so a rotated CA needs no
-   restart.
+   that holds only the CA certificate, under the key `ca.crt`. If cert-manager
+   issues the Enterprise Manager's certificate, copy `ca.crt` out of its Secret
+   rather than referencing that Secret, which also holds the private key:
+
+   ```bash
+   kubectl create secret generic enterprise-manager-grpc-ca \
+     --namespace <NAMESPACE> \
+     --from-file=ca.crt=./ca.crt
+   ```
+
+   The gateway reads the Secret again at every reconnect, so a rotated CA needs
+   no restart.
 
 2. **Keep the gateway on the issuer allowlist.** The platform chart adds the
    gateway's ServiceAccount to
