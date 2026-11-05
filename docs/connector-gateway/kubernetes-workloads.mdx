@@ -1,0 +1,185 @@
+---
+title: Call the Connector Gateway from Kubernetes workloads
+sidebar_label: Kubernetes workloads
+description:
+  Connect a Kubernetes workload to the Connector Gateway as its service account
+  with a projected ServiceAccount token, and handle the gateway's refusals.
+---
+
+A workload running in Kubernetes calls the Connector Gateway's MCP endpoint as
+its [service account](../platform/enterprise-directory/service-accounts.mdx) by
+sending a projected ServiceAccount token. No one signs in: Kubernetes issues the
+token to the pod and replaces it before it expires. The same token also
+authenticates the workload to the
+[AI Gateway](../ai-gateway/kubernetes-workloads.mdx).
+
+## Prerequisites
+
+- **An active service account bound to the ServiceAccount your pod runs as**, in
+  a group that's granted the connectors the workload needs. See
+  [Service accounts](../platform/enterprise-directory/service-accounts.mdx).
+- **The trusted issuer's audience**, such as `stacklok-enterprise-platform`.
+  Your administrator sets it and can confirm it on the **Trusted issuers** tab
+  in the console.
+- **The gateway's MCP endpoint**, `https://<GATEWAY_HOST>/gw/mcp`, the same
+  endpoint users connect their clients to.
+
+## Mount a token for the gateway
+
+Add a projected token volume to the pod spec and mount it into the container
+that calls the gateway:
+
+```yaml title="deployment.yaml"
+spec:
+  template:
+    spec:
+      serviceAccountName: <SERVICE_ACCOUNT_NAME>
+      containers:
+        - name: <CONTAINER_NAME>
+          image: <IMAGE>
+          volumeMounts:
+            - name: stacklok-token
+              mountPath: /var/run/secrets/stacklok
+              readOnly: true
+      volumes:
+        - name: stacklok-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  # highlight-next-line
+                  audience: <AUDIENCE>
+                  # highlight-next-line
+                  expirationSeconds: 1800
+```
+
+Set `audience` to the trusted issuer's audience, and `expirationSeconds` to
+`1800`. The gateway applies the same token rules as the AI Gateway: exactly one
+audience and at most 60 minutes of lifetime left. See
+[Mount a token for the gateway](../ai-gateway/kubernetes-workloads.mdx#mount-a-token-for-the-gateway)
+for why to request this audience only for Stacklok Enterprise. A workload that
+calls both gateways needs only this one volume.
+
+## Connect to the gateway
+
+Configure the workload's MCP client with the gateway's MCP endpoint, and send
+the token in the `Authorization: Bearer` header of every request. Read the file
+again before each request, because the kubelet replaces the token and the
+previous one expires. The gateway binds the MCP session to the service account,
+so the session survives the token change.
+
+To check that the gateway accepts the token, send an MCP `initialize` request
+from the pod:
+
+```bash
+curl -i https://<GATEWAY_HOST>/gw/mcp \
+  -H "Authorization: Bearer $(cat /var/run/secrets/stacklok/token)" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"token-check","version":"1.0.0"}}}'
+```
+
+A `200` response means the gateway accepted the token. The token works only on
+the MCP endpoint; the gateway's REST API refuses it with `401`.
+
+The response's `Mcp-Session-Id` header identifies the MCP session. A workload
+that sends HTTP requests itself, instead of through an MCP client library,
+repeats that header and the same `Accept` header on every later request: first
+the `notifications/initialized` notification, then `tools/list` and
+`tools/call`. Without the session header, a `tools/list` or `tools/call` request
+fails, because the gateway treats it as the start of a new session.
+
+Treat the token as a password until it expires. Don't log it, print it, or send
+it anywhere except the gateways.
+
+## What the workload can reach
+
+The gateway serves the account every connector granted to one of its groups that
+uses **None**, **Bearer token**, or **Header injection** authentication, as
+described in
+[What an account can reach](../platform/enterprise-directory/service-accounts.mdx#what-an-account-can-reach).
+For a Cedar-mode connector, its Cedar policy decides: a policy with no condition
+on the principal admits every active service account, and a policy that requires
+a token claim admits none. See
+[Cedar-mode connectors](./connector-policies.mdx#cedar-mode-connectors).
+
+A service account has no connections to make or pause. Its `tools/list` response
+includes every tool its groups are allowed on each connector it can reach, and a
+grant or revocation applies on its next request. Each tool's name combines the
+connector's name, an ID, and the backend's own tool name, so call tools by the
+names `tools/list` returns. The gateway sends the backend only the connector's
+own credential, never the workload's token.
+
+## Handle errors
+
+| Status | Body                           | Meaning                                                                                                                                                                                                                                                                                  |
+| ------ | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `401`  | `invalid token`                | The token failed verification: wrong audience, more than 60 minutes of lifetime left, or expired                                                                                                                                                                                         |
+| `401`  | Varies                         | The gateway has no installed issuer for the token, so it handled the request as a user's: the issuer is missing or disabled, or the gateway couldn't install it. Check the issuer on the **Trusted issuers** tab, then the gateway logs described in [Troubleshooting](#troubleshooting) |
+| `403`  | `service account not resolved` | The token is valid, but no active service account is bound to this ServiceAccount, such as when the account is suspended or deleted                                                                                                                                                      |
+| `503`  | `directory unavailable`        | The gateway can't reach the directory. Retry after the `Retry-After` delay                                                                                                                                                                                                               |
+
+The gateway counts each request that carries a token from a trusted issuer in
+the `stacklok.connector_gateway.workload_identity.resolutions` metric, with an
+`outcome` attribute of `success`, `token_rejected`, `identity_unresolved`, or
+`directory_unavailable`. For an unresolved identity, the Enterprise Manager
+records the reason in the
+`stacklok.enterprise_manager.directory.workload.resolutions` metric, as
+described in
+[Handle errors](../ai-gateway/kubernetes-workloads.mdx#handle-errors) for the AI
+Gateway.
+
+## Next steps
+
+- [Grant and revoke connector access](./connector-policies.mdx) to give the
+  account's groups the connectors the workload needs.
+- [Review activity](./connectors.mdx#review-activity) to see the account's tool
+  calls.
+
+## Related information
+
+- [Service accounts](../platform/enterprise-directory/service-accounts.mdx) for
+  bindings, activation, and revocation.
+- [Accept service account workloads](../platform/enterprise-platform/configure-connector-gateway.mdx#accept-service-account-workloads)
+  for the cluster setup the gateway needs.
+
+## Troubleshooting
+
+<details>
+<summary>Requests fail with 401 after the workload runs for a while</summary>
+
+The workload is sending a token it read earlier, which has since expired. Read
+the token file before each request.
+
+</details>
+
+<details>
+<summary>Requests fail with 401 although the issuer is enabled</summary>
+
+The gateway installs a new issuer on its next poll of the directory, every 30
+seconds by default. Retry after the poll. If requests still fail, an
+administrator checks the gateway logs:
+
+- `workload trust snapshot poll failed` means the gateway couldn't fetch the
+  issuers. Its `state` is `PermissionDenied` when the gateway's ServiceAccount
+  is missing from `workloadTrustSaSubjectAllowlist`, and `Unavailable` when it
+  can't reach the directory or verify its certificate.
+- `workload trust dropped` means the gateway fetched an issuer but couldn't
+  install it. Its `reason` says why, such as `key_fetch_failed` when an egress
+  rule is missing.
+
+See
+[Accept service account workloads](../platform/enterprise-platform/configure-connector-gateway.mdx#accept-service-account-workloads).
+
+</details>
+
+<details>
+<summary>The workload lists no tools from a connector</summary>
+
+Check that the connector is granted to one of the account's groups and uses an
+authentication type that can serve a service account, as listed in
+[What an account can reach](../platform/enterprise-directory/service-accounts.mdx#what-an-account-can-reach).
+The connector's **Access** tab warns when a granted group holds service accounts
+it can't serve.
+
+</details>
