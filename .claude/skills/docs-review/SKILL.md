@@ -156,6 +156,8 @@ Structure your review as:
 
 Before including any finding, apply the **independent reviewer test**: would a different competent tech writer independently flag the same issue? If two phrasings are equally clear and correct, don't flag one as better. The goal is a stable review - running the skill twice on the same document should produce essentially the same findings.
 
+For each proposed change, identify the reader's likely misunderstanding, failed task, or concrete style-guide violation. If you can only explain why you prefer the alternative, omit it. The exclusions below also apply to feedback labeled "optional," "nonblocking," or "nit"; those labels don't make cosmetic suggestions useful. A review with no findings is a valid outcome.
+
 **Primary issues** (address before merge):
 
 - Accuracy: documented behavior contradicts CLI reference, API spec, or upstream source

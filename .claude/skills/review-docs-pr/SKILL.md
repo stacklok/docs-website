@@ -28,8 +28,15 @@ Before drafting, look at reviews and threads already on the PR:
 Apply the docs-review skill's criteria (information architecture, LLM-pattern table, accuracy, style guide compliance). Invoke `/docs-review` for the full criteria if not already loaded. In addition:
 
 - **Verify factual claims at the source.** For content documenting product behavior, the code is the primary source and the docs are what's being verified: check flags, fields, defaults, and API routes against the upstream repo at the relevant tag, not against other docs or memory.
+- **Match the verdict to the evidence available.** If upstream source is inaccessible, continue with an editorial and documentation-consistency review and state that limit. Distinguish claims you verified directly from author-supplied evidence and claims you could not verify. Agreement between pages is not proof of product behavior: don't recommend broadening a factual claim just to make wording consistent. Identify any material verification still needed for a source-capable reviewer, without presenting an unverified claim as an error or claiming technical sign-off.
 - **Check the PR's own claims.** If the PR body says "build passes" or "links verified", spot-check rather than trusting it.
 - **Scope findings to the PR.** Pre-existing issues in surrounding content can be noted as out-of-scope observations or follow-up issue candidates, not blocking findings.
+
+## Review a follow-up revision
+
+Unless the requester asks for a fresh full review, check the changes since the previous reviewed commit, whether they resolve the prior findings, and any affected surrounding content. Report newly introduced material problems, but don't use each follow-up as another search for wording improvements across the whole PR. Reopen a settled point only when new evidence shows a concrete correctness or reader-task problem, and explain that evidence.
+
+When the prior findings are resolved and no material problems remain in the reviewed changes, say so and stop. There is no quota of new findings, optional suggestions, or nits. Keep outstanding source verification or release dependencies separate from editorial findings; repeating a review cannot resolve unavailable evidence.
 
 ## Draft the review
 
