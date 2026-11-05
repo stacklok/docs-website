@@ -23,20 +23,21 @@ Select **Add connector** to open the setup wizard, or **Import connector** to
 start the wizard from a server your registry publishes or your cluster runs. The
 wizard has four steps:
 
-1. **Connector**: enter a **Name**, an optional **Description**, and the **MCP
-   server URL**. Under **Advanced options**, choose the **Transport**, add
+1. **Add connector**: enter a **Name**, an optional **Description**, and the
+   **MCP server URL**. Under **Advanced options**, choose the **Transport**, add
    **Request headers**, or turn on **Allow private IPs** for an in-cluster
    endpoint. Select **Next**.
-2. **Authentication**: set how the gateway authenticates to the server. The step
-   depends on what the console finds out about the server; see
+2. Authentication: set how the gateway authenticates to the server. This step's
+   title and fields depend on what the console finds out about the server; see
    [Authentication in the wizard](#authentication-in-the-wizard).
-3. **Grant access**: choose the directory groups that can use the connector, and
-   select **Next**, or select **Skip** to grant access later from the
-   connector's **Access** tab.
-4. **Connector added**: the console creates the connector, publishes it, and
-   runs its [setup check](#check-setup-and-publish-a-connector). The step shows
-   **Your connector is ready**, or **Setup check failed** with a link to
-   **Configure**. Select **Done**.
+3. **Grant access**: choose the directory groups that can use the connector
+   under **Groups**, then select **Next**. With no group chosen, the button
+   reads **Skip**, and you grant access later from the connector's **Access**
+   tab.
+4. **Connector added**: leaving **Grant access** creates the connector,
+   publishes it, runs its [setup check](#check-setup-and-publish-a-connector),
+   and grants the groups access. The step shows **Your connector is ready**, or
+   **Setup check failed** with a link to **Configure**. Select **Done**.
 
 The Connector Gateway serves connectors that use the `streamable-http` or `sse`
 transport. SSE is a deprecated MCP transport, so keep **Streamable HTTP** unless
@@ -47,12 +48,13 @@ server. Put credentials in the connector's authentication instead.
 
 ### Authentication in the wizard
 
-For a public HTTPS URL, **Next** on the **Connector** step checks the server's
-OAuth metadata, and the **Authentication** step opens on one of three paths:
+For a public HTTPS URL, **Next** on the **Add connector** step checks the
+server's OAuth metadata, and the authentication step opens on one of three
+paths, each titled for what it asks:
 
 - **Choose an identity provider**: the server's authorization server matches
-  connector identity providers you already registered. Select one, or select
-  **Create new provider**.
+  connector identity providers you already registered. Select the one the
+  connector signs users in through, or select **Create new provider**.
 - **Set up an identity provider**: the server uses OAuth and no existing
   provider matches. The wizard drafts a new
   [connector identity provider](./identity-providers.mdx) from the server's
@@ -61,9 +63,9 @@ OAuth metadata, and the **Authentication** step opens on one of three paths:
   ID** and **Client secret** of a client you registered with it. The wizard
   creates the provider when you finish, and the connector signs users in through
   it.
-- **Set up authorization**: the console couldn't determine the method, or the
-  server didn't ask for authentication. A notice says which, and you choose the
-  **Authorization method** yourself. See
+- **Set up authorization**: the console couldn't reach the server, couldn't
+  determine the method, or the server didn't ask for authentication. A notice
+  says which, and you choose the **Authorization method** yourself. See
   [Configure connector authentication](./connector-authentication.mdx).
 
 For a plain HTTP URL, a private or in-cluster address, or a server imported from
@@ -80,7 +82,7 @@ Import starts the wizard prefilled from a server you pick.
      servers don't appear.
    - **Import from Kubernetes** scans your cluster for running MCP servers.
 2. Select one server, then **Next**. A server that already has a connector shows
-   **Added**.
+   **Added** and can't be selected.
 3. Review the prefilled **Name**, **Description**, **MCP server URL**, and
    **Advanced options**. If the source doesn't report the server's transport,
    choose one under **Advanced options**.
@@ -138,9 +140,9 @@ resolves to a private address, so it needs two settings:
    turns it on for you when the endpoint is a Service in the server's own
    namespace.
 
-2. Add the endpoint's address range to the Enterprise Manager's verification
-   allowlist. Verification applies its own private-range check, independent of
-   **Allow private IPs**. Add the narrowest range that covers your in-cluster
+2. Add the endpoint's address range to the allowlist of the Enterprise Manager's
+   setup check. The setup check applies its own private-range check, independent
+   of **Allow private IPs**. Add the narrowest range that covers your in-cluster
    MCP servers, such as your cluster's Service CIDR:
 
    ```yaml title="values.yaml"
@@ -171,7 +173,7 @@ select **Configure**, and select **Save**. A Helm upgrade updates the allowlist;
 persisted connectors are checked again only when you save them. Confirm
 **Ready** in the list before granting access to directory groups.
 
-For API-based verification, use the
+To check connector status through the API, use the
 [Enterprise Manager API](../platform/enterprise-platform/enterprise-manager-api.mdx#base-url)
 port-forward in a separate terminal, then list the connectors with an
 administrator access token:
@@ -199,9 +201,9 @@ ranges out too, since they reach the Enterprise Manager pod's own listeners.
 
 A connector's authentication type sets the credential the gateway sends to its
 backend: none, a static secret, or a credential derived from the calling user's
-identity, such as their own OAuth token. Set it in the wizard's
-**Authentication** step, or select **Configure** on an existing connector and
-save to run the setup check again.
+identity, such as their own OAuth token. Set it on the wizard's authentication
+step, or select **Configure** on an existing connector and save to run the setup
+check again.
 
 Some types reference a [managed secret](./managed-secrets.mdx) or a
 [connector identity provider](./identity-providers.mdx). The wizard can create
@@ -238,12 +240,12 @@ on [tool call recording](./tool-usage.mdx#record-tool-calls).
 ## Edit or delete a connector
 
 To edit a connector, open it and select **Configure**, or choose **Configure**
-from its row's actions menu. The wizard opens on the **Connector** and
-**Authentication** steps with the current settings; change them and select
-**Save**. A stored secret is kept unless you choose a new one. Changes to the
-endpoint, authentication, or **Allow private IPs** setting run the setup check
-again. A connector whose authentication type the console doesn't support opens
-read-only; edit it through the
+from its row's actions menu. The wizard opens with the connector's current
+settings. Change what you need, select **Next** to reach **Set up
+authorization**, and select **Save**. A stored secret is kept unless you choose
+a new one. Changes to the endpoint, authentication, or **Allow private IPs**
+setting run the setup check again. A connector whose authentication type the
+console doesn't support opens read-only; edit it through the
 [Enterprise Manager API](../platform/enterprise-platform/enterprise-manager-api.mdx).
 
 To delete a connector, select **Delete** on its details page or from its row's
@@ -298,9 +300,8 @@ Common causes:
 - **The endpoint is unreachable from the Enterprise Manager pod.** Check the
   URL, DNS, and any egress NetworkPolicy or proxy between the Enterprise Manager
   and the backend.
-- **The endpoint is in-cluster.** Check that its address falls within the
-  verification allowlist, even when **Allow private IPs** is on. See the next
-  entry.
+- **The endpoint is in-cluster.** Check that its address falls within the setup
+  check's allowlist, even when **Allow private IPs** is on. See the next entry.
 - **The connector's identity provider isn't active.** Check the provider on the
   [Identity providers](./identity-providers.mdx) screen.
 
@@ -315,9 +316,10 @@ After you fix the cause, open the connector, select **Configure**, and select
 An endpoint that resolves to a private, loopback, or reserved address passes two
 separate checks, and each has its own setting:
 
-- If the wizard reports that the URL is a private, loopback, or in-cluster
-  address, or that "This endpoint resolves to a disallowed (private or reserved)
-  IP range", turn on **Allow private IPs** under **Advanced options**.
+- If the wizard reports that the URL uses plain HTTP or is a private, loopback,
+  or in-cluster address, or that "This endpoint resolves to a disallowed
+  (private or reserved) IP range", turn on **Allow private IPs** under
+  **Advanced options**.
 - If the connector saves but shows **Setup check failed**, check that its
   address range is included in
   `enterprise-manager.directory.connectorVerification.allowedPrivateRanges`. A

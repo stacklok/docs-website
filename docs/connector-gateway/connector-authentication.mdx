@@ -62,8 +62,8 @@ OAuth metadata. When you prepare them yourself, create them in this order:
 
 ## Configure authentication in the console
 
-Set a connector's authentication on the wizard's **Authentication** step when
-you [add the connector](./connectors.mdx#add-a-connector). For an existing
+Set a connector's authentication on the wizard's authentication step when you
+[add the connector](./connectors.mdx#add-a-connector). For an existing
 connector, open it and select **Configure**, then select **Next** to reach the
 **Set up authorization** step.
 
@@ -72,9 +72,11 @@ connector, open it and select **Configure**, then select **Next** to reach the
      the token.
    - **Header injection**: enter the **Header name**, for example `X-API-Key`,
      and choose the secret that holds its value.
-   - **Token exchange (RFC 8693)**: enter the **Token URL** and **Client ID**,
-     and optionally an **Audience**, **Scopes**, and a **Client secret
-     reference**.
+   - **Token exchange (RFC 8693)**: enter the **Token URL**. Optionally choose a
+     **Subject identity provider**, which defaults to the primary identity
+     provider, and a **Subject token type**, and set a **Client ID**, an
+     **Audience**, **Scopes**, and a **Client secret reference**. A client
+     secret needs a client ID.
    - **Upstream identity provider**: choose the connector identity provider that
      users authorize against.
    - **Microsoft Entra on-behalf-of (OBO)**: choose the **Upstream identity
@@ -83,18 +85,27 @@ connector, open it and select **Configure**, then select **Next** to reach the
      **Client secret reference**. Set **Authority** only for a non-public
      Microsoft Entra cloud, and **Token cache skew** to change how long before
      expiry the gateway stops reusing an exchanged token.
-   - **AWS STS**: choose the identity provider whose tokens the gateway
-     federates, enter the AWS **Region** and **Service**, and set a **Fallback
-     role ARN** or role mappings that pick a **Role ARN** from a claim value.
-   - **Cross-app access (XAA)**: choose the identity provider, enter the **IdP
-     token URL** and **IdP client ID**, the **Target token URL**, and the
-     **Target audience**. Optionally set a **Target resource**, **Scopes**, a
-     **Target client ID**, and a client secret reference for each side.
+   - **AWS STS**: choose the **Upstream identity provider** whose tokens the
+     gateway federates and enter the AWS **Region**. Set a **Fallback role
+     ARN**, role mappings, or both; each mapping assigns a **Role ARN** to a
+     **Claim value** or a **CEL matcher**. Optionally set the SigV4 signing
+     **Service**, the **Role claim** that mappings match against, the **Session
+     name claim**, and the **Session duration**.
+   - **Cross-app access (XAA)**: choose the **Upstream identity provider** whose
+     ID tokens the gateway exchanges, and enter the **IdP token URL**, the
+     **Target token URL**, and the **Target audience**. Optionally set a
+     **Target resource** and **Scopes**. Each side has its own client: set the
+     **IdP client ID** and **IdP client secret reference**, and the **Target
+     client ID** and **Target client secret reference**, or leave a side's pair
+     empty for a public client.
 
    For each secret, choose **Managed secret** or **Kubernetes Secret** as its
-   source. A Kubernetes Secret must be in the
-   `enterprise-manager.directory.kubernetesSecretRefs.allowed` list of your Helm
-   values.
+   source. For a Kubernetes Secret, choose its **Namespace**, **Secret name**,
+   and **Key** from the Secrets allowlisted in
+   `enterprise-manager.directory.kubernetesSecretRefs.allowed` in your Helm
+   values. Keep these Secrets in a dedicated namespace: the allowlist refuses
+   the platform's release namespace. See
+   [`directory.kubernetesSecretRefs`](../platform/reference/helm/enterprise-manager.mdx#directorykubernetessecretrefs).
 
 2. Finish the wizard, or select **Save** when you configure an existing
    connector. Saving runs the connector's setup check; see
@@ -121,11 +132,11 @@ gateway, its sign-in includes a consent step for each enabled connector the user
 hasn't authorized yet.
 
 Connectors that use **Upstream identity provider**, **Token exchange
-(RFC 8693)**, **Microsoft Entra on-behalf-of (OBO)**, `awsSts`, or `xaa` act as
-the user. The gateway forwards or exchanges the user's own token on each call,
-so the backend sees the individual user. Connectors that use **None**, **Bearer
-token**, or **Header injection** connect immediately, with no backend-specific
-sign-in.
+(RFC 8693)**, **Microsoft Entra on-behalf-of (OBO)**, **AWS STS**, or
+**Cross-app access (XAA)** act as the user. The gateway forwards or exchanges
+the user's own token on each call, so the backend sees the individual user.
+Connectors that use **None**, **Bearer token**, or **Header injection** connect
+immediately, with no backend-specific sign-in.
 
 The gateway's authorization server stores each user's session and upstream
 tokens. When the upstream tokens can no longer be used, the connector shows
@@ -169,7 +180,7 @@ The provider rejected the gateway's callback URL, often with an error such as
 `redirect_uri_mismatch`. The gateway always uses `{issuer}/oauth/callback`,
 where `{issuer}` is `global.stacklok.authServerIssuer`. The console shows the
 exact value as **Redirect URI** on the identity provider's details and on the
-**Identity providers** screen.
+**Identity Providers** screen.
 
 Register that exact URL in the allowed redirect URIs of the provider's OAuth
 app. Providers that use dynamic client registration receive it automatically.
