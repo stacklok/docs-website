@@ -13,20 +13,19 @@ connector's authentication type defines.
 
 ## Choose an authentication type
 
-Every connector has exactly one authentication type. The console supports the
-first six types in the table below. Configure `awsSts` and `xaa` through the
-[Enterprise Manager API](../platform/enterprise-platform/enterprise-manager-api.mdx).
+Every connector has exactly one authentication type. The console's
+**Authorization method** offers every type in the table below.
 
 | Console label                          | API `type`        | What the gateway sends                                                                     | Needs                                      |
 | -------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------ |
 | **None**                               | `none`            | No credential                                                                              | Nothing                                    |
 | **Bearer token**                       | `bearerToken`     | A static token in the `Authorization` header                                               | A secret                                   |
 | **Header injection**                   | `headerInjection` | A static value in a header you name                                                        | A secret                                   |
-| **Upstream identity provider**         | `upstreamInject`  | The calling user's own OAuth token, collected through a per-user consent flow              | A connector identity provider              |
 | **Token exchange (RFC 8693)**          | `tokenExchange`   | A token obtained by exchanging the caller's token at call time                             | A token endpoint; a secret is optional     |
+| **Upstream identity provider**         | `upstreamInject`  | The calling user's own OAuth token, collected through a per-user consent flow              | A connector identity provider              |
 | **Microsoft Entra on-behalf-of (OBO)** | `obo`             | A Microsoft Entra ID token from the On-Behalf-Of (OBO) flow                                | An identity provider and a secret          |
-| API only                               | `awsSts`          | AWS SigV4-signed requests using temporary credentials from AWS STS web-identity federation | An identity provider; no secret            |
-| API only                               | `xaa`             | A token from the cross-app access (ID-JAG) flow                                            | An identity provider; secrets are optional |
+| **AWS STS**                            | `awsSts`          | AWS SigV4-signed requests using temporary credentials from AWS STS web-identity federation | An identity provider; no secret            |
+| **Cross-app access (XAA)**             | `xaa`             | A token from the cross-app access (ID-JAG) flow                                            | An identity provider; secrets are optional |
 
 Use these guidelines to pick a type:
 
@@ -38,20 +37,24 @@ Use these guidelines to pick a type:
 - Use **Upstream identity provider** when the backend should act as each user,
   for example a SaaS MCP server that requires the user's own OAuth grant.
 - Use **Token exchange (RFC 8693)**, **Microsoft Entra on-behalf-of (OBO)**,
-  `xaa`, or `awsSts` when the backend trusts your identity provider and accepts
-  a token derived from the caller's identity.
+  **AWS STS**, or **Cross-app access (XAA)** when the backend trusts your
+  identity provider and accepts a token derived from the caller's identity.
 
 ## Set up the prerequisites in order
 
-Each authentication type references objects that must exist before you save the
-connector. Create them in this order:
+Each authentication type references objects that must exist when you save the
+connector. The connector setup wizard creates some of them as you go: **New
+secret** next to a secret picker creates a managed secret, and the **Set up an
+identity provider** step creates a connector identity provider from the server's
+OAuth metadata. When you prepare them yourself, create them in this order:
 
 1. **Secrets.** Create a [managed secret](./managed-secrets.mdx) for each static
-   credential or client secret the type needs.
+   credential or client secret the type needs, or allowlist a Kubernetes Secret
+   that holds it.
 2. **Identity provider.** Register a
    [connector identity provider](./identity-providers.mdx) for types that need
-   one. The provider's client secret is itself a managed secret, which is why
-   secrets come first.
+   one. The provider's client secret is itself a secret, which is why secrets
+   come first.
 3. **Connector authentication.** Configure the connector's authentication type,
    referencing the secrets and provider.
 4. **Access.** Grant access to the connector through its
@@ -59,26 +62,59 @@ connector. Create them in this order:
 
 ## Configure authentication in the console
 
-1. In the console, open the connector and select the **Configuration** tab.
-2. Under **Authentication**, choose a **Backend auth** type and fill in its
-   fields:
-   - **Bearer token**: under **Secret reference**, choose the managed secret
-     that holds the token.
+Set a connector's authentication on the wizard's authentication step when you
+[add the connector](./connectors.mdx#add-a-connector). For an existing
+connector, open it and select **Configure**, then select **Next** to reach the
+**Set up authorization** step.
+
+1. Choose an **Authorization method** and fill in its fields:
+   - **Bearer token**: under **Secret reference**, choose the secret that holds
+     the token.
    - **Header injection**: enter the **Header name**, for example `X-API-Key`,
-     and choose the managed secret that holds its value.
+     and choose the secret that holds its value.
+   - **Token exchange (RFC 8693)**: enter the **Token URL**. Optionally choose a
+     **Subject identity provider**, which defaults to the primary identity
+     provider, and a **Subject token type**, and set a **Client ID**, an
+     **Audience**, **Scopes**, and a **Client secret reference**. A client
+     secret needs a client ID.
    - **Upstream identity provider**: choose the connector identity provider that
      users authorize against.
-   - **Token exchange (RFC 8693)**: enter the **Token URL** and **Client ID**,
-     and optionally an audience, scopes, and a **Client secret reference**.
    - **Microsoft Entra on-behalf-of (OBO)**: choose the **Upstream identity
      provider** whose user tokens the gateway exchanges, enter the **Tenant ID**
      and **Client ID**, set an **Audience**, **Scopes**, or both, and choose the
      **Client secret reference**. Set **Authority** only for a non-public
      Microsoft Entra cloud, and **Token cache skew** to change how long before
      expiry the gateway stops reusing an exchanged token.
-3. Select **Save**, or **Save and verify** for a draft or broken connector.
-   Saving verifies the connector; see
-   [Verify and publish a connector](./connectors.mdx#verify-and-publish-a-connector).
+   - **AWS STS**: choose the **Upstream identity provider** whose tokens the
+     gateway federates and enter the AWS **Region**. Set a **Fallback role
+     ARN**, role mappings, or both; each mapping assigns a **Role ARN** to a
+     **Claim value** or a **CEL matcher**. Optionally set the SigV4 signing
+     **Service**, the **Role claim** that mappings match against, the **Session
+     name claim**, and the **Session duration**.
+   - **Cross-app access (XAA)**: choose the **Upstream identity provider** whose
+     ID tokens the gateway exchanges, and enter the **IdP token URL**, the
+     **Target token URL**, and the **Target audience**. Optionally set a
+     **Target resource** and **Scopes**. Each side has its own client: set the
+     **IdP client ID** and **IdP client secret reference**, and the **Target
+     client ID** and **Target client secret reference**, or leave a side's pair
+     empty for a public client.
+
+   For each secret, choose **Managed secret** or **Kubernetes Secret** as its
+   source. For a Kubernetes Secret, choose its **Namespace**, **Secret name**,
+   and **Key** from the Secrets allowlisted in
+   `enterprise-manager.directory.kubernetesSecretRefs.allowed` in your Helm
+   values. Keep these Secrets in a dedicated namespace: the allowlist refuses
+   the platform's release namespace. See
+   [`directory.kubernetesSecretRefs`](../platform/reference/helm/enterprise-manager.mdx#directorykubernetessecretrefs).
+
+2. Finish the wizard, or select **Save** when you configure an existing
+   connector. Saving runs the connector's setup check; see
+   [Check setup and publish a connector](./connectors.mdx#check-setup-and-publish-a-connector).
+
+When you configure an existing connector, its stored secret is kept unless you
+choose a new one. To save a **Token exchange (RFC 8693)** connector without its
+client secret, select **Remove client secret**. For **Cross-app access (XAA)**,
+select **Remove IdP client secret** or **Remove target client secret**.
 
 ## How users authorize connectors
 
@@ -96,11 +132,11 @@ gateway, its sign-in includes a consent step for each enabled connector the user
 hasn't authorized yet.
 
 Connectors that use **Upstream identity provider**, **Token exchange
-(RFC 8693)**, **Microsoft Entra on-behalf-of (OBO)**, `awsSts`, or `xaa` act as
-the user. The gateway forwards or exchanges the user's own token on each call,
-so the backend sees the individual user. Connectors that use **None**, **Bearer
-token**, or **Header injection** connect immediately, with no backend-specific
-sign-in.
+(RFC 8693)**, **Microsoft Entra on-behalf-of (OBO)**, **AWS STS**, or
+**Cross-app access (XAA)** act as the user. The gateway forwards or exchanges
+the user's own token on each call, so the backend sees the individual user.
+Connectors that use **None**, **Bearer token**, or **Header injection** connect
+immediately, with no backend-specific sign-in.
 
 The gateway's authorization server stores each user's session and upstream
 tokens. When the upstream tokens can no longer be used, the connector shows
@@ -144,7 +180,7 @@ The provider rejected the gateway's callback URL, often with an error such as
 `redirect_uri_mismatch`. The gateway always uses `{issuer}/oauth/callback`,
 where `{issuer}` is `global.stacklok.authServerIssuer`. The console shows the
 exact value as **Redirect URI** on the identity provider's details and on the
-**Identity providers** screen.
+**Identity Providers** screen.
 
 Register that exact URL in the allowed redirect URIs of the provider's OAuth
 app. Providers that use dynamic client registration receive it automatically.
