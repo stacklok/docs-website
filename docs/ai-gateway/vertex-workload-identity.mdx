@@ -3,7 +3,7 @@ title: Connect to Vertex AI without a key
 sidebar_label: Keyless Vertex AI
 description:
   Authenticate the AI Gateway to Google Vertex AI with Workload Identity
-  Federation, so no service account key is stored in your cluster.
+  Federation, so your cluster stores no service account key.
 ---
 
 The AI Gateway can reach Google Vertex AI with no stored key. It uses Google
@@ -30,13 +30,17 @@ Kubernetes Service (AKS), and the grant follows exactly one ServiceAccount.
 - A GCP project with Vertex AI enabled. This guide uses one project, referred to
   as `<PROJECT_ID>`, for the pool, the service account, and Vertex AI. They can
   be separate projects.
-- The name of the gateway's Kubernetes ServiceAccount. The chart names it
+- The name of the gateway's Kubernetes ServiceAccount, referred to as
+  `<SERVICE_ACCOUNT>`, and the namespace it runs in, referred to as
+  `<NAMESPACE>`. The chart names the ServiceAccount
   `<RELEASE_NAME>-ai-gateway-v2`. Confirm it on a running install:
 
   ```bash
   kubectl get deployment <RELEASE_NAME>-ai-gateway-v2 -n <NAMESPACE> \
     -o jsonpath='{.spec.template.spec.serviceAccountName}'
   ```
+
+## Create the workload identity pool
 
 Enable the APIs the token exchange uses, and look up the project number:
 
@@ -61,16 +65,21 @@ gcloud iam workload-identity-pools create <POOL_ID> \
 Google can grant Vertex AI access in two ways. The steps for each identity
 source show both.
 
-- _Service account impersonation_: the federated identity impersonates a GCP
-  service account that holds `roles/aiplatform.user`. Vertex AI sees the service
-  account. Set `serviceAccountEmail` in the gateway's configuration.
-  Impersonation works with every Google Cloud API and fits teams that already
-  grant access to service accounts.
+- _Service account impersonation_ (recommended): the federated identity
+  impersonates a GCP service account that holds `roles/aiplatform.user`. Vertex
+  AI sees the service account. Set `serviceAccountEmail` in the gateway's
+  configuration. Impersonation fits teams that already grant access to service
+  accounts.
 - _Direct resource access_: the federated identity holds `roles/aiplatform.user`
   itself. No service account is involved. Leave `serviceAccountEmail` unset.
   Some Google Cloud products limit what a federated identity can do directly.
 
-A service account you create for impersonation has no key. Create it with:
+Use service account impersonation unless you have a reason to grant the
+federated identity directly. It works with every Google Cloud API, and the
+Vertex AI grant stays on one service account, so you can change the identity
+source later without moving that grant.
+
+For impersonation, create the service account now. It has no key:
 
 ```bash
 gcloud iam service-accounts create ai-gateway-vertex \
@@ -183,8 +192,8 @@ gcloud projects add-iam-policy-binding <PROJECT_ID> \
 
 ### Configure the provider
 
-Replace `credentialSecretRef` with `gcpWorkloadIdentity` on the `vertex`
-provider:
+Set `gcpWorkloadIdentity` on the `vertex` provider. If the provider has a
+`credentialSecretRef`, remove it:
 
 ```yaml title="values.yaml"
 ai-gateway-v2:
@@ -218,8 +227,8 @@ egress rule. The provider rule already allows port 443, which covers
 
 ## Use the gateway's AWS IAM role
 
-On Amazon EKS, the gateway can sign in to Google with the IAM role it runs as
-through EKS Pod Identity or IRSA. The gateway signs an AWS Security Token
+On Amazon EKS, the gateway can authenticate to Google with the IAM role it runs
+as through EKS Pod Identity or IRSA. The gateway signs an AWS Security Token
 Service (STS) `GetCallerIdentity` request with that role's credentials, and
 Google verifies the request with AWS. The chart projects no token.
 
@@ -229,10 +238,28 @@ without a credential Secret, that's the same role. Google sees only the role's
 ARN, so any principal that can assume the role reaches Vertex AI. The role's
 trust policy is the boundary, and it must admit only the gateway.
 
-### Restrict the role's trust policy
+### Attach a restricted role to the gateway
 
-Allow only the gateway's ServiceAccount to assume the role. With EKS Pod
-Identity:
+Give the role a trust policy that admits only the gateway's ServiceAccount, then
+attach it to that ServiceAccount. The steps depend on how the cluster hands
+roles to pods.
+
+<Tabs groupId='aws-identity' queryString='aws-identity'>
+<TabItem value='pod-identity' label='EKS Pod Identity' default>
+
+EKS Pod Identity needs the EKS Pod Identity Agent on the cluster. EKS Auto Mode
+includes it. On other clusters, install the add-on if it isn't there yet:
+
+```bash
+aws eks create-addon --cluster-name <CLUSTER_NAME> \
+  --addon-name eks-pod-identity-agent
+```
+
+See
+[Set up the Amazon EKS Pod Identity Agent](https://docs.aws.amazon.com/eks/latest/userguide/pod-id-agent-setup.html)
+for details.
+
+Restrict the role's trust policy to the gateway's ServiceAccount:
 
 ```json title="trust-policy.json"
 {
@@ -254,10 +281,6 @@ Identity:
 }
 ```
 
-With IRSA, use the cluster's OIDC provider as a federated principal, and set a
-`StringEquals` condition on its `:sub` key to
-`system:serviceaccount:<NAMESPACE>:<SERVICE_ACCOUNT>`.
-
 If the gateway's ServiceAccount has no role yet, associate one:
 
 ```bash
@@ -267,6 +290,47 @@ aws eks create-pod-identity-association \
   --service-account <SERVICE_ACCOUNT> \
   --role-arn arn:aws:iam::<AWS_ACCOUNT_ID>:role/<ROLE_NAME>
 ```
+
+</TabItem>
+<TabItem value='irsa' label='IRSA'>
+
+IRSA needs an IAM OIDC provider for the cluster's OIDC issuer. Restrict the
+role's trust policy to the gateway's ServiceAccount. `<OIDC_PROVIDER>` is the
+issuer URL without `https://`, such as
+`oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE`:
+
+```json title="trust-policy.json"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::<AWS_ACCOUNT_ID>:oidc-provider/<OIDC_PROVIDER>"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "<OIDC_PROVIDER>:sub": "system:serviceaccount:<NAMESPACE>:<SERVICE_ACCOUNT>",
+          "<OIDC_PROVIDER>:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+Annotate the gateway's ServiceAccount with the role in your Helm values:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::<AWS_ACCOUNT_ID>:role/<ROLE_NAME>
+```
+
+</TabItem>
+</Tabs>
 
 The role needs no IAM permissions for Vertex AI. Google calls AWS STS to verify
 the signed request.
@@ -342,11 +406,13 @@ ai-gateway-v2:
 ```
 
 `aws.region` is the AWS region the gateway signs for. The provider's `region` is
-the Vertex AI region. The chart refuses to render when `aws.region` isn't an AWS
-region name, and when `expirationSeconds` is set, because no token is projected.
+the Vertex AI region. The chart refuses to render when `aws.region` is missing
+or isn't an AWS region name, and when `expirationSeconds` is set, because no
+token is projected.
 
 With `networkPolicy.allowExternalEgress: false`, the chart adds an egress rule
 for the EKS Pod Identity Agent so the gateway can fetch its role credentials.
+With IRSA, the provider rule on port 443 already covers AWS STS.
 
 ## Verify the connection
 
@@ -383,6 +449,9 @@ gcloud iam service-accounts keys delete <KEY_ID> \
   --iam-account=<KEY_SERVICE_ACCOUNT_EMAIL>
 ```
 
+If a tool such as External Secrets Operator or a GitOps controller manages the
+Secret, remove it from that source too, or the Secret comes back.
+
 ## Next steps
 
 - [Control model access](./control-model-access.mdx) to decide which users and
@@ -414,6 +483,10 @@ these causes:
   public, or upload the JWKS again.
 - With impersonation, the principal lacks `roles/iam.workloadIdentityUser` on
   the service account.
+- With the AWS role, the error mentions `retrieve aws credentials`. The pod has
+  no role: confirm the EKS Pod Identity Agent runs and the association exists,
+  or, with IRSA, that the ServiceAccount carries the
+  `eks.amazonaws.com/role-arn` annotation.
 
 </details>
 
