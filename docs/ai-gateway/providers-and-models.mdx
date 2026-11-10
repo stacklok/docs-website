@@ -19,18 +19,20 @@ The provider `kind` decides which client APIs serve its models. The gateway
 doesn't translate between APIs, so a model is reachable only on the APIs its
 provider speaks.
 
-| Provider              | `kind`              | Client APIs                            | Credential                                   |
-| --------------------- | ------------------- | -------------------------------------- | -------------------------------------------- |
-| OpenAI                | `openai`            | Chat Completions, Responses            | API key                                      |
-| OpenRouter            | `openrouter`        | Chat Completions, Responses            | API key                                      |
-| Anthropic             | `anthropic`         | Anthropic Messages                     | API key                                      |
-| Claude on AWS Bedrock | `bedrock-anthropic` | Anthropic Messages                     | EKS Pod Identity, or an AWS credentials file |
-| Google AI Studio      | `gemini-aistudio`   | Gemini `generateContent` and streaming | API key                                      |
-| Google Vertex AI      | `vertex`            | Gemini `generateContent` and streaming | Service account key                          |
+| Provider                          | `kind`              | Client APIs                            | Credential                                   |
+| --------------------------------- | ------------------- | -------------------------------------- | -------------------------------------------- |
+| OpenAI                            | `openai`            | Chat Completions, Responses            | API key                                      |
+| OpenRouter                        | `openrouter`        | Chat Completions, Responses            | API key                                      |
+| Anthropic                         | `anthropic`         | Anthropic Messages                     | API key                                      |
+| Claude on AWS Bedrock             | `bedrock-anthropic` | Anthropic Messages                     | EKS Pod Identity, or an AWS credentials file |
+| AWS Bedrock OpenAI-compatible API | `bedrock-openai`    | Chat Completions, Responses            | EKS Pod Identity, or an AWS credentials file |
+| Google AI Studio                  | `gemini-aistudio`   | Gemini `generateContent` and streaming | API key                                      |
+| Google Vertex AI                  | `vertex`            | Gemini `generateContent` and streaming | Service account key                          |
 
 `bedrock-anthropic` calls the Bedrock InvokeModel API with Anthropic's native
-request format and requires `region`. `vertex` uses the Vertex Gemini API and
-requires `project` and `region`.
+request format and requires `region`. `bedrock-openai` calls Bedrock's
+OpenAI-compatible API with the OpenAI request format and requires `region`.
+`vertex` uses the Vertex Gemini API and requires `project` and `region`.
 
 Each provider needs `kind`, `baseUrl`, and at least one model. The chart refuses
 to render a provider that is missing one of them or uses an unknown `kind`.
@@ -166,6 +168,73 @@ ai-gateway-v2:
         key: credentials
       awsProfile: <AWS_PROFILE>
 ```
+
+### AWS Bedrock OpenAI-compatible API
+
+`bedrock-openai` serves Bedrock models to OpenAI clients on Chat Completions and
+Responses through Bedrock's OpenAI-compatible API. It signs requests with AWS
+credentials and takes the same credential options as
+[Claude on AWS Bedrock](#claude-on-aws-bedrock): EKS Pod Identity by default, or
+a credentials file in `credentialSecretRef` with an optional `awsProfile`.
+
+Set `baseUrl` to the `bedrock-runtime` endpoint with the `/openai` prefix. The
+gateway appends the OpenAI API path, such as `/v1/chat/completions`. List
+Bedrock's model IDs. OpenAI models use `us.` or `global.` inference profiles.
+Open-weight models, such as gpt-oss, Nemotron, Qwen, and DeepSeek, have no
+inference profile, so list the in-region model ID and use a `region` that offers
+the model.
+
+Bedrock serves open-weight models on Chat Completions only. List them in a
+separate provider block with `dialects: ['openai-chat']` so the gateway routes
+them on Chat Completions only. The other value is `openai-responses`, and the
+gateway refuses to start if a block names a dialect its kind doesn't serve.
+
+```yaml
+ai-gateway-v2:
+  providers:
+    # OpenAI models: Chat Completions and Responses
+    - kind: bedrock-openai
+      baseUrl: https://bedrock-runtime.us-east-1.amazonaws.com/openai
+      region: us-east-1
+      models: ['us.openai.gpt-6.1-sol', 'us.openai.gpt-6-luna']
+    # Open-weight models: Chat Completions only
+    - kind: bedrock-openai
+      baseUrl: https://bedrock-runtime.us-east-1.amazonaws.com/openai
+      region: us-east-1
+      dialects: ['openai-chat']
+      models: ['nvidia.nemotron-super-3-120b', 'qwen.qwen3-coder-next']
+```
+
+`GET /v1/models` still lists Chat-only models, because the endpoint can't tell a
+Chat Completions client from a Responses client. A Responses client, such as
+Codex, that selects one gets a `404`, or a `501` when no provider serves the
+Responses API.
+
+The gateway's IAM role needs `bedrock:InvokeModel` and
+`bedrock:InvokeModelWithResponseStream` on each model's `foundation-model` ARN.
+For a profile ID, also grant the `inference-profile` ARN, and grant the
+`foundation-model` ARN in every destination Region the profile lists, such as
+`us-east-1`, `us-east-2`, and `us-west-2`. The Responses API also authorizes
+`bedrock:InvokeModel` on the account's default project,
+`arn:aws:bedrock:<REGION>:<ACCOUNT_ID>:project/default`. A permissions boundary
+on the role must allow the same actions.
+
+A few Bedrock behaviors affect clients on this kind:
+
+- Bedrock retains Responses API calls for 30 days unless the request sets
+  `"store": false`. The gateway forwards the field as the client sent it, and
+  Codex sends `"store": false`. To turn off retention for the whole account, set
+  Bedrock's data retention mode to `none`.
+- Bedrock rejects the hosted `web_search` tool on the Responses API. The stream
+  ends with an `invalid_request_error`, and the gateway records no usage. Codex
+  sends this tool by default, so set `web_search = "disabled"` in the Codex
+  configuration for Bedrock models.
+- gpt-oss returns its reasoning in `<reasoning>` tags inside the message content
+  on Chat Completions, and the gateway relays it unchanged.
+
+Bedrock models have their own prices, so each model needs a `bedrock-openai`
+entry in the pricing catalog. See
+[Match provider kinds to catalog entries](./budgets-and-pricing.mdx#match-provider-kinds-to-catalog-entries).
 
 ### Google Vertex AI
 
