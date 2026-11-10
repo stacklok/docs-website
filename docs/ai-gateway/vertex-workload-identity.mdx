@@ -19,17 +19,18 @@ The gateway supports two identity sources:
 | Kubernetes ServiceAccount token | Any cluster whose OIDC issuer Google can reach                            | The gateway's ServiceAccount     |
 | AWS IAM role                    | Amazon EKS with EKS Pod Identity or IAM roles for service accounts (IRSA) | The IAM role the gateway runs as |
 
-Use the Kubernetes ServiceAccount token unless your security team ties GCP
-access to AWS IAM roles. It works on any cluster, including Amazon EKS and Azure
-Kubernetes Service (AKS), and the grant follows exactly one ServiceAccount.
+Use the Kubernetes ServiceAccount token unless your security team ties Google
+Cloud access to AWS IAM roles. It works on any cluster, including Amazon EKS and
+Azure Kubernetes Service (AKS), and the grant follows exactly one
+ServiceAccount.
 
 ## Prerequisites
 
 - The `gcloud` CLI, signed in as a principal that can create workload identity
   pools and service accounts and set IAM policy on your project.
-- A GCP project with Vertex AI enabled. This guide uses one project, referred to
-  as `<PROJECT_ID>`, for the pool, the service account, and Vertex AI. They can
-  be separate projects.
+- A Google Cloud project with Vertex AI enabled. This guide uses one project,
+  referred to as `<PROJECT_ID>`, for the pool, the service account, and Vertex
+  AI. They can be separate projects.
 - The name of the gateway's Kubernetes ServiceAccount, referred to as
   `<SERVICE_ACCOUNT>`, and the namespace it runs in, referred to as
   `<NAMESPACE>`. The chart names the ServiceAccount
@@ -51,7 +52,8 @@ gcloud services enable iam.googleapis.com sts.googleapis.com \
 gcloud projects describe <PROJECT_ID> --format='value(projectNumber)'
 ```
 
-Create a workload identity pool for the gateway:
+Create a workload identity pool for the gateway. Create one pool per cluster, so
+one cluster's gateway can't use another cluster's grant:
 
 ```bash
 gcloud iam workload-identity-pools create <POOL_ID> \
@@ -66,13 +68,11 @@ Google can grant Vertex AI access in two ways. The steps for each identity
 source show both.
 
 - _Service account impersonation_ (recommended): the federated identity
-  impersonates a GCP service account that holds `roles/aiplatform.user`. Vertex
-  AI sees the service account. Set `serviceAccountEmail` in the gateway's
-  configuration. Impersonation fits teams that already grant access to service
-  accounts.
+  impersonates a Google Cloud service account that holds
+  `roles/aiplatform.user`. Vertex AI sees the service account. Set
+  `serviceAccountEmail` in the gateway's configuration.
 - _Direct resource access_: the federated identity holds `roles/aiplatform.user`
   itself. No service account is involved. Leave `serviceAccountEmail` unset.
-  Some Google Cloud products limit what a federated identity can do directly.
 
 Use service account impersonation unless you have a reason to grant the
 federated identity directly. It works with every Google Cloud API, and the
@@ -146,12 +146,12 @@ Leave the allowed audiences unset. The chart projects the provider's default
 audience, `https://iam.googleapis.com/` followed by the provider's resource
 name.
 
-:::tip[Use one pool per cluster]
+:::warning[Keep one pool per cluster]
 
 A federated principal belongs to the pool and is keyed on the token's `sub`
 claim alone. Two clusters that run the gateway under the same namespace and
-ServiceAccount name produce the same principal. Give each cluster its own pool
-so one cluster's gateway can't use another cluster's grant.
+ServiceAccount name produce the same principal. If they share a pool, either
+cluster's gateway can use a grant meant for the other.
 
 :::
 
@@ -423,6 +423,16 @@ helm upgrade <RELEASE_NAME> <CHART> -n <NAMESPACE> -f values.yaml
 kubectl rollout status deployment/<RELEASE_NAME>-ai-gateway-v2 -n <NAMESPACE>
 ```
 
+Before you send a test request, make sure the gateway's own checks pass, or it
+refuses the request before it contacts Google:
+
+- The model has a price in the pricing catalog, under the `google` catalog
+  provider. See
+  [Update the pricing catalog](./budgets-and-pricing.mdx#update-the-pricing-catalog).
+- The caller has an applicable [budget](./manage-budgets.mdx).
+- If model access is on, the caller has a
+  [grant for the model](./control-model-access.mdx).
+
 Send a request for a model the `vertex` provider serves:
 
 ```bash
@@ -432,10 +442,12 @@ curl -s https://<AI_GATEWAY_HOST>/v1beta/models/gemini-2.5-pro:generateContent \
   -d '{"contents": [{"role": "user", "parts": [{"text": "ping"}]}]}'
 ```
 
-A response confirms the token exchange, the grant, and the route. The gateway
+A response confirms the token exchange, the grant, and the route. A `402` means
+the caller has no budget with capacity. A `403` means either the caller has no
+grant for the model or Vertex AI denied the gateway's identity. The gateway
 fetches a Google token on the first Vertex AI request, so the pod starts cleanly
-even when the GCP side is misconfigured. See [Troubleshooting](#troubleshooting)
-if the request fails.
+even when the Google Cloud side is misconfigured. See
+[Troubleshooting](#troubleshooting) if the request fails.
 
 ## Remove the old service account key
 
