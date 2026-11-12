@@ -12,8 +12,8 @@ Configure the Enterprise Manager chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `enterprise-manager`. Chart version: `0.25.0`. Generated from the
-platform source at `v0.25.0`.
+Chart: `enterprise-manager`. Chart version: `0.26.0`. Generated from the
+platform source at `v0.26.0`.
 
 ## Values
 
@@ -206,7 +206,10 @@ generated using the fullname template)
 
 Create the ClusterRole/Role bindings the manager needs, including the
 per-namespace Secret reader Roles for directory issuers. Set false when RBAC is
-managed externally.
+managed externally. Externally managed RBAC must still grant cluster-wide `list`
+on `mcpservers`, `mcpoidcconfigs` and `mcpexternalauthconfigs` in
+`toolhive.stacklok.dev`, or the directory discovery scan fails or reports every
+server's auth requirement as unknown.
 
 ### `podAnnotations`
 
@@ -397,12 +400,8 @@ ServiceAccount subjects allowed on the general directory.v1 RPCs, e.g.
 Empty rejects all callers. Entries are rendered through `tpl`; empty results are
 dropped.
 
-⚠️ With ai-gateway installed, also add
-"system:serviceaccount:&#60;namespace&#62;:&#60;AIGateway CR
-name&#62;-api-key-service", or every virtual-key request fails with 503. A
-standalone install has no render guard for this. Add "&#60;AIGateway CR
-name&#62;-main-processor" too when group-label metadata is on; omitting it
-silently drops the labels.
+⚠️ With AI Gateway (ai-gateway-v2) installed, also add its gateway
+ServiceAccount, or every virtual-key request fails with 503.
 
 ### `grpc.callerAuth.credentialSaSubjectAllowlist`
 
@@ -437,10 +436,8 @@ in saSubjectAllowlist, or it fails to start.
 
 **Default:** `[]`
 
-ServiceAccount subjects allowed to call GetWorkloadTrustSnapshot: the ai-gateway
-operator
-("system:serviceaccount:&#60;namespace&#62;:&#60;release&#62;-upstream") and
-Sprout. Entries are rendered through `tpl`; empty results are dropped. Empty
+ServiceAccount subjects allowed to call GetWorkloadTrustSnapshot: the AI Gateway
+data plane. Entries are rendered through `tpl`; empty results are dropped. Empty
 denies workload credentials.
 
 ### `grpc.callerAuth.meteringSaSubjectAllowlist`
@@ -577,7 +574,7 @@ Pod-label selector for permitted gRPC clients. An empty selector allows no pods.
 **Default:**
 `{"duration":"2160h","enabled":false,"port":443,"renewBefore":"720h","targetPort":8443}`
 
-Additional TLS listener on the HTTP server, used by the ai-gateway budgets
+Additional TLS listener on the HTTP server, used by AI Gateway's budgets
 webhook. The plain listener is unaffected.
 
 ### `webhookTLS.enabled`
@@ -595,8 +592,8 @@ mount.
 
 **Default:** `443`
 
-Service port for the TLS listener. Must match the ai-gateway operator's
-budgetsWebhook.port.
+Service port for the TLS listener. Must match the port in AI Gateway's
+budgets.endpoint.
 
 ### `webhookTLS.targetPort`
 
@@ -621,8 +618,8 @@ global.webhooks.issuerRef.
 
 **Default:** `{"audience":""}`
 
-Webhook caller authentication. `audience` MUST match the ai-gateway operator's
-budgetsWebhook.audience; empty rejects every webhook call.
+Webhook caller authentication. `audience` MUST match the audience AI Gateway
+requests for its budgets webhook calls; empty rejects every webhook call.
 
 ### `resources`
 
@@ -930,6 +927,7 @@ dynamicAuth: {}
 existingSecret: ''
 existingSecretKey: postgres-password
 host: ''
+maxConns: 0
 migration:
   existingSecret: ''
   existingSecretKey: postgres-migration-password
@@ -980,6 +978,19 @@ other's data.
 **Default:** `""`
 
 Falls back to global.postgres.sslMode.
+
+### `database.maxConns`
+
+**Type:** `int`
+
+**Default:** `0`
+
+Per-pod ceiling on the shared app connection pool. 0 allows one per CPU of
+resources.limits.cpu, rounded up, at least 4 and at most 16. With no CPU limit
+it counts the node's CPUs instead, so it is 16 on a node with 16 or more. The
+maintenance and admin pools add up to 2 each. A rolling update runs 25% more
+pods (rounded up, so at least one), so keep (replicas + surge pods) x
+(maxConns + 4) under the server's max_connections.
 
 ### `database.existingSecret`
 
@@ -1162,8 +1173,8 @@ or the manager refuses to boot.
 **Default:** `""`
 
 Base URL of this platform's AI Gateway, including the version segment, e.g.
-"http://ai-gateway.envoy-ai-gateway-system.svc.cluster.local/v1". An https://
-URL usually needs caBundle.
+"http://ai-gateway-v2.&#60;namespace&#62;.svc.cluster.local/v1". An https:// URL
+usually needs caBundle.
 
 ### `budgets.classifier.model`
 
@@ -1171,8 +1182,8 @@ URL usually needs caBundle.
 
 **Default:** `""`
 
-Model id sent on every call. Must exactly match an AIGatewayRoute model. Empty
-uses the module default.
+Model id sent on every call. Must exactly match a model in AI Gateway's
+model-to-provider routes. Empty uses the module default.
 
 ### `budgets.classifier.contextWindowTokens`
 
@@ -1701,8 +1712,8 @@ Platform-wide values; the umbrella chart overrides them.
 **Default:** `{"kind":"ClusterIssuer","name":""}`
 
 cert-manager issuer for the budgets webhook serving certificate. Required when
-webhookTLS.enabled. Must be the CA the ai-gateway operator trusts via
-webhooks.caBundleSecret.
+webhookTLS.enabled. Must be the CA AI Gateway trusts via
+global.webhooks.caBundleSecret.
 
 ### `global.webhooks.issuerRef.kind`
 
@@ -1711,7 +1722,7 @@ webhooks.caBundleSecret.
 **Default:** `"ClusterIssuer"`
 
 "ClusterIssuer" (recommended) or "Issuer". An Issuer must exist in every
-namespace with an AIGateway CR as well as the release namespace.
+namespace with an AI Gateway install as well as the release namespace.
 
 ## Related information
 

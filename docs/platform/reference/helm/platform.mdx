@@ -11,8 +11,8 @@ Configure the platform chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `stacklok-enterprise-platform`. Chart version: `0.25.0`. Generated from
-the platform source at `v0.25.0`.
+Chart: `stacklok-enterprise-platform`. Chart version: `0.26.0`. Generated from
+the platform source at `v0.26.0`.
 
 ## Values
 
@@ -199,18 +199,8 @@ enabled for development.
 </details>
 
 ServiceAccount subjects allowed to call the directory's identity RPCs: Connector
-Gateway, the API key service, and AI Gateway main processors. An override
-replaces the default (AI Gateway v2 when enabled), so keep every caller.
-
-### `enterprise-manager.grpc.callerAuth.acknowledgeNoApiKeyServiceCaller`
-
-**Type:** `bool`
-
-**Default:** `false`
-
-Bypass the umbrella check requiring an API key service caller in
-saSubjectAllowlist. Enable only when virtual keys are disabled or that service
-deliberately uses an insecure directory connection.
+Gateway and AI Gateway v2. An override replaces the default (AI Gateway v2 when
+enabled), so keep every caller.
 
 ### `enterprise-manager.grpc.callerAuth.gatewaySaSubjectAllowlist`
 
@@ -259,10 +249,6 @@ ServiceAccount override changes it.
 <summary>Default value</summary>
 
 ```yaml
-- '{{- if and (dig "stacklok" "aiGateway" "enabled" false .Values.global) (dig
-  "stacklok" "enterpriseManager" "url" "" .Values.global)
-  -}}system:serviceaccount:{{ .Release.Namespace }}:{{ .Release.Name
-  }}-upstream{{- end -}}'
 - '{{- if and (dig "stacklok" "connectorGateway" "enabled" false .Values.global)
   (dig "stacklok" "enterpriseManager" "url" "" .Values.global)
   -}}system:serviceaccount:{{ .Release.Namespace }}:{{ .Release.Name
@@ -289,9 +275,10 @@ set; override when naming differs.
 <summary>Default value</summary>
 
 ```yaml
-- '{{- if dig "stacklok" "aiGateway" "enabled" false .Values.global
-  -}}system:serviceaccount:{{ .Release.Namespace }}:{{ .Release.Name
-  }}-upstream{{- end -}}'
+- '{{- if and (dig "stacklok" "connectorGateway" "enabled" false .Values.global)
+  (dig "stacklok" "connectorGateway" "workloadIdentity" "enabled" true
+  .Values.global) -}}system:serviceaccount:{{ .Release.Namespace }}:{{
+  .Release.Name }}-connector-gateway{{- end -}}'
 - '{{- if dig "stacklok" "aiGatewayV2" "enabled" false .Values.global
   -}}system:serviceaccount:{{ .Release.Namespace }}:{{ if contains
   "ai-gateway-v2" .Release.Name }}{{ .Release.Name | trunc 63 | trimSuffix "-"
@@ -302,7 +289,12 @@ set; override when naming differs.
 </details>
 
 ServiceAccount subjects allowed to fetch workload trust snapshots. Defaults
-derive enabled AI Gateways' subjects; override when naming differs.
+derive the enabled AI Gateway's subject, and the Connector Gateway's when
+global.stacklok.connectorGateway.workloadIdentity.enabled is set; override when
+naming differs. The Connector Gateway entry keys on global values only, because
+this chart cannot read the gateway's Directory settings. It is inert where the
+gateway's path is off: the cleartext arm requires grpc.insecure, which bypasses
+this gate, and a gateway with no Directory address never calls.
 
 ### `enterprise-manager.grpc.tls.enabled`
 
@@ -495,6 +487,32 @@ Connector Gateway control-plane API URL for the console. Defaults to the derived
 Service address when the gateway is enabled; set it when naming or ports differ.
 Empty hides the Connectors pages.
 
+### `toolhive-cloud-ui.frontDoorUrl`
+
+**Type:** `string`
+
+<details>
+<summary>Default value</summary>
+
+```yaml
+'{{- $exp := include "toolhive-cloud-ui.experiments" (dict "root" .) | fromJson
+-}}{{- $ent := include "toolhive-cloud-ui.entitlements" (dict "root" .) |
+fromJson -}}{{- if and $exp.workspace $ent.module_workspace -}}{{- $svc :=
+ternary .Release.Name (printf "%s-workspace" .Release.Name) (contains
+"workspace" .Release.Name) | trunc 63 | trimSuffix "-" -}}http://{{ $svc }}.{{
+.Release.Namespace }}:8080{{- end -}}'
+```
+
+</details>
+
+Front Door URL for the Workspace pages, derived from the `workspace` subchart's
+Service. Rendered only while the cloud-ui AppConfig has the workspace experiment
+and the module_workspace entitlement on, so the URL and the Workspace pages read
+the same check. The Service name follows the subchart's fullname: the release
+name alone when it already contains "workspace", else
+&#60;release&#62;-workspace. Set it by hand when workspace.fullnameOverride or
+workspace.nameOverride is set.
+
 ### `connector-gateway.enabled`
 
 **Type:** `bool`
@@ -546,6 +564,57 @@ Install the Bedrock guardrails adapter and enable the gateway's guardrails hook.
 Configure the Bedrock guardrail ID, version, and region, plus the shared webhook
 TLS identity or chart-local overrides.
 
+### `workspace.production`
+
+**Type:** `bool`
+
+**Default:** `true`
+
+Enforce production requirements for Workspace, including external PostgreSQL and
+object storage, credentials, and resource limits.
+
+### `workspace.image.repository`
+
+**Type:** `string`
+
+<details>
+<summary>Default value</summary>
+
+```yaml
+image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-enterprise/workspace
+```
+
+</details>
+
+Container image repository for Workspace.
+
+### `workspace.postgres.enabled`
+
+**Type:** `bool`
+
+**Default:** `false`
+
+Deploy the development PostgreSQL instance for Workspace. Requires
+workspace.production to be false.
+
+### `workspace.objectStore.enabled`
+
+**Type:** `bool`
+
+**Default:** `false`
+
+Deploy the development MinIO object store for Workspace. Requires
+workspace.production to be false.
+
+### `workspace.networkPolicy.cloudUI.enabled`
+
+**Type:** `bool`
+
+**Default:** `true`
+
+Allow console pods to reach Workspace when workspace.networkPolicy.enabled is
+true.
+
 ### `global.stacklok.sessionHeaders`
 
 **Type:** `list`
@@ -576,9 +645,8 @@ ServiceAccount in that allowlist.
 
 **Default:** `false`
 
-Omit the main processor's projected ServiceAccount token for directory calls
-during local development. Leave false for authenticated installations; a
-directory that requires caller authentication refuses these calls.
+Not read by any subchart. AI Gateway v2 takes its directory transport from its
+own `directory.insecure` and `directory.tokenProjection`.
 
 ### `global.stacklok.enterpriseManager`
 
@@ -645,17 +713,9 @@ CSV.
 
 **Default:** `false`
 
-Enable the experimental Workspace pages in the cloud UI. Subject to the
-release-channel guard: it stays off on the Stable channel.
-
-### `global.stacklok.aiGateway.enabled`
-
-**Type:** `bool`
-
-**Default:** `false`
-
-Install the Envoy-based AI Gateway operator and CRDs, and expose its capability
-to sibling components.
+Enable the experimental Workspace: the cloud UI pages and the Atrium backend
+(the workspace subchart). The backend also requires the module_workspace license
+field. Subject to the release-channel guard: it stays off on the Stable channel.
 
 ### `global.stacklok.connectorGateway.enabled`
 
@@ -666,14 +726,31 @@ to sibling components.
 Install Connector Gateway and expose its capability to sibling components. Also
 set connectorGatewayId and authServerIssuer.
 
+### `global.stacklok.connectorGateway.workloadIdentity.enabled`
+
+**Type:** `bool`
+
+**Default:** `true`
+
+Let a Directory service account call the Connector Gateway with its workload's
+own projected ServiceAccount token. Turns on the gateway setting, its
+issuer-discovery ClusterRoleBinding and API-server token mount, and adds the
+gateway's ServiceAccount to
+enterprise-manager.grpc.callerAuth.workloadTrustSaSubjectAllowlist, so the
+gateway's half is never on without Directory's. The gateway's half stays off
+when it has no Directory address or dials Directory on the cleartext development
+arm (directory.insecure), where the gateway would refuse to start. Workload
+trusts and accounts are shared with AI Gateway v2: an active bound account
+authenticates here too and reaches every Connector its groups grant. See
+docs/customer/connector-gateway-workload-callers.md.
+
 ### `global.stacklok.aiGatewayV2.enabled`
 
 **Type:** `bool`
 
 **Default:** `false`
 
-Install the AI Gateway v2 data plane. Enabling both AI Gateway implementations
-requires acknowledgeBothDataPlanes and distinct front doors.
+Install the AI Gateway v2 data plane.
 
 ### `global.stacklok.aiGatewayV2.url`
 
@@ -685,18 +762,6 @@ AI Gateway v2's public URL, e.g. https://ai-gateway.example.com. The console
 reads models and health from it, and shows it in the CLI setup command.
 ai-gateway-v2's httpRoute.hostname defaults to its host. A local
 toolhive-cloud-ui.gatewayProxyUrl or httpRoute.hostname wins.
-
-### `global.stacklok.acknowledgeBothDataPlanes`
-
-**Type:** `bool`
-
-**Default:** `false`
-
-Allow both AI Gateway implementations during a deliberate side-by-side
-migration. Configure distinct front doors and maintain separate provider routes.
-AI Gateway v2 has no AIPolicy authorization; its Bedrock guardrails and Presidio
-scanning require their own toggles. Both data planes consume resources while
-installed.
 
 ### `global.stacklok.primaryIdp.issuer`
 
@@ -820,7 +885,7 @@ strings, and fragments are rejected.
 
 Enable structured audit events in components that adopt the global audit
 configuration. A local audit block replaces the global block in full. MCPServer
-and AIGateway custom resources require their own audit configuration.
+custom resources require their own audit configuration.
 
 ### `global.stacklok.audit.component`
 
@@ -873,8 +938,7 @@ defers to the adopting component's default.
 **Default:** `false`
 
 Enable OpenTelemetry Protocol (OTLP) export in adopting components. Global true
-enables export even when a local toggle is false; the AI Gateway operator's own
-local OTLP block replaces the global block in full.
+enables export even when a local toggle is false.
 
 ### `global.stacklok.telemetry.otlp.endpoint`
 
@@ -885,16 +949,6 @@ local OTLP block replaces the global block in full.
 OTLP collector endpoint used when an adopting component has no local endpoint.
 Workload custom resources require their own telemetry configuration.
 
-### `global.stacklok.telemetry.otlp.protocol`
-
-**Type:** `string`
-
-**Default:** `""`
-
-OTLP transport for the AI Gateway operator's own telemetry: grpc or
-http/protobuf. Empty uses its default; other current adopters do not read this
-setting.
-
 ### `global.stacklok.telemetry.otlp.insecure`
 
 **Type:** `bool`
@@ -902,8 +956,7 @@ setting.
 **Default:** `false`
 
 Allow an insecure OTLP transport in adopting components. Global true takes
-effect even when a local flag is false; the AI Gateway operator's own local OTLP
-block replaces the global block in full.
+effect even when a local flag is false.
 
 ### `global.webhooks.issuerRef.name`
 
@@ -921,8 +974,7 @@ Enterprise Manager webhook TLS is enabled.
 **Default:** `"ClusterIssuer"`
 
 Kind of the shared cert-manager issuer: ClusterIssuer or Issuer. A namespaced
-Issuer must exist in every namespace where a consumer creates a Certificate,
-including namespaces containing AIGateway resources.
+Issuer must exist in every namespace where a consumer creates a Certificate.
 
 ### `global.webhooks.caBundleSecret`
 
