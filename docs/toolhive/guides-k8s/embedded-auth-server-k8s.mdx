@@ -219,6 +219,7 @@ with a generic "authorization header required" error.
 | `upstreamProviders`             | Configuration for upstream identity providers. MCPServer and MCPRemoteProxy support one provider; VirtualMCPServer supports multiple providers for sequential authentication.                                                                                                                                                                                                                                                                                                                               |
 | `cimd`                          | Optional Client ID Metadata Document (CIMD) configuration. When `cimd.enabled` is `true`, the auth server accepts HTTPS URLs as `client_id` values and resolves them via CIMD, letting clients (for example, VS Code) authenticate without prior Dynamic Client Registration. See [Enable CIMD for zero-registration clients](#enable-cimd-for-zero-registration-clients).                                                                                                                                  |
 | `baselineClientScopes`          | Optional list of OAuth 2.0 scopes merged into every DCR-registered client's scope set. Use this when MCP clients register with a narrowed `scope` field but then request wider scopes at `/oauth/authorize`. See [Enable baseline scopes for DCR clients](#enable-baseline-scopes-for-dcr-clients).                                                                                                                                                                                                         |
+| `tlsListener`                   | Optional. Serves the authorization server's OAuth endpoints over HTTPS on port 8443, using a certificate and private key from a Secret. See [Serve the authorization server over TLS](#serve-the-authorization-server-over-tls).                                                                                                                                                                                                                                                                            |
 | `disableUpstreamTokenInjection` | Optional. When `true`, the embedded auth server authenticates clients normally but the proxy strips `Authorization`, `Cookie`, and `Proxy-Authorization` from forwarded requests instead of swapping the JWT for an upstream token. Use this for public backends (such as documentation servers) that you still want to gate behind client auth. Cannot be combined with `tokenExchange`, `awsSts`, or OBO (Stacklok Enterprise) on the same workload, since each would re-add credentials after the strip. |
 
 ## Step 5: Create the MCPOIDCConfig and MCPServer resources
@@ -393,6 +394,56 @@ kubectl create secret generic redis-acl-secret \
 
 For a complete walkthrough including deploying Redis Sentinel from scratch, see
 [Redis session storage](./redis-session-storage.mdx).
+
+## Serve the authorization server over TLS
+
+By default, the embedded authorization server shares the proxy's plain HTTP
+port, and you terminate TLS at an ingress or gateway in front of it. To have the
+pod serve the authorization server's OAuth endpoints over HTTPS itself, add a
+`tlsListener` block at `spec.embeddedAuthServer.tlsListener`. The listener runs
+on port 8443 alongside the HTTP port. MCP traffic, health probes, and metrics
+stay on the HTTP port.
+
+Create a TLS Secret with the certificate and private key in PEM format:
+
+```bash
+kubectl create secret tls auth-server-tls \
+  --namespace toolhive-system \
+  --cert=tls.crt \
+  --key=tls.key
+```
+
+Then reference both keys from the `MCPExternalAuthConfig`. Both
+`certificateSecretRef` and `privateKeySecretRef` are required:
+
+```yaml title="MCPExternalAuthConfig: TLS listener"
+spec:
+  type: embeddedAuthServer
+  embeddedAuthServer:
+    # ...
+    tlsListener:
+      certificateSecretRef:
+        name: auth-server-tls
+        key: tls.crt
+      privateKeySecretRef:
+        name: auth-server-tls
+        key: tls.key
+```
+
+When `tlsListener` is set, the operator adds a container port named `https-auth`
+and a Service port 8443 with `appProtocol: https` to each MCPServer or
+MCPRemoteProxy that references the config. The listener accepts TLS 1.2 or
+later. When the certificate in the Secret is renewed, the listener picks up the
+new certificate without a pod restart.
+
+Because the TLS listener owns port 8443, set the workload's `proxyPort` to a
+different port. If both use 8443, the operator marks the workload `Failed` and
+reports the conflict in its status conditions.
+
+A VirtualMCPServer accepts the same block at
+`spec.authServerConfig.tlsListener`. See
+[Serve the authorization server over TLS](../guides-vmcp/embedded-auth-server-vmcp.mdx#serve-the-authorization-server-over-tls)
+in the vMCP guide.
 
 ## Configure MCP client registration
 
