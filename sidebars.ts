@@ -433,6 +433,7 @@ const platformSidebar: SidebarsConfig[string] = [
       'platform/enterprise-directory/users-and-groups',
       'platform/enterprise-directory/scim-provisioning',
       'platform/enterprise-directory/okta-directory-sync',
+      'platform/enterprise-directory/service-accounts',
       'platform/enterprise-directory/virtual-api-keys',
     ],
   },
@@ -528,6 +529,11 @@ const connectorGatewaySidebar: SidebarsConfig[string] = [
     defaultStyle: false,
   },
   'connector-gateway/support-connector-access',
+  {
+    type: 'doc',
+    id: 'connector-gateway/kubernetes-workloads',
+    label: 'Kubernetes workloads',
+  },
 
   {
     type: 'html',
@@ -577,6 +583,11 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
   },
   { type: 'doc', id: 'ai-gateway/manage-budgets', label: 'Manage budgets' },
   'ai-gateway/budgets-and-pricing',
+  {
+    type: 'doc',
+    id: 'ai-gateway/kubernetes-workloads',
+    label: 'Kubernetes workloads',
+  },
   {
     type: 'doc',
     id: 'ai-gateway/prompt-injection-screening',
