@@ -17,7 +17,7 @@ authenticates against. This is separate from platform sign-in:
 
 ## Where to find them
 
-In the admin console, go to **Identity providers**.
+In the admin console, go to **Identity Providers**.
 
 ## The corporate provider appears here, read-only
 
@@ -33,8 +33,19 @@ provider record while continuing to serve other directory operations.
 
 ## Register a provider
 
-Create a [managed secret](./managed-secrets.mdx) for the client secret. Then add
-the provider issuer, client identifier, and managed-secret reference.
+Create a [managed secret](./managed-secrets.mdx) for the client secret, or
+allowlist a Kubernetes Secret that holds it in
+`enterprise-manager.directory.kubernetesSecretRefs.allowed`. Keep that Secret in
+a dedicated namespace: the allowlist refuses the platform's release namespace.
+See
+[`directory.kubernetesSecretRefs`](../platform/reference/helm/enterprise-manager.mdx#directorykubernetessecretrefs).
+
+Then add the provider's issuer or OAuth endpoints, the client identifier, and
+the secret reference. A provider that needs extra parameters on its
+authorization request takes them under **Additional authorization parameters**.
+For example, Google issues a refresh token only when the request includes
+`access_type=offline`, and adding `prompt=consent` makes it issue a new one to
+users who already consented.
 
 The console displays the callback derived from the Connector Gateway issuer:
 `{issuer}/oauth/callback`. Register this URI in the upstream provider's OAuth
@@ -42,6 +53,28 @@ application. A mismatch causes the upstream provider to reject authorization.
 
 Once registered, a provider becomes selectable when you configure a connector's
 authentication.
+
+### Create a provider from the connector wizard
+
+When you [add a connector](./connectors.mdx#add-a-connector) whose MCP server
+uses OAuth, the setup wizard reads the server's metadata. If one of your
+providers already serves its authorization server, the wizard offers it under
+**Choose an identity provider**. Otherwise, the **Set up an identity provider**
+step drafts a new OAuth2 provider with a suggested **Identity provider name**
+and the **Authorization URL**, **Token URL**, and **Scopes** filled in. Add any
+**Additional authorization parameters** the provider needs, then set up its
+client:
+
+- If the authorization server supports dynamic client registration (DCR), the
+  gateway registers its own client from the **Discovery URL**, so you don't need
+  a client ID or secret.
+- Otherwise, enter the **Client ID** of the OAuth app you registered with the
+  provider, and choose the **Client secret** from a managed secret or an
+  allowlisted Kubernetes Secret. **New secret** creates a managed secret without
+  leaving the wizard.
+
+The wizard creates the provider when you finish, and it appears under **Identity
+Providers** for other connectors to use.
 
 ## Next steps
 
