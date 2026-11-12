@@ -562,6 +562,11 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
   },
   {
     type: 'doc',
+    id: 'ai-gateway/vertex-workload-identity',
+    label: 'Keyless Vertex AI',
+  },
+  {
+    type: 'doc',
     id: 'ai-gateway/model-routing',
     label: 'Model routing',
   },

@@ -1,0 +1,513 @@
+---
+title: Connect to Vertex AI without a key
+sidebar_label: Keyless Vertex AI
+description:
+  Authenticate the AI Gateway to Google Vertex AI with Workload Identity
+  Federation, so your cluster stores no service account key.
+---
+
+The AI Gateway can reach Google Vertex AI with no stored key. It uses Google
+Cloud _Workload Identity Federation_: the gateway proves its identity with a
+short-lived credential it already has, and Google exchanges that credential for
+a short-lived access token. No private key exists that could leak, and you have
+no key to rotate.
+
+The gateway supports two identity sources:
+
+| Identity source                 | Works on                                                                  | Google grants access to          |
+| ------------------------------- | ------------------------------------------------------------------------- | -------------------------------- |
+| Kubernetes ServiceAccount token | Any cluster whose OIDC issuer Google can reach                            | The gateway's ServiceAccount     |
+| AWS IAM role                    | Amazon EKS with EKS Pod Identity or IAM roles for service accounts (IRSA) | The IAM role the gateway runs as |
+
+Use the Kubernetes ServiceAccount token unless your security team ties Google
+Cloud access to AWS IAM roles. It works on any cluster, including Amazon EKS and
+Azure Kubernetes Service (AKS), and the grant follows exactly one
+ServiceAccount.
+
+## Prerequisites
+
+- The `gcloud` CLI, signed in as a principal that can create workload identity
+  pools and service accounts and set IAM policy on your project.
+- A Google Cloud project with Vertex AI enabled. This guide uses one project,
+  referred to as `<PROJECT_ID>`, for the pool, the service account, and Vertex
+  AI. They can be separate projects.
+- The name of the gateway's Kubernetes ServiceAccount, referred to as
+  `<SERVICE_ACCOUNT>`, and the namespace it runs in, referred to as
+  `<NAMESPACE>`. The chart names the ServiceAccount
+  `<RELEASE_NAME>-ai-gateway-v2`. Confirm it on a running install:
+
+  ```bash
+  kubectl get deployment <RELEASE_NAME>-ai-gateway-v2 -n <NAMESPACE> \
+    -o jsonpath='{.spec.template.spec.serviceAccountName}'
+  ```
+
+## Create the workload identity pool
+
+Enable the APIs the token exchange uses, and look up the project number:
+
+```bash
+gcloud services enable iam.googleapis.com sts.googleapis.com \
+  iamcredentials.googleapis.com aiplatform.googleapis.com \
+  --project=<PROJECT_ID>
+gcloud projects describe <PROJECT_ID> --format='value(projectNumber)'
+```
+
+Create a workload identity pool for the gateway. Create one pool per cluster, so
+one cluster's gateway can't use another cluster's grant:
+
+```bash
+gcloud iam workload-identity-pools create <POOL_ID> \
+  --project=<PROJECT_ID> \
+  --location=global \
+  --display-name="AI Gateway"
+```
+
+## Choose how Google grants access
+
+Google can grant Vertex AI access in two ways. The steps for each identity
+source show both.
+
+- _Service account impersonation_ (recommended): the federated identity
+  impersonates a Google Cloud service account that holds
+  `roles/aiplatform.user`. Vertex AI sees the service account. Set
+  `serviceAccountEmail` in the gateway's configuration.
+- _Direct resource access_: the federated identity holds `roles/aiplatform.user`
+  itself. No service account is involved. Leave `serviceAccountEmail` unset.
+
+Use service account impersonation unless you have a reason to grant the
+federated identity directly. It works with every Google Cloud API, and the
+Vertex AI grant stays on one service account, so you can change the identity
+source later without moving that grant.
+
+For impersonation, create the service account now. It has no key:
+
+```bash
+gcloud iam service-accounts create ai-gateway-vertex \
+  --project=<PROJECT_ID> \
+  --display-name="AI Gateway Vertex AI"
+gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  --member="serviceAccount:ai-gateway-vertex@<PROJECT_ID>.iam.gserviceaccount.com" \
+  --role="roles/aiplatform.user"
+```
+
+## Use the Kubernetes ServiceAccount token
+
+The chart projects a short-lived, audience-bound ServiceAccount token into the
+gateway pod. The Google Security Token Service (STS) validates it against your
+cluster's OIDC issuer.
+
+### Find your cluster's OIDC issuer
+
+<Tabs groupId='cluster' queryString='cluster'>
+<TabItem value='eks' label='Amazon EKS' default>
+
+```bash
+aws eks describe-cluster --name <CLUSTER_NAME> \
+  --query "cluster.identity.oidc.issuer" --output text
+```
+
+</TabItem>
+<TabItem value='aks' label='Azure AKS'>
+
+Enable the OIDC issuer on the cluster if it isn't on yet, then read the URL:
+
+```bash
+az aks update -g <RESOURCE_GROUP> -n <CLUSTER_NAME> --enable-oidc-issuer
+az aks show -g <RESOURCE_GROUP> -n <CLUSTER_NAME> \
+  --query "oidcIssuerProfile.issuerUrl" -o tsv
+```
+
+</TabItem>
+</Tabs>
+
+Google STS fetches the issuer's signing keys, so the issuer must be publicly
+reachable. Amazon EKS and AKS issuers are. For a private or self-managed
+cluster, upload the cluster's JSON Web Key Set (JWKS) to the provider with
+`--jwk-json-path`. Upload it again after every signing key rotation, or every
+token exchange fails.
+
+### Create the OIDC provider
+
+Create the provider with an attribute condition that admits only the gateway's
+ServiceAccount. Without the condition, any workload in the cluster can use the
+provider.
+
+```bash
+gcloud iam workload-identity-pools providers create-oidc <PROVIDER_ID> \
+  --project=<PROJECT_ID> \
+  --location=global \
+  --workload-identity-pool=<POOL_ID> \
+  --issuer-uri=<ISSUER_URL> \
+  --attribute-mapping="google.subject=assertion.sub" \
+  --attribute-condition="assertion.sub == 'system:serviceaccount:<NAMESPACE>:<SERVICE_ACCOUNT>'"
+```
+
+Leave the allowed audiences unset. The chart projects the provider's default
+audience, `https://iam.googleapis.com/` followed by the provider's resource
+name.
+
+:::warning[Keep one pool per cluster]
+
+A federated principal belongs to the pool and is keyed on the token's `sub`
+claim alone. Two clusters that run the gateway under the same namespace and
+ServiceAccount name produce the same principal. If they share a pool, either
+cluster's gateway can use a grant meant for the other.
+
+:::
+
+### Grant Vertex AI access to the ServiceAccount
+
+The gateway's federated principal is:
+
+```text
+principal://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/subject/system:serviceaccount:<NAMESPACE>:<SERVICE_ACCOUNT>
+```
+
+<Tabs groupId='access' queryString='access'>
+<TabItem value='impersonation' label='Impersonation' default>
+
+Let the principal impersonate the service account:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  ai-gateway-vertex@<PROJECT_ID>.iam.gserviceaccount.com \
+  --project=<PROJECT_ID> \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principal://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/subject/system:serviceaccount:<NAMESPACE>:<SERVICE_ACCOUNT>"
+```
+
+</TabItem>
+<TabItem value='direct' label='Direct resource access'>
+
+Grant the principal Vertex AI access on the project:
+
+```bash
+gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  --role="roles/aiplatform.user" \
+  --member="principal://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/subject/system:serviceaccount:<NAMESPACE>:<SERVICE_ACCOUNT>"
+```
+
+</TabItem>
+</Tabs>
+
+### Configure the provider
+
+Set `gcpWorkloadIdentity` on the `vertex` provider. If the provider has a
+`credentialSecretRef`, remove it:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  providers:
+    - kind: vertex
+      baseUrl: https://aiplatform.googleapis.com
+      project: <PROJECT_ID>
+      region: global
+      models: ['gemini-2.5-pro']
+      gcpWorkloadIdentity:
+        audience: //iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/providers/<PROVIDER_ID>
+        # Set for impersonation. Omit for direct resource access.
+        serviceAccountEmail: ai-gateway-vertex@<PROJECT_ID>.iam.gserviceaccount.com
+        # Token lifetime in seconds. Defaults to 3600, minimum 600.
+        expirationSeconds: 3600
+```
+
+The chart mounts the projected token in the pod. The kubelet rotates the token
+before it expires, and the gateway reads the new token on its next refresh, so
+rotation needs no restart. The gateway doesn't start if the token file is
+missing, so a broken volume fails the rollout instead of the first request.
+
+The chart refuses to render when `gcpWorkloadIdentity` is on a provider other
+than `vertex`, when it's combined with `credentialSecretRef`, when the audience
+isn't a workload identity pool provider, or when `serviceAccountEmail` isn't a
+`*.gserviceaccount.com` address.
+
+With `networkPolicy.allowExternalEgress: false`, the gateway needs no extra
+egress rule. The provider rule already allows port 443, which covers
+`sts.googleapis.com` and `iamcredentials.googleapis.com`.
+
+## Use the gateway's AWS IAM role
+
+On Amazon EKS, the gateway can authenticate to Google with the IAM role it runs
+as through EKS Pod Identity or IRSA. The gateway signs an AWS Security Token
+Service (STS) `GetCallerIdentity` request with that role's credentials, and
+Google verifies the request with AWS. The chart projects no token.
+
+The gateway uses the role its pod has. If the gateway already reaches
+[Claude on AWS Bedrock](./providers-and-models.mdx#claude-on-aws-bedrock)
+without a credential Secret, that's the same role. Google sees only the role's
+ARN, so any principal that can assume the role reaches Vertex AI. The role's
+trust policy is the boundary, and it must admit only the gateway.
+
+### Attach a restricted role to the gateway
+
+Give the role a trust policy that admits only the gateway's ServiceAccount, then
+attach it to that ServiceAccount. The steps depend on how the cluster hands
+roles to pods.
+
+<Tabs groupId='aws-identity' queryString='aws-identity'>
+<TabItem value='pod-identity' label='EKS Pod Identity' default>
+
+EKS Pod Identity needs the EKS Pod Identity Agent on the cluster. EKS Auto Mode
+includes it. On other clusters, install the add-on if it isn't there yet:
+
+```bash
+aws eks create-addon --cluster-name <CLUSTER_NAME> \
+  --addon-name eks-pod-identity-agent
+```
+
+See
+[Set up the Amazon EKS Pod Identity Agent](https://docs.aws.amazon.com/eks/latest/userguide/pod-id-agent-setup.html)
+for details.
+
+Restrict the role's trust policy to the gateway's ServiceAccount:
+
+```json title="trust-policy.json"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "pods.eks.amazonaws.com" },
+      "Action": ["sts:AssumeRole", "sts:TagSession"],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/eks-cluster-arn": "arn:aws:eks:<AWS_REGION>:<AWS_ACCOUNT_ID>:cluster/<CLUSTER_NAME>",
+          "aws:RequestTag/kubernetes-namespace": "<NAMESPACE>",
+          "aws:RequestTag/kubernetes-service-account": "<SERVICE_ACCOUNT>"
+        }
+      }
+    }
+  ]
+}
+```
+
+If the gateway's ServiceAccount has no role yet, associate one:
+
+```bash
+aws eks create-pod-identity-association \
+  --cluster-name <CLUSTER_NAME> \
+  --namespace <NAMESPACE> \
+  --service-account <SERVICE_ACCOUNT> \
+  --role-arn arn:aws:iam::<AWS_ACCOUNT_ID>:role/<ROLE_NAME>
+```
+
+</TabItem>
+<TabItem value='irsa' label='IRSA'>
+
+IRSA needs an IAM OIDC provider for the cluster's OIDC issuer. Restrict the
+role's trust policy to the gateway's ServiceAccount. `<OIDC_PROVIDER>` is the
+issuer URL without `https://`, such as
+`oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE`:
+
+```json title="trust-policy.json"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::<AWS_ACCOUNT_ID>:oidc-provider/<OIDC_PROVIDER>"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "<OIDC_PROVIDER>:sub": "system:serviceaccount:<NAMESPACE>:<SERVICE_ACCOUNT>",
+          "<OIDC_PROVIDER>:aud": "sts.amazonaws.com"
+        }
+      }
+    }
+  ]
+}
+```
+
+Annotate the gateway's ServiceAccount with the role in your Helm values:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::<AWS_ACCOUNT_ID>:role/<ROLE_NAME>
+```
+
+</TabItem>
+</Tabs>
+
+The role needs no IAM permissions for Vertex AI. Google calls AWS STS to verify
+the signed request.
+
+### Create the AWS provider
+
+Create an AWS provider for your account, with an attribute condition that pins
+it to the gateway's role. Without the condition, any role in the account can use
+the provider.
+
+```bash
+gcloud iam workload-identity-pools providers create-aws <PROVIDER_ID> \
+  --project=<PROJECT_ID> \
+  --location=global \
+  --workload-identity-pool=<POOL_ID> \
+  --account-id=<AWS_ACCOUNT_ID> \
+  --attribute-condition="attribute.aws_role == 'arn:aws:sts::<AWS_ACCOUNT_ID>:assumed-role/<ROLE_NAME>'"
+```
+
+Leave the attribute mapping unset. The default mapping already sets
+`attribute.aws_role` to the role's assumed-role ARN.
+
+### Grant Vertex AI access to the role
+
+The gateway's federated principal is:
+
+```text
+principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/attribute.aws_role/arn:aws:sts::<AWS_ACCOUNT_ID>:assumed-role/<ROLE_NAME>
+```
+
+<Tabs groupId='access' queryString='access'>
+<TabItem value='impersonation' label='Impersonation' default>
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  ai-gateway-vertex@<PROJECT_ID>.iam.gserviceaccount.com \
+  --project=<PROJECT_ID> \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/attribute.aws_role/arn:aws:sts::<AWS_ACCOUNT_ID>:assumed-role/<ROLE_NAME>"
+```
+
+</TabItem>
+<TabItem value='direct' label='Direct resource access'>
+
+```bash
+gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  --role="roles/aiplatform.user" \
+  --member="principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/attribute.aws_role/arn:aws:sts::<AWS_ACCOUNT_ID>:assumed-role/<ROLE_NAME>"
+```
+
+</TabItem>
+</Tabs>
+
+### Configure the provider for the AWS role
+
+Set `gcpWorkloadIdentity.aws` on the `vertex` provider:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  providers:
+    - kind: vertex
+      baseUrl: https://aiplatform.googleapis.com
+      project: <PROJECT_ID>
+      region: global
+      models: ['gemini-2.5-pro']
+      gcpWorkloadIdentity:
+        audience: //iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/providers/<PROVIDER_ID>
+        # Set for impersonation. Omit for direct resource access.
+        serviceAccountEmail: ai-gateway-vertex@<PROJECT_ID>.iam.gserviceaccount.com
+        aws:
+          # The AWS region to sign for, such as us-east-1.
+          region: <AWS_REGION>
+```
+
+`aws.region` is the AWS region the gateway signs for. The provider's `region` is
+the Vertex AI region. The chart refuses to render when `aws.region` is missing
+or isn't an AWS region name, and when `expirationSeconds` is set, because no
+token is projected.
+
+With `networkPolicy.allowExternalEgress: false`, the chart adds an egress rule
+for the EKS Pod Identity Agent so the gateway can fetch its role credentials.
+With IRSA, the provider rule on port 443 already covers AWS STS.
+
+## Verify the connection
+
+Upgrade the release and wait for the rollout to finish:
+
+```bash
+helm upgrade <RELEASE_NAME> <CHART> -n <NAMESPACE> -f values.yaml
+kubectl rollout status deployment/<RELEASE_NAME>-ai-gateway-v2 -n <NAMESPACE>
+```
+
+Before you send a test request, make sure the gateway's own checks pass, or it
+refuses the request before it contacts Google:
+
+- The model has a price in the pricing catalog, under the `google` catalog
+  provider. See
+  [Update the pricing catalog](./budgets-and-pricing.mdx#update-the-pricing-catalog).
+- The caller has an applicable [budget](./manage-budgets.mdx).
+- If model access is on, the caller has a
+  [grant for the model](./control-model-access.mdx).
+
+Send a request for a model the `vertex` provider serves:
+
+```bash
+curl -s https://<AI_GATEWAY_HOST>/v1beta/models/gemini-2.5-pro:generateContent \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"contents": [{"role": "user", "parts": [{"text": "ping"}]}]}'
+```
+
+A response confirms the token exchange, the grant, and the route. A `402` means
+the caller has no budget with capacity. A `403` means either the caller has no
+grant for the model or Vertex AI denied the gateway's identity. The gateway
+fetches a Google token on the first Vertex AI request, so the pod starts cleanly
+even when the Google Cloud side is misconfigured. See
+[Troubleshooting](#troubleshooting) if the request fails.
+
+## Remove the old service account key
+
+After the request succeeds, delete the key Secret and the key itself:
+
+```bash
+kubectl delete secret <VERTEX_SECRET_NAME> -n <NAMESPACE>
+gcloud iam service-accounts keys list \
+  --iam-account=<KEY_SERVICE_ACCOUNT_EMAIL>
+gcloud iam service-accounts keys delete <KEY_ID> \
+  --iam-account=<KEY_SERVICE_ACCOUNT_EMAIL>
+```
+
+If a tool such as External Secrets Operator or a GitOps controller manages the
+Secret, remove it from that source too, or the Secret comes back.
+
+## Next steps
+
+- [Control model access](./control-model-access.mdx) to decide which users and
+  groups can call the Vertex AI models.
+- [Route models to providers](./model-routing.mdx) to understand how requests
+  reach the `vertex` provider.
+
+## Related information
+
+- [Connect model providers](./providers-and-models.mdx) for the other provider
+  kinds and credentials.
+- [Workload Identity Federation with other clouds](https://cloud.google.com/iam/docs/workload-identity-federation-with-other-clouds)
+  in the Google Cloud documentation.
+
+## Troubleshooting
+
+<details>
+<summary>Vertex AI requests fail with "mint gcp access token"</summary>
+
+The gateway couldn't get a Google token, so it sent nothing to Vertex AI. The
+gateway logs carry the Google STS error after `mint gcp access token`. Check
+these causes:
+
+- The attribute condition doesn't match. Compare the condition with the
+  gateway's namespace and ServiceAccount, or with the role's assumed-role ARN.
+- The audience in `gcpWorkloadIdentity.audience` names a different pool or
+  provider.
+- Google STS can't fetch your cluster's signing keys. Confirm the issuer is
+  public, or upload the JWKS again.
+- With impersonation, the principal lacks `roles/iam.workloadIdentityUser` on
+  the service account.
+- With the AWS role, the error mentions `retrieve aws credentials`. The pod has
+  no role: confirm the EKS Pod Identity Agent runs and the association exists,
+  or, with IRSA, that the ServiceAccount carries the
+  `eks.amazonaws.com/role-arn` annotation.
+
+</details>
+
+<details>
+<summary>Vertex AI returns 403 permission denied</summary>
+
+The token exchange worked, but the identity Vertex AI sees has no access. Grant
+`roles/aiplatform.user` on the Vertex AI project to the service account you
+impersonate, or to the federated principal with direct resource access. IAM
+changes can take a few minutes to apply.
+
+</details>
