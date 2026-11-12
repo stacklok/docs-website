@@ -69,21 +69,21 @@ Before deploying, ensure you have:
 Enable each required component in `values.yaml`. All component flags default to
 `false`, and an install without values creates no platform workloads.
 
-| Enable flag                                | What it deploys                                                                                                                              |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `toolhiveOperator`                         | The ToolHive Operator and its custom resource definitions (`MCPServer`, `VirtualMCPServer`, and others)                                      |
-| `enterpriseManager`                        | Enterprise Manager, which serves configuration to Stacklok clients                                                                           |
-| `enterprise-manager.directory.enabled`     | The directory service: users, groups, connectors, secrets, and virtual keys. Needs `enterpriseManager` and a PostgreSQL database you provide |
-| `cloudUi`                                  | Console (Next.js application)                                                                                                                |
-| `registryServer`                           | Registry Server, backed by an external PostgreSQL database you provide                                                                       |
-| `global.stacklok.aiGateway.enabled`        | Legacy AI Gateway: the AI Gateway operator and its custom resource definitions                                                               |
-| `global.stacklok.aiGatewayV2.enabled`      | AI Gateway. Enable either this or the legacy AI Gateway, except during a migration window                                                    |
-| `global.stacklok.connectorGateway.enabled` | Connector Gateway. Also requires `global.stacklok.connectorGatewayId` and `global.stacklok.authServerIssuer`                                 |
+| Enable flag                                 | What it deploys                                                                                                                             |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `toolhiveOperator`                          | The ToolHive Operator and its custom resource definitions (`MCPServer`, `VirtualMCPServer`, and others)                                     |
+| `global.stacklok.enterpriseManager.enabled` | Enterprise Manager, which serves configuration to Stacklok clients                                                                          |
+| `enterprise-manager.directory.enabled`      | The directory service: users, groups, connectors, secrets, and virtual keys. Needs Enterprise Manager and a PostgreSQL database you provide |
+| `cloudUi`                                   | Console (Next.js application)                                                                                                               |
+| `global.stacklok.registryServer.enabled`    | Registry Server, backed by an external PostgreSQL database you provide                                                                      |
+| `global.stacklok.aiGateway.enabled`         | Legacy AI Gateway: the AI Gateway operator and its custom resource definitions                                                              |
+| `global.stacklok.aiGatewayV2.enabled`       | AI Gateway. Enable either this or the legacy AI Gateway, except during a migration window                                                   |
+| `global.stacklok.connectorGateway.enabled`  | Connector Gateway. Also requires `global.stacklok.connectorGatewayId` and `global.stacklok.authServerIssuer`                                |
 
-The gateway flags belong under `global.stacklok`. The console's chart
-identifiers retain their original names: the flag is `cloudUi` and its
-configuration key is `toolhive-cloud-ui`, so use those spellings in the values
-file.
+The gateway, Enterprise Manager, and Registry Server flags belong under
+`global.stacklok`. The console's chart identifiers retain their original names:
+the flag is `cloudUi` and its configuration key is `toolhive-cloud-ui`, so use
+those spellings in the values file.
 
 Besides its enable flag, gateway ID, and authorization server issuer, the
 Connector Gateway requires Redis or Valkey, key material, and a TLS connection
@@ -181,15 +181,15 @@ for the Secret in the `default` namespace.
 
 ### What it checks
 
-| Check                          | Renders when                                                                                        | Outcome                                                                                    |
-| ------------------------------ | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Kubernetes version             | Always                                                                                              | `fail` below 1.30 (the chart's floor)                                                      |
-| Node capacity (CPU and memory) | Always                                                                                              | `warn` below 4 allocatable cores or 6Gi, evaluated on the smallest node                    |
-| Distribution                   | Always                                                                                              | `warn` on OpenShift OCP                                                                    |
-| Egress reachability            | `preflight.checkEgress=true`                                                                        | `warn` only; off by default, always fails in air gap                                       |
-| Registry database reachability | `registryServer.enabled` and a run-time `toolhive-registry-server.preflightDatabaseUri` is supplied | `fail` if unreachable                                                                      |
-| OIDC issuer reachability       | `enterpriseManager.enabled=true` and `global.stacklok.primaryIdp.issuer` is set                     | `fail` if unreachable or misconfigured (see the note below)                                |
-| Signing-key Secret exists      | `enterpriseManager.enabled=true`                                                                    | `fail` if the Secret named in `enterprise-manager.signingConfig.existingSecret` is missing |
+| Check                          | Renders when                                                                                                        | Outcome                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Kubernetes version             | Always                                                                                                              | `fail` below 1.30 (the chart's floor)                                                      |
+| Node capacity (CPU and memory) | Always                                                                                                              | `warn` below 4 allocatable cores or 6Gi, evaluated on the smallest node                    |
+| Distribution                   | Always                                                                                                              | `warn` on OpenShift OCP                                                                    |
+| Egress reachability            | `preflight.checkEgress=true`                                                                                        | `warn` only; off by default, always fails in air gap                                       |
+| Registry database reachability | `global.stacklok.registryServer.enabled` and a run-time `toolhive-registry-server.preflightDatabaseUri` is supplied | `fail` if unreachable                                                                      |
+| OIDC issuer reachability       | `global.stacklok.enterpriseManager.enabled=true` and `global.stacklok.primaryIdp.issuer` is set                     | `fail` if unreachable or misconfigured (see the note below)                                |
+| Signing-key Secret exists      | `global.stacklok.enterpriseManager.enabled=true`                                                                    | `fail` if the Secret named in `enterprise-manager.signingConfig.existingSecret` is missing |
 
 :::note[A cluster-internal OIDC issuer can fail from your workstation]
 
@@ -210,7 +210,7 @@ helm template stacklok-enterprise \
   --version <VERSION> \
   --namespace stacklok-system \
   --values values.yaml \
-  --set registryServer.enabled=true \
+  --set global.stacklok.registryServer.enabled=true \
   --set 'toolhive-registry-server.preflightDatabaseUri=postgres://<USER>:<PASSWORD>@<HOST>:5432/<DATABASE>?sslmode=require' \
   | kubectl preflight --auto-update=false -
 ```
@@ -411,21 +411,22 @@ one; see the warning after the example.
 replicated:
   enabled: true
 
-# Enable only the components you want.
+# Enable only the components you want. The Enterprise Manager and Registry
+# Server flags sit under global.stacklok below.
 toolhiveOperator:
-  enabled: true
-enterpriseManager:
   enabled: true
 cloudUi:
   enabled: true
-registryServer:
-  enabled: true
 
-# The corporate identity provider, configured once for the whole platform. Every
-# component reads it from here. See "Configure platform identity" for the client
-# registrations these values correspond to.
 global:
   stacklok:
+    enterpriseManager:
+      enabled: true
+    registryServer:
+      enabled: true
+    # The corporate identity provider, configured once for the whole platform.
+    # Every component reads it from here. See "Configure platform identity" for
+    # the client registrations these values correspond to.
     primaryIdp:
       issuer: 'https://idp.example.com'
       clientId: '<CONSOLE_CLIENT_ID>'
@@ -469,11 +470,9 @@ toolhive-registry-server:
             name: registry-db-credentials
             key: password
 
-# Configuration for the console.
+# Configuration for the console. It connects to the Registry Server in this
+# release by default.
 toolhive-cloud-ui:
-  # URL of the Registry Server. When it runs in this cluster, point at its
-  # in-cluster Service (named registry-api on port 8080).
-  apiBaseUrl: 'http://registry-api.stacklok-system.svc.cluster.local:8080'
   # URL of the Enterprise Manager. Only the console's server side calls it, so
   # point at its in-cluster Service, named <RELEASE_NAME>-enterprise-manager
   # on port 80.
@@ -950,9 +949,9 @@ The Registry Server uses the fixed Service name `registry-api`.
 Set `betterAuth.url` to the public console address that your ingress or gateway
 publishes.
 
-The in-cluster URLs (`apiBaseUrl`, `enterpriseManagerUrl`) stay as Service DNS
-and need no routing. Once the routes resolve, confirm the Enterprise Manager
-answers at its external hostname:
+The console reaches the Registry Server and the Enterprise Manager through their
+in-cluster Service DNS names, which need no routing. Once the routes resolve,
+confirm the Enterprise Manager answers at its external hostname:
 
 ```bash
 curl -sf https://config.example.com/.well-known/toolhive-configuration | jq .
