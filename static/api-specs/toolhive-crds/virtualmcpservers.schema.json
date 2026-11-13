@@ -190,7 +190,7 @@
                         "description": "JWTBearerIssuerPolicyConfig binds RFC 7523 policy to a named trusted issuer.",
                         "properties": {
                           "acceptedAudiences": {
-                            "description": "AcceptedAudiences identifies this authorization server's accepted\nassertion audiences. When omitted, runtime validation defaults to the\ntoken endpoint.",
+                            "description": "AcceptedAudiences identifies this authorization server's accepted\nassertion audiences. When omitted, plain JWT-bearer assertions must name\nthe token endpoint, and ID-JAG assertions may name the token endpoint or\nthis server's issuer identifier, unless the issuer is also an allowed\nresource audience. A configured list replaces these defaults.",
                             "items": {
                               "maxLength": 2048,
                               "minLength": 1,
@@ -276,7 +276,7 @@
                 "spiffeClientAuth": {
                   "description": "SPIFFEClientAuth associates SPIFFE principal patterns with explicit\nOAuth client identities and permissions. A sibling of TokenExchange and\nJWTBearer below, not nested under either: client authentication does\nnot by itself confer a grant. See SPIFFEClientConfig.",
                   "items": {
-                    "description": "SPIFFEClientConfig associates one SPIFFE principal pattern from a declared\ntrust domain with an explicit OAuth client identity and permissions.\nConfiguration is not authentication: configured SPIFFE clients remain\nnon-public OAuth clients without a secret until live SPIFFE credential\nvalidation is implemented (see SPIFFETrustDomainConfig's doc comment).\n\nGrantTypes is deliberately not exposed here: the runtime only accepts\nexactly the RFC 8693 token-exchange grant for a SPIFFE client\n(validateSPIFFEGrants in pkg/authserver/spiffe_trust.go), so the converter\nalways supplies it instead of letting it be configured.",
+                    "description": "SPIFFEClientConfig associates one SPIFFE principal pattern from a declared\ntrust domain with an explicit OAuth client identity and permissions.\nDeclaring a client does not grant access by itself. SPIFFE clients\nauthenticate with a JWT-SVID or an X.509-SVID and have no client secret.\nTrust material comes from the declared bundle source (see\nSPIFFETrustDomainConfig's doc comment).\n\nGrantTypes is deliberately not exposed here: the runtime only accepts\nexactly the RFC 8693 token-exchange grant for a SPIFFE client\n(validateSPIFFEGrants in pkg/authserver/spiffe_trust.go), so the converter\nalways supplies it instead of letting it be configured.",
                     "properties": {
                       "audiences": {
                         "description": "Audiences are RFC 8693 token audiences this association may request.",
@@ -598,12 +598,12 @@
               "x-kubernetes-list-type": "atomic"
             },
             "spiffeTrustDomains": {
-              "description": "SPIFFETrustDomains declares SPIFFE trust domains for\ninboundGrants.spiffeClientAuth associations. See SPIFFETrustDomainConfig's\ndoc comment for why declaring a domain does not by itself enable\nauthentication in this build.",
+              "description": "SPIFFETrustDomains declares SPIFFE trust domains for\ninboundGrants.spiffeClientAuth associations. Each declaration must be\nreferenced by an inboundGrants.spiffeClientAuth entry.",
               "items": {
-                "description": "SPIFFETrustDomainConfig declares one SPIFFE trust domain accepted by the\nembedded authorization server. Configuration is not authentication: no\nlive X.509-SVID or JWT-SVID validation exists yet, so a declared trust\ndomain does not by itself let any workload authenticate — RunConfig.Validate\n(pkg/authserver/config.go) currently hard-rejects any non-empty\nspiffeTrustDomains at authserver startup via validateSPIFFENotYetEnforced,\na deliberate placeholder until real SVID verification lands.",
+                "description": "SPIFFETrustDomainConfig declares one SPIFFE trust domain accepted by the\nembedded authorization server. A declared domain becomes usable only after\nthe configured source supplies trust material during auth-server startup.",
                 "properties": {
                   "bundleSource": {
-                    "description": "BundleSource declares exactly one trust-bundle source and is validated for\nshape here. The standalone file loader exists, but is not wired into SPIFFE\nauthentication.",
+                    "description": "BundleSource declares exactly one trust-bundle source and is validated for\nshape here. Only the file source is loaded in this build; bundle_endpoint\nand workload_api are rejected when the auth-server configuration is\nvalidated.",
                     "properties": {
                       "endpoint": {
                         "description": "Endpoint declares a HTTPS SPIFFE Bundle Endpoint. Required when Type is\n\"bundle_endpoint\".",
@@ -1124,7 +1124,7 @@
                     "description": "JWTBearerGrant enables the plain RFC 7523 JWT-bearer grant for this\nissuer. It is independent of RFC 8693 delegation policy.\nThis legacy field is deprecated; configure RFC 7523 policy under\ninboundGrants.jwtBearer.issuerPolicies.",
                     "properties": {
                       "acceptedAudiences": {
-                        "description": "AcceptedAudiences identifies this authorization server's accepted\nassertion audiences. When omitted, runtime validation defaults to the\ntoken endpoint.",
+                        "description": "AcceptedAudiences identifies this authorization server's accepted\nassertion audiences. When omitted, plain JWT-bearer assertions must name\nthe token endpoint, and ID-JAG assertions may name the token endpoint or\nthis server's issuer identifier, unless the issuer is also an allowed\nresource audience. A configured list replaces these defaults.",
                         "items": {
                           "maxLength": 2048,
                           "minLength": 1,
@@ -1236,7 +1236,7 @@
               "x-kubernetes-list-type": "atomic"
             },
             "upstreamProviders": {
-              "description": "UpstreamProviders configures connections to upstream Identity Providers.\nWhen configured, the embedded auth server delegates interactive authentication\nto these providers. It may be omitted only when delegateClients or a trusted\nissuer with jwtBearerGrant enables token-only operation.\nMCPServer and MCPRemoteProxy support a single upstream; VirtualMCPServer supports multiple.",
+              "description": "UpstreamProviders configures connections to upstream Identity Providers.\nWhen configured, the embedded auth server delegates interactive authentication\nto these providers. It may be omitted only when token-only operation is\nenabled by delegateClients (also under inboundGrants.tokenExchange),\ninboundGrants.spiffeClientAuth, or a trusted issuer with jwtBearerGrant\n(also under inboundGrants.jwtBearer).\nMCPServer and MCPRemoteProxy support a single upstream; VirtualMCPServer supports multiple.",
               "items": {
                 "description": "UpstreamProviderConfig defines configuration for an upstream Identity Provider.\n\nExactly one of OIDCConfig or OAuth2Config must be set and must match the\ndeclared Type: oidc-typed providers set OIDCConfig, oauth2-typed providers\nset OAuth2Config. The CEL rule below enforces the pairing at admission; the\nmatching Go-level check in validateUpstreamProvider provides defense-in-depth\nfor stored objects.\n\nThe rule is structured as a chain of equality checks ending in an explicit\n`false`, so adding a new UpstreamProviderType value without extending this\nrule fails admission instead of silently demanding the OAuth2 shape. When\nadding a new type, extend both this rule and validateUpstreamProvider.",
                 "properties": {
