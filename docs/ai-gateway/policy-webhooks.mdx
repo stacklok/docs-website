@@ -1,0 +1,345 @@
+---
+title: Enforce model request policy with webhooks
+sidebar_label: Policy webhooks
+description:
+  Send each AI Gateway model request to your own policy service, which allows or
+  denies it before any bytes reach the model provider.
+---
+
+Policy webhooks let your own policy service rule on the model requests that pass
+through the AI Gateway. The gateway sends each request's caller, target model,
+and, optionally, the request body to an HTTPS endpoint you run, called the
+_receiver_, and denies the request when the receiver denies it.
+
+You declare each webhook as a _hook_ in the gateway's configuration: the
+receiver's URL, the point in a request's lifecycle where the gateway calls it,
+and whether the receiver's answer is enforced.
+
+## Prerequisites
+
+- The AI Gateway is enabled. See
+  [Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx).
+- A receiver that accepts and answers the gateway's `WebhookReview` requests.
+  See [Write the receiver](#write-the-receiver).
+- If the gateway's network policy restricts egress, a rule that lets the gateway
+  pods reach the receiver. See [Network access](#network-access).
+
+## How the gateway calls your webhooks
+
+Each model request is one _interaction_, and a webhook attaches to one of two
+points in it:
+
+| Phase                | When the gateway calls the webhook                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `request.received`   | After the gateway authenticates the caller and resolves the target model, and before any bytes go to the provider. |
+| `response.completed` | After the provider's response is complete, and before the gateway releases the end of it to the client.            |
+
+Each webhook also has an _enforcement_ mode:
+
+- `required`: the gateway waits for the receiver. On `request.received`, a deny
+  stops the request. On `response.completed`, the gateway holds the response
+  until the receiver confirms it recorded the interaction: a whole response, or
+  the last frame of a streamed one. If the receiver fails, the client receives
+  an error in place of that response or frame.
+- `observation`: the gateway calls the receiver in the background and never
+  blocks the client. A deny is logged and counted as a would-deny, and the
+  request goes ahead. Observation is available on `request.received` only.
+
+To try out a policy before enforcing it, start with an `observation` webhook and
+switch it to `required` once its would-deny count looks right.
+
+On `request.received`, the gateway runs its built-in checks first:
+[model access](./control-model-access.mdx),
+[budget admission](./manage-budgets.mdx),
+[PCI/PII scanning](./pci-pii-controls.mdx), and
+[prompt injection screening](./prompt-injection-screening.mdx). Your `required`
+webhooks run next, one at a time, in the order you list them. The first deny
+stops the request, and no later webhook is called. Once every `required` webhook
+allows the request, the `observation` webhooks run.
+
+As a result, your receiver sees only requests the built-in checks allowed. When
+PCI/PII scanning is on, the body your receiver sees is the redacted body.
+
+## Configure the webhooks
+
+Declare webhooks under `ai-gateway-v2.extraHooks` in your platform values. This
+example enforces policy on every request:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  extraHooks:
+    - name: model-policy
+      url: https://policy.example.com/ai-gateway/request
+      phase: request.received
+      enforcement: required
+      failurePolicy: fail_closed
+      timeout: 5s
+      payload: true
+```
+
+| Field             | Required | Description                                                                                                                                                                                                                                                    |
+| ----------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`            | Yes      | A lowercase DNS label, unique across all webhooks. Appears in logs, metrics, and the client's denial message. The names `model-access`, `scanning`, `guardrails`, and `budgets-*` belong to the built-in webhooks.                                             |
+| `url`             | Yes      | The receiver endpoint, used as written. Must be `https://`, except for a loopback host.                                                                                                                                                                        |
+| `phase`           | Yes      | `request.received` or `response.completed`.                                                                                                                                                                                                                    |
+| `enforcement`     | Yes      | `required` or `observation`. A `response.completed` webhook must be `required`.                                                                                                                                                                                |
+| `failurePolicy`   | No       | `fail_closed` or `fail_open`. Allowed only on a `required` `request.received` webhook. Default: `fail_closed`. See [Failure policy](#failure-policy).                                                                                                          |
+| `timeout`         | No       | How long one call to the receiver may take, including its one retry, as a duration such as `5s`. Maximum `120s`. Default: `5s`.                                                                                                                                |
+| `payload`         | No       | Send the client's request body to the receiver. `request.received` only. Default: `false`.                                                                                                                                                                     |
+| `caBundle`        | No       | The Secret holding the CA that signed the receiver's certificate: `secretName`, and `key`, which defaults to `ca.crt`. Used only with `tokenProjection`. Default: `global.webhooks.caBundleSecret`. See [Authenticate the gateway](#authenticate-the-gateway). |
+| `tokenProjection` | No       | The `audience` of a Kubernetes service account token the gateway sends to the receiver, and its `expirationSeconds`, at least `600`. Default: `3600`. See [Authenticate the gateway](#authenticate-the-gateway).                                               |
+
+### Add a response.completed webhook
+
+The `required` `response.completed` webhooks run one after another, and their
+timeouts must add up to no more than
+`ai-gateway-v2.lifecycle.completionHookTimeout`, which defaults to `5s` and
+accepts `1s` to `120s`. With budgets on, the built-in usage webhook already uses
+the full `5s`, so raise `completionHookTimeout` before you add your own. A
+longer value holds the end of a response longer when a receiver is slow. Above
+`29s`, also raise `ai-gateway-v2.livenessProbe.failureThreshold`.
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  lifecycle:
+    completionHookTimeout: 10s
+  extraHooks:
+    - name: usage-ledger
+      url: https://policy.example.com/ai-gateway/usage
+      phase: response.completed
+      enforcement: required
+      timeout: 5s
+```
+
+### Authenticate the gateway
+
+For a receiver behind a private CA, set `tokenProjection.audience` and
+`caBundle`. The chart mounts the CA Secret and a projected token for the
+gateway's Kubernetes service account. The gateway verifies the receiver's
+certificate against that CA and sends the token in the `Authorization: Bearer`
+header, rereading it as Kubernetes rotates it.
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  extraHooks:
+    - name: model-policy
+      url: https://policy.policy-system.svc/ai-gateway/request
+      phase: request.received
+      enforcement: required
+      caBundle:
+        secretName: policy-ca
+      tokenProjection:
+        audience: policy-webhook
+```
+
+When you omit `caBundle.secretName`, the chart uses
+`global.webhooks.caBundleSecret`. When the CA Secret changes, the gateway pods
+restart to pick it up.
+
+Your receiver validates the token with the cluster's token issuer and checks
+that its audience matches `tokenProjection.audience` and that its subject is the
+gateway's service account.
+
+Without `caBundle` and `tokenProjection`, the receiver must serve HTTPS with a
+certificate from a public CA, and the gateway sends no credential. Use this only
+for a receiver that restricts who can reach it by other means, such as a private
+network.
+
+### Failure policy
+
+The `failurePolicy` of a `required` `request.received` webhook decides what
+happens when the gateway can't get a usable answer: the receiver is unreachable,
+doesn't answer within `timeout`, answers with a status other than `2xx`, or
+answers with a body the gateway can't parse.
+
+- `fail_closed` denies the request. The client receives a `504` for a timeout, a
+  `503` for an unreachable receiver, and a `502` for a bad answer.
+- `fail_open` allows the request when the caller is a person. A request from a
+  [Kubernetes workload](./kubernetes-workloads.mdx) is denied either way.
+
+An explicit deny from the receiver denies the request under either policy.
+
+Before applying the failure policy, the gateway retries once after a connection
+failure, a `502` or `504`, or a `503` without a `Retry-After` header. The retry
+counts against the same `timeout`.
+
+## Write the receiver
+
+The gateway sends an HTTPS `POST` with a `WebhookReview` JSON body and expects a
+`WebhookReview` back. The `X-AIGW-Webhook-Id` header carries the same value as
+`request.uid`.
+
+### What the request carries
+
+A `request.received` request looks like this:
+
+```json
+{
+  "apiVersion": "webhooks.ai-gateway.stacklok.dev/v1",
+  "kind": "WebhookReview",
+  "request": {
+    "uid": "<PER_CALL_ID>",
+    "interactionId": "<INTERACTION_ID>",
+    "interactionTimestamp": "2026-11-12T12:00:00Z",
+    "event": "request.received",
+    "subject": {
+      "user": "<IDP_SUBJECT>",
+      "clientIp": "203.0.113.10",
+      "userAgent": "..."
+    },
+    "target": { "provider": "openai", "model": "gpt-4o" },
+    "payload": { "format": "openai", "body": { "...": "..." } }
+  }
+}
+```
+
+- `subject` identifies the caller. A person carries `user`, the subject from
+  their identity provider token, and `virtualKeyId` when they call with a
+  [virtual API key](../platform/enterprise-directory/virtual-api-keys.mdx). A
+  Kubernetes workload carries `principal.serviceAccount` instead, so a receiver
+  can't mistake it for a person.
+- `target` names the provider and model the request is routed to.
+- `payload` is present only when the webhook sets `payload: true`.
+  `payload.body` is the client's request body in the provider's native format,
+  with any redactions from the built-in checks applied. `payload.format` names
+  the routed provider kind, such as `openai` or `anthropic`. Interpret the body
+  against that provider's own API reference.
+- `interactionId` is the same for the `request.received` and
+  `response.completed` calls of one interaction, so you can join them.
+
+A `response.completed` request carries the same identity fields, plus a `result`
+block with the interaction's `outcome`, its `durationMs`, and, when the provider
+reported usage, `usage`. `usage` is the provider's own usage block, passed
+through byte for byte, so read it against the provider's API reference. When the
+provider reported no usage, `usagePresent` is `false`.
+
+Ignore fields and `event` values your receiver doesn't recognize. When each
+gateway pod starts, it sends `webhook.ping` events, which carry no subject or
+body, until the receiver answers with a `2xx` status.
+
+### Answer the request
+
+To allow a request, answer `200` with `allowed: true` and the request's `uid`:
+
+```json
+{
+  "apiVersion": "webhooks.ai-gateway.stacklok.dev/v1",
+  "kind": "WebhookReview",
+  "response": {
+    "uid": "<PER_CALL_ID>",
+    "allowed": true
+  }
+}
+```
+
+To deny it, answer `200` with `allowed: false` and a `status`:
+
+```json
+{
+  "apiVersion": "webhooks.ai-gateway.stacklok.dev/v1",
+  "kind": "WebhookReview",
+  "response": {
+    "uid": "<PER_CALL_ID>",
+    "allowed": false,
+    "status": { "code": 403, "message": "model not approved for group" },
+    "sanitizedError": "model not approved for your team",
+    "auditAnnotations": { "rule": "approved-models" }
+  }
+}
+```
+
+- `status.code` is the status the client receives. The gateway keeps a `4xx` or
+  `5xx` code and turns any other value into `403`.
+- The gateway logs `status.message` and never returns it to the client.
+- `sanitizedError` is the only receiver text the client sees. The client
+  receives `request denied by organization policy (<HOOK_NAME>): ` followed by
+  your `sanitizedError`, cut to 256 bytes. Use fixed, client-safe wording. When
+  you leave it empty, the gateway uses `request blocked by policy`.
+- `auditAnnotations` are key-value pairs the gateway writes into the
+  interaction's [audit record](./forward-audit-logs.mdx).
+
+A `response.completed` receiver answers `200` with `allowed: true` to confirm
+that it recorded the interaction. Any `2xx` answer releases the held response,
+whatever its `allowed` value.
+
+Because the gateway can retry a call, your receiver can see the same `uid`
+twice. Make any side effects, such as recording usage, idempotent on `uid`.
+
+## Network access
+
+The AI Gateway allows all egress by default. If you set
+`ai-gateway-v2.networkPolicy.allowExternalEgress: false`, add a rule to
+`ai-gateway-v2.networkPolicy.egress` that lets the gateway pods reach your
+receiver's host and port. A missing rule shows up as a timeout, which denies
+requests under `fail_closed`.
+
+## Monitor webhook calls
+
+The gateway counts every call to a receiver in the
+`stacklok.ai_gateway.webhook.invocations` metric, labeled with the webhook's
+name in `webhook_name` and the result in `webhook_outcome`, such as `admit`,
+`deny`, or `failure`. On an `observation` webhook, the `deny` count is its
+would-deny count.
+
+## Next steps
+
+- [Control model access](./control-model-access.mdx) to grant models to
+  directory groups before any webhook runs.
+- [Forward audit logs](./forward-audit-logs.mdx) to collect each webhook's
+  decisions and annotations in your security information and event management
+  (SIEM) system.
+- [Set up telemetry](./telemetry.mdx) to collect the webhook metrics.
+
+## Related information
+
+- [Enforce tool call policy with webhooks](../connector-gateway/policy-webhooks.mdx) -
+  the equivalent for the Connector Gateway
+- [Configure the AI Gateway](../platform/enterprise-platform/configure-ai-gateway.mdx) -
+  chart values for the gateway
+
+## Troubleshooting
+
+<details>
+<summary>Requests fail with a 502, 503, or 504</summary>
+
+A `required` webhook under `fail_closed` couldn't get a usable answer from your
+receiver. See [Failure policy](#failure-policy) for what each status means. The
+gateway logs the webhook's name and the reason. Check that the gateway pods can
+reach the URL, that the `caBundle` Secret holds the CA that signed the
+receiver's certificate, and that the receiver echoes `uid` and sets `kind` and
+`allowed` in every answer.
+
+</details>
+
+<details>
+<summary>The chart doesn't render after adding a webhook</summary>
+
+The chart checks `extraHooks` when it renders, and the error names the entry and
+the fix. Common causes are:
+
+- A missing `name`, `url`, `phase`, or `enforcement`, an unknown field, or a
+  value outside the allowed list.
+- A `name` that a built-in webhook uses: `model-access`, `scanning`,
+  `guardrails`, or one starting with `budgets-`.
+- `caBundle` without `tokenProjection.audience`, or `tokenProjection` with no CA
+  Secret in `caBundle.secretName` or `global.webhooks.caBundleSecret`.
+- `response.completed` webhook timeouts that add up to more than
+  `lifecycle.completionHookTimeout`, or an `observation` webhook whose `timeout`
+  is longer than it.
+
+</details>
+
+<details>
+<summary>The gateway doesn't start after adding a webhook</summary>
+
+The gateway checks every webhook when it starts, and refuses to start with an
+invalid one. It logs the webhook's position, name, and problem. Common causes
+are:
+
+- An `http://` URL to a host other than loopback.
+- `failurePolicy` on a webhook that isn't a `required` `request.received`
+  webhook.
+- A `response.completed` webhook set to `observation`.
+- A `name` that another webhook already uses.
+
+</details>

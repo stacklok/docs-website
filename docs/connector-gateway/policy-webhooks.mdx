@@ -1,0 +1,270 @@
+---
+title: Enforce tool call policy with webhooks
+sidebar_label: Policy webhooks
+description:
+  Send each Connector Gateway tool call to your own policy service, which can
+  allow, deny, or rewrite it before it reaches the connector.
+---
+
+Policy webhooks let your own policy service rule on the tool calls that pass
+through the Connector Gateway. Before the gateway dispatches a `tools/call` to a
+connector, it sends the caller's identity, the tool name, and the arguments to
+an HTTPS endpoint you run, called the _receiver_. The receiver can allow the
+call, deny it, or rewrite its arguments, and the gateway enforces the answer.
+
+The gateway uses the same request and response format as ToolHive
+[webhook authorization](../toolhive/guides-cli/webhooks.mdx), so you can reuse a
+ToolHive receiver. The gateway is stricter in two ways: it calls webhooks only
+for `tools/call`, and it denies a call whose mutating patch renames the tool.
+See [Write the receiver](#write-the-receiver).
+
+## Prerequisites
+
+- The Connector Gateway is enabled. See
+  [Configure the Connector Gateway](../platform/enterprise-platform/configure-connector-gateway.mdx).
+- A receiver that accepts and answers in the ToolHive webhook format. See
+  [Write the receiver](#write-the-receiver).
+- If the gateway's network policy restricts egress, a rule that lets the gateway
+  pods reach the receiver. See [Network access](#network-access).
+
+## How the gateway calls your webhooks
+
+A webhook is either _validating_ or _mutating_:
+
+- A validating webhook answers allow or deny.
+- A mutating webhook returns a [JSON Patch](https://jsonpatch.com/) that
+  rewrites the call's arguments, or denies the call.
+
+For each `tools/call`, the gateway runs these steps in order:
+
+1. Connector access and tool enablement. A call these deny never reaches a
+   webhook. See [Grant and revoke connector access](./connector-policies.mdx).
+2. Every matching mutating webhook, in the order you list them.
+3. Every matching validating webhook, in the order you list them. They see the
+   arguments as the mutating webhooks left them, whatever order the two types
+   appear in the list.
+4. Dispatch to the connector, with the final arguments.
+
+The first deny stops the call, so the webhooks after it aren't called. With no
+webhooks configured, tool calls go straight from access checks to the connector.
+
+One client tool call produces exactly one request to each matching webhook. The
+gateway calls webhooks for `tools/call` only.
+
+## Configure the webhooks
+
+Declare webhooks under `connector-gateway.enterpriseConfig.policyWebhooks` in
+your platform values. This example sends every call to a validating webhook and
+calls a second webhook only for tools whose names start with `github_delete_`:
+
+```yaml title="values.yaml"
+connector-gateway:
+  enterpriseConfig:
+    policyWebhooks:
+      - name: tool-policy
+        type: validating
+        url: https://policy.example.com/v1/validate
+        timeout: 5s
+        failurePolicy: fail
+        tls:
+          caBundlePath: /etc/policy-webhook/ca.crt
+        hmacSecretRef: /etc/policy-webhook/hmac-secret
+      - name: destructive-tools
+        type: validating
+        url: https://policy.example.com/v1/destructive
+        match:
+          tools: ['github_delete_*']
+```
+
+| Field           | Required | Description                                                                                                                                                                                          |
+| --------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`          | Yes      | Unique within the list. Appears in the gateway's logs and metrics.                                                                                                                                   |
+| `type`          | Yes      | `validating` or `mutating`.                                                                                                                                                                          |
+| `url`           | Yes      | The receiver endpoint. Must be `https://` unless `tls.insecureSkipVerify` is `true`.                                                                                                                 |
+| `timeout`       | No       | How long the gateway waits for an answer, from `1s` to `30s`. Default: `10s`.                                                                                                                        |
+| `failurePolicy` | No       | What happens when the receiver can't be reached or answers badly. `fail` denies the call and `ignore` lets it through. Default: `fail`. See [Failure policy](#failure-policy).                       |
+| `match.tools`   | No       | Glob patterns for the tool calls this webhook applies to. Empty matches every call. See [Scope a webhook to specific tools](#scope-a-webhook-to-specific-tools).                                     |
+| `tls`           | No       | `caBundlePath` to trust a private CA, and `clientCertPath` and `clientKeyPath` for mutual TLS. `insecureSkipVerify` skips certificate verification and permits `http://` URLs, for development only. |
+| `hmacSecretRef` | No       | Path to a file holding a shared secret. The gateway signs each request with it. See [Verify the gateway's signature](#verify-the-gateways-signature).                                                |
+
+Mount the CA bundle, client certificate, and HMAC secret files into the gateway
+pod with `connector-gateway.extraVolumes` and
+`connector-gateway.extraVolumeMounts`. For example, to mount the CA bundle and
+HMAC secret used above from a Secret named `policy-webhook`:
+
+```yaml title="values.yaml"
+connector-gateway:
+  extraVolumes:
+    - name: policy-webhook
+      secret:
+        secretName: policy-webhook
+  extraVolumeMounts:
+    - name: policy-webhook
+      mountPath: /etc/policy-webhook
+      readOnly: true
+```
+
+### Scope a webhook to specific tools
+
+A webhook with `match.tools` is called only for calls whose tool name matches at
+least one glob. The gateway tries each glob against both the tool name the
+client called and the connector's own name for the tool, so a pattern works
+whether or not your deployment prefixes tool names with the connector name. A
+call that matches no glob proceeds without calling that webhook.
+
+Scoping limits the effect of a receiver outage. Under `failurePolicy: fail`, an
+unreachable receiver behind a webhook with no `match.tools` denies every tool
+call on the gateway, while a scoped one denies only the calls it covers.
+
+### Failure policy
+
+When a receiver times out, is unreachable, answers with a status other than
+`200` or a body the gateway can't parse, or returns a patch the gateway can't
+apply, `failurePolicy: fail` denies the call and `failurePolicy: ignore` lets it
+through with its original arguments.
+
+Some outcomes deny the call under either policy:
+
+- An explicit deny from a validating or mutating webhook.
+- An HTTP `422 Unprocessable Entity` answer.
+- A mutating webhook's patch that changes the tool name.
+- A call the gateway couldn't send at all, such as when the HMAC secret file is
+  unreadable at call time.
+
+## Write the receiver
+
+The gateway sends and expects the ToolHive webhook format, and the ToolHive
+[`pkg/webhook`](https://github.com/stacklok/toolhive/tree/main/pkg/webhook)
+package defines its Go types. A request from the Connector Gateway looks like
+this:
+
+```json
+{
+  "version": "v0.1.0",
+  "uid": "550e8400-e29b-41d4-a716-446655440000",
+  "timestamp": "2026-11-12T10:15:30.123Z",
+  "principal": {
+    "sub": "<IDP_SUBJECT>",
+    "platform_user_id": "<DIRECTORY_USER_ID>",
+    "email": "alice@example.com",
+    "groups": ["engineering"]
+  },
+  "mcp_request": {
+    "jsonrpc": "2.0",
+    "id": 0,
+    "method": "tools/call",
+    "params": {
+      "name": "github_delete_repository",
+      "arguments": { "owner": "example", "repo": "scratch" }
+    }
+  },
+  "context": {
+    "server_name": "connector-gateway",
+    "transport": "streamable-http"
+  }
+}
+```
+
+A few details differ from a request sent by a ToolHive MCP server:
+
+- `principal` identifies the signed-in user. `platform_user_id` is the user's ID
+  in the Stacklok Enterprise directory. When the call is made on behalf of
+  another identity, `principal.delegation` carries the delegation chain.
+- `mcp_request` is a `tools/call` the gateway builds from the call. Its `id` is
+  always `0`, and `params.name` is the tool name the client called.
+- `context.server_name` is always `connector-gateway`, and `context.source_ip`
+  is absent.
+
+### Answer the request
+
+Answer `200` in the ToolHive
+[validating](../toolhive/guides-cli/webhooks.mdx#validating-webhook-response-format)
+or
+[mutating](../toolhive/guides-cli/webhooks.mdx#mutating-webhook-response-format)
+response format, and echo the request's `uid`. Keep a mutating webhook's patch
+within `/mcp_request/params/arguments`, since only the arguments reach the
+connector. A patch that changes `/mcp_request/params/name` denies the call under
+either failure policy.
+
+When a receiver denies a call, the client receives a tool result with `isError`
+set, and the connector receives nothing. The result text is the receiver's
+`message` followed by its `reason` in parentheses, each cut to 512 bytes. When
+the receiver sends no message, the text is `Request denied by policy`.
+
+### Verify the gateway's signature
+
+When you set `hmacSecretRef`, the gateway signs each request with HMAC-SHA256
+and sends two headers:
+
+- `X-ToolHive-Timestamp`: the Unix time the request was signed.
+- `X-ToolHive-Signature`: `sha256=` followed by the hex-encoded HMAC of the
+  string `<timestamp>.<request body>`.
+
+Recompute the signature with the same secret, compare it in constant time, and
+reject requests whose timestamp is outside a short window, such as five minutes,
+so a captured request can't be replayed later.
+
+## Network access
+
+The Connector Gateway allows all egress by default. If you set
+`connector-gateway.networkPolicy.allowExternalEgress: false`, add a rule to
+`connector-gateway.networkPolicy.egress` that lets the gateway pods reach each
+receiver's host and port. A missing rule shows up as a timeout, which denies
+calls under `failurePolicy: fail`.
+
+## Monitor webhook calls
+
+The gateway counts each webhook call in the
+`stacklok.connector_gateway.policy_webhook.calls` metric, with these attributes:
+
+- `webhook`: the webhook's `name`.
+- `outcome`: `success` when the receiver allowed the call, `rejected` when it
+  denied the call, and `error` when the call to the receiver failed.
+- `failure_policy`: on an `error` only, `fail` or `ignore`, naming what the
+  gateway did with the call.
+
+A rising `error` count means the receiver is unhealthy. The gateway's logs name
+the webhook, its outcome, and the tool, and never record argument values.
+
+## Next steps
+
+- [Grant and revoke connector access](./connector-policies.mdx) to control which
+  users reach a connector before any webhook runs.
+- [Monitor tool usage](./tool-usage.mdx) to see which tools your users call.
+- [Set up telemetry](./telemetry.mdx) to collect the webhook metrics.
+
+## Related information
+
+- [Delegate tool authorization with webhooks](../toolhive/guides-cli/webhooks.mdx) -
+  the ToolHive webhook format and an example receiver
+- [Enforce model request policy with webhooks](../ai-gateway/policy-webhooks.mdx) -
+  the equivalent for the AI Gateway
+
+## Troubleshooting
+
+<details>
+<summary>Tool calls fail with "Request denied by policy"</summary>
+
+A webhook under `failurePolicy: fail` can't reach its receiver, or the receiver
+is answering badly. Check the `stacklok.connector_gateway.policy_webhook.calls`
+metric for `error` outcomes and the gateway logs for the webhook's name. Confirm
+the gateway pods can reach the URL, that `tls.caBundlePath` points at the CA
+that signed the receiver's certificate, and that the receiver answers within
+`timeout`.
+
+</details>
+
+<details>
+<summary>The gateway doesn't start after adding a webhook</summary>
+
+The gateway checks the list when it starts, and refuses to start with an invalid
+webhook. Its log names the problem. Common causes are:
+
+- A `timeout` outside `1s` to `30s`.
+- An `http://` URL without `tls.insecureSkipVerify`.
+- An unknown `type` or `failurePolicy`.
+- A malformed glob in `match.tools`.
+- A duplicate `name`.
+- An HMAC secret file that isn't mounted at the `hmacSecretRef` path.
+
+</details>
