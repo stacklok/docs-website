@@ -12,8 +12,8 @@ Configure the Enterprise Manager chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `enterprise-manager`. Chart version: `0.26.0`. Generated from the
-platform source at `v0.26.0`.
+Chart: `enterprise-manager`. Chart version: `0.28.0`. Generated from the
+platform source at `v0.28.0`.
 
 ## Values
 
@@ -574,8 +574,8 @@ Pod-label selector for permitted gRPC clients. An empty selector allows no pods.
 **Default:**
 `{"duration":"2160h","enabled":false,"port":443,"renewBefore":"720h","targetPort":8443}`
 
-Additional TLS listener on the HTTP server, used by AI Gateway's budgets
-webhook. The plain listener is unaffected.
+Additional TLS listener on the HTTP server, used by AI Gateway's budgets webhook
+and by Connector Gateway's approvals webhook. The plain listener is unaffected.
 
 ### `webhookTLS.enabled`
 
@@ -584,7 +584,9 @@ webhook. The plain listener is unaffected.
 **Default:** `false`
 
 Enable the TLS listener and its supporting Certificate, Service port, and volume
-mount.
+mount. Turned on automatically while the approvals experiment
+(global.stacklok.experiments.approvals.enabled) is on, which also needs port 443
+below.
 
 ### `webhookTLS.port`
 
@@ -762,7 +764,12 @@ consumed by enterprise-manager yet.
 **Default:** `[]`
 
 Additional OIDC issuers whose tokens are also accepted. Each entry requires
-issuer and audience.
+issuer and audience. A secondary issuer's groups and roles grant nothing on the
+platform admin gate unless a ClusterPlatformRoleBinding condition names that
+issuer in its `issuer` field; a condition without one applies to the primary
+issuer only. An entry with the same issuer URI as the primary (a second audience
+on the same authority) counts as the primary issuer, so conditions without an
+`issuer` grant its callers too.
 
 ### `signingConfig`
 
@@ -831,68 +838,113 @@ exclusive with enterpriseConfig.
 
 **Default:** `{}`
 
-Inline enterprise configuration (ServerConfig), rendered into a mounted
-ConfigMap. Mutually exclusive with configFile. Each directive sets enforcement:
-"enforced" (mandatory) or "default" (advisory).
+Organization-wide configuration distributed by Enterprise Manager to clients.
+Set directives directly under enterpriseConfig, as shown below. The chart
+serializes the object as JSON in a mounted ConfigMap. Use either
+enterpriseConfig or configFile. An empty object creates no enterprise
+configuration ConfigMap.
+
+Each directive has a typed value and a required enforcement field: "enforced"
+makes the value mandatory; "default" lets clients use their local settings
+instead. Omitted directives leave client settings unchanged. The degraded_mode
+block has no value or enforcement wrapper.
+
+Helm passes this object through without validating its fields. Enterprise
+Manager validates field names, types, enforcement values, and degraded-mode
+policy and duration at startup. Changes to this object trigger a rollout to load
+the configuration. All callers receive the organization-wide values; the targets
+field is accepted but is not evaluated. Store only non-sensitive values here:
+the entire object is in a ConfigMap.
 
 ```yaml
 enterpriseConfig:
+  # Registry connection settings for the CLI and web console.
   registry:
     value:
-      api_url: 'https://api.registry.example.com/registry/toolhive' # for thv CLI/desktop
-      # server_api_url: "https://api.registry.example.com"          # for the cloud-UI web console
-      # allow_private_ip: true
+      # CLI registry API URL, scoped to one registry. The CLI appends
+      # /v0.1/... paths to this URL.
+      api_url: 'https://api.registry.example.com/registry/toolhive'
+      # Registry server API root for the web console, including /v1 routes.
+      # Overrides the console's API_BASE_URL. Leave it out under the
+      # umbrella: it defaults to global.stacklok.registryServer.url, or to
+      # the registry-api Service while global.stacklok.registryServer.enabled
+      # is true, and a set value that differs fails the render.
+      server_api_url: 'https://api.registry.example.com'
+      # Allow the CLI to connect to registry URLs resolving to private IPs.
+      # Defaults to false when omitted.
+      allow_private_ip: false
     enforcement: 'enforced'
 
+  # OpenTelemetry export settings for ToolHive clients. These do not
+  # configure telemetry for the Enterprise Manager service itself.
   telemetry:
     value:
+      # OTLP collector endpoint.
       otel_endpoint: 'https://otel.example.com'
+      # Fraction of traces to sample, from 0.0 to 1.0. Set explicitly;
+      # an omitted sampling_rate resolves to zero on clients.
       sampling_rate: 0.1
+      # Omit these booleans to preserve the client's local settings.
       tracing_enabled: true
       metrics_enabled: true
-      # insecure: false
-      # headers:
-      #   x-tenant-id: "my-org"
+      # Use TLS for the OTLP connection. Set true for plaintext transport.
+      insecure: false
+      # Optional exporter headers. Include only non-sensitive metadata.
+      headers:
+        x-tenant-id: 'example-tenant'
     enforcement: 'enforced'
 
-  # Prevent clients from running MCP servers not listed in the registry.
+  # With value false and enforcement enforced, the CLI blocks creation of
+  # MCP servers outside the approved registry. True or omission allows them.
   non_registry_servers:
     value: false
     enforcement: 'enforced'
 
+  # Corporate CA certificate for MCP server containers to verify TLS
+  # connections to internal registries, proxies, and APIs.
+  # Supply either inline pem or url, but not both. The ToolHive client
+  # fetches url at startup; it must be reachable from the client machine.
   ca_certificate:
     value:
       pem: |
         -----BEGIN CERTIFICATE-----
-        ...
+        <BASE64_ENCODED_CERTIFICATE>
         -----END CERTIFICATE-----
-      # url: "https://pki.example.com/ca.pem"   # alternative: fetch by URL
+      # Alternative to pem:
+      # url: "https://pki.example.com/ca.pem"
     enforcement: 'enforced'
 
-  # Environment variables injected into every MCP server container.
+  # String-valued environment variables for MCP server containers.
+  # With default enforcement, applies only when the local map is empty.
+  # With enforced, replaces the entire local map without merging keys.
   build_env:
     value:
       HTTP_PROXY: 'http://proxy.example.com:3128'
       NO_PROXY: 'localhost,127.0.0.1'
     enforcement: 'default'
 
-  help_menu:
-    value: false
+  # AI Gateway connection settings for the web console.
+  gateway:
+    value:
+      # User-facing proxy URL for model requests, catalog, and readiness.
+      # Overrides GATEWAY_PROXY_URL when AI Gateway is installed. Also used
+      # in the CLI setup command displayed by the console.
+      proxy_url: 'https://gateway.example.com'
     enforcement: 'enforced'
 
-  playground:
-    value: false
-    enforcement: 'enforced'
-
-  assistant:
-    value: false
-    enforcement: 'enforced'
-
-  # policy: "warn" | "block_new"
+  # CLI behavior when Enterprise Manager is unreachable and cached
+  # configuration has expired. Without a cached configuration, the CLI
+  # blocks new installations immediately.
   degraded_mode:
+    # block_new blocks new tool installations; existing tools continue.
+    # warn allows operations with a warning. Defaults to block_new when
+    # degraded_mode is omitted; policy is required when the block is set.
     policy: 'block_new'
+    # Extra time after cache expiry before the policy takes effect.
+    # Go duration string, such as "30m" or "24h". Omitted means no grace.
     grace_period: '24h'
-    message: 'Enterprise Manager unreachable — contact your administrator.'
+    # Optional warning shown during the grace period and with policy warn.
+    message: 'Enterprise Manager unreachable. Contact your administrator.'
 ```
 
 ### `appConfig`
@@ -909,6 +961,16 @@ values.
 appConfig:
   logLevel: debug
   seedDefaultRoles: true
+  budgets:
+    # Cancelled streams one user or service account may produce per period.
+    # Observe (the default) logs and counts the would-be refusals; switch to
+    # enforce to refuse with 429 once max is sized from that data. Every field
+    # is optional; the values shown are the defaults. max: 0 fails startup.
+    disconnectLimit:
+      mode: observe # observe (count, refuse no one) or enforce (429 at max)
+      period: month # day, week (from Monday), month or year, in UTC
+      max: 500
+      retentionPeriods: 3
 ```
 
 ### `database`
@@ -923,6 +985,7 @@ admin:
   existingSecret: ''
   existingSecretKey: postgres-admin-password
   user: ''
+caBundleRef: {}
 dynamicAuth: {}
 existingSecret: ''
 existingSecretKey: postgres-password
@@ -978,6 +1041,20 @@ other's data.
 **Default:** `""`
 
 Falls back to global.postgres.sslMode.
+
+### `database.caBundleRef`
+
+**Type:** `object`
+
+**Default:** `{}`
+
+CA bundle that verifies the Postgres server certificate, for a server signed by
+a private CA (a corporate CA, AWS RDS). Falls back to
+global.postgres.caBundleRef. Exactly one of `secretRef: {name: …}` or
+`configMapRef: {name: …}`, plus `key` beside it (default `ca.crt`). Mounted
+under /etc/enterprise-manager/postgres-ca and named by `PGSSLROOTCERT`; use
+sslMode `verify-full` to check the host name too. Restart the pods after
+rotating the bundle's contents in place.
 
 ### `database.maxConns`
 
