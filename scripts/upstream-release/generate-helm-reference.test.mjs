@@ -110,7 +110,10 @@ test('release chart selection supports legacy and current gateway layouts', () =
     for (const [version, legacy] of [
       ['0.25.0', true],
       ['0.26.0', false],
+      ['0.26.1', false],
       ['0.27.0', false],
+      ['0.28.0', false],
+      ['0.28.1', false],
       ['0.100.0', false],
     ]) {
       fs.writeFileSync(metadata, yaml.stringify({ version }));
@@ -132,7 +135,17 @@ test('release chart selection supports legacy and current gateway layouts', () =
       );
       assert.equal(
         Boolean(platform.description_overrides?.['workspace.production']),
-        !legacy
+        version.startsWith('0.26.')
+      );
+      assert.equal(
+        Boolean(platform.description_overrides?.['workspace.postgres.enabled']),
+        version.startsWith('0.26.')
+      );
+      assert.equal(
+        Boolean(
+          platform.description_overrides?.['workspace.genuiServer.enabled']
+        ),
+        ['0.27.0', '0.28.0'].includes(version)
       );
     }
     fs.writeFileSync(metadata, 'version: invalid\n');

@@ -39,7 +39,11 @@ export function resolveHelmCharts(project, clone) {
     .filter((chart) => !chart.before || !atLeast(chart.before))
     .map((chart) => {
       const overrides = (chart.release_overrides || [])
-        .filter((override) => atLeast(override.since))
+        .filter(
+          (override) =>
+            atLeast(override.since) &&
+            (!override.before || !atLeast(override.before))
+        )
         .sort((a, b) => {
           const left = version(a.since);
           const right = version(b.since);
