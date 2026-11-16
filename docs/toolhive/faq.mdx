@@ -205,15 +205,39 @@ quality. Review the criteria and
 
 ### Does ToolHive collect any data?
 
-ToolHive collects anonymous usage metrics to help improve the product. These
-metrics include only tool call counts and are completely anonymous. No personal
-information, user identifiers, or sensitive data is collected.
+ToolHive collects anonymous usage metrics to help improve the product. No
+personal information or sensitive data is collected. ToolHive never sends server
+names (except entries from its built-in registry), tool names, tool arguments or
+results, URLs, image names, namespaces, or error messages.
+
+Each MCP server proxy, and each Virtual MCP Server (vMCP), sends a report every
+15 minutes. A report contains:
+
+- The number of tool calls so far that day, split by the MCP client that made
+  them, such as Claude Code or Cursor. ToolHive recognizes a fixed list of
+  clients and reports any other client as `other`.
+- How the server is set up, each value from a fixed list: the transport, whether
+  it runs in a container or remotely, where its definition came from (the
+  built-in registry, a custom registry, a `uvx://`, `npx://`, or `go://`
+  package, or a plain image or URL), the container runtime, the authentication
+  mode, and whether an authorization policy is on.
+- For a server from the built-in registry only, its registry entry name, such as
+  `io.github.stacklok/fetch`.
+- For a vMCP server: the number of backends and tools, and which of these
+  features are on: optimizer, code mode, composite tools, and outgoing
+  authentication.
+- The ToolHive version, operating system, and architecture.
+
+Reports carry two random identifiers that are not tied to your identity: an
+anonymous ID created when ToolHive first runs, and a new ID for each process.
+Workloads deployed by the Kubernetes operator share one ID per operator
+installation. The update service that receives the reports records an
+approximate, city-level location derived from the request's IP address. The IP
+address is not stored with the metrics.
 
 The metrics collection:
 
 - Is enabled by default
-- Only tracks the number of tool calls
-- Uses a randomly generated instance ID (not tied to your identity)
 - Is automatically disabled in CI environments
 - Can be easily disabled
 
@@ -238,7 +262,13 @@ export TOOLHIVE_USAGE_METRICS_ENABLED=false
 ```
 
 Once you opt out, ToolHive stops collecting and sending usage metrics. You need
-to restart any running servers for the change to take effect.
+to restart any running servers for the change to take effect. Virtual MCP
+Servers run with `thv vmcp serve` or the `vmcp` binary honor the same settings.
+
+For the Kubernetes operator, add `TOOLHIVE_USAGE_METRICS_ENABLED` with the value
+`"false"` to the `operator.env` list in your Helm values. The operator passes
+the setting to the MCPServer, MCPRemoteProxy, and VirtualMCPServer workloads it
+deploys, which restarts them once.
 
 ### How do I disable update checks?
 
@@ -250,10 +280,11 @@ environment variable to `true`:
 export TOOLHIVE_SKIP_UPDATE_CHECK=true
 ```
 
-The setting is honored by the CLI, the API server, and the Kubernetes operator
-telemetry service. For the operator, add it to the `operator.env` list in your
-Helm values. Update checks are also skipped automatically when ToolHive detects
-a CI environment.
+The setting is honored by the CLI, the API server, Virtual MCP Servers, and the
+Kubernetes operator. For the operator, add it to the `operator.env` list in your
+Helm values. The operator passes it to the workloads it deploys, so their update
+checks and usage metrics stop as well. Update checks are also skipped
+automatically when ToolHive detects a CI environment.
 
 ## Security and permissions
 
