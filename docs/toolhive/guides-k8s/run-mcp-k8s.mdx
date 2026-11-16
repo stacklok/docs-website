@@ -164,8 +164,8 @@ When you apply an `MCPServer` resource, here's what happens:
    - A RoleBinding that connects the ServiceAccount to the Role
 3. The operator creates a new Deployment containing a ToolHive proxy pod and
    service to handle client connections
-4. The proxy creates the actual `MCPServer` pod containing your specified
-   container image
+4. The proxy creates a StatefulSet that runs the actual MCP server pod
+   containing your specified container image
 5. For STDIO transport, the proxy attaches directly to the pod; for SSE and
    Streamable HTTP transport, a headless service is created for direct pod
    communication
@@ -335,6 +335,42 @@ The `spec.permissionProfile` field is deprecated and has no effect. It remains
 in the CRD so existing manifests still apply, but the operator records a
 `PermissionProfileUnsupported` Warning event on any MCPServer that sets it.
 Remove the field from your manifests to clear the warning.
+
+### Set environment variables on the MCP server
+
+Use the `spec.env` field to set environment variables on the MCP server
+container. The proxy runner passes them to the `mcp` container in the backend
+StatefulSet.
+
+```yaml {11-15} title="my-mcpserver-env.yaml"
+apiVersion: toolhive.stacklok.dev/v1beta1
+kind: MCPServer
+metadata:
+  name: fetch
+  namespace: development
+spec:
+  image: ghcr.io/stackloklabs/gofetch/server
+  transport: streamable-http
+  mcpPort: 8080
+  proxyPort: 8080
+  env:
+    - name: HTTPS_PROXY
+      value: 'http://egress-proxy.example.com:3128'
+    - name: NO_PROXY
+      value: '.svc.cluster.local'
+```
+
+`spec.env` only applies to the MCP server container. To set environment
+variables on the proxy runner, use `spec.resourceOverrides.proxyDeployment.env`
+(see
+[Override proxy Deployment and Service settings](#override-proxy-deployment-and-service-settings)).
+The proxy runner and the MCP server run in separate pods, so you can give each
+its own values. For example, the proxy runner can reach your identity provider
+through one HTTP proxy while the MCP server reaches the internet through
+another.
+
+For sensitive values such as API tokens, use
+[secrets](#run-a-server-with-secrets) instead of plain environment variables.
 
 ### Run a server with secrets
 
@@ -585,7 +621,9 @@ Common uses:
   Agent injection annotations to the proxy runner pods.
 - **Proxy environment variables** tune the proxy runner itself. For example, set
   `TOOLHIVE_DEBUG=true` to enable debug logging in the proxy container (this
-  affects the proxy, not the MCP server it manages).
+  affects the proxy, not the MCP server it manages). To set environment
+  variables on the MCP server, use
+  [`spec.env`](#set-environment-variables-on-the-mcp-server).
 - **Image pull secrets** let the proxy runner pull from a private registry. The
   secrets in `proxyDeployment.imagePullSecrets` are added to the proxy
   Deployment's pod spec, and to the operator-managed ServiceAccount when the
@@ -700,8 +738,8 @@ to create an MCPGroup, see
 
 ## Horizontal scaling
 
-MCPServer creates two separate Deployments: a proxy runner and a backend MCP
-server. You can scale each independently:
+MCPServer creates two separate workloads: a proxy runner Deployment and a
+backend MCP server StatefulSet. You can scale each independently:
 
 - `spec.replicas` controls the proxy runner pod count
 - `spec.backendReplicas` controls the backend MCP server pod count
@@ -828,7 +866,7 @@ spec:
       terminationGracePeriodSeconds: 60
 ```
 
-The same 30-second default applies to the backend Deployment.
+The same 30-second default applies to the backend StatefulSet.
 
 ## Next steps
 
@@ -952,8 +990,8 @@ Fix the referenced field, then reapply the resource.
 
 ### Resource accepted but pods are failing
 
-The operator created the proxy and backend Deployments, but one or both pods are
-not Running. Check pod status first:
+The operator created the proxy Deployment and the proxy created the backend
+StatefulSet, but one or both pods are not Running. Check pod status first:
 
 ```bash
 kubectl -n <NAMESPACE> get pods -l app.kubernetes.io/instance=<MCPSERVER_NAME>
