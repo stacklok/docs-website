@@ -478,6 +478,7 @@ const platformSidebar: SidebarsConfig[string] = [
         ],
       },
       'platform/enterprise-manager/degraded-mode',
+      'platform/enterprise-manager/skills',
     ],
   },
 
