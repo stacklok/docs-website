@@ -7,9 +7,9 @@
 
 set -euo pipefail
 
-# Check if jq is installed
-if ! command -v jq >/dev/null 2>&1; then
-    echo "Error: 'jq' is required but not installed. Please install jq and try again."
+# Node is already required by the docs build, so parse JSON with it.
+if ! command -v node >/dev/null 2>&1; then
+    echo "Error: 'node' is required but not installed."
     exit 1
 fi
 
@@ -24,10 +24,21 @@ RELEASE_JSON=$(curl -sf "$API_ENDPOINT" || {
     echo "Failed to fetch release information from GitHub API"
     exit 1
 })
-RELEASE_VERSION=$(echo "$RELEASE_JSON" | jq -r '.tag_name // empty' | sed 's/^v//')
-RELEASE_TARBALL=$(echo "$RELEASE_JSON" | jq -r \
-    --arg version "$RELEASE_VERSION" \
-    '.assets[] | select(.name == "toolhive_" + $version + "_linux_amd64.tar.gz") | .browser_download_url // empty')
+
+# Print the download URL of the named release asset, or nothing if absent.
+asset_url() {
+    node -e '
+        const release = JSON.parse(require("fs").readFileSync(0, "utf8"));
+        const asset = (release.assets || []).find((a) => a.name === process.argv[1]);
+        if (asset) console.log(asset.browser_download_url);
+    ' "$1" <<<"$RELEASE_JSON"
+}
+
+RELEASE_VERSION=$(node -e '
+    const release = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    console.log((release.tag_name || "").replace(/^v/, ""));
+' <<<"$RELEASE_JSON")
+RELEASE_TARBALL=$(asset_url "toolhive_${RELEASE_VERSION}_linux_amd64.tar.gz")
 
 if [ -z "$RELEASE_TARBALL" ]; then
     echo "Failed to get release tarball URL for release: ${RELEASE_VERSION}"
@@ -78,9 +89,7 @@ if [[ "${TOOLHIVE_VERIFY_SIGNATURE:-false}" == "true" ]]; then
         echo "Error: cosign is required for signature verification"
         exit 1
     }
-    BUNDLE_URL=$(echo "$RELEASE_JSON" | jq -r \
-        --arg version "$RELEASE_VERSION" \
-        '.assets[] | select(.name == "toolhive_" + $version + "_linux_amd64.tar.gz.sigstore.json") | .browser_download_url // empty')
+    BUNDLE_URL=$(asset_url "toolhive_${RELEASE_VERSION}_linux_amd64.tar.gz.sigstore.json")
     if [[ -z "$BUNDLE_URL" ]]; then
         echo "Error: signature bundle missing for release $RELEASE_VERSION"
         exit 1
