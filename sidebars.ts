@@ -500,6 +500,7 @@ const platformSidebar: SidebarsConfig[string] = [
   },
 
   'platform/concepts/two-group-models',
+  'platform/concepts/registry-server-and-connector-catalog',
 ];
 
 const connectorGatewaySidebar: SidebarsConfig[string] = [
