@@ -19,11 +19,18 @@ else
     API_ENDPOINT="https://api.github.com/repos/stacklok/toolhive/releases/latest"
 fi
 
+# Authenticate when a token is available; anonymous API calls share a low
+# per-IP rate limit that CI runners regularly exhaust.
+CURL_AUTH=()
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    CURL_AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
+fi
+
 # Fetch release information
-RELEASE_JSON=$(curl -sf "$API_ENDPOINT" || {
-    echo "Failed to fetch release information from GitHub API"
+if ! RELEASE_JSON=$(curl -fsS ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} "$API_ENDPOINT"); then
+    echo "Failed to fetch release information from $API_ENDPOINT" >&2
     exit 1
-})
+fi
 
 # Print the download URL of the named release asset, or nothing if absent.
 asset_url() {
