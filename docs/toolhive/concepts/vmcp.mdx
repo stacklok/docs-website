@@ -2,189 +2,144 @@
 title: Understanding Virtual MCP Server
 sidebar_label: Virtual MCP Server (vMCP)
 description:
-  Virtual MCP Server (vMCP) aggregates multiple MCP servers into one endpoint
-  for simpler client configuration.
+  Combine MCP servers behind one endpoint with Virtual MCP Server. Compare local
+  and Kubernetes deployments and choose the capabilities you need.
 ---
 
-This document explains Virtual MCP Server (vMCP), a ToolHive feature available
-both through the [Kubernetes operator](../guides-vmcp/quickstart.mdx) and the
-[local CLI](../guides-vmcp/local-cli.mdx). You'll learn why it exists, when to
-use it, and how it simplifies managing multiple MCP servers while enabling
-powerful multi-system workflows.
+<span id='what-is-vmcp' />
+
+Virtual MCP Server (vMCP) combines tools from multiple MCP servers behind one
+endpoint. Your client connects to vMCP, which routes each request to the backend
+that provides the tool. You can run vMCP locally with the ToolHive CLI or deploy
+it on Kubernetes with the ToolHive operator.
 
 ## The problem vMCP solves
 
-**Before vMCP**: Engineers manage 10+ separate MCP server connections, each with
-its own authentication, manually coordinate multi-step workflows across systems,
-and repeatedly configure the same parameters.
+Separate MCP servers each have their own connection settings and tool lists. As
+you add servers, every client needs access to the right endpoints. Tools with
+overlapping names also become harder to distinguish.
 
-**With vMCP**: Connect once to a unified endpoint that aggregates all backend
-MCP servers, execute complex multi-system workflows declaratively, and use
-pre-configured tools with sensible defaults.
+vMCP gives clients one connection and lets you control the combined tool list.
+For example, you can expose tools from an internal documentation server and a
+remote issue tracker through the same endpoint, while configuring credentials
+for each backend separately.
 
-## Core value propositions
+<span id='core-value-propositions' />
+<span id='good-fit' />
+<span id='not-needed' />
 
-vMCP delivers five key benefits:
+## When to use vMCP
 
-1. **Reduce complexity**: Many connections become one, dramatically simplifying
-   configuration
-2. **Speed up workflows**: Parallel execution across systems instead of
-   sequential calls
-3. **Improve security**: Centralized authentication and authorization with a
-   two-boundary model
-4. **Enable reusability**: Define workflows once, use them everywhere
-5. **Optimize tool discovery**: Reduce token usage by replacing all tool
-   definitions with two lightweight search-and-call primitives
+Use vMCP when you want one client connection for several servers, need to curate
+the tools a team can access, or want to compose calls across backends. These
+needs can arise with just two servers. The number of servers alone doesn't
+determine whether aggregation is useful.
+
+Running servers separately remains a good choice when your client already
+manages their connections and tool lists well. vMCP adds a process to operate
+and a shared dependency for the backends it exposes.
+
+## Architecture overview
+
+```mermaid
+flowchart LR
+    Client[MCP client] --> vMCP[Virtual MCP Server]
+    vMCP --> Container[Container-based MCP server]
+    vMCP --> Remote[Remote MCP server]
+```
+
+### How it works
+
+In a local deployment, vMCP reads a [ToolHive group](./groups.mdx) on your
+machine. The `thv vmcp serve` command runs in the foreground and connects to the
+group's running servers. You manage its process lifetime and local
+configuration.
+
+On Kubernetes, a `VirtualMCPServer` resource references an `MCPGroup` in the
+same namespace. Backend resources join that group through `spec.groupRef`. The
+operator discovers the backends and manages the vMCP deployment and service. The
+group can contain three resource types:
+
+| Resource                                             | Backend connection                                                  |
+| ---------------------------------------------------- | ------------------------------------------------------------------- |
+| [MCPServer](../reference/crds/mcpserver.mdx)         | A container-based MCP server running in the cluster                 |
+| [MCPRemoteProxy](../guides-k8s/remote-mcp-proxy.mdx) | A remote MCP server reached through a proxy managed by the operator |
+| [MCPServerEntry](../guides-k8s/mcp-server-entry.mdx) | A remote MCP server registered for routing without a proxy pod      |
+
+The local CLI suits development and evaluation. Kubernetes provides declarative
+deployment and lifecycle management for shared services. Each path has its own
+configuration format: local runtime YAML for the CLI, and Kubernetes resources
+for the operator. Feature setup and identity configuration depend on that
+deployment choice.
+
+<span id='core-capabilities' />
 
 ## Key capabilities
 
 ### Multi-server aggregation
 
-Managing 10-20+ MCP server connections is overwhelming. Each server needs its
-own configuration, authentication, and maintenance. vMCP aggregates all backend
-MCP servers into one endpoint with automatic conflict resolution.
+vMCP presents a combined tool list and routes calls to the appropriate backend.
+You choose how to resolve tool-name conflicts. With the `prefix` strategy and
+the format `{workload}_`, tools named `search` from two backends become, for
+example, `docs_search` and `issues_search`.
 
-vMCP supports three types of backends:
+<span id='tool-customization-and-overrides' />
 
-- **MCPServer**: Container-based MCP servers running in your Kubernetes cluster
-- **MCPRemoteProxy**: Proxies to external remote MCP servers (SaaS platforms,
-  third-party services, or MCP servers hosted outside your cluster)
-- **MCPServerEntry**: Zero-infrastructure catalog entries that point vMCP at a
-  remote MCP server without deploying a proxy pod
-
-vMCP aggregates these backend types and authenticates to each one using its
-configured outgoing authentication strategy. This architecture enables combining
-internal tools with external SaaS MCP endpoints in a single unified interface.
-
-**Example scenario**: An engineering team needs access to 8 backend servers
-(GitHub, Jira, Slack, Confluence, PagerDuty, Datadog, AWS, and internal company
-docs). Some are container-based MCPServer resources running in the cluster,
-while others are remote SaaS MCP endpoints reached through an MCPRemoteProxy or
-MCPServerEntry. Instead of configuring 8 separate connections, they configure
-one vMCP connection with SSO. This significantly reduces configuration
-complexity and makes onboarding new team members much easier.
-
-When multiple backend MCP servers have tools with the same name (for example,
-both GitHub and Jira have `create_issue`), vMCP automatically prefixes them:
-`github_create_issue`, `jira_create_issue`. You can also define custom names for
-clarity.
-
-### Multi-step workflows (composition)
-
-Real-world tasks span multiple systems and require manual orchestration. vMCP
-supports two complementary patterns: operator-authored composite tools with a
-fixed structure, and agent-authored Starlark scripts that combine tools
-on-the-fly via [code mode](../guides-vmcp/code-mode.mdx). Both run server-side
-with parallel execution, conditionals, and error handling so an agent gets a
-single aggregated result instead of one tool call per backend.
-
-**Example scenario**: During an incident investigation, you need logs from your
-logging system, metrics from your monitoring platform, traces from your tracing
-service, and infrastructure status from your cloud provider. Without vMCP, an
-engineer manually runs 4 commands sequentially and aggregates results. With
-vMCP, you fetch all of this in parallel, automatically aggregate it into a
-formatted report, and create a Jira ticket with all the data. This workflow is
-reusable for every incident.
-
-**Example scenario**: For an app deployment, merge the pull request, wait for
-tests, ask a human for approval, deploy only if approved, and notify the team in
-Slack. vMCP handles this entire flow declaratively, with automatic rollback on
-deployment failure.
-
-### Tool customization and overrides
-
-Third-party MCP servers often have generic names, descriptions, and unrestricted
-parameters. vMCP lets you filter, rename, and wrap tools without modifying the
-upstream servers.
-
-**Security policy enforcement**: You can restrict a fetch tool to internal
-domains only (`*.company.com`), validate URLs before calling the backend, and
-provide clear error messages for policy violations.
-
-**Simplified interfaces**: A complex tool like AWS EC2 might have 20+
-parameters, but your frontend team only needs 3. You can create a simplified
-wrapper that uses instance names instead of IDs and pre-fills safe defaults for
-all other parameters.
-
-### Parameter defaults and pre-configuration
-
-Generic servers require repetitive parameter specification. You always use the
-same repo, channel, or database. vMCP lets you create specialized instances with
-pre-configured defaults.
-
-**Example scenario**: Without vMCP, every GitHub query requires specifying
-`repo: stacklok/toolhive`. With vMCP, you pre-configure this default - engineers
-never specify the repo parameter, and they can't accidentally query the wrong
-repository. This eliminates hundreds of repetitive parameter entries per week.
-
-**Example scenario**: Configure staging database as the default (safe for
-development), while production queries require an explicit approval gate.
-Connection details are centralized in vMCP configuration instead of scattered
-across individual tool configurations.
+You can filter tools and override their names or descriptions to tailor the
+combined list. These settings belong to the aggregation configuration; access
+policies belong to authorization. See
+[Tool aggregation and conflict resolution](../guides-vmcp/tool-aggregation.mdx).
 
 ### Authentication boundary separation
 
-Different authentication is needed for clients versus backend MCP servers, and
-managing credentials across multiple systems is complex. vMCP implements a
-two-boundary auth model that separates these concerns.
+Clients authenticate to vMCP, and vMCP authenticates to its backends. These are
+separate boundaries: a client credential that vMCP accepts doesn't necessarily
+grant access to a backend.
 
-**How it works**: Clients authenticate to vMCP using OAuth 2.1 authorization as
-defined in the MCP specification. vMCP then handles authentication to each
-backend MCP server independently. Revoking access is simple: disable the user in
-your identity provider and all backend access is revoked instantly.
+Configure each boundary for your deployment. Backends can use different
+credentials or token-exchange strategies, while authorization policies control
+which requests are allowed. The embedded authorization server provides an OAuth
+flow for deployments that need to broker upstream sign-in. See
+[vMCP authentication](../guides-vmcp/authentication.mdx) for the configuration
+paths and [Backend authentication](./backend-auth.mdx) for pattern selection.
 
-This approach provides single sign-on for users, centralized access control, and
-a complete audit trail.
+<span id='parameter-defaults-and-pre-configuration' />
 
-vMCP can also run an embedded authorization server that handles the full OAuth
-flow with multiple upstream identity providers (such as GitHub, Google, or
-Okta). This enables per-user backend authentication: when a user logs in, the
-auth server acquires tokens from each upstream provider and injects them into
-requests to the appropriate backends. MCP clients register or identify
-themselves automatically through Client ID Metadata Documents (CIMD) or Dynamic
-Client Registration (DCR), so no manual client configuration is needed. See
-[Embedded authorization server](../guides-vmcp/embedded-auth-server-vmcp.mdx)
-for setup details.
+### Multi-step workflows (composition)
 
-## When to use vMCP
+[Composite tools](../guides-vmcp/composite-tools.mdx) define reusable workflows
+that call backend tools and pass results between steps. Use them when you want
+to publish a fixed workflow as one tool. A workflow can supply fixed arguments
+to its backend calls and expose only the inputs its callers need.
 
-### Good fit
+[Code mode](../guides-vmcp/code-mode.mdx) lets an agent submit a Starlark script
+that calls backend tools server-side. Use it when the agent needs to decide the
+sequence of calls for the task at hand. Both approaches reduce the need for
+clients to coordinate each backend call themselves.
 
-- Teams managing 5+ MCP servers (local or remote)
-- Tasks requiring coordination across multiple systems
-- Centralized authentication and authorization requirements
-- Workflows that should be reusable across the team
-- Security policies that need centralized enforcement
-- Aggregating external SaaS MCP servers with internal tools
+## Optimize tool discovery
 
-### Not needed
+As the combined tool list grows, its definitions consume more of a model's
+context. The optimizer exposes `find_tool` and `call_tool` so the client can
+search for a relevant tool and invoke it, instead of receiving every tool
+definition up front. Keyword search and embedding-based search have different
+runtime requirements. See
+[Optimize tool discovery](../guides-vmcp/optimizer.mdx) to choose and configure
+an approach for your deployment.
 
-- Single MCP server usage
-- Simple, one-step operations
-- No orchestration requirements
-
-## Summary
-
-vMCP transforms MCP from individual servers into a unified orchestration
-platform. It aggregates both container-based MCPServer resources and remote
-MCPRemoteProxy backends into a single endpoint. The use cases range from simple
-aggregation to complex workflows with approval gates, making it valuable for
-teams managing multiple MCP servers.
+<span id='summary' />
 
 ## Next steps
 
-- [Try the Quickstart](../guides-vmcp/quickstart.mdx) to deploy your first vMCP
-  on a Kubernetes cluster
-- [Run vMCP locally with the CLI](../guides-vmcp/local-cli.mdx) for a quick
-  evaluation without Kubernetes
-- [Learn how to deploy vMCP](../guides-vmcp/intro.mdx) for a full overview of
-  configuration and architecture
+- [Run vMCP locally](../guides-vmcp/local-cli.mdx) to combine servers on your
+  workstation.
+- [Try the Kubernetes quickstart](../guides-vmcp/quickstart.mdx) to deploy an
+  aggregated endpoint and connect a client.
+- [Configure an existing Kubernetes deployment](../guides-vmcp/configuration.mdx)
+  to add backends and adapt its settings.
 
 ## Related information
 
-- [Configure authentication](../guides-vmcp/authentication.mdx)
-- [Tool aggregation and conflict resolution](../guides-vmcp/tool-aggregation.mdx)
-- [Composite tools and workflows](../guides-vmcp/composite-tools.mdx)
-- [Run tool calls server-side with code mode](../guides-vmcp/code-mode.mdx)
-- [Optimize tool discovery](../guides-vmcp/optimizer.mdx)
-- [Proxy remote MCP servers](../guides-k8s/remote-mcp-proxy.mdx)
+- [vMCP guides](../guides-vmcp/index.mdx)
+- [VirtualMCPServer reference](../reference/crds/virtualmcpserver.mdx)
+- [`thv vmcp` command reference](../reference/cli/thv_vmcp.md)

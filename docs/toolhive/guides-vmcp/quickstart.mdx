@@ -1,14 +1,17 @@
 ---
-title: 'Quickstart: Virtual MCP Server'
-sidebar_label: Quickstart
+title: 'Quickstart: vMCP on Kubernetes'
+sidebar_label: Kubernetes quickstart
 description:
-  Aggregate multiple MCP servers into a single endpoint using Virtual MCP
-  Server.
+  Deploy Virtual MCP Server on Kubernetes, combine two backend servers, and
+  verify their tools through a connected AI client.
 ---
 
-In this tutorial, you'll learn how to deploy Virtual MCP Server (vMCP) to
-aggregate multiple MCP servers into a single endpoint. By the end, you'll have a
-working deployment that combines tools from multiple backends.
+Deploy Virtual MCP Server (vMCP) on Kubernetes to combine Fetch and OSV behind
+one endpoint. You'll list the aggregated tools, call one through vMCP, and use
+it from Visual Studio Code with GitHub Copilot.
+
+To try aggregation on your workstation, follow
+[Run vMCP locally with the CLI](./local-cli.mdx).
 
 ## What you'll learn
 
@@ -25,8 +28,10 @@ Before starting this tutorial, make sure you have:
 - A Kubernetes cluster with the ToolHive operator installed (see
   [Quickstart: Kubernetes Operator](../guides-k8s/quickstart.mdx))
 - `kubectl` configured to communicate with your cluster
-- An MCP client. Visual Studio Code with GitHub Copilot is used in this
-  tutorial, but any client that supports remote HTTP MCP servers will work.
+- The [ToolHive CLI](../guides-cli/install.mdx) installed locally to verify
+  tools and manage the client connection
+- Visual Studio Code with GitHub Copilot
+- Port `4483` available on your workstation
 
 ## Step 1: Create an MCPGroup
 
@@ -114,10 +119,11 @@ kubectl apply -f mcpservers.yaml
 Wait for both servers to be ready:
 
 ```bash
-kubectl get mcpservers -n toolhive-system -w
+kubectl wait --for=condition=Ready mcpserver/fetch mcpserver/osv \
+  -n toolhive-system --timeout=180s
 ```
 
-You should see both servers with `Ready` status before continuing.
+Both resources should report `condition met` before you continue.
 
 ## Step 3: Create a VirtualMCPServer
 
@@ -134,10 +140,9 @@ spec:
   incomingAuth:
     type: anonymous
 
-  # Auto-discover auth config from backend MCPServers
+  # Both example backends accept anonymous requests
   outgoingAuth:
     source: inline
-    # No default specified will use anonymous
 
   # Expose as ClusterIP (cluster-internal or exposed via Ingress/Gateway)
   serviceType: ClusterIP
@@ -160,20 +165,22 @@ Apply the resource:
 kubectl apply -f virtualmcpserver.yaml
 ```
 
-Check the status:
+Wait for vMCP to be ready, then check its status:
 
 ```bash
+kubectl wait --for=condition=Ready virtualmcpserver/demo-vmcp \
+  -n toolhive-system --timeout=180s
 kubectl get virtualmcpservers -n toolhive-system
 ```
 
-After about 30 seconds, you should see output similar to:
+You should see output similar to:
 
 ```text
 NAME        PHASE   URL                                                            BACKENDS   AGE   READY
 demo-vmcp   Ready   http://vmcp-demo-vmcp.toolhive-system.svc.cluster.local:4483   2          30s   True
 ```
 
-Note the port number for step 5.
+The service listens on port `4483`.
 
 :::info[What's happening?]
 
@@ -194,52 +201,66 @@ kubectl describe virtualmcpserver demo-vmcp -n toolhive-system
 Look for the `Discovered Backends` section in the status, which should show both
 backends.
 
-## Step 5: Connect your client
-
-In a separate terminal, port-forward the vMCP service to your local machine:
+Keep a port-forward running in a separate terminal for the rest of the tutorial:
 
 ```bash
 kubectl port-forward service/vmcp-demo-vmcp -n toolhive-system 4483:4483
 ```
 
-Test the health endpoint:
+Wait for `Forwarding from 127.0.0.1:4483` before continuing. In another
+terminal, list the tools through vMCP:
 
 ```bash
-curl http://localhost:4483/health
+thv mcp list tools --server http://localhost:4483/mcp
 ```
 
-You should see `{"status":"ok"}`.
+Check that the list contains tools prefixed with both `fetch_` and `osv_`. Call
+the Fetch tool through the same endpoint:
 
-To have ToolHive manage the vMCP connection and configure your clients for you,
-add the port-forwarded endpoint as a remote server with the ToolHive CLI:
+```bash
+thv mcp call fetch_fetch \
+  --server http://localhost:4483/mcp \
+  --args '{"url":"https://example.com"}'
+```
+
+The result should contain the page text about use in documentation examples.
+This confirms that vMCP can route a tool call to a backend and return its
+result.
+
+## Step 5: Connect your client
+
+Add the endpoint as a ToolHive-managed remote connection and register VS Code:
 
 ```bash
 thv run http://localhost:4483/mcp --name demo-vmcp
+thv client register vscode
 ```
 
-This registers the vMCP endpoint as a ToolHive-managed workload, which
-automatically configures your registered MCP clients to connect to it.
-
-:::tip
-
-If you're using the ToolHive UI instead, add the same endpoint as a remote MCP
-server from the app. For more details, see
-[Run MCP servers](../guides-ui/run-mcp-servers.mdx).
-
-If you haven't set up client configuration yet, run `thv client setup` to
-register your MCP clients. See
-[Client configuration](../guides-cli/client-configuration.mdx) for more details.
-
-:::
+ToolHive adds the connection to VS Code's configuration. If VS Code is already
+registered, skip the registration command. Reload VS Code if it hasn't picked up
+the connection. For registration details, see
+[Client configuration](../guides-cli/client-configuration.mdx).
 
 ## Step 6: Test the aggregated tools
 
-Try asking your AI assistant questions that use the aggregated tools. Both tools
-work through the same vMCP endpoint!
+In GitHub Copilot Chat, select **Agent** mode and enable the tools from
+`demo-vmcp`. Ask it to use `fetch_fetch` to retrieve `https://example.com`.
+Approve the tool call when prompted.
+
+Check that Copilot shows a call to `fetch_fetch` through `demo-vmcp` and reports
+the retrieved page content. You now have a client using the aggregated endpoint,
+with tools from both backends available through that connection.
 
 ## Step 7: Clean up
 
-Delete the resources when you're done:
+Remove the local connection that ToolHive added to your clients:
+
+```bash
+thv rm demo-vmcp
+```
+
+Stop the port-forward with **Ctrl+C** in its terminal, then delete the cluster
+resources:
 
 ```bash
 kubectl delete virtualmcpserver demo-vmcp -n toolhive-system
@@ -249,18 +270,15 @@ kubectl delete mcpgroup demo-tools -n toolhive-system
 
 ## Next steps
 
-Congratulations! You've successfully deployed vMCP and aggregated multiple
-backends into a single endpoint.
-
 - [Configure authentication](../guides-vmcp/authentication.mdx) for production
 - [Connect ToolHive to an enterprise identity provider](../integrations/vmcp-idp-overview.mdx)
   for end-to-end Entra ID or Okta setup with Cedar group-based access control
 - [Customize tool aggregation](../guides-vmcp/tool-aggregation.mdx) with
   filtering and overrides
-- [Understanding Virtual MCP Server](../concepts/vmcp.mdx)
 
 ## Related information
 
+- [Understanding Virtual MCP Server](../concepts/vmcp.mdx)
 - [Run vMCP locally with the CLI](../guides-vmcp/local-cli.mdx)
 - [Client compatibility](../reference/client-compatibility.mdx)
 

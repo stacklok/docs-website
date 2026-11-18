@@ -17,5 +17,10 @@ other private information in the appropriate secret storage.
 Add a topic when there is a maintenance workflow to document. Keep its
 instructions and supporting configuration together, and link it from this page.
 
+## Architecture proposals
+
+- [ToolHive information architecture pilot](./information-architecture/README.md):
+  Proposed task navigation, Resources destinations, and the first vMCP journey.
+
 For development commands and contribution guidance, see the
 [repository README](../README.md).

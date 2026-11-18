@@ -1,215 +1,141 @@
 ---
 title: Run vMCP locally with the CLI
 description:
-  Run Virtual MCP Server locally with the thv vmcp command to aggregate a
-  ToolHive group without Kubernetes.
+  Combine local MCP servers with thv vmcp, connect your client, and verify a
+  tool call. Customize the generated configuration when you need more control.
 ---
 
-Virtual MCP Server (vMCP) is usually deployed on Kubernetes through the
-`VirtualMCPServer` custom resource, but you can also run it locally from the
-ToolHive CLI. The `thv vmcp` subcommands aggregate the MCP servers in a local
-[ToolHive group](../concepts/groups.mdx) behind a single endpoint, without a
-cluster or operator.
-
-Use this mode for local development, quick evaluation, or any case where you
-want vMCP's aggregation, tool routing, and optimizer capabilities without the
-operational overhead of Kubernetes.
-
-## When to use the local CLI
-
-- You are developing or evaluating vMCP on your workstation.
-- You run MCP servers locally with `thv run` and want to expose them through a
-  single endpoint.
-- You want to use the vMCP [optimizer](./optimizer.mdx) to reduce token usage
-  across a local group.
-- You don't yet need the clustered, operator-managed deployment model covered in
-  the [Quickstart](./quickstart.mdx).
-
-For production and multi-tenant deployments, use the Kubernetes
-[`VirtualMCPServer`](./quickstart.mdx) resource instead.
+Run Virtual MCP Server (vMCP) on your workstation to expose a ToolHive group's
+servers through one endpoint. This guide uses Fetch and OSV, which require no
+API credentials. For an operator-managed deployment, use the
+[Kubernetes quickstart](./quickstart.mdx).
 
 ## Prerequisites
 
-- ToolHive CLI v0.24.0 or later. Check with `thv version`.
-- A container runtime (Docker, Podman, or OrbStack) available to ToolHive.
-- A ToolHive group with one or more running MCP servers. To create one:
+- The [ToolHive CLI](../guides-cli/install.mdx) installed. Check with
+  `thv version`.
+- A running container runtime supported by ToolHive, such as Docker, Podman, or
+  OrbStack.
+- Visual Studio Code with GitHub Copilot for the client verification step. Other
+  clients can use the endpoint according to their
+  [connection requirements](../reference/client-compatibility.mdx).
+- Port `4483` available on your workstation.
 
-  ```bash
-  thv group create my-group
-  thv run --group my-group fetch
-  thv run --group my-group github
-  ```
+## Prepare a group
 
-  See [Manage ToolHive groups](../guides-cli/group-management.mdx) for details.
+Create a group and start two servers in it. The explicit workload names keep
+these examples separate from servers you already run:
 
-## Subcommands at a glance
+```bash
+thv group create vmcp-demo
+thv run --group vmcp-demo --name vmcp-fetch fetch
+thv run --group vmcp-demo --name vmcp-osv osv
+thv list --group vmcp-demo
+```
 
-The `thv vmcp` command has three subcommands:
-
-| Subcommand          | Purpose                                               |
-| ------------------- | ----------------------------------------------------- |
-| `thv vmcp init`     | Generate a starter YAML config from a running group   |
-| `thv vmcp validate` | Validate a YAML config for syntax and semantic errors |
-| `thv vmcp serve`    | Start the aggregated vMCP server                      |
-
-There are two ways to run the server:
-
-- **Quick mode** uses `thv vmcp serve --group <name>` to generate an in-memory
-  config from a group. No YAML file is required.
-- **Config-file mode** uses `thv vmcp init` → edit → `thv vmcp validate` →
-  `thv vmcp serve --config vmcp.yaml` for reproducible or customized setups.
+Wait until both workloads have status `running` before continuing. If you
+already have a group to aggregate, substitute its group and workload names in
+the following commands.
 
 ## Quick mode
 
-Quick mode is the fastest way to aggregate a local group. Run the server with
-just a group name:
+Start vMCP from the group:
 
 ```bash
-thv vmcp serve --group my-group
+thv vmcp serve --group vmcp-demo
 ```
 
-By default, the server binds to `127.0.0.1:4483` using the Streamable HTTP
-transport protocol. Point your MCP client at `http://127.0.0.1:4483/mcp` to
-access all tools from the group through a single endpoint.
+Keep this command running in its terminal while you complete the next steps. The
+endpoint is `http://127.0.0.1:4483/mcp`. Quick mode prefixes tool names with
+their workload name, so the Fetch tool is exposed as `vmcp-fetch_fetch`.
 
-:::note[Loopback-only]
+Quick mode uses anonymous authentication and accepts only loopback bind
+addresses. To configure client authentication or bind to another interface, use
+[config-file mode](#config-file-mode).
 
-Quick mode always uses anonymous authentication, so `thv vmcp serve --group`
-only accepts loopback bind addresses (`127.0.0.1`, `::1`, `localhost`, or the
-default empty value). Binding to a non-loopback interface is rejected to avoid
-exposing an unauthenticated server on the network. To bind to a non-loopback
-address, use [config-file mode](#config-file-mode) and configure client
-authentication.
+## Verify the tools
 
-:::
-
-### Enable the optimizer in quick mode
-
-Add `--optimizer` or `--optimizer-embedding` to replace the full tool list with
-`find_tool` and `call_tool` primitives:
+In another terminal, list the tools through vMCP:
 
 ```bash
-# Tier 1: FTS5 keyword search (no external container)
-thv vmcp serve --group my-group --optimizer
-
-# Tier 2: FTS5 + semantic search using a managed TEI container
-thv vmcp serve --group my-group --optimizer-embedding
+thv mcp list tools --server http://127.0.0.1:4483/mcp
 ```
 
-See [Optimizer tiers](#optimizer-tiers) for the full comparison.
+Check that the list includes tools prefixed with both `vmcp-fetch_` and
+`vmcp-osv_`. Call the Fetch tool through the same endpoint:
+
+```bash
+thv mcp call vmcp-fetch_fetch \
+  --server http://127.0.0.1:4483/mcp \
+  --args '{"url":"https://example.com"}'
+```
+
+The result should contain the page text about use in documentation examples.
+This verifies tool routing and a backend call, in addition to vMCP accepting
+connections.
+
+## Connect your client
+
+Add the aggregated endpoint as a ToolHive-managed remote connection:
+
+```bash
+thv run http://127.0.0.1:4483/mcp --name vmcp-connection
+thv client register vscode
+```
+
+ToolHive adds the connection to Visual Studio Code's configuration. If VS Code
+is already registered, you can skip the registration command. Keep vMCP running
+and reload VS Code if it hasn't picked up the connection.
+
+In GitHub Copilot Chat, select **Agent** mode and enable the tools from
+`vmcp-connection`. Ask it to use `vmcp-fetch_fetch` to retrieve
+`https://example.com`. Approve the tool call when prompted, then check that
+Copilot reports the page content and shows a tool invocation through the
+aggregated connection.
+
+For client registration details, see
+[Client configuration](../guides-cli/client-configuration.mdx).
+
+<span id='subcommands-at-a-glance' />
 
 ## Config-file mode
 
-Config-file mode is recommended when you need to customize backend settings,
-authentication, or aggregation rules, or when you want a reproducible setup
-checked into version control.
+Use a configuration file when you want to save and customize the setup. Stop the
+quick-mode process with **Ctrl+C** before starting another vMCP process on the
+same port.
 
 ### Step 1: Generate a starter config
 
-`thv vmcp init` discovers running workloads in a group and writes a starter YAML
-file with one backend entry per accessible workload:
-
 ```bash
-thv vmcp init --group my-group --output vmcp.yaml
+thv vmcp init --group vmcp-demo --output vmcp.yaml
 ```
 
-Omit `--output` to write the generated YAML to standard output instead.
+The file contains the running backends' URLs and transport settings, plus
+comments describing the main configuration sections. Regenerate it if you
+recreate a backend and its address changes.
 
-The generated file includes inline comments describing each section. A minimal
-example looks like this:
-
-```yaml title="vmcp.yaml"
-# Generated by `thv vmcp init`. Review and customize before use.
-
-name: my-group-vmcp
-groupRef: my-group
-
-incomingAuth:
-  type: anonymous
-
-outgoingAuth:
-  source: inline
-
-aggregation:
-  conflictResolution: prefix
-  conflictResolutionConfig:
-    prefixFormat: '{workload}_'
-
-backends:
-  - name: fetch
-    url: http://127.0.0.1:12345/sse
-    transport: sse
-  - name: github
-    url: http://127.0.0.1:12346/mcp
-    transport: streamable-http
-```
+This is a local runtime configuration file. Kubernetes uses a
+[`VirtualMCPServer` resource](./configuration.mdx) with a different structure.
 
 ### Step 2: Review and edit
 
-Customize the generated config. Common edits include:
+For example, add the following `tools` list under the generated `aggregation`
+section to limit OSV to looking up a vulnerability by ID. The Fetch backend
+keeps its existing tool list:
 
-- Changing `incomingAuth` from `anonymous` to `oidc` to require authenticated
-  clients.
-- Adding tool filters, renames, or overrides under `aggregation.tools`.
-- Configuring the [optimizer](./optimizer.mdx) under an `optimizer` section.
-
-#### Filter tools per workload
-
-Use `aggregation.tools` to expose only a curated subset of tools from each
-backend. Tools not listed in `filter` are hidden from `tools/list` responses.
-For the `filesystem` workload below, first
-[run the Filesystem MCP server](../guides-mcp/filesystem.mdx?mode=cli) with
-`--group my-group`, then regenerate `vmcp.yaml` to include its backend.
-
-```yaml title="vmcp.yaml"
+```yaml title="vmcp.yaml aggregation section"
 aggregation:
   conflictResolution: prefix
   conflictResolutionConfig:
     prefixFormat: '{workload}_'
   tools:
-    - workload: fetch
+    - workload: vmcp-osv
       filter:
-        - fetch
-    - workload: filesystem
-      filter:
-        - read_file
-        - write_file
-        - list_directory
+        - get_vulnerability
 ```
 
-With this config, a client calling `tools/list` sees three tools
-(`filesystem_read_file`, `filesystem_write_file`, `filesystem_list_directory`)
-plus the single `fetch_fetch` tool instead of all tools exposed by both
-backends.
-
-You can also rename tools or override descriptions without modifying the
-backends:
-
-```yaml title="vmcp.yaml"
-aggregation:
-  tools:
-    - workload: fetch
-      overrides:
-        fetch:
-          description: 'Retrieve any URL and return its content as text'
-```
-
-To hide all backend tools globally (or per workload) and expose only
-[composite tools](./composite-tools.mdx) to clients, use
-`aggregation.excludeAllTools` or `aggregation.tools[].excludeAll`. Hidden tools
-are removed from `tools/list` and cannot be called directly, but composite
-workflow steps can still route to them internally. See
-[Excluding all tools](./tool-aggregation.mdx#excluding-all-tools) for examples.
-
-To prevent a newly added group workload from exposing all of its tools, set
-`aggregation.defaultToolVisibility: deny` and list every workload that should
-contribute tools. See
-[Require workloads to opt in](./tool-aggregation.mdx#require-workloads-to-opt-in).
-
-For the full filter and override reference, see
-[Tool aggregation](./tool-aggregation.mdx).
-
-See [Configure vMCP](./configuration.mdx) for the full schema.
+[Tool aggregation](./tool-aggregation.mdx) covers filtering, renaming, and
+visibility rules. Keep the generated backend entries when editing the file.
 
 ### Step 3: Validate the config
 
@@ -217,9 +143,9 @@ See [Configure vMCP](./configuration.mdx) for the full schema.
 thv vmcp validate --config vmcp.yaml
 ```
 
-Validation checks YAML syntax, required fields, middleware configuration, and
-backend settings. It exits `0` on success and non-zero with a descriptive
-message otherwise.
+The command exits successfully when the configuration passes validation and
+reports errors for invalid settings. It doesn't establish that the backends are
+reachable; verify calls after starting the server.
 
 ### Step 4: Start the server
 
@@ -227,112 +153,77 @@ message otherwise.
 thv vmcp serve --config vmcp.yaml
 ```
 
-When both `--config` and `--group` are set, `--config` takes precedence.
+Keep it running, then repeat [tool verification](#verify-the-tools) and use the
+existing client connection. With the filter above, the tool list contains
+`vmcp-fetch_fetch` and `vmcp-osv_get_vulnerability`.
+
+When `--config` and `--group` are both set, `--config` takes precedence.
 
 ## Optimizer tiers
 
-`thv vmcp serve` supports four tiers of tool optimization. Tier 0 is the
-default; tiers 1 through 3 replace the full backend tool list with `find_tool`
-and `call_tool` primitives that search the aggregated tool set. Tier 1 uses FTS5
-keyword search only; tiers 2 and 3 add semantic embeddings on top for hybrid
-search.
+To search a large tool list instead of exposing every definition, stop the
+running vMCP process and enable keyword search in quick mode:
 
-| Tier | Flag or setting                             | Search                          | External service              |
-| ---- | ------------------------------------------- | ------------------------------- | ----------------------------- |
-| 0    | (none)                                      | None - all tools passed through | None                          |
-| 1    | `--optimizer`                               | FTS5 keyword (in-process)       | None                          |
-| 2    | `--optimizer-embedding`                     | FTS5 + TEI semantic             | Managed TEI container         |
-| 3    | `optimizer.embeddingService` in config YAML | FTS5 + external embedding       | User-managed embedding server |
+```bash
+thv vmcp serve --group vmcp-demo --optimizer
+```
 
-Tier 2 implies Tier 1: `--optimizer-embedding` also enables the keyword index.
-For Tier 2, ToolHive starts and stops a HuggingFace Text Embeddings Inference
-(TEI) container named `thv-embedding-<hash>` automatically. Customize the model
-and image with `--embedding-model` and `--embedding-image`.
-
-For Tier 3, you can point at any HuggingFace TEI server or at an
-OpenAI-compatible `/embeddings` endpoint (OpenAI, Azure OpenAI, or another
-compatible gateway). Set `embeddingProvider: openai` and `embeddingModel`
-alongside `embeddingService`, and supply the API key via the `OPENAI_API_KEY`
-environment variable (omit it for keyless gateways). The default is `tei`, so
-existing Tier 3 configs continue to work unchanged.
-
-For the conceptual background and tuning parameters, see
-[Optimize tool discovery](./optimizer.mdx) and
-[Tool optimization](../concepts/tool-optimization.mdx).
+The endpoint exposes `find_tool` and `call_tool`. For keyword search, managed
+embeddings with `--optimizer-embedding`, or an external embedding service, see
+[Local optimizer setup](./optimizer.mdx#local-mode-cli).
 
 ## Enable audit logging
 
-Add `--enable-audit` to `thv vmcp serve` to turn on audit logging with default
-settings when the loaded config doesn't already define an audit section:
+Add `--enable-audit` when starting vMCP to enable audit logging with defaults
+when the loaded configuration doesn't already define an audit section:
 
 ```bash
-thv vmcp serve --group my-group --enable-audit
+thv vmcp serve --group vmcp-demo --enable-audit
 ```
 
-For audit configuration options, see [Audit logging](./audit-logging.mdx).
+Stop the current vMCP process before starting this one. See
+[Audit logging](./audit-logging.mdx) for configuration options.
+
+## Clean up
+
+Remove the remote connection you added to your clients:
+
+```bash
+thv rm vmcp-connection
+```
+
+Stop the foreground vMCP process with **Ctrl+C**. If you created the example
+group and backends in this guide, remove them:
+
+```bash
+thv rm vmcp-fetch vmcp-osv
+thv group rm vmcp-demo
+```
+
+Delete `vmcp.yaml` if you generated it and no longer need it. Existing groups
+and servers you used in place of the examples can stay running.
 
 ## Command reference
 
-All `thv vmcp` flags, with their defaults:
+The generated references list all options and defaults for
+[`thv vmcp serve`](../reference/cli/thv_vmcp_serve.md),
+[`thv vmcp init`](../reference/cli/thv_vmcp_init.md), and
+[`thv vmcp validate`](../reference/cli/thv_vmcp_validate.md).
 
-### `thv vmcp serve`
+<span id='compared-to-the-kubernetes-deployment' />
 
-| Flag                    | Default                                                    | Description                                                          |
-| ----------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------- |
-| `--config`, `-c`        | (empty)                                                    | Path to a vMCP configuration file                                    |
-| `--group`               | (empty)                                                    | ToolHive group name for quick mode (used when `--config` is not set) |
-| `--host`                | `127.0.0.1`                                                | Bind address (quick mode requires a loopback address)                |
-| `--port`                | `4483`                                                     | TCP port to listen on                                                |
-| `--enable-audit`        | `false`                                                    | Enable audit logging with default configuration                      |
-| `--optimizer`           | `false`                                                    | Enable Tier 1 FTS5 keyword optimizer                                 |
-| `--optimizer-embedding` | `false`                                                    | Enable Tier 2 semantic optimizer (implies `--optimizer`)             |
-| `--embedding-model`     | `BAAI/bge-small-en-v1.5`                                   | HuggingFace model name for the managed TEI container                 |
-| `--embedding-image`     | `ghcr.io/huggingface/text-embeddings-inference:cpu-latest` | TEI container image                                                  |
-| `--session-ttl`         | `30m`                                                      | Session inactivity timeout as a Go duration (`30m`, `2h`, `168h`)    |
-
-### `thv vmcp init`
-
-| Flag             | Default    | Description                                        |
-| ---------------- | ---------- | -------------------------------------------------- |
-| `--group`, `-g`  | (required) | ToolHive group name whose workloads are discovered |
-| `--output`, `-o` | stdout     | Output file path for the generated config          |
-| `--config`, `-c` | stdout     | Alias for `--output`                               |
-
-### `thv vmcp validate`
-
-| Flag             | Default    | Description                                     |
-| ---------------- | ---------- | ----------------------------------------------- |
-| `--config`, `-c` | (required) | Path to the vMCP configuration file to validate |
-
-For full CLI help, run `thv vmcp --help` or see
-[`thv vmcp`](../reference/cli/thv_vmcp.md) in the reference.
-
-## Compared to the Kubernetes deployment
-
-| Aspect            | Local CLI (`thv vmcp`)                         | Kubernetes (`VirtualMCPServer` CRD)       |
-| ----------------- | ---------------------------------------------- | ----------------------------------------- |
-| Runtime           | Foreground process                             | Pod managed by the operator               |
-| Configuration     | CLI flags or local YAML file                   | `VirtualMCPServer` custom resource        |
-| Backend discovery | Reads ToolHive groups on the local machine     | Reads `MCPGroup` resources in the cluster |
-| Authentication    | Anonymous in quick mode; configurable in files | Full OIDC integration via CRD fields      |
-| Lifecycle         | Tied to the terminal session                   | Managed declaratively, survives restarts  |
-| Embedding server  | Managed TEI container (Tier 2)                 | `EmbeddingServer` custom resource         |
-
-The underlying aggregation, tool routing, and optimizer logic are the same. Use
-the local CLI for development and single-user workflows; use the Kubernetes
-deployment for shared, production, or multi-user environments.
+For deployment trade-offs, see
+[Understanding Virtual MCP Server](../concepts/vmcp.mdx#architecture-overview).
 
 ## Next steps
 
-- [Configure vMCP](./configuration.mdx) to customize backends, authentication,
-  and aggregation rules.
-- [Optimize tool discovery](./optimizer.mdx) to tune `find_tool` and `call_tool`
-  for large toolsets.
-- [Deploy vMCP on Kubernetes](./quickstart.mdx) when you're ready to move to a
-  production-grade deployment.
+- [Customize tool aggregation](./tool-aggregation.mdx) with filtering and
+  overrides.
+- [Optimize tool discovery](./optimizer.mdx) for a larger set of backends.
+- [Deploy vMCP on Kubernetes](./quickstart.mdx) for an operator-managed service.
 
 ## Related information
 
 - [Understanding Virtual MCP Server](../concepts/vmcp.mdx)
 - [Manage ToolHive groups](../guides-cli/group-management.mdx)
-- [`thv vmcp` CLI reference](../reference/cli/thv_vmcp.md)
+- [`thv vmcp` command reference](../reference/cli/thv_vmcp.md)

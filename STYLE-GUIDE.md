@@ -288,6 +288,12 @@ page as its first sidebar child. This page explains what the component is, who
 it's for, and where to start. It is an explicit child item in the sidebar - not
 a hidden category-link page.
 
+The vMCP information architecture pilot uses a
+[task-routing index](docs/toolhive/guides-vmcp/index.mdx) and one
+[canonical explanation](docs/toolhive/concepts/vmcp.mdx) under Understand
+ToolHive. Keep local and Kubernetes setup as separate procedures and link to the
+explanation for architecture and deployment trade-offs.
+
 ### Cross-references
 
 Link to related content in other sections where it adds value. Key patterns:
