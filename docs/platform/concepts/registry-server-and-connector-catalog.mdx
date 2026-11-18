@@ -1,0 +1,137 @@
+---
+title: When to deploy the Registry Server
+sidebar_label: Registry Server or connector catalog
+description:
+  Decide whether your deployment needs the optional Registry Server alongside
+  the Connector Gateway's connector catalog, and how the two connect.
+---
+
+The Connector Gateway's connector catalog decides what your users can reach
+through the gateway. Each entry is a _connector_: the gateway's record of one
+MCP server, with the settings the gateway needs to serve it. Administrators add
+connectors in the console, configure their authentication, and grant them to
+directory groups. A deployment that serves remote and in-cluster MCP servers
+only through the gateway can run entirely on the connector catalog.
+
+The Registry Server is an optional system of record for MCP server, skill, and
+plugin metadata that sits upstream of the connector catalog. It implements the
+official MCP Registry API specification, so any client that speaks that API can
+read its catalog. Deploy it when the approved record itself needs to be
+versioned and machine-readable, with custom metadata and team-scoped access, or
+when clients outside the gateway need a catalog to read from. An approval
+process on its own doesn't require it; an existing IT service management (ITSM)
+or change-management process can hold the approval record while the connector
+catalog enforces the outcome.
+
+## How the two compare
+
+The two catalogs answer different questions. The connector catalog answers "who
+can use this server through the gateway, and with which credential?" The
+Registry Server answers "which servers, skills, and plugins does the
+organization know about, and what is their current version and metadata?"
+
+|                 | Connector catalog                                                                       | Registry Server                                                                                                                                                                 |
+| --------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Managed through | The console and the Enterprise Manager API                                              | Git or file sources, the publishing API, upstream registries, and Kubernetes discovery                                                                                          |
+| Holds           | One connector per MCP server: its endpoint, transport, authentication, and group grants | Versioned entries for MCP servers, skills, and plugins, with publisher-provided metadata. An MCP server entry can list remote endpoints, container image packages, or both      |
+| Versions        | One current definition per connector                                                    | Multiple versions per entry, with a `latest` pointer. The publishing API keeps versions until you delete them; Git and file sources mirror the versions currently in the source |
+| Access control  | Connector policies on directory groups                                                  | Claim-scoped registries and entries                                                                                                                                             |
+| Read by         | The Connector Gateway                                                                   | The console's import dialog, the Stacklok CLI, the ToolHive CLI and UI, and other MCP registry clients                                                                          |
+| Required        | Yes, when you enable the Connector Gateway                                              | No                                                                                                                                                                              |
+
+## Decision matrix
+
+Find the rows that match your requirements. If every row that applies to you
+points to the connector catalog alone, you don't need the Registry Server.
+
+| Requirement                                                                                                                     | Recommendation          | Why                                                                                                                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Approval and ownership records live in an existing ITSM or change-management process                                            | Connector catalog alone | The request holds the approval record, and administrators add the approved connector                                                                                                             |
+| Administrators onboard third-party remote MCP servers in the console                                                            | Connector catalog alone | The setup wizard covers endpoint, authentication, and access in one flow                                                                                                                         |
+| Platform teams run MCP servers in your cluster with the ToolHive Operator                                                       | Connector catalog alone | **Import from Kubernetes** discovers running servers and their declared authentication                                                                                                           |
+| You build internal MCP servers and want a publish, review, and version workflow before they reach users                         | Registry Server         | Git sources go through code review and keep version history in Git, and the publishing API keeps each version until you delete it                                                                |
+| Approved servers need a versioned record with custom metadata, such as owner, tier, or data classification, that tools can read | Registry Server         | Entries carry publisher-provided metadata, and the registry API serves them to clients and other deployments                                                                                     |
+| The team that vets MCP servers maintains its own catalog, separate from the team that provisions access                         | Registry Server         | The registry is the vetting team's record, and the connector catalog stays with the team that grants access                                                                                      |
+| Several platform deployments or environments share one approved catalog                                                         | Registry Server         | Registries can pull from another Registry Server through an `api` source                                                                                                                         |
+| Developers run MCP servers locally with the Stacklok CLI, and you restrict them to an approved list                             | Registry Server         | The [registry policy](../enterprise-manager/policies/registry.mdx) and [non-registry servers policy](../enterprise-manager/policies/non-registry-servers.mdx) need a registry to enforce against |
+| You distribute skills or plugins to developers                                                                                  | Registry Server         | The connector catalog holds MCP servers only                                                                                                                                                     |
+
+## How registry entries reach the connector catalog
+
+The console's **Import from registry** option is the only link between the two
+catalogs, and it works as a one-time prefill. When an administrator imports a
+server, the console reads the `latest` version of the entry from the Registry
+Server, copies its name, description, endpoint, and transport into the setup
+wizard, and creates an ordinary connector from the result. The connector keeps
+no reference to the entry or its version.
+
+Several behaviors follow from that design:
+
+- Publishing a new version, changing an entry's endpoint or metadata, or
+  deleting an entry leaves existing connectors unchanged, and the console
+  doesn't flag the difference.
+- Approval state and custom metadata stay in the registry. The connector carries
+  only the fields the wizard copies.
+- Import covers remote servers only. Container-only entries don't appear in the
+  import list; they reach the connector catalog when the Operator runs them and
+  **Import from Kubernetes** discovers them.
+- The console recognizes a server that already has a connector by its endpoint
+  URL and marks it **Added**. A new version at the same URL looks already added,
+  and a new URL looks like a new server.
+
+## Keep connectors in sync with approved records
+
+Whichever system holds the approved record, a Registry Server entry or an ITSM
+request, the connector doesn't follow it. A connector needs an update only when
+something it carries changes: its endpoint, transport, or authentication, or who
+should have access. A server upgrade that keeps the same endpoint and
+authentication needs no change at the gateway, though users might need to
+refresh their client's tool list to see new tools.
+
+Assign an owner for the changes that do reach the gateway, and build the step
+into the process that approves them. When a server moves to a new endpoint or is
+retired, that owner updates or deletes the connector in the console or through
+the [Enterprise Manager API](../enterprise-platform/enterprise-manager-api.mdx).
+
+To turn the handoff into a reviewed step, have your approval workflow create the
+connector as a draft through the Enterprise Manager API. The gateway withholds
+drafts, and an administrator reviews and publishes the connector in the console.
+See
+[Check setup and publish a connector](../../connector-gateway/connectors.mdx#check-setup-and-publish-a-connector).
+
+## Two operating models
+
+Which model fits depends on who owns MCP server onboarding in your organization.
+
+When **platform and engineering teams** own MCP servers, the Registry Server
+gives them a governed record they already understand. Engineers publish internal
+servers through Git or the publishing API, reviewers approve changes as pull
+requests, and environment-specific registries promote entries from development
+to production. Administrators then import approved remote servers into the
+connector catalog and grant access. The same registry serves the Stacklok CLI
+and ToolHive UI for local servers and skills.
+
+When **IT or a central administration team** owns MCP access, the connector
+catalog is usually enough. Requests and approvals run through the organization's
+existing ITSM process, and teams that self-host servers deploy them through
+their usual software development lifecycle. Administrators then add
+vendor-hosted and in-cluster servers directly in the console, and the
+connector's setup check, access grants, and activity view cover the lifecycle
+they manage. You can add the Registry Server later if a publishing workflow or
+local-client catalog becomes a requirement, and import from it from then on.
+
+## Next steps
+
+- [Configure the Registry Server](../enterprise-platform/configure-registry-server.mdx)
+  to add it to your platform deployment.
+- [Manage connectors](../../connector-gateway/connectors.mdx) to add and import
+  connectors in the console.
+- [Distributed deployments](../enterprise-platform/distributed-deployments.mdx)
+  to share a catalog across environments.
+
+## Related information
+
+- [Publish MCP servers](../../toolhive/guides-registry/publish-servers.mdx) -
+  Git, file, and API publishing workflows for the Registry Server
+- [Registry Server authorization](../../toolhive/guides-registry/authorization.mdx) -
+  claim-scoped registries and entries
