@@ -16,13 +16,27 @@ The platform requires Kubernetes 1.30 or later. The umbrella chart sets
 
 ## Validated platforms
 
-Stacklok runs a recurring end-to-end test on each validated platform. A version
-appears on this page after that test passes on it.
+Stacklok validates each platform on this page with an install and an end-to-end
+test. A platform with a recurring test runs that test again on a schedule.
 
-| Platform                     | Supported versions                                               | Recurring test          |
-| ---------------------------- | ---------------------------------------------------------------- | ----------------------- |
-| SUSE Rancher Prime with RKE2 | See the [version matrix](#rancher-prime-and-rke2-version-matrix) | Weekly                  |
-| Amazon EKS                   | EKS 1.36                                                         | Every release candidate |
+| Platform                       | Versions                                                         | Recurring test          |
+| ------------------------------ | ---------------------------------------------------------------- | ----------------------- |
+| SUSE Rancher Prime with RKE2   | See the [version matrix](#rancher-prime-and-rke2-version-matrix) | Weekly                  |
+| Amazon EKS                     | EKS 1.36                                                         | Every release candidate |
+| Azure Kubernetes Service (AKS) | See the [version matrix](#aks-version-matrix)                    | None                    |
+
+Each version matrix lists one row for each version that Stacklok validated, with
+the newest version first. The **Status** column uses these values:
+
+- **Supported:** the version has commercial support. Support includes later
+  patch releases of the same minor versions.
+- **Tested weekly:** the recurring test runs on this version.
+- **Validated:** Stacklok installed and tested the platform on this version
+  once. Contact Stacklok before you run it in production.
+- **End of life:** the platform vendor ended support for this version.
+
+When the platform vendor releases a new minor version, Stacklok validates it and
+adds a row to the top of the matrix.
 
 ### SUSE Rancher Prime and RKE2
 
@@ -37,17 +51,7 @@ Stacklok validated together. The newest pair is first.
 | ------------- | ----- | ------------------------------------------ | ---------------- | ---------- | ------------------------ |
 | v2.15         | v1.36 | Rancher Prime v2.15.3, RKE2 v1.36.5+rke2r1 | 0.27.0           | 2026-11-17 | Supported, tested weekly |
 
-- **Supported** pairs have commercial support. Support includes later patch
-  releases of the same Rancher Prime and RKE2 minor versions.
-- **Tested weekly** marks the pair that the weekly test runs on. The other
-  supported pairs keep their support.
-- **End of life** marks a pair after SUSE ends support for its Rancher Prime or
-  RKE2 minor version.
-
-When SUSE releases a new Rancher Prime or RKE2 minor version, Stacklok validates
-the new pair and adds it to the top of the matrix.
-
-#### Test configuration
+#### Rancher Prime and RKE2 test configuration
 
 Stacklok validates each pair in the matrix with this configuration:
 
@@ -95,6 +99,64 @@ Stacklok tests every release candidate on Amazon EKS 1.36 before it promotes the
 release to the Stable channel. The functional test suite installs the platform
 and runs end-to-end tests against it.
 
+### Azure Kubernetes Service (AKS)
+
+Stacklok validated the platform on AKS with Azure-managed services for the
+database and the identity provider.
+
+#### AKS version matrix
+
+| AKS   | Tested patch versions | Platform release | Validated  | Status    |
+| ----- | --------------------- | ---------------- | ---------- | --------- |
+| v1.36 | Kubernetes v1.36.5    | 0.27.0           | 2026-11-17 | Validated |
+
+#### AKS test configuration
+
+| Component         | Setting                                                                        |
+| ----------------- | ------------------------------------------------------------------------------ |
+| Network           | Azure CNI Overlay with Cilium                                                  |
+| Pod Security      | No violations of the `restricted` level                                        |
+| Azure Policy      | Microsoft Defender for Cloud default initiative, in audit mode                 |
+| PostgreSQL        | Azure Database for PostgreSQL flexible server 17, with a private endpoint      |
+| Identity provider | Microsoft Entra ID, with SCIM provisioning to the Enterprise Manager directory |
+| Ingress           | Envoy Gateway with Gateway API `HTTPRoute` resources                           |
+| Install method    | Argo CD Helm application from the Stacklok OCI registry                        |
+
+The validation covers the ToolHive Operator, the Registry Server, the console,
+Enterprise Manager with the directory, and the Replicated SDK. Console sign-in
+with Entra ID and SCIM provisioning both work.
+
+Keep these AKS settings in mind when you write your values file:
+
+- Add your cluster's pod and service CIDRs to
+  `enterprise-manager.directory.connectorVerification.allowedPrivateRanges`.
+  Read them from the cluster:
+
+  ```bash
+  az aks show --resource-group <RESOURCE_GROUP> --name <CLUSTER_NAME> \
+    --query "networkProfile.{pods:podCidr,services:serviceCidr}"
+  ```
+
+- Set `enterprise-manager.grpc.callerAuth.clusterOidcIssuer` to the AKS OIDC
+  issuer URL, including its trailing slash. AKS signs service account tokens
+  with this issuer when the OIDC issuer feature is on. Enterprise Manager
+  fetches the issuer keys over outbound HTTPS. Read the URL from the cluster:
+
+  ```bash
+  az aks show --resource-group <RESOURCE_GROUP> --name <CLUSTER_NAME> \
+    --query oidcIssuerProfile.issuerUrl --output tsv
+  ```
+
+- Use PostgreSQL 16 or later on Azure Database for PostgreSQL flexible server.
+  Enterprise Manager needs a role with `BYPASSRLS`, and the server admin can
+  create that role on PostgreSQL 16 and later.
+- Grant `CREATE` on the `public` schema to each migration role. On Azure, the
+  `public` schema of a new database belongs to `azure_pg_admin`, so the database
+  owner can't create tables there by default.
+- If you switch Azure Policy for Kubernetes to deny mode, allow the platform
+  images from `image-proxy.stacklok.com` and `proxy.replicated.com`, and the
+  service ports 80, 3000, 8080, 8081, and 9091.
+
 ## Other Kubernetes distributions
 
 Other conformant distributions at Kubernetes 1.30 or later can run the platform
@@ -105,8 +167,8 @@ confirm the distribution.
 ## Commercial support
 
 Stacklok provides commercial support for the platform on each validated platform
-on this page. For SUSE Rancher Prime and RKE2, that is each pair marked
-**Supported** in the [version matrix](#rancher-prime-and-rke2-version-matrix).
+on this page. For a platform with a version matrix, that is each version marked
+**Supported**.
 
 The [Stacklok Platform Terms](https://stacklok.com/platform-terms/) govern that
 support. Your order form names your support tier, and the tier sets the response
