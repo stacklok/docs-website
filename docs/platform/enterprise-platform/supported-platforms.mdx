@@ -16,19 +16,19 @@ The platform requires Kubernetes 1.30 or later. The umbrella chart sets
 
 ## Validated platforms
 
-Stacklok tests each platform on this page for every release candidate. A release
-reaches the Stable channel only after the end-to-end test passes on every
-platform.
+Stacklok tests each platform in this table for every release candidate. A
+release reaches the Stable channel only after the end-to-end test passes on
+every platform.
 
-| Platform                       | Versions                                                         | Release candidate test  |
-| ------------------------------ | ---------------------------------------------------------------- | ----------------------- |
-| Azure Kubernetes Service (AKS) | See the [version matrix](#aks-version-matrix)                    | Every release candidate |
-| Amazon EKS                     | EKS 1.36                                                         | Every release candidate |
-| SUSE Rancher Prime with RKE2   | See the [version matrix](#rancher-prime-and-rke2-version-matrix) | Every release candidate |
+| Platform                       | Version                             | Tested patch versions                      | Platform release | Validated  | Status    |
+| ------------------------------ | ----------------------------------- | ------------------------------------------ | ---------------- | ---------- | --------- |
+| Azure Kubernetes Service (AKS) | v1.36                               | Kubernetes v1.36.5                         | 0.27.0           | 2026-11-17 | Validated |
+| Amazon EKS                     | v1.36                               | Platform version eks.17                    | 0.28.0           | 2026-11-18 | Supported |
+| SUSE Rancher Prime with RKE2   | RKE2 v1.36 with Rancher Prime v2.15 | RKE2 v1.36.5+rke2r1, Rancher Prime v2.15.3 | 0.27.0           | 2026-11-17 | Supported |
 
-Each version matrix lists one row for each version that Stacklok validated, with
-the newest version first. The release candidate test runs on the newest version
-in each matrix. The **Status** column uses these values:
+The table orders the platforms AKS, EKS, then RKE2, with the newest version of
+each platform first. The release candidate test runs on the newest version of
+each platform. The **Status** column uses these values:
 
 - **Supported:** the version has commercial support. Support includes later
   patch releases of the same minor versions.
@@ -36,127 +36,8 @@ in each matrix. The **Status** column uses these values:
   before you run it in production.
 - **End of life:** the platform vendor ended support for this version.
 
-When the platform vendor releases a new minor version, Stacklok validates it and
-adds a row to the top of the matrix.
-
-### Azure Kubernetes Service (AKS)
-
-Stacklok validated the platform on AKS with Azure-managed services for the
-database and the identity provider.
-
-#### AKS version matrix
-
-| AKS   | Tested patch versions | Platform release | Validated  | Status    |
-| ----- | --------------------- | ---------------- | ---------- | --------- |
-| v1.36 | Kubernetes v1.36.5    | 0.27.0           | 2026-11-17 | Validated |
-
-#### AKS test configuration
-
-| Component         | Setting                                                                        |
-| ----------------- | ------------------------------------------------------------------------------ |
-| Network           | Azure CNI Overlay with Cilium                                                  |
-| Pod Security      | No violations of the `restricted` level                                        |
-| Azure Policy      | Microsoft Defender for Cloud default initiative, in audit mode                 |
-| PostgreSQL        | Azure Database for PostgreSQL flexible server 17, with a private endpoint      |
-| Identity provider | Microsoft Entra ID, with SCIM provisioning to the Enterprise Manager directory |
-| Ingress           | Envoy Gateway with Gateway API `HTTPRoute` resources                           |
-| Install method    | Argo CD Helm application from the Stacklok OCI registry                        |
-
-The validation covers the ToolHive Operator, the Registry Server, the console,
-Enterprise Manager with the directory. Console sign-in with Entra ID and SCIM
-provisioning both work.
-
-Keep these AKS settings in mind when you write your values file:
-
-- Add your cluster's pod and service CIDRs to
-  `enterprise-manager.directory.connectorVerification.allowedPrivateRanges`.
-  Read them from the cluster:
-
-  ```bash
-  az aks show --resource-group <RESOURCE_GROUP> --name <CLUSTER_NAME> \
-    --query "networkProfile.{pods:podCidr,services:serviceCidr}"
-  ```
-
-- Set `enterprise-manager.grpc.callerAuth.clusterOidcIssuer` to the AKS OIDC
-  issuer URL, including its trailing slash. AKS signs service account tokens
-  with this issuer when the OIDC issuer feature is on. Enterprise Manager
-  fetches the issuer keys over outbound HTTPS. Read the URL from the cluster:
-
-  ```bash
-  az aks show --resource-group <RESOURCE_GROUP> --name <CLUSTER_NAME> \
-    --query oidcIssuerProfile.issuerUrl --output tsv
-  ```
-
-- Use PostgreSQL 16 or later on Azure Database for PostgreSQL flexible server.
-  Enterprise Manager needs a role with `BYPASSRLS`, and the server admin can
-  create that role on PostgreSQL 16 and later.
-- Grant `CREATE` on the `public` schema to each migration role. On Azure, the
-  `public` schema of a new database belongs to `azure_pg_admin`, so the database
-  owner can't create tables there by default.
-- If you switch Azure Policy for Kubernetes to deny mode, allow the platform
-  images from `image-proxy.stacklok.com` and `proxy.replicated.com`, and the
-  service ports 80, 3000, 8080, 8081, and 9091.
-
-### Amazon EKS
-
-Stacklok tests every release candidate on Amazon EKS 1.36 before it promotes the
-release to the Stable channel. The functional test suite installs the platform
-and runs end-to-end tests against it.
-
-### SUSE Rancher Prime and RKE2
-
-Stacklok supports the platform on RKE2 clusters that SUSE Rancher Prime manages.
-
-#### Rancher Prime and RKE2 version matrix
-
-Each row is a Rancher Prime minor version and an RKE2 minor version that
-Stacklok validated together. The newest pair is first.
-
-| Rancher Prime | RKE2  | Tested patch versions                      | Platform release | Validated  | Status    |
-| ------------- | ----- | ------------------------------------------ | ---------------- | ---------- | --------- |
-| v2.15         | v1.36 | Rancher Prime v2.15.3, RKE2 v1.36.5+rke2r1 | 0.27.0           | 2026-11-17 | Supported |
-
-#### Rancher Prime and RKE2 test configuration
-
-Stacklok validates each pair in the matrix with this configuration:
-
-| Component              | Setting                                                                  |
-| ---------------------- | ------------------------------------------------------------------------ |
-| RKE2 profile           | CIS                                                                      |
-| Pod Security Admission | `rancher-restricted` as the cluster default, with no namespace exemption |
-| Node operating system  | SUSE Linux Enterprise Server (SLES) 16.0                                 |
-| Storage                | Longhorn 1.12.1                                                          |
-| PostgreSQL             | PostgreSQL 17 on CloudNativePG                                           |
-| Install method         | Rancher app from the Stacklok OCI registry                               |
-
-The validation covers the ToolHive Operator, the Registry Server, the console,
-Enterprise Manager, and the MCP server pods that the operator creates. Each runs
-under `rancher-restricted` with no Pod Security violation.
-
-The release candidate test installs the platform, runs the preflight checks,
-reconciles an `MCPServer` as a smoke test, audits Pod Security, and collects a
-support bundle.
-
-The release candidate test on RKE2 runs without the AI Gateway, the Connector
-Gateway, and the Workspace. Contact Stacklok before you enable them on RKE2 in
-production.
-
-Keep these RKE2 defaults in mind when you write your values file:
-
-- Add your cluster's pod and service CIDRs to
-  `enterprise-manager.directory.connectorVerification.allowedPrivateRanges`.
-  RKE2 defaults to `10.42.0.0/16` for pods and `10.43.0.0/16` for services.
-  Rancher shows the values in use under **Cluster Configuration** >
-  **Networking** as **Cluster CIDR** and **Service CIDR**. See
-  [RKE2 cluster configuration](https://ranchermanager.docs.rancher.com/reference-guides/cluster-configuration/rancher-server-configuration/rke2-cluster-configuration).
-- The RKE2 service account issuer is
-  `https://kubernetes.default.svc.cluster.local`. Set it in
-  `enterprise-manager.grpc.callerAuth.clusterOidcIssuer`. Enterprise Manager
-  fetches the issuer keys from the Kubernetes API server on port 6443.
-- RKE2 ships Traefik as the default IngressClass, `traefik`. The chart renders
-  no Ingress, so you create one for the console and Enterprise Manager.
-- Rancher Apps stores the chart package in a Kubernetes Secret, which holds at
-  most 1 MiB. Every platform release from 0.26.0 fits within that limit.
+When a platform vendor releases a new minor version, Stacklok validates it and
+adds a row above the older versions of that platform.
 
 ## Other Kubernetes distributions
 
@@ -167,9 +48,8 @@ Stacklok to confirm the distribution.
 
 ## Commercial support
 
-Stacklok provides commercial support for the platform on each validated platform
-on this page. For a platform with a version matrix, that is each version marked
-**Supported**.
+Stacklok provides commercial support for the platform on each version marked
+**Supported** in the [validated platforms](#validated-platforms) table.
 
 The [Stacklok Platform Terms](https://stacklok.com/platform-terms/) govern that
 support. Your order form names your support tier, and the tier sets the response
@@ -178,8 +58,9 @@ the two releases before it. See
 [Enterprise support](../../toolhive/support.mdx#enterprise-support) for how to
 reach the support team.
 
-SUSE supports Rancher Prime, RKE2, and SLES under your SUSE subscription.
-Stacklok supports the Stacklok Enterprise platform that runs on them.
+SUSE supports Rancher Prime, RKE2, and SUSE Linux Enterprise Server under your
+SUSE subscription. Stacklok supports the Stacklok Enterprise platform that runs
+on them.
 
 ## Next steps
 
