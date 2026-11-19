@@ -524,6 +524,42 @@ GitOps tools:
 1. Mirror each new release and commit the mirrored version to your Git source of
    truth in the same change.
 
+For Flux, define the chart as an `OCIRepository` source and point the
+`HelmRelease` at it with `chartRef`. Flux recommends this source for charts in
+an OCI registry. `HelmRepository` works too, but it tracks only the chart
+version, while an `OCIRepository` also detects a new digest under the same tag:
+
+```yaml
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: stacklok-enterprise-platform
+  namespace: flux-system
+spec:
+  interval: 10m
+  url: oci://<YOUR_REGISTRY_HOST>/<YOUR_PREFIX>/stacklok-enterprise-platform
+  ref:
+    tag: <VERSION>
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  secretRef:
+    name: <REGISTRY_CREDENTIALS_SECRET>
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: stacklok-enterprise
+  namespace: stacklok-system
+spec:
+  interval: 10m
+  chartRef:
+    kind: OCIRepository
+    name: stacklok-enterprise-platform
+    namespace: flux-system
+  # Supply the values from Step 4 inline or through valuesFrom.
+```
+
 ### Keep registry credentials fresh
 
 Many registries issue short-lived pull tokens (ECR's expire after 12 hours). A
@@ -556,7 +592,7 @@ pod, so pod-level workload identity fits here:
 - **Amazon ECR:** Use
   [EKS Pod Identity](https://docs.aws.amazon.com/eks/latest/userguide/pod-identities.html)
   or IAM roles for service accounts. For Flux, set `provider: aws` on the
-  `HelmRepository` and drop its `secretRef`.
+  `OCIRepository` and drop its `secretRef`.
 - **Google Artifact Registry:** Use
   [Workload Identity Federation](https://cloud.google.com/iam/docs/workload-identity-federation)
   to bind the controller's service account to a Google service account with
