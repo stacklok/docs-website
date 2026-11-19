@@ -11,8 +11,8 @@ Configure the AI Gateway chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `ai-gateway-v2`. Chart version: `0.26.0`. Generated from the platform
-source at `v0.26.0`.
+Chart: `ai-gateway-v2`. Chart version: `0.29.0`. Generated from the platform
+source at `v0.29.0`.
 
 ## Values
 
@@ -38,8 +38,14 @@ scaler (HPA/KEDA) is not overridden on every `helm upgrade`.
 
 **Type:** `string`
 
-**Default:**
-`"image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-enterprise/sprout"`
+<details>
+<summary>Default value</summary>
+
+```yaml
+image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-enterprise/ai-gateway
+```
+
+</details>
 
 Container image repository.
 
@@ -512,6 +518,20 @@ the process. Go duration string. Binary default 10s.
 Upstream stream ceiling. The termination grace period, liveness guard and
 httpRoute timeouts all derive from it. Go duration string.
 
+### `lifecycle.completionHookTimeout`
+
+**Type:** `string`
+
+**Default:** `"5s"`
+
+How long the gateway waits for the required response.completed hooks, which run
+one after another, so their timeouts must add up to no more than this; the
+render fails when they do not fit. With budgets on, budgets-usage takes 5s of
+it. A longer value holds a streaming client's final frame longer when a
+completion receiver is slow, and adds to the termination grace period.
+Single-unit duration, 1s to 120s; above 29s, raise
+livenessProbe.failureThreshold too.
+
 ### `providers`
 
 **Type:** `list`
@@ -530,6 +550,12 @@ fails unless `baseUrl` is an in-cluster Service host (`*.svc` or
 check proves an in-cluster name, not a fake upstream. Keep the mock's namespace
 operator-owned, and never point a mock at a proxy to a real vendor.
 
+`bedrock-openai` serves Bedrock models through Bedrock's OpenAI-compatible Chat
+Completions and Responses paths, signed with SigV4 like `bedrock-anthropic`. Its
+baseUrl carries the `/openai` prefix. `dialects` narrows a block to the dialects
+its models really serve (`openai-chat`, `openai-responses`); Bedrock's
+open-weight models serve Chat Completions only.
+
 ```yaml
 Example:
   providers:
@@ -543,6 +569,34 @@ Example:
       baseUrl: https://bedrock-runtime.us-east-1.amazonaws.com
       region: us-east-1
       models: ['us.anthropic.claude-opus-4-8']
+    - kind: bedrock-openai
+      baseUrl: https://bedrock-runtime.us-east-1.amazonaws.com/openai
+      region: us-east-1
+      models: ['us.openai.gpt-6.1-sol']
+    - kind: bedrock-openai
+      baseUrl: https://bedrock-runtime.us-east-1.amazonaws.com/openai
+      region: us-east-1
+      dialects: ['openai-chat']
+      models: ['nvidia.nemotron-super-3-120b', 'qwen.qwen3-coder-next']
+    - kind: vertex
+      baseUrl: https://aiplatform.googleapis.com
+      project: my-proj
+      region: us-central1
+      models: ['gemini-2.5-pro']
+      # Keyless auth via GCP Workload Identity Federation: no credentialSecretRef.
+      # The pod's ServiceAccount token is exchanged for a short-lived Google token.
+      gcpWorkloadIdentity:
+        audience: //iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/eks/providers/staging
+        serviceAccountEmail: vertex@my-proj.iam.gserviceaccount.com # optional; unset = direct resource access
+        expirationSeconds: 3600 # optional, minimum 600
+      # Alternative subject: sign with the gateway's own AWS role (EKS Pod Identity or
+      # IRSA) instead of a Kubernetes token. Mounts no token volume; the pool provider
+      # must be an AWS provider. Not combinable with expirationSeconds.
+      # gcpWorkloadIdentity:
+      #   audience: //iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/aws/providers/prod
+      #   serviceAccountEmail: vertex@my-proj.iam.gserviceaccount.com
+      #   aws:
+      #     region: us-east-1   # the AWS region to sign for, not the Vertex region
     - kind: openai
       mock: true
       baseUrl: http://mock-llm-provider.mock-llm-provider.svc.cluster.local:8080
@@ -939,10 +993,31 @@ and populate `egress` to lock this pod down.
 
 Additional egress rules (NetworkPolicyEgressRule shape) applied when
 allowExternalEgress is false. Must cover DNS and every provider, directory,
-budgets and OTLP destination. With directory.endpoint set, an in-cluster
-workload trust needs the API server's endpoint addresses and port, often 6443;
-the `kubernetes.default` Service address on 443 is not enough. A trust with a
-public JWKS URL needs its host on 443.
+budgets, OTLP and extraHooks receiver destination. With directory.endpoint set,
+an in-cluster workload trust needs the API server's endpoint addresses and port,
+often 6443; the `kubernetes.default` Service address on 443 is not enough. A
+trust with a public JWKS URL needs its host on 443.
+
+### `extraHooks`
+
+**Type:** `list`
+
+**Default:** `[]`
+
+Operator receiver hooks, added after the built-in entries, so model access,
+budgets, scanning and guardrails check a request before any operator hook sees
+it. An operator hook must not retarget the model (x-ai-eg-model): the built-ins
+already checked the original one. Each entry is a gateway hook entry with
+camelCase keys (`failurePolicy`, `includeRequestHeaders`, ...); unknown keys
+fail the render, and the gateway validates the rest at startup, naming a bad
+entry. For an in-cluster receiver behind a private CA, set
+`tokenProjection.audience` (the gateway then sends a projected ServiceAccount
+token) and `caBundle.secretName` (falls back to global.webhooks.caBundleSecret);
+the chart mounts both. With neither, the receiver must serve public-CA HTTPS and
+gets no credential. `payload` sets what a request.received entry's envelope
+carries of the request: `body` (the raw provider request body), `content` (the
+provider-neutral content tree, with no body) or `both`. The legacy `true` reads
+as `body`; unset or `false` sends no payload.
 
 ### `extraEnv`
 
