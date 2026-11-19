@@ -527,7 +527,24 @@ GitOps tools:
 For Flux, define the chart as an `OCIRepository` source and point the
 `HelmRelease` at it with `chartRef`. Flux recommends this source for charts in
 an OCI registry. `HelmRepository` works too, but it tracks only the chart
-version, while an `OCIRepository` also detects a new digest under the same tag:
+version, while an `OCIRepository` also detects a new digest under the same tag.
+
+Flux resolves the `OCIRepository`'s `secretRef` in the source's own namespace,
+so create the pull secret in `flux-system` as well:
+
+```bash
+kubectl create secret docker-registry stacklok-enterprise-pull \
+  --namespace flux-system \
+  --docker-server=<YOUR_REGISTRY_HOST> \
+  --docker-username=<USERNAME> \
+  --docker-password=<TOKEN_OR_PASSWORD>
+```
+
+If your registry issues short-lived tokens, replace this static secret as
+described in
+[Keep registry credentials fresh](#keep-registry-credentials-fresh).
+
+Then define the source and the release:
 
 ```yaml
 apiVersion: source.toolkit.fluxcd.io/v1
@@ -536,7 +553,7 @@ metadata:
   name: stacklok-enterprise-platform
   namespace: flux-system
 spec:
-  interval: 10m
+  interval: 5m
   url: oci://<YOUR_REGISTRY_HOST>/<YOUR_PREFIX>/stacklok-enterprise-platform
   ref:
     tag: <VERSION>
@@ -544,7 +561,7 @@ spec:
     mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
     operation: copy
   secretRef:
-    name: <REGISTRY_CREDENTIALS_SECRET>
+    name: stacklok-enterprise-pull
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -552,7 +569,7 @@ metadata:
   name: stacklok-enterprise
   namespace: stacklok-system
 spec:
-  interval: 10m
+  interval: 5m
   chartRef:
     kind: OCIRepository
     name: stacklok-enterprise-platform
