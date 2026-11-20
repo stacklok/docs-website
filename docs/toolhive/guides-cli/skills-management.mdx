@@ -362,6 +362,10 @@ name, and must not start or end with a hyphen.
 You can also add optional files in `scripts/`, `references/`, and `assets/`
 subdirectories for executable code, documentation, and static resources.
 
+ToolHive installs skill files without executable permissions, so tell the agent
+to run bundled scripts through an interpreter, such as `bash scripts/check.sh`
+or `python3 scripts/report.py`, instead of `./scripts/check.sh`.
+
 For the full list of frontmatter fields (version, license, allowed-tools, and
 more) and directory structure details, see
 [Understanding skills](../concepts/skills.mdx#skill-structure).
@@ -385,6 +389,50 @@ This verifies that:
 - The `name` and `description` fields are present
 - The `name` matches the directory name
 - No symlinks or path traversal issues exist
+
+Validation also reports warnings for problems that pass these checks but break
+the skill once it's installed. Warnings never make a skill invalid or change the
+exit code:
+
+- `ref-unresolved`: a relative link or image in `SKILL.md`, or in a Markdown
+  file it links to, points at a file that doesn't exist.
+- `ref-escapes-root`: a link or path leaves the skill directory, for example
+  `../shared/notes.md`. Only the skill directory is installed, so the target
+  won't exist on the user's machine.
+- `script-direct-exec`: the instructions run a bundled script directly, such as
+  `./scripts/check.sh`. Installed skill files aren't executable, so run the
+  script through an interpreter instead, such as `bash scripts/check.sh`.
+- `allowed-tools-comma`: the `allowed-tools` field is comma-delimited instead of
+  space-delimited.
+- `skill-md-too-long`: `SKILL.md` is longer than 500 lines.
+
+For machine-readable results, for example in CI or an editor integration, add
+`--format json`. Alongside the `errors` and `warnings` strings, the output
+includes a `findings` array with the severity, a stable rule ID, the file, and
+the line of each issue:
+
+```bash
+thv skill validate ./my-skill --format json
+```
+
+```json
+{
+  "valid": true,
+  "warnings": ["link \"references/setup.md\" does not exist"],
+  "findings": [
+    {
+      "severity": "warning",
+      "rule": "ref-unresolved",
+      "file": "SKILL.md",
+      "line": 12,
+      "message": "link \"references/setup.md\" does not exist"
+    }
+  ]
+}
+```
+
+The `line` is `0` when a check doesn't apply to a specific line. Rule IDs are
+stable, so you can filter on them in scripts.
 
 ### Build an OCI artifact
 
@@ -619,6 +667,10 @@ Common issues include:
 - Missing `name` or `description` in the frontmatter
 - Skill `name` doesn't match the directory name
 - Symlinks present in the skill directory (not allowed for security)
+
+Warnings such as `ref-unresolved` or `script-direct-exec` don't fail validation,
+but they point at links or commands that won't work once the skill is installed.
+See [Validate a skill](#validate-a-skill) for what each warning means.
 
 </details>
 
