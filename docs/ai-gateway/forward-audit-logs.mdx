@@ -145,6 +145,63 @@ and the `scanning` entry reports the entity types it acted on, such as
 
 <AuditShippers />
 
+## Log the text behind a denial
+
+Audit events record that a governance hook denied a request, but not the text
+that tripped it. To see that text when you review a PII block or a prompt
+injection verdict, turn on `failureLogs.includePrompt`:
+
+```yaml title="values.yaml"
+ai-gateway-v2:
+  failureLogs:
+    includePrompt: true
+```
+
+The PII scanner and the prompt injection guardrail then append the text behind
+each denial to the cause they return, after `; prompt: `, and the gateway writes
+that cause to its operational failure record on standard error. The scanner
+appends each message that carried a blocked entity, prefixed with its path in
+the request body. The guardrail appends the text it screened. Either appends at
+most 15 KiB. The adapter pods roll out when the setting changes.
+
+A refused request leaves one `ai-gateway-v2: request failed` record. A request
+the guardrail flags in `Monitor` mode is still forwarded, and leaves one
+`ai-gateway-v2: governance would deny` record. Both records carry:
+
+- `request_id` and `interaction_id`, which match the audit event. The client
+  also receives `request_id` in the `X-Request-ID` response header.
+- `subject`, the caller's canonical subject. A refused request's record also
+  carries `email`, looked up in the directory.
+- `model` and `provider`, once the gateway has resolved them.
+- `hook`, the hook entry that denied the request.
+- `cause`, the hook's reason followed by the request text.
+- `hook_annotations`, such as the entity types the scanner detected or the
+  guardrail categories that fired.
+
+Only denials carry text. A request the scanner redacts, or matches under
+`log-only` or `mode: shadow`, is forwarded and leaves no failure record. A
+redaction that fails refuses the request, and the scanner appends the message it
+couldn't redact.
+
+To turn the text on for one screen only, set `scanning.denyPromptInMessage` or
+`guardrails.denyPromptInMessage`. Each wins over `failureLogs.includePrompt` in
+either direction, so `guardrails.denyPromptInMessage: false` keeps the
+guardrail's text out of the log while the scanner's still goes in.
+
+:::warning
+
+The logged text is raw user content, including the PII the scanner detected.
+Restrict access to the gateway's standard error, including Kubernetes pod log
+access, and set retention in your log pipeline to what your data handling policy
+allows for that content.
+
+:::
+
+The gateway drops a cause that looks like a credential and sets
+`cause_unavailable: true` instead. The chart refuses to render
+`includePrompt: true` together with `failureLogs.includeMessage: false`, which
+promises metadata-only records.
+
 ## Related logs
 
 The **Kubernetes API audit log** covers control-plane activity such as `kubectl`
@@ -155,7 +212,9 @@ from audit events. A record can name the caller by directory email and, by
 default, includes a bounded parsed error message to make failures easier to
 diagnose. `failureLogs.level` sets their severity: `warn` (the default),
 `error`, or `debug`. When log retention or access can't accommodate personal
-data, set `failureLogs.includeMessage` to `false` to drop the message.
+data, set `failureLogs.includeMessage` to `false` to drop the message. To add
+the text behind a governance denial, see
+[Log the text behind a denial](#log-the-text-behind-a-denial).
 
 **Conversation content** reaches no audit event. Screening sends prompt text to
 Presidio and AWS Bedrock for analysis. Snapshot capture, configured with the
