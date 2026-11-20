@@ -33,8 +33,9 @@ Replace these placeholders throughout:
 - Outbound HTTPS to `image-proxy.stacklok.com`, plus `fulcio.sigstore.dev`,
   `rekor.sigstore.dev`, and `tuf-repo-cdn.sigstore.dev` for Sigstore's roots.
 - A valid, non-expired license. The proxy authenticates every request against
-  it. Your license is available from the Stacklok install portal at
-  [install.stacklok.com](https://install.stacklok.com).
+  it. Stacklok issues the license during onboarding, and the Stacklok install
+  portal at [install.stacklok.com](https://install.stacklok.com) shows your
+  License ID.
 
 ## Step 1: Authenticate to the proxy
 
@@ -112,7 +113,7 @@ Verify that GitHub's OIDC issuer signed the image through one of Stacklok's
 release workflows:
 
 ```bash
-IDENTITY='^https://github\.com/stacklok/stacklok-enterprise-platform/\.github/workflows/_release-(image|toolhive-cloud-ui|upstream-repackaged)\.yml@.*$'
+IDENTITY='^https://github\.com/stacklok/stacklok-enterprise-platform/\.github/workflows/_release-(image|docker-image|toolhive-cloud-ui|upstream-repackaged)\.yml@.*$'
 ISSUER='https://token.actions.githubusercontent.com'
 IMAGE="$BASE/<IMAGE>@${DIGEST}"
 ```
@@ -204,18 +205,23 @@ oras discover "$IMAGE"
 
 ## Which images are signed
 
-| Image (`<IMAGE>`)                                                                                      | Signing workflow                   |
-| ------------------------------------------------------------------------------------------------------ | ---------------------------------- |
-| `thv`, `operator`, `proxyrunner`, `vmcp`, `registry-api`, `toolhive-enterprise`                        | `_release-image.yml`               |
-| `ai-gateway-operator`, `ai-gateway-main-processor`, `ai-gateway-api-key-service`                       | `_release-image.yml`               |
-| `cloud-ui`                                                                                             | `_release-toolhive-cloud-ui.yml`   |
-| `ai-gateway-controller`, `ai-gateway-extproc`, `envoy-gateway`, `envoy-ratelimit`, `presidio-analyzer` | `_release-upstream-repackaged.yml` |
-| Stacklok License Manager                                                                               | Upstream signature                 |
+| Image (`<IMAGE>`)                                                                                                   | Signing workflow                   |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `thv`, `operator`, `proxyrunner`, `vmcp`, `registry-api`, `toolhive-enterprise`                                     | `_release-image.yml`               |
+| `connector-gateway`, `ai-gateway`, `ai-gateway-operator`, `ai-gateway-main-processor`, `ai-gateway-api-key-service` | `_release-image.yml`               |
+| `cloud-ui`                                                                                                          | `_release-toolhive-cloud-ui.yml`   |
+| `presidio-analyzer`, `preflight-runner`                                                                             | `_release-docker-image.yml`        |
+| `ai-gateway-controller`, `ai-gateway-extproc`, `envoy-gateway`, `envoy-ratelimit`                                   | `_release-upstream-repackaged.yml` |
+| Stacklok License Manager                                                                                            | Upstream signature                 |
 
-Stacklok repackages and signs Envoy Gateway, Envoy Ratelimit, and Presidio. The
-Stacklok License Manager retains its upstream image and signature. It appears as
+Stacklok repackages and signs Envoy Gateway and Envoy Ratelimit, and builds
+Presidio Analyzer from pinned upstream source. The Stacklok License Manager
+retains its upstream image and signature. It appears as
 `stacklok-license-manager-*` in `kubectl get pods` and is pulled by digest from
 `proxy.replicated.com/library/replicated-sdk-image`.
+
+For which component uses each image, and which images a minimal install needs,
+see [Container images](./deployment.mdx#container-images).
 
 ## Verify across all images
 
@@ -223,11 +229,12 @@ To check every Stacklok-signed image for a release in one pass:
 
 ```bash
 BASE=image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-enterprise
-IDENTITY='^https://github\.com/stacklok/stacklok-enterprise-platform/\.github/workflows/_release-(image|toolhive-cloud-ui|upstream-repackaged)\.yml@.*$'
+IDENTITY='^https://github\.com/stacklok/stacklok-enterprise-platform/\.github/workflows/_release-(image|docker-image|toolhive-cloud-ui|upstream-repackaged)\.yml@.*$'
 ISSUER='https://token.actions.githubusercontent.com'
 VERSION='<VERSION>'
 
 for IMAGE in thv operator proxyrunner vmcp registry-api toolhive-enterprise cloud-ui \
+             connector-gateway ai-gateway preflight-runner \
              ai-gateway-operator ai-gateway-main-processor ai-gateway-api-key-service \
              ai-gateway-controller ai-gateway-extproc \
              envoy-gateway envoy-ratelimit presidio-analyzer; do
