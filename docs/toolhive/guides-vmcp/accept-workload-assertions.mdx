@@ -177,9 +177,16 @@ hashing the raw assertion for replay protection instead), and whether the
 assertion's `aud` needs an `acceptedAudiences` entry to match, per the tabs
 above.
 
-| Error                                                                                 | Likely cause                                                                                                                    |
-| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `invalid_grant`: "The JWT bearer assertion issuer is not enabled for this grant."     | The assertion's `iss` doesn't match a `trustedIssuers` entry with an `inboundGrants.jwtBearer.issuerPolicies` entry configured. |
-| `invalid_grant`: "The JWT bearer assertion subject is not configured for this grant." | The assertion's `sub` has no matching entry in `issuerPolicies[].subjectBindings`.                                              |
-| `invalid_target`                                                                      | The `resource` parameter isn't in the matched subject binding's `allowedResources`.                                             |
-| `invalid_grant`: "The JWT bearer assertion has already been used."                    | The assertion's replay key (its `jti`, or a hash of the assertion when `jti` is absent) was already consumed.                   |
+When an assertion fails a validation rule, ToolHive returns `invalid_grant` with
+an `error_description` that starts with the reason code `invalid_assertion`,
+followed by a hint. A client can read the reason code to decide how to respond
+without parsing the hint.
+
+| Error                                                                                                | Likely cause                                                                                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_grant`: "invalid_assertion: The JWT bearer assertion issuer is not enabled for this grant." | The assertion's `iss` doesn't match a `trustedIssuers` entry with an `inboundGrants.jwtBearer.issuerPolicies` entry configured.                                                                   |
+| `invalid_grant`: "The JWT bearer assertion subject is not configured for this grant."                | The assertion's `sub` has no matching entry in `issuerPolicies[].subjectBindings`.                                                                                                                |
+| `invalid_target`                                                                                     | The `resource` parameter isn't in the matched subject binding's `allowedResources`.                                                                                                               |
+| `invalid_grant`: "invalid_assertion: The JWT bearer assertion has already been used."                | The assertion's replay key (its `jti`, or a hash of the assertion when `jti` is absent) was already consumed.                                                                                     |
+| `invalid_grant`: "invalid_assertion: The JWT bearer assertion exceeds the configured maximum age."   | The assertion's issued lifetime (`exp` minus `iat`) is longer than the issuer policy's `maxAssertionAge`. Request a shorter-lived assertion, or raise `maxAssertionAge`.                          |
+| HTTP 503 `temporarily_unavailable`: "issuer_unavailable"                                             | ToolHive couldn't fetch the issuer's signing keys, so it never evaluated the assertion. Check that the issuer's JWKS endpoint is reachable from the authorization server, then retry the request. |

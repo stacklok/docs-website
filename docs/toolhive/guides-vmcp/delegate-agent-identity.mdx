@@ -312,16 +312,23 @@ SVID formats:
   (mutual TLS). This requires the authorization server's own TLS listener and a
   TLS connection that reaches it end to end.
 
-A SPIFFE client can use only the RFC 8693 token-exchange grant and has no client
-secret. To have a workload get a token in its own name, with no user subject
-token, use the [JWT-bearer grant](./accept-workload-assertions.mdx) instead.
+A SPIFFE client has no client secret. Each client association chooses which of
+two grants its workloads can use:
+
+- **Token exchange (RFC 8693):** the workload presents a subject token, such as
+  a user's token, and gets a token that names that subject with the workload
+  recorded as the acting party. Use this when an agent acts on behalf of a user.
+  This is the default.
+- **Client credentials:** the workload gets a token in its own name, with no
+  subject token. Use this for an agent that calls MCP servers as itself, for
+  example a scheduled job with no user behind it.
 
 ### Declare the trust domain and client associations
 
 Two blocks under `authServerConfig` work together. `spiffeTrustDomains` declares
 each trust domain you accept and where ToolHive loads its trust bundle from.
 `inboundGrants.spiffeClientAuth` maps a SPIFFE ID, or a pattern of SPIFFE IDs,
-to one OAuth client ID with its allowed audiences and scopes.
+to one OAuth client ID with its grants, allowed resources, and scopes.
 
 First, store your trust domain's bundle in a ConfigMap. The bundle must be a
 SPIFFE trust bundle in JWKS format, such as the output of
@@ -363,7 +370,12 @@ spec:
           principalPattern: spiffe://example.org/ns/agents/sa/reporting-agent
           clientId: reporting-agent
           methods: [spiffe_jwt, spiffe_x509]
-          audiences: [https://vmcp.example.com/mcp-resource]
+          # highlight-start
+          grantTypes:
+            - urn:ietf:params:oauth:grant-type:token-exchange
+            - client_credentials
+          resources: [https://vmcp.example.com/mcp-resource]
+          # highlight-end
           scopes: [openid]
 ```
 
@@ -379,15 +391,28 @@ spec:
 
 `spiffeClientAuth` fields:
 
-| Field              | Description                                                                                                                                                      |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `trustDomainRef`   | Required. The `name` of a `spiffeTrustDomains` entry.                                                                                                            |
-| `principalPattern` | Required. An exact SPIFFE ID, or one ending in `/*` to match every ID below that path. It must start with `spiffe://<trustDomain>/`. Patterns must not overlap.  |
-| `clientId`         | Required. The OAuth client ID that matching workloads authenticate as. It must be unique and must not match a `delegateClients[].clientId`.                      |
-| `methods`          | Required. `spiffe_jwt`, `spiffe_x509`, or both. Must be a subset of the trust domain's `methods`. `spiffe_x509` requires `tlsListener` and an `https://` issuer. |
-| `audiences`        | Required. The RFC 8693 audiences this client may request.                                                                                                        |
-| `scopes`           | Required. The scopes this client may request.                                                                                                                    |
-| `resources`        | Optional. RFC 8707 resource indicators this client may request. Each must be one of the server's allowed audiences.                                              |
+| Field              | Description                                                                                                                                                                                                                                                      |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `trustDomainRef`   | Required. The `name` of a `spiffeTrustDomains` entry.                                                                                                                                                                                                            |
+| `principalPattern` | Required. An exact SPIFFE ID, or one ending in `/*` to match every ID below that path. It must start with `spiffe://<trustDomain>/`. Patterns must not overlap.                                                                                                  |
+| `clientId`         | Required. The OAuth client ID that matching workloads authenticate as. It must be unique and must not match a `delegateClients[].clientId`.                                                                                                                      |
+| `methods`          | Required. `spiffe_jwt`, `spiffe_x509`, or both. Must be a subset of the trust domain's `methods`. `spiffe_x509` requires `tlsListener` and an `https://` issuer.                                                                                                 |
+| `grantTypes`       | Optional. The grants matching workloads can use: `urn:ietf:params:oauth:grant-type:token-exchange`, `client_credentials`, or both. Defaults to token exchange only.                                                                                              |
+| `resources`        | Required, with at least one entry. The RFC 8707 resource indicators this client may request, as absolute HTTP(S) URIs. Each must be one of the server's allowed audiences. Every request names exactly one of these, and it becomes the issued token's audience. |
+| `scopes`           | Required. The scopes this client may request.                                                                                                                                                                                                                    |
+| `audiences`        | Deprecated and ignored. Use `resources` instead. A non-empty value is reported in the `DeprecatedInboundGrantConfiguration` status condition, and the authorization server logs a warning at startup.                                                            |
+
+To grant `client_credentials` to an association that allows `spiffe_jwt`, the
+issuer must use `https://`. A captured JWT-SVID would otherwise let anyone get
+tokens for that workload. For local development with a loopback `http://`
+issuer, set `insecureAllowConfidentialOverLoopbackHTTP: true`.
+
+An association that grants only `client_credentials` doesn't turn on token
+exchange for the server. When some association lists `client_credentials`, the
+authorization server metadata at `/.well-known/oauth-authorization-server`
+advertises `client_credentials` in `grant_types_supported`. It also lists
+`spiffe_jwt` and `spiffe_x509` in `token_endpoint_auth_methods_supported` when
+an association enables them.
 
 ToolHive polls the bundle file every 30 seconds, so a rotated bundle in the
 ConfigMap takes effect without a restart. If ToolHive can't load a fresh bundle
@@ -409,7 +434,7 @@ curl -s -X POST https://vmcp.example.com:8443/oauth/token \
   --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
   --data-urlencode "subject_token=<SUBJECT_TOKEN>" \
   --data-urlencode "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
-  --data-urlencode "audience=https://vmcp.example.com/mcp-resource" \
+  --data-urlencode "resource=https://vmcp.example.com/mcp-resource" \
   --data-urlencode "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-spiffe" \
   --data-urlencode "client_assertion=<JWT_SVID>"
 ```
@@ -419,6 +444,12 @@ the SPIFFE ID in the verified SVID; when you include it, it must match that
 association's `clientId`. The SVID must expire within 6 minutes and be at most
 16 KiB. ToolHive doesn't track JWT-SVID `jti` values, so keep SVID lifetimes
 short.
+
+Every SPIFFE token request names its target with exactly one `resource`
+parameter, which must exactly match an entry in the association's `resources`.
+ToolHive rejects a missing, empty, or repeated `resource`, and any `audience`
+parameter, with `invalid_target`. The issued token's `aud` is the requested
+resource.
 
 ### Exchange a token with an X.509-SVID
 
@@ -432,7 +463,7 @@ curl -s -X POST https://vmcp.example.com:8443/oauth/token \
   --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
   --data-urlencode "subject_token=<SUBJECT_TOKEN>" \
   --data-urlencode "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
-  --data-urlencode "audience=https://vmcp.example.com/mcp-resource" \
+  --data-urlencode "resource=https://vmcp.example.com/mcp-resource" \
   --data-urlencode "client_id=reporting-agent"
 ```
 
@@ -452,6 +483,35 @@ authenticates as itself, so write principal patterns that can't match a proxy's
 or gateway's SPIFFE ID. Behind an ingress that terminates TLS, use JWT-SVIDs
 instead.
 
+### Get a token with the client credentials grant
+
+When the association lists `client_credentials` in `grantTypes`, a workload can
+get a token in its own name, with no subject token. It authenticates with its
+SVID exactly as in the exchange examples above, using either a JWT-SVID as the
+`client_assertion` or an X.509-SVID over mutual TLS:
+
+```bash title="POST /oauth/token"
+curl -s -X POST https://vmcp.example.com:8443/oauth/token \
+  --data-urlencode "grant_type=client_credentials" \
+  --data-urlencode "resource=https://vmcp.example.com/mcp-resource" \
+  --data-urlencode "scope=openid" \
+  --data-urlencode "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-spiffe" \
+  --data-urlencode "client_assertion=<JWT_SVID>"
+```
+
+The issued access token carries these claims:
+
+- `sub`: the workload's verified SPIFFE ID
+- `client_id`: the association's `clientId`
+- `aud`: the requested `resource`
+- `scp`: the granted scopes, as an array
+
+Each requested scope must be in the association's `scopes`. A request with no
+`scope` gets a token with no scopes. ToolHive doesn't issue a refresh token. The
+token expires at the earlier of the server's access token lifetime and the
+expiry of the SVID that authenticated the request, so a token never outlives its
+credential. To get a new token, the workload requests one with a fresh SVID.
+
 ### Subject tokens for SPIFFE clients
 
 A SPIFFE client isn't a delegate client, so it gets none of a delegate client's
@@ -459,7 +519,7 @@ exemptions for ToolHive-issued tokens. The subject token can be either of these:
 
 - A token issued by this ToolHive authorization server. ToolHive accepts it when
   the token's `client_id` is the SPIFFE client's `clientId`, or when its
-  `may_act.sub` names that `clientId`.
+  `may_act.sub` names that `clientId` or the workload's SPIFFE ID.
 - A token from an external issuer listed under `trustedIssuers`. The matching
   `inboundGrants.tokenExchange.issuerPolicies` entry must authorize the token's
   actor through `allowedActors` or `actorMatcher`, or through a `may_act` claim
@@ -468,9 +528,30 @@ exemptions for ToolHive-issued tokens. The subject token can be either of these:
   [RFC 8693 delegation with a pre-provisioned delegate client](#rfc-8693-delegation-with-a-pre-provisioned-delegate-client)
   for how to set up an issuer policy.
 
-In both cases, the token's `aud` must include every audience the issued token
-gets. The issued token records the SPIFFE client in `act.sub`, using the
-configured `clientId`; the SPIFFE ID itself doesn't appear in the token.
+In both cases, the subject token's `aud` must include the requested `resource`.
+
+The issued token records the workload's verified SPIFFE ID in the outermost
+`act.sub`, and its `client_id` claim is the association's `clientId`. To write a
+Cedar policy for every workload of a SPIFFE client, match
+`principal.claim_client_id`. To write a policy for one workload, match its
+SPIFFE ID in `principal.claim_act.sub`.
+
+:::info[Changed in v0.67.0]
+
+The outermost `act.sub` of a SPIFFE client's exchanged token used to be the
+association's `clientId`. If your Cedar policies match `claim_act.sub` against a
+SPIFFE `clientId`, change them to match `claim_client_id` instead.
+
+:::
+
+A principal pattern ending in `/*` gives many workloads the same `clientId`, so
+ToolHive binds each token to the workload that obtained it. When a SPIFFE client
+presents a ToolHive-issued subject token that it's accepted for only because of
+its `client_id`, the token's `sub` or outermost `act.sub` must be the calling
+workload's SPIFFE ID. One workload therefore can't exchange a token that a
+sibling workload obtained through client credentials or token exchange. If the
+workload sends an `actor_token`, the actor token's `sub` must be its own SPIFFE
+ID.
 
 :::warning
 
@@ -512,6 +593,13 @@ exchange that issuer's tokens whose actor passes `allowedActors` or
 | `invalid_target`: "The client is not permitted to request audience ..."                                                                                  | The `audience` parameter on the exchange request isn't in the delegate client's `audiences` list. Request one of the listed audiences, or add the audience to `delegateClients[].audiences`.                                                                                                                         |
 | HTTP 401 `invalid_client` for a SPIFFE client using an X.509-SVID                                                                                        | The client certificate didn't reach the authorization server's TLS listener on port 8443, for example because an ingress terminated TLS, or the certificate doesn't match the association's `principalPattern`. Use TLS passthrough to port 8443, or switch the client to a JWT-SVID.                                |
 | HTTP 401 `invalid_client` for a SPIFFE client using a JWT-SVID                                                                                           | Check that the SVID's only audience is exactly the `issuer`, that it expires within 6 minutes, that its SPIFFE ID matches a `principalPattern` enabled for `spiffe_jwt`, and that the trust bundle in the ConfigMap is current.                                                                                      |
+| `invalid_target` for a SPIFFE client                                                                                                                     | The request didn't carry exactly one `resource` that matches an entry in the association's `resources`, or it carried an `audience` parameter. Send a single `resource` and no `audience`.                                                                                                                           |
+| `invalid_grant`: "The subject token was issued to a different workload of this client."                                                                  | The ToolHive-issued subject token names a different workload than the caller, or names no workload. A workload can exchange only tokens that name its own SPIFFE ID in `sub` or the outermost `act.sub`.                                                                                                             |
+| `invalid_request`: "The actor token's subject does not match the authenticated workload."                                                                | The `actor_token`'s `sub` isn't the calling workload's SPIFFE ID.                                                                                                                                                                                                                                                    |
+| `unauthorized_client` on a `client_credentials` request                                                                                                  | The client isn't an authenticated SPIFFE client, or its association doesn't list `client_credentials` in `grantTypes`.                                                                                                                                                                                               |
+| `invalid_scope` on a `client_credentials` request                                                                                                        | A requested scope isn't in the association's `scopes`.                                                                                                                                                                                                                                                               |
+| CRD rejected: `resources is required`                                                                                                                    | A `spiffeClientAuth` entry has no `resources`. Add at least one resource that's also one of the server's allowed audiences.                                                                                                                                                                                          |
+| Status condition `DeprecatedInboundGrantConfiguration` lists `spiffeClientAuth[].audiences`                                                              | The association still sets the deprecated `audiences` field, which ToolHive ignores. Move the values to `resources` and remove `audiences`.                                                                                                                                                                          |
 | Status condition: `bundleSource: type "bundle_endpoint" is not supported by this build; only "file" is supported`                                        | Set `bundleSource.type: file` and supply the trust bundle through a ConfigMap. The same applies to `workload_api`.                                                                                                                                                                                                   |
 | CRD rejected: `issuerPolicies[]: allowedDelegateClients: Required value`                                                                                 | An `inboundGrants.tokenExchange.issuerPolicies` entry is missing `allowedDelegateClients`. Add it.                                                                                                                                                                                                                   |
 | CRD rejected: "delegateClients with an HTTP issuer require insecureAllowConfidentialOverLoopbackHTTP to be explicitly enabled"                           | A delegate client uses a plain-HTTP issuer. Use an `https://` issuer, or for local development set `insecureAllowConfidentialOverLoopbackHTTP: true` with a loopback issuer.                                                                                                                                         |
