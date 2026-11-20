@@ -11,8 +11,8 @@ Configure the AI Gateway chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `ai-gateway-v2`. Chart version: `0.28.0`. Generated from the platform
-source at `v0.28.0`.
+Chart: `ai-gateway-v2`. Chart version: `0.30.0`. Generated from the platform
+source at `v0.30.0`.
 
 ## Values
 
@@ -552,9 +552,14 @@ operator-owned, and never point a mock at a proxy to a real vendor.
 
 `bedrock-openai` serves Bedrock models through Bedrock's OpenAI-compatible Chat
 Completions and Responses paths, signed with SigV4 like `bedrock-anthropic`. Its
-baseUrl carries the `/openai` prefix. `dialects` narrows a block to the dialects
-its models really serve (`openai-chat`, `openai-responses`); Bedrock's
-open-weight models serve Chat Completions only.
+baseUrl carries the `/openai` prefix.
+
+A `models` entry is a model name, or `{id, dialects}` to narrow that model to
+the dialects it really serves (`openai-chat`, `openai-responses`); Bedrock's
+open-weight models serve Chat Completions only. A model without `dialects` is
+served through every dialect its kind serves. Each kind takes one provider block
+(mocks aside): list every model of a kind in that block. The render fails on a
+second non-mock block of a kind.
 
 ```yaml
 Example:
@@ -572,12 +577,12 @@ Example:
     - kind: bedrock-openai
       baseUrl: https://bedrock-runtime.us-east-1.amazonaws.com/openai
       region: us-east-1
-      models: ['us.openai.gpt-6.1-sol']
-    - kind: bedrock-openai
-      baseUrl: https://bedrock-runtime.us-east-1.amazonaws.com/openai
-      region: us-east-1
-      dialects: ['openai-chat']
-      models: ['nvidia.nemotron-super-3-120b', 'qwen.qwen3-coder-next']
+      models:
+        - us.openai.gpt-6.1-sol
+        - id: nvidia.nemotron-super-3-120b
+          dialects: ['openai-chat']
+        - id: qwen.qwen3-coder-next
+          dialects: ['openai-chat']
     - kind: vertex
       baseUrl: https://aiplatform.googleapis.com
       project: my-proj
@@ -1014,7 +1019,10 @@ entry. For an in-cluster receiver behind a private CA, set
 `tokenProjection.audience` (the gateway then sends a projected ServiceAccount
 token) and `caBundle.secretName` (falls back to global.webhooks.caBundleSecret);
 the chart mounts both. With neither, the receiver must serve public-CA HTTPS and
-gets no credential.
+gets no credential. `payload` sets what a request.received entry's envelope
+carries of the request: `body` (the raw provider request body), `content` (the
+provider-neutral content tree, with no body) or `both`. The legacy `true` reads
+as `body`; unset or `false` sends no payload.
 
 ### `extraEnv`
 

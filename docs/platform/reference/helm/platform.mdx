@@ -11,8 +11,8 @@ Configure the platform chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `stacklok-enterprise-platform`. Chart version: `0.28.0`. Generated from
-the platform source at `v0.28.0`.
+Chart: `stacklok-enterprise-platform`. Chart version: `0.30.0`. Generated from
+the platform source at `v0.30.0`.
 
 ## Values
 
@@ -871,13 +871,20 @@ Enterprise Manager installed with directory.enabled, global.redis.host and
 global.stacklok.primaryIdp.clientId: only a token issued to that client, the
 console, can read or approve a request. Its client claim is
 primaryIdp.clientClaim (cid, client_id or azp). The gateway builds Enterprise
-Manager's Service and Secret names from the release name, so the experiment does
-not work with a nameOverride or fullnameOverride on enterprise-manager, and its
-render refuses one. The chart generates the HMAC secret and keeps it across
-upgrades. A renderer that cannot read the cluster, such as a GitOps tool,
-generates a new secret on every sync, which briefly denies gated calls while the
-two pods pick it up. Subject to the release-channel guard: it stays off on the
-Stable channel.
+Manager's Service and Secret names from the host of
+global.stacklok.enterpriseManager.url when that host is a Service name
+(&#60;svc&#62;, &#60;svc&#62;.&#60;ns&#62;,
+&#60;svc&#62;.&#60;ns&#62;.svc[.cluster.local]), else from the release name.
+With a nameOverride or fullnameOverride on enterprise-manager, set that URL to
+the renamed Service on its service.port (80 by default), for example
+http://enterprise-server.&#60;ns&#62;.svc, or the enterprise-manager render
+refuses the experiment. The URL is also Enterprise Manager's address for
+ai-gateway-v2, connector-gateway and cloud-ui. A URL naming any other Service
+fails the same render, because the gateway would call that Service for
+approvals. The chart generates the HMAC secret and keeps it across upgrades. A
+renderer that cannot read the cluster, such as a GitOps tool, generates a new
+secret on every sync, which briefly denies gated calls while the two pods pick
+it up. Subject to the release-channel guard: it stays off on the Stable channel.
 
 ### `global.stacklok.experiments.approvals.tools`
 
@@ -921,6 +928,16 @@ from tool results, the workspace subchart renders the generative UI server, and
 Atrium sends the model only the text of tool results. Needs workspace on too.
 Subject to the release-channel guard: it stays off on the Stable channel.
 
+### `global.stacklok.experiments.workspaceSkills.enabled`
+
+**Type:** `bool`
+
+**Default:** `false`
+
+Reserved for letting Workspace Chat use the SEP skills catalog. Not available in
+this release: the render refuses true. Subject to the release-channel guard once
+available: it stays off on the Stable channel.
+
 ### `global.stacklok.experiments.platformIdpBearers.enabled`
 
 **Type:** `bool`
@@ -932,6 +949,18 @@ IdP, including RFC 8693 delegated tokens whose act claim names the agent acting
 for the User. The gateway mounts the path only when its control-plane corp-IdP
 chain names the primary IdP. Subject to the release-channel guard: it stays off
 on the Stable channel.
+
+### `global.stacklok.experiments.kubernetesImportSuggestedAuth.enabled`
+
+**Type:** `bool`
+
+**Default:** `false`
+
+Prefill a Kubernetes import's authorization in the console's connector wizard
+from what the workload's spec declares. The prefill does not check that the
+server accepts what Connector Gateway sends, so it can create a connector that
+gets 401s; with it off, the Admin configures authorization by hand. Subject to
+the release-channel guard: it stays off on the Stable channel.
 
 ### `global.stacklok.connectorGateway.enabled`
 
@@ -1022,7 +1051,8 @@ connector-gateway.consoleUrl, which switches on the reconnect link in a
 connector credential prompt; a local connector-gateway.consoleUrl wins. The
 gateway accepts only an absolute https URL, or http on a loopback host, with no
 userinfo, query or fragment; an inherited value outside that stops it from
-starting.
+starting. Workspace inherits it as workspace.sep.callbackBaseUrl, where the
+Connector Gateway sign-in returns the browser; a local value wins.
 
 ### `global.stacklok.primaryIdp.issuer`
 
