@@ -501,6 +501,7 @@ const platformSidebar: SidebarsConfig[string] = [
   },
 
   'platform/concepts/two-group-models',
+  'platform/concepts/registry-server-and-connector-catalog',
 ];
 
 const connectorGatewaySidebar: SidebarsConfig[string] = [
@@ -522,6 +523,7 @@ const connectorGatewaySidebar: SidebarsConfig[string] = [
   'connector-gateway/identity-providers',
   'connector-gateway/connector-authentication',
   'connector-gateway/connector-policies',
+  'connector-gateway/policy-webhooks',
 
   {
     type: 'html',
@@ -595,6 +597,11 @@ const aiGatewaySidebar: SidebarsConfig[string] = [
     label: 'Prompt injection screening',
   },
   { type: 'doc', id: 'ai-gateway/pci-pii-controls', label: 'PCI/PII controls' },
+  {
+    type: 'doc',
+    id: 'ai-gateway/policy-webhooks',
+    label: 'Policy webhooks',
+  },
   {
     type: 'doc',
     id: 'ai-gateway/forward-audit-logs',

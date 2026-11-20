@@ -19,12 +19,8 @@ jobs:
     # job (update-visual-baselines.yaml, same digest) pixel-consistent
     # with each other regardless of which runner picks up the job.
     container:
-      image: mcr.microsoft.com/playwright:v1.65.0-noble@sha256:6e3fb709361521eb27161606e6da6d2674e5e89fa16516cb37d6fdd91372273d # v1.63.0-noble
+      image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 # v1.63.0-noble
       options: --ipc=host
-    env:
-      # Keep the build-time MCP metadata format stable. The regular site
-      # build still validates the current ToolHive release independently.
-      TOOLHIVE_VERSION: '0.49.0'
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -72,7 +68,20 @@ jobs:
       - name: Install ToolHive CLI
         env:
           TOOLHIVE_VERIFY_SIGNATURE: 'true'
-        run: ./scripts/install-thv.sh
+          GITHUB_TOKEN: ${{ github.token }}
+        # Use the ToolHive release the docs are synced to, so the version
+        # moves with release sync PRs instead of drifting.
+        run: |
+          TOOLHIVE_VERSION="$(node -e '
+            const fs = require("fs");
+            const { parse } = require("yaml");
+            const config = parse(fs.readFileSync(".github/upstream-projects.yaml", "utf8"));
+            const version = config.projects.find((p) => p.id === "toolhive")?.version;
+            if (!version) throw new Error("No toolhive version in upstream-projects.yaml");
+            console.log(version);
+          ')"
+          export TOOLHIVE_VERSION
+          ./scripts/install-thv.sh
 
       # SWC's native loader rejects the writable parents of /github/home.
       # Use a private cache under /tmp, whose sticky bit protects its children.
