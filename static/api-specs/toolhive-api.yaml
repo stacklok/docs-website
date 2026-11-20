@@ -160,6 +160,23 @@ components:
         ClientSecretFile / ClientSecretEnvVar, and ClientID must be left empty.
         Mutually exclusive with ClientID.
       properties:
+        client_name:
+          description: |-
+            ClientName is the optional RFC 7591 "client_name" registration metadata
+            sent when ToolHive registers with the upstream. When empty, ToolHive
+            registers as "ToolHive MCP Client". It is display-only metadata: the
+            upstream shows it on its authorization screen, and it is never used as
+            a key. It is capped at 256 characters, matching the client_name bound
+            the authserver enforces on inbound registrations. Names with leading
+            or trailing whitespace, or containing control or format characters,
+            are rejected.
+
+            Changing it does not rename an already-registered client: the cached
+            registration is keyed without the client name, so the new value applies
+            only the next time ToolHive registers a fresh client — for example
+            after rotating via RotationKey, or when the upstream rejects the cached
+            registration.
+          type: string
         discovery_url:
           description: |-
             DiscoveryURL is the exact RFC 8414 / OIDC Discovery document URL to
@@ -1062,10 +1079,9 @@ components:
       properties:
         audiences:
           description: |-
-            Audiences are RFC 8693 token audiences this association may request.
-            This is an independent request dimension from Resources: it is not
-            bounded by allowed_audiences (which is an RFC 8707 resource-URI list)
-            and may contain non-URI logical audience identifiers.
+            Audiences is deprecated and ignored; use Resources. It stays in the
+            schema because v0.65.0 required it, and a warning is logged at startup
+            when it is set.
           items:
             type: string
           type: array
@@ -1096,11 +1112,12 @@ components:
         resources:
           description: |-
             Resources are RFC 8707 resource indicators this association may
-            request. Must be a subset of the server's allowed_audiences allowlist
-            (RunConfig.AllowedAudiences) — the same RFC 8707 resource-URI list
-            DelegateClientRunConfig.Audiences is validated against. Distinct from
-            Audiences: a resource permission does not imply the same value is also
-            a permitted token audience, or vice versa.
+            request. At least one is required for every association: both
+            client_credentials and token exchange take exactly one resource per
+            request and grant it as the token audience. Must be a subset of the
+            server's allowed_audiences allowlist (RunConfig.AllowedAudiences) — the
+            same RFC 8707 resource-URI list DelegateClientRunConfig.Audiences is
+            validated against.
           items:
             type: string
           type: array
@@ -2013,6 +2030,14 @@ components:
             type: string
           type: array
           uniqueItems: false
+        findings:
+          description: |-
+            Findings lists every error and warning with its rule ID and location.
+            Each Errors or Warnings entry corresponds to exactly one finding.
+          items:
+            $ref: '#/components/schemas/github_com_stacklok_toolhive_pkg_skills.Finding'
+          type: array
+          uniqueItems: false
         valid:
           description: Valid indicates whether the skill definition is valid.
           type: boolean
@@ -2475,6 +2500,25 @@ components:
       - FailureReasonKeySigned
       - FailureReasonUnsignedRejected
       - FailureReasonUnknown
+    github_com_stacklok_toolhive_pkg_skills.Finding:
+      properties:
+        file:
+          description: |-
+            File is the slash-separated path of the affected file, relative to the
+            validated directory.
+          type: string
+        line:
+          description: Line is the 1-based line in File, or 0 when unknown.
+          type: integer
+        message:
+          description: Message describes the problem.
+          type: string
+        rule:
+          description: Rule is the stable ID of the check that produced the finding.
+          type: string
+        severity:
+          $ref: '#/components/schemas/github_com_stacklok_toolhive_pkg_skills.Severity'
+      type: object
     github_com_stacklok_toolhive_pkg_skills.InstallStatus:
       description: Status is the current installation status.
       enum:
@@ -2607,6 +2651,15 @@ components:
       x-enum-varnames:
       - ScopeUser
       - ScopeProject
+    github_com_stacklok_toolhive_pkg_skills.Severity:
+      description: Severity is "error" or "warning".
+      enum:
+      - error
+      - warning
+      type: string
+      x-enum-varnames:
+      - SeverityError
+      - SeverityWarning
     github_com_stacklok_toolhive_pkg_skills.SkillContent:
       properties:
         body:
@@ -2822,6 +2875,14 @@ components:
           description: Errors is a list of validation errors, if any.
           items:
             type: string
+          type: array
+          uniqueItems: false
+        findings:
+          description: |-
+            Findings lists every error and warning with its rule ID and location.
+            Each Errors or Warnings entry corresponds to exactly one finding.
+          items:
+            $ref: '#/components/schemas/github_com_stacklok_toolhive_pkg_skills.Finding'
           type: array
           uniqueItems: false
         valid:
