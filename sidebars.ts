@@ -372,6 +372,7 @@ const platformSidebar: SidebarsConfig[string] = [
       id: 'platform/enterprise-platform/index',
     },
     items: [
+      'platform/enterprise-platform/supported-platforms',
       'platform/enterprise-platform/deployment',
       'platform/enterprise-platform/distributed-deployments',
       'platform/enterprise-platform/airgap-install',
