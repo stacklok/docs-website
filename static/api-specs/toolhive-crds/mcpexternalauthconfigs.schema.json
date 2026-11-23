@@ -385,17 +385,16 @@
                 "spiffeClientAuth": {
                   "description": "SPIFFEClientAuth associates SPIFFE principal patterns with explicit\nOAuth client identities and permissions. A sibling of TokenExchange and\nJWTBearer below, not nested under either: client authentication does\nnot by itself confer a grant. See SPIFFEClientConfig.",
                   "items": {
-                    "description": "SPIFFEClientConfig associates one SPIFFE principal pattern from a declared\ntrust domain with an explicit OAuth client identity and permissions.\nDeclaring a client does not grant access by itself. SPIFFE clients\nauthenticate with a JWT-SVID or an X.509-SVID and have no client secret.\nTrust material comes from the declared bundle source (see\nSPIFFETrustDomainConfig's doc comment).\n\nGrantTypes is deliberately not exposed here: the runtime only accepts\nexactly the RFC 8693 token-exchange grant for a SPIFFE client\n(validateSPIFFEGrants in pkg/authserver/spiffe_trust.go), so the converter\nalways supplies it instead of letting it be configured.",
+                    "description": "SPIFFEClientConfig associates one SPIFFE principal pattern from a declared\ntrust domain with an explicit OAuth client identity and permissions.\nDeclaring a client does not grant access by itself. SPIFFE clients\nauthenticate with a JWT-SVID or an X.509-SVID and have no client secret.\nTrust material comes from the declared bundle source (see\nSPIFFETrustDomainConfig's doc comment).",
                     "properties": {
                       "audiences": {
-                        "description": "Audiences are RFC 8693 token audiences this association may request.",
+                        "description": "Deprecated: ignored; use resources.\n\nThe field was required in earlier releases and is still accepted so\nexisting objects keep validating. A non-empty value is reported by the\nDeprecatedInboundGrantConfiguration condition and has no effect on token\ntargeting.",
                         "items": {
                           "maxLength": 2048,
                           "minLength": 1,
                           "type": "string"
                         },
                         "maxItems": 50,
-                        "minItems": 1,
                         "type": "array",
                         "x-kubernetes-list-type": "set"
                       },
@@ -404,6 +403,23 @@
                         "maxLength": 253,
                         "minLength": 1,
                         "type": "string"
+                      },
+                      "grantTypes": {
+                        "default": [
+                          "urn:ietf:params:oauth:grant-type:token-exchange"
+                        ],
+                        "description": "GrantTypes contains the OAuth grants permitted for this association.\nIt defaults to the token-exchange grant when omitted, which is what the\noperator configured before this field existed. List client_credentials\nto opt in to the SPIFFE-bound client credentials grant. The list alone\ndecides which grants the association may use: client authentication does\nnot confer any grant, and there is no separate per-grant enable switch.\nUse urn:ietf:params:oauth:grant-type:token-exchange for RFC 8693 token\nexchange.",
+                        "items": {
+                          "enum": [
+                            "client_credentials",
+                            "urn:ietf:params:oauth:grant-type:token-exchange"
+                          ],
+                          "type": "string"
+                        },
+                        "maxItems": 2,
+                        "minItems": 1,
+                        "type": "array",
+                        "x-kubernetes-list-type": "set"
                       },
                       "methods": {
                         "description": "Methods are the credential types this association may authenticate\nwith. Must be a subset of the referenced trust domain's methods.",
@@ -427,7 +443,7 @@
                         "type": "string"
                       },
                       "resources": {
-                        "description": "Resources are RFC 8707 resource indicators this association may\nrequest. Must be a subset of the server's allowed_audiences allowlist,\nwhich is derived at reconcile time and not available on this CRD, so\nallowlist membership is validated at reconcile time, not admission.\nShape (a well-formed absolute HTTP(S) URI) is independent of that\nderived allowlist and is validated here. Distinct from Audiences: a\nresource permission does not imply the same value is also a permitted\ntoken audience, or vice versa.",
+                        "description": "Resources are RFC 8707 resource indicators this association may\nrequest. Must be a subset of the server's allowed_audiences allowlist,\nwhich is derived at reconcile time and not available on this CRD, so\nallowlist membership is validated at reconcile time, not admission.\nShape (a well-formed absolute HTTP(S) URI) is independent of that\nderived allowlist and is validated here. Required, with at least one\nentry, for every association: client_credentials and token exchange each\ntake exactly one resource per request and grant it as the token\naudience.",
                         "items": {
                           "maxLength": 2048,
                           "minLength": 1,
@@ -458,7 +474,6 @@
                       }
                     },
                     "required": [
-                      "audiences",
                       "clientId",
                       "methods",
                       "principalPattern",
@@ -470,6 +485,10 @@
                       {
                         "message": "principalPattern path must not contain . or .. segments",
                         "rule": "self.principalPattern.split('/').all(segment, segment != '.' && segment != '..')"
+                      },
+                      {
+                        "message": "resources is required",
+                        "rule": "has(self.resources) && size(self.resources) > 0"
                       }
                     ]
                   },
@@ -636,12 +655,12 @@
             },
             "insecureAllowConfidentialOverLoopbackHTTP": {
               "default": false,
-              "description": "InsecureAllowConfidentialOverLoopbackHTTP opts in to confidential\nDynamic Client Registration (DCR) and delegate clients when issuer is a\nplain-HTTP loopback URL (e.g. \"http://localhost:8080\"). Without this\nflag, that combination is rejected at reconcile time: a loopback http://\nissuer is normally fine for local development since the traffic never\nleaves the machine, but confidential clients send secrets over cleartext.\nForcing TLS onto every loopback deployment instead would just push\noperators toward insecureAllowHTTP, which is worse: that also disables\nthe non-loopback host check. Has no effect when there are no confidential\nclients or issuer is https.\n\nprivate_key_jwt registration has no equivalent flag or transport\nrestriction: unlike confidential registration, it never returns a\nclient_secret (or any other secret) in the DCR response, so there is\nnothing here for cleartext HTTP to expose.",
+              "description": "InsecureAllowConfidentialOverLoopbackHTTP opts in to confidential\nDynamic Client Registration (DCR), delegate clients and SPIFFE\nassociations that have spiffe_jwt in methods and client_credentials in\ngrantTypes on the same association, when issuer is a plain-HTTP loopback\nURL (e.g. \"http://localhost:8080\"). Without this\nflag, that combination is rejected at admission, and reconcile additionally\nrequires the issuer host to be loopback. A loopback http://\nissuer is normally fine for local development since the traffic never\nleaves the machine, but confidential clients send secrets over cleartext.\nForcing TLS onto every loopback deployment instead would just push\noperators toward insecureAllowHTTP, which is worse: that also disables\nthe non-loopback host check. Has no effect when there are no confidential\nclients or issuer is https.\n\nprivate_key_jwt registration has no equivalent flag or transport\nrestriction: unlike confidential registration, it never returns a\nclient_secret (or any other secret) in the DCR response, so there is\nnothing here for cleartext HTTP to expose.",
               "type": "boolean"
             },
             "insecureAllowHTTP": {
               "default": false,
-              "description": "InsecureAllowHTTP permits an http:// issuer URL for non-localhost hosts.\nOnly set this for in-cluster Kubernetes deployments where traffic between\npods traverses a trusted network (e.g. the in-cluster service mesh).\nProduction deployments reachable outside the cluster MUST use https://.\n\nOn VirtualMCPServer: when false (the default), http:// issuers for non-localhost\nhosts are rejected at reconcile time with an AuthServerConfigValidated=False condition.\n\nOn MCPServer and MCPRemoteProxy (via MCPExternalAuthConfig): this field is\nstructurally present but enforcement is deferred to pod startup via Config.Validate();\na misconfigured issuer will cause the pod to crash at startup rather than surface\nas an operator condition.\n\nOne combination is rejected at admission on all three CRDs regardless of the\nabove: setting this field alongside confidential client registration or\ndelegate clients, which would issue or use client secrets in cleartext over\nan unauthenticated endpoint (see the XValidation rule on\nEmbeddedAuthServerConfig).",
+              "description": "InsecureAllowHTTP permits an http:// issuer URL for non-localhost hosts.\nOnly set this for in-cluster Kubernetes deployments where traffic between\npods traverses a trusted network (e.g. the in-cluster service mesh).\nProduction deployments reachable outside the cluster MUST use https://.\n\nOn VirtualMCPServer: when false (the default), http:// issuers for non-localhost\nhosts are rejected at reconcile time with an AuthServerConfigValidated=False condition.\n\nOn MCPServer and MCPRemoteProxy (via MCPExternalAuthConfig): this field is\nstructurally present but enforcement is deferred to pod startup via Config.Validate();\na misconfigured issuer will cause the pod to crash at startup rather than surface\nas an operator condition.\n\nOne combination is rejected at admission on all three CRDs regardless of the\nabove: setting this field alongside confidential client registration or\ndelegate clients, or a SPIFFE association that has spiffe_jwt in methods and\nclient_credentials in grantTypes on the same association, which would issue\nor use client secrets or JWT-SVIDs in cleartext over an unauthenticated\nendpoint (see the XValidation rule on\nEmbeddedAuthServerConfig).",
               "type": "boolean"
             },
             "issuer": {
@@ -1444,6 +1463,12 @@
                       "dcrConfig": {
                         "description": "DCRConfig enables RFC 7591 Dynamic Client Registration against the upstream\nauthorization server. When set, the client credentials are obtained at\nruntime rather than being pre-provisioned, and ClientID must be left empty.\nMutually exclusive with ClientID.",
                         "properties": {
+                          "clientName": {
+                            "description": "ClientName is the optional RFC 7591 \"client_name\" registration metadata\nsent when ToolHive registers with the upstream. When empty, ToolHive\nregisters as \"ToolHive MCP Client\". It is display-only metadata: the\nupstream shows it on its authorization screen, and it is never used as\na key. Changing it does not rename an already-registered client; the\nnew value applies only the next time ToolHive registers a fresh client,\nfor example after rotating via RotationKey, or when the upstream\nrejects the cached registration. Names with leading or trailing\nwhitespace, or containing control or format characters, are rejected.",
+                            "maxLength": 256,
+                            "pattern": "^[^\\p{Cc}\\p{Cf}\\p{Z}]([^\\p{Cc}\\p{Cf}]*[^\\p{Cc}\\p{Cf}\\p{Z}])?$",
+                            "type": "string"
+                          },
                           "discoveryUrl": {
                             "description": "DiscoveryURL is the RFC 8414 / OIDC Discovery document URL. The resolver\nissues a single GET against this URL (no well-known-path fallback) and\nreads registration_endpoint, authorization_endpoint, token_endpoint,\ntoken_endpoint_auth_methods_supported, and scopes_supported from the\nresponse.\nMutually exclusive with RegistrationEndpoint.\nHTTPS is required because the registration endpoint resolved from this\ndocument carries the initial access token and the issued client_secret\n(RFC 7591 §3, RFC 8414 §3). MaxLength is a defensive size cap (etcd\nobject budget, regex evaluation cost) and matches the conventional URL\nlength cap.",
                             "maxLength": 2048,
@@ -1769,6 +1794,12 @@
                       "dcrConfig": {
                         "description": "DCRConfig enables RFC 7591 Dynamic Client Registration. When set, ClientID\nand ClientSecretRef must be omitted. If neither discoveryUrl nor\nregistrationEndpoint is set, discovery is derived from issuerUrl.",
                         "properties": {
+                          "clientName": {
+                            "description": "ClientName is the optional RFC 7591 \"client_name\" registration metadata\nsent when ToolHive registers with the upstream. When empty, ToolHive\nregisters as \"ToolHive MCP Client\". It is display-only metadata: the\nupstream shows it on its authorization screen, and it is never used as\na key. Changing it does not rename an already-registered client; the\nnew value applies only the next time ToolHive registers a fresh client,\nfor example after rotating via RotationKey, or when the upstream\nrejects the cached registration. Names with leading or trailing\nwhitespace, or containing control or format characters, are rejected.",
+                            "maxLength": 256,
+                            "pattern": "^[^\\p{Cc}\\p{Cf}\\p{Z}]([^\\p{Cc}\\p{Cf}]*[^\\p{Cc}\\p{Cf}\\p{Z}])?$",
+                            "type": "string"
+                          },
                           "discoveryUrl": {
                             "description": "DiscoveryURL is the RFC 8414 / OIDC Discovery document URL. The resolver\nissues a single GET against this URL (no well-known-path fallback) and\nreads registration_endpoint, authorization_endpoint, token_endpoint,\ntoken_endpoint_auth_methods_supported, and scopes_supported from the\nresponse.\nMutually exclusive with RegistrationEndpoint.\nHTTPS is required because the registration endpoint resolved from this\ndocument carries the initial access token and the issued client_secret\n(RFC 7591 §3, RFC 8414 §3). MaxLength is a defensive size cap (etcd\nobject budget, regex evaluation cost) and matches the conventional URL\nlength cap.",
                             "maxLength": 2048,
@@ -2032,16 +2063,16 @@
               "rule": "!has(self.inboundGrants) || !has(self.inboundGrants.spiffeClientAuth) || self.inboundGrants.spiffeClientAuth.all(client, !client.clientId.matches('^[A-Za-z][A-Za-z0-9+.-]*://.+'))"
             },
             {
-              "message": "insecureAllowHTTP cannot be combined with confidential client registration or delegateClients; client secrets would be issued or used in cleartext over an unauthenticated endpoint",
-              "rule": "!(has(self.insecureAllowHTTP) && self.insecureAllowHTTP && ((has(self.allowConfidentialClientRegistration) && self.allowConfidentialClientRegistration) || (has(self.delegateClients) && size(self.delegateClients) > 0) || (has(self.inboundGrants) && has(self.inboundGrants.tokenExchange) && has(self.inboundGrants.tokenExchange.delegateClients) && size(self.inboundGrants.tokenExchange.delegateClients) > 0)))"
+              "message": "insecureAllowHTTP cannot be combined with confidential client registration, delegateClients or JWT-SVID SPIFFE associations that grant client_credentials; client secrets or JWT-SVIDs would be issued or used in cleartext over an unauthenticated endpoint",
+              "rule": "!(has(self.insecureAllowHTTP) && self.insecureAllowHTTP && ((has(self.allowConfidentialClientRegistration) && self.allowConfidentialClientRegistration) || (has(self.delegateClients) && size(self.delegateClients) > 0) || (has(self.inboundGrants) && has(self.inboundGrants.tokenExchange) && has(self.inboundGrants.tokenExchange.delegateClients) && size(self.inboundGrants.tokenExchange.delegateClients) > 0) || (has(self.inboundGrants) && has(self.inboundGrants.spiffeClientAuth) && self.inboundGrants.spiffeClientAuth.exists(a, 'spiffe_jwt' in a.methods && has(a.grantTypes) && 'client_credentials' in a.grantTypes))))"
             },
             {
               "message": "forceConfidentialRedirectUris requires allowConfidentialClientRegistration to be true",
               "rule": "(!has(self.forceConfidentialRedirectUris) || size(self.forceConfidentialRedirectUris) == 0) || (has(self.allowConfidentialClientRegistration) && self.allowConfidentialClientRegistration)"
             },
             {
-              "message": "confidential client registration or delegateClients with an HTTP issuer require insecureAllowConfidentialOverLoopbackHTTP to be explicitly enabled; the issuer must still be loopback",
-              "rule": "!self.issuer.startsWith('http://') || (has(self.insecureAllowConfidentialOverLoopbackHTTP) && self.insecureAllowConfidentialOverLoopbackHTTP) || ((!has(self.allowConfidentialClientRegistration) || !self.allowConfidentialClientRegistration) && (!has(self.delegateClients) || size(self.delegateClients) == 0) && (!has(self.inboundGrants) || !has(self.inboundGrants.tokenExchange) || !has(self.inboundGrants.tokenExchange.delegateClients) || size(self.inboundGrants.tokenExchange.delegateClients) == 0))"
+              "message": "confidential client registration, delegateClients or JWT-SVID SPIFFE associations that grant client_credentials with an HTTP issuer require insecureAllowConfidentialOverLoopbackHTTP to be explicitly enabled; the issuer must still be loopback",
+              "rule": "!self.issuer.startsWith('http://') || (has(self.insecureAllowConfidentialOverLoopbackHTTP) && self.insecureAllowConfidentialOverLoopbackHTTP) || ((!has(self.allowConfidentialClientRegistration) || !self.allowConfidentialClientRegistration) && (!has(self.delegateClients) || size(self.delegateClients) == 0) && (!has(self.inboundGrants) || !has(self.inboundGrants.tokenExchange) || !has(self.inboundGrants.tokenExchange.delegateClients) || size(self.inboundGrants.tokenExchange.delegateClients) == 0) && !(has(self.inboundGrants) && has(self.inboundGrants.spiffeClientAuth) && self.inboundGrants.spiffeClientAuth.exists(a, 'spiffe_jwt' in a.methods && has(a.grantTypes) && 'client_credentials' in a.grantTypes)))"
             },
             {
               "message": "canonical tokenExchange conflicts with legacy delegateClients or RFC 8693 trusted issuer policy",

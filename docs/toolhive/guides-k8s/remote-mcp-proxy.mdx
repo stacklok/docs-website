@@ -185,6 +185,35 @@ When you apply an `MCPRemoteProxy` resource, here's what happens:
 
 :::
 
+#### Size the proxy container
+
+The operator fills in any CPU or memory request or limit you leave unset with
+these defaults:
+
+|          | CPU    | Memory  |
+| -------- | ------ | ------- |
+| Requests | `50m`  | `64Mi`  |
+| Limits   | `200m` | `256Mi` |
+
+Values you set in `spec.resources`, or on the `toolhive` container through
+[`podTemplateSpec`](#customize-the-remote-proxy-pod), override the defaults
+field by field, and `podTemplateSpec` takes precedence over `spec.resources`. If
+you set a limit without a request, Kubernetes uses the limit as the request. If
+you set a request above the default limit, the limit rises to match it.
+
+A busy proxy, especially one that runs the embedded authorization server, can
+use more than 256Mi of memory. Check the pod's memory usage and set
+`spec.resources.limits.memory` explicitly so the pod isn't OOMKilled.
+
+:::info[Changed in v0.67.0]
+
+`MCPRemoteProxy` containers used to run without default requests or limits.
+After the operator upgrade, each proxy that leaves a resource field unset
+restarts once and gets the 256Mi memory limit. Before you upgrade, set explicit
+limits on any proxy whose memory usage is near or above 256Mi.
+
+:::
+
 ### Authentication configuration
 
 The `oidcConfigRef` field references an MCPOIDCConfig resource that validates
@@ -1100,7 +1129,8 @@ Typical causes:
 - The remote server uses a private CA but `caBundleRef` is missing or points to
   a Secret/ConfigMap that doesn't exist.
 - The pod was OOMKilled. `kubectl describe pod` shows `Reason: OOMKilled` in the
-  last terminated state - raise `resources.limits`.
+  last terminated state - raise `resources.limits.memory` above the 256Mi
+  default. See [Size the proxy container](#size-the-proxy-container).
 
 </details>
 
