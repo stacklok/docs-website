@@ -149,6 +149,66 @@ ToolHive mints a token for a synthetic client derived deterministically from the
 assertion's issuer and subject. There's no delegation and nothing to
 pre-register.
 
+ToolHive refuses an assertion that carries a `cnf` (confirmation) claim, with
+any value. A `cnf` claim means the issuer bound the assertion to a key, and
+ToolHive can't verify that proof of possession, so it won't redeem the assertion
+as a plain bearer credential.
+
+## Limit which assertion forms an issuer accepts
+
+The JWT-bearer grant accepts two forms of signed assertion from a trusted
+issuer: a plain RFC 7523 assertion, as shown above, and an Identity Assertion
+JWT Authorization Grant (ID-JAG), the assertion an IdP mints for
+[cross-application access](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-identity-assertion-authz-grant).
+By default, an issuer policy accepts both, so trusting an issuer for one form
+also trusts it for the other.
+
+Set `acceptedAssertionTypes` on the issuer policy to limit it to one form:
+
+```yaml title="VirtualMCPServer: issuer policy limited to ID-JAG"
+inboundGrants:
+  jwtBearer:
+    issuerPolicies:
+      - issuerRef: okta-issuer
+        # highlight-next-line
+        acceptedAssertionTypes: ['id_jag']
+        subjectBindings:
+          - subject: '<USER_SUBJECT>'
+            allowedResources:
+              - https://vmcp.example.com/mcp-resource
+```
+
+| Value                      | Effect                                                              |
+| -------------------------- | ------------------------------------------------------------------- |
+| omitted                    | ToolHive accepts both plain assertions and ID-JAGs from the issuer. |
+| `['jwt_bearer']`           | ToolHive accepts only plain assertions from the issuer.             |
+| `['id_jag']`               | ToolHive accepts only ID-JAGs from the issuer.                      |
+| `['jwt_bearer', 'id_jag']` | Same as omitting the field.                                         |
+
+An assertion of a form the issuer doesn't accept gets `invalid_grant` with the
+same "issuer is not enabled for this grant" hint as an unknown issuer.
+
+Use `['id_jag']` for an issuer that acts as the IdP for cross-application
+access. The plain grant needs no client credentials, so without this restriction
+any other JWT that IdP signs for a bound subject could be redeemed on it.
+Subject bindings apply to both forms: a binding you add for an ID-JAG's subject
+also authorizes a plain assertion for that subject whenever `jwt_bearer` is
+accepted.
+
+Redeeming an ID-JAG has two requirements that the plain grant doesn't:
+
+- The redeeming client must authenticate as a confidential client (for example,
+  with `client_secret_basic`, `client_secret_post`, or `private_key_jwt`). A
+  public client, or a request with no client credentials, gets HTTP 401
+  `invalid_client` with the reason `client_authentication_required`, and the
+  ID-JAG stays unused so the right client can still redeem it.
+- The ID-JAG specification sets an ID-JAG's `aud` to this authorization server's
+  issuer identifier. With `acceptedAudiences` omitted, ToolHive accepts either
+  the issuer or the token endpoint URL as an ID-JAG's `aud`. When you list
+  `id_jag` explicitly, the server fails to start if `acceptedAudiences` is set
+  but doesn't include the issuer, or if `acceptedAudiences` is omitted and the
+  issuer is also listed as an allowed resource.
+
 ## Next steps
 
 - [Delegate agent identity with token exchange](./delegate-agent-identity.mdx)
@@ -182,11 +242,13 @@ an `error_description` that starts with the reason code `invalid_assertion`,
 followed by a hint. A client can read the reason code to decide how to respond
 without parsing the hint.
 
-| Error                                                                                                | Likely cause                                                                                                                                                                                      |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invalid_grant`: "invalid_assertion: The JWT bearer assertion issuer is not enabled for this grant." | The assertion's `iss` doesn't match a `trustedIssuers` entry with an `inboundGrants.jwtBearer.issuerPolicies` entry configured.                                                                   |
-| `invalid_grant`: "The JWT bearer assertion subject is not configured for this grant."                | The assertion's `sub` has no matching entry in `issuerPolicies[].subjectBindings`.                                                                                                                |
-| `invalid_target`                                                                                     | The `resource` parameter isn't in the matched subject binding's `allowedResources`.                                                                                                               |
-| `invalid_grant`: "invalid_assertion: The JWT bearer assertion has already been used."                | The assertion's replay key (its `jti`, or a hash of the assertion when `jti` is absent) was already consumed.                                                                                     |
-| `invalid_grant`: "invalid_assertion: The JWT bearer assertion exceeds the configured maximum age."   | The assertion's issued lifetime (`exp` minus `iat`) is longer than the issuer policy's `maxAssertionAge`. Request a shorter-lived assertion, or raise `maxAssertionAge`.                          |
-| HTTP 503 `temporarily_unavailable`: "issuer_unavailable"                                             | ToolHive couldn't fetch the issuer's signing keys, so it never evaluated the assertion. Check that the issuer's JWKS endpoint is reachable from the authorization server, then retry the request. |
+| Error                                                                                                         | Likely cause                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_grant`: "invalid_assertion: The JWT bearer assertion issuer is not enabled for this grant."          | The assertion's `iss` doesn't match a `trustedIssuers` entry with an `inboundGrants.jwtBearer.issuerPolicies` entry configured, or the issuer policy's `acceptedAssertionTypes` excludes this assertion form. |
+| `invalid_grant`: "invalid_assertion: The JWT bearer assertion must not carry a 'cnf' claim."                  | The assertion is key-bound with a `cnf` claim. Ask the issuer for an assertion without `cnf`.                                                                                                                 |
+| HTTP 401 `invalid_client`: "client_authentication_required: The ID-JAG grant requires client authentication." | An ID-JAG was presented by a public client or without client credentials. Register the redeeming client as confidential and authenticate it on the request.                                                   |
+| `invalid_grant`: "The JWT bearer assertion subject is not configured for this grant."                         | The assertion's `sub` has no matching entry in `issuerPolicies[].subjectBindings`.                                                                                                                            |
+| `invalid_target`                                                                                              | The `resource` parameter isn't in the matched subject binding's `allowedResources`.                                                                                                                           |
+| `invalid_grant`: "invalid_assertion: The JWT bearer assertion has already been used."                         | The assertion's replay key (its `jti`, or a hash of the assertion when `jti` is absent) was already consumed.                                                                                                 |
+| `invalid_grant`: "invalid_assertion: The JWT bearer assertion exceeds the configured maximum age."            | The assertion's issued lifetime (`exp` minus `iat`) is longer than the issuer policy's `maxAssertionAge`. Request a shorter-lived assertion, or raise `maxAssertionAge`.                                      |
+| HTTP 503 `temporarily_unavailable`: "issuer_unavailable"                                                      | ToolHive couldn't fetch the issuer's signing keys, so it never evaluated the assertion. Check that the issuer's JWKS endpoint is reachable from the authorization server, then retry the request.             |
