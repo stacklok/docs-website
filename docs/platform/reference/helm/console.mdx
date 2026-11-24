@@ -11,8 +11,8 @@ Configure the console chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `toolhive-cloud-ui`. Chart version: `0.30.0`. Generated from the platform
-source at `v0.30.0`.
+Chart: `toolhive-cloud-ui`. Chart version: `0.31.1`. Generated from the platform
+source at `v0.31.1`.
 
 ## Values
 
@@ -22,8 +22,8 @@ source at `v0.30.0`.
 
 **Default:** `1`
 
-Number of replicas for the deployment. Ignored when ha.enabled or
-autoscaling.enabled is true.
+Number of replicas for the deployment. Ignored when `ha.enabled` or
+`autoscaling.enabled` is true.
 
 ### `ha`
 
@@ -43,7 +43,7 @@ replicaCount: 2
 </details>
 
 High availability: replica count, PodDisruptionBudget and anti-affinity
-together. The render fails if ha.enabled is true with fewer than 2 replicas,
+together. The render fails if `ha.enabled` is true with fewer than 2 replicas,
 since a PDB without spare replicas blocks every node drain.
 
 ### `ha.enabled`
@@ -52,8 +52,8 @@ since a PDB without spare replicas blocks every node drain.
 
 **Default:** `false`
 
-Enable HA mode: uses ha.replicaCount, creates a PodDisruptionBudget, and spreads
-replicas across nodes and zones.
+Enable HA mode: uses `ha.replicaCount`, creates a PodDisruptionBudget, and
+spreads replicas across nodes and zones.
 
 ### `ha.replicaCount`
 
@@ -61,7 +61,7 @@ replicas across nodes and zones.
 
 **Default:** `2`
 
-Replica count used when ha.enabled is true.
+Replica count used when `ha.enabled` is true.
 
 ### `ha.podDisruptionBudget.minAvailable`
 
@@ -77,7 +77,7 @@ Minimum number of pods that must remain available.
 
 **Default:** `"soft"`
 
-Node anti-affinity: "soft" (preferred) or "hard" (required). Zone spreading is
+Node anti-affinity: `soft` (preferred) or `hard` (required). Zone spreading is
 always preferred only.
 
 ### `image.repository`
@@ -101,7 +101,7 @@ Image repository. Override to pull from your own mirror.
 
 **Default:** `""`
 
-Image tag (defaults to .Chart.AppVersion when empty).
+Image tag. Empty uses the chart's `appVersion`.
 
 ### `image.pullPolicy`
 
@@ -109,7 +109,7 @@ Image tag (defaults to .Chart.AppVersion when empty).
 
 **Default:** `"IfNotPresent"`
 
-Pull from registry if available, use local image if not
+Image pull policy.
 
 ### `imagePullSecrets`
 
@@ -232,7 +232,7 @@ Security context for the container
 
 **Default:** `{"nextCache":{"sizeLimit":""},"tmp":{"sizeLimit":""}}`
 
-Size limits for the writable emptyDir volumes at /tmp and /app/.next/cache,
+Size limits for the writable emptyDir volumes at `/tmp` and `/app/.next/cache`,
 which Next.js needs under the read-only root filesystem. Empty means unbounded.
 
 ### `service.type`
@@ -261,11 +261,12 @@ Container target port
 
 ### `service.nodePort`
 
-**Type:** `string`
+**Type:** `int`
 
 **Default:** `nil`
 
-NodePort (only used if type is NodePort, range: 30000-32767)
+Node port, used only when `type` is `NodePort` (range `30000`-`32767`). Empty
+lets Kubernetes assign one.
 
 ### `resources`
 
@@ -429,8 +430,9 @@ attaches a deny-all policy to pods that have none.
 
 **Default:** `true`
 
-Allow all egress traffic. Every destination is a URL you configure, so set false
-and list them in `egress` to lock egress down.
+Allow all egress traffic. Every destination is a URL you configure, so set
+`false` and list them in `egress` to lock egress down. While this is `true`, the
+`egress` list is ignored.
 
 ### `networkPolicy.egress`
 
@@ -438,9 +440,11 @@ and list them in `egress` to lock egress down.
 
 **Default:** `[]`
 
-Egress rules (NetworkPolicyEgressRule shape) applied when allowExternalEgress is
-false. Must cover DNS and every configured destination; a missing one fails
-silently.
+Egress rules (NetworkPolicyEgressRule shape) applied when `allowExternalEgress`
+is `false`. Must cover DNS and every configured destination; a missing one fails
+silently at run time. With the policy enabled, the render fails when this is
+empty and `allowExternalEgress` is `false`, because the pod would have no egress
+at all.
 
 ### `apiBaseUrl`
 
@@ -449,8 +453,8 @@ silently.
 **Default:** `""`
 
 Registry Server API base URL. Leave it empty: it defaults to
-global.stacklok.registryServer.url, or to the registry-api Service while
-global.stacklok.registryServer.enabled is true. A set value that differs from
+`global.stacklok.registryServer.url`, or to the `registry-api` Service while
+`global.stacklok.registryServer.enabled` is true. A set value that differs from
 that URL fails the render. Set it only while neither global key is set.
 Enterprise Manager's `registry.server_api_url` config wins over it at run time;
 with neither, the registry-backed pages have no backend.
@@ -471,7 +475,16 @@ the pods after changing the CA bundle's contents.
 
 **Default:** `[]`
 
-Additional OIDC providers. Empty means single-provider mode.
+Additional OIDC providers users can sign in with, beside the primary provider.
+Each entry needs `issuerUrl`, `clientId` and `clientSecret`, and takes an
+optional `scopes` (comma-separated; empty uses the primary provider's scopes).
+The console skips an entry missing a required field and logs an error. Register
+the redirect URI `<console URL>/api/auth/oauth2/callback/oidc-<n>` with each
+provider, where the console URL is the effective `betterAuth.url` and `<n>` is
+the entry's position plus 1 (`oidc-2` for the first entry). The whole list,
+including each `clientSecret`, is written into the Deployment as the plain-text
+environment variable `OIDC_ADDITIONAL_PROVIDERS`, readable by anyone who can
+read the Deployment. Empty means single-provider mode.
 
 ### `betterAuth`
 
@@ -480,7 +493,9 @@ Additional OIDC providers. Empty means single-provider mode.
 **Default:**
 `{"existingSecret":"","existingSecretKey":"secret","secret":"","url":""}`
 
-Better Auth session management
+Console sign-in sessions. The secret signs and encrypts the console's session
+cookies, which carry the user's OIDC tokens. Changing it invalidates every
+existing session.
 
 ### `betterAuth.secret`
 
@@ -507,7 +522,7 @@ Existing Secret holding the token encryption secret. Takes precedence over
 
 **Default:** `"secret"`
 
-Key within existingSecret holding the token encryption secret.
+Key within `existingSecret` holding the token encryption secret.
 
 ### `betterAuth.url`
 
@@ -516,7 +531,7 @@ Key within existingSecret holding the token encryption secret.
 **Default:** `""`
 
 Public, browser-reachable URL of the console, used for authentication callbacks.
-Required. Empty inherits global.stacklok.consoleUrl.
+Required. Empty inherits `global.stacklok.consoleUrl`.
 
 ### `enterpriseManagerUrl`
 
@@ -525,8 +540,8 @@ Required. Empty inherits global.stacklok.consoleUrl.
 **Default:** `""`
 
 Base URL of Enterprise Manager. Required for the administration pages, which
-fail without it. Empty inherits global.stacklok.enterpriseManager.url. Once set,
-only an active Directory profile may sign in.
+fail without it. Empty inherits `global.stacklok.enterpriseManager.url`. Once
+set, only an active Directory profile may sign in.
 
 ### `gatewayProxyUrl`
 
@@ -537,8 +552,8 @@ only an active Directory profile may sign in.
 Public AI Gateway proxy URL shown in the CLI setup command and the "My Usage"
 banner. It is also the console's gateway backend (model discovery, liveness), so
 it must reach AI Gateway v2. Empty inherits `global.stacklok.aiGatewayV2.url`
-while AI Gateway v2 is installed. The config server's `gateway.proxy_url` wins
-over both when set.
+while AI Gateway v2 is installed. Enterprise Manager's `gateway.proxy_url`
+setting wins over both when set.
 
 ### `connectorGatewayUrl`
 
@@ -546,10 +561,10 @@ over both when set.
 
 **Default:** `""`
 
-Connector Gateway control-plane API URL, e.g.
-http://&#60;release&#62;-connector-gateway-control-plane.&#60;namespace&#62;:8090
-(not the data-plane Service). The Connectors pages also need
-global.stacklok.connectorGateway.enabled. The value is `tpl`-evaluated.
+Connector Gateway control-plane API URL, for example
+`http://<release>-connector-gateway-control-plane.<namespace>:8090` (not the
+data-plane Service). The Connectors pages also need
+`global.stacklok.connectorGateway.enabled`. The value is `tpl`-evaluated.
 
 ### `frontDoorUrl`
 
@@ -557,10 +572,10 @@ global.stacklok.connectorGateway.enabled. The value is `tpl`-evaluated.
 
 **Default:** `""`
 
-Workspace Front Door API URL, e.g.
-http://&#60;release&#62;-workspace.&#60;namespace&#62;:8080, read server-side by
-the Workspace pages. Empty leaves Front Door unconfigured, and the Workspace
-pages then report it as unavailable. The value is `tpl`-evaluated.
+Workspace Front Door API URL, for example
+`http://<release>-workspace.<namespace>:8080`, read server-side by the Workspace
+pages. Empty leaves Front Door unconfigured, and the Workspace pages then report
+it as unavailable. The value is `tpl`-evaluated.
 
 ### `thvCliOidcIssuerUrl`
 
@@ -569,7 +584,7 @@ pages then report it as unavailable. The value is `tpl`-evaluated.
 **Default:** `""`
 
 OIDC issuer URL used by the console's Stacklok CLI setup instructions. Set this
-and thvCliOidcClientId to enable the setup wizard.
+and `thvCliOidcClientId` to enable the setup wizard.
 
 ### `thvCliOidcClientId`
 
@@ -578,7 +593,7 @@ and thvCliOidcClientId to enable the setup wizard.
 **Default:** `""`
 
 Public OAuth client ID used by the Stacklok CLI with PKCE. Set this and
-thvCliOidcIssuerUrl to enable the console's setup wizard.
+`thvCliOidcIssuerUrl` to enable the console's setup wizard.
 
 ### `thvCliOidcAudience`
 
@@ -586,8 +601,8 @@ thvCliOidcIssuerUrl to enable the console's setup wizard.
 
 **Default:** `""`
 
-Optional OAuth audience included in the CLI setup command. Set it when the LLM
-gateway requires a specific JWT audience; empty omits the option.
+Optional OAuth audience included in the CLI setup command. Set it when the AI
+Gateway requires a specific JWT audience; empty omits the option.
 
 ### `thvCliOidcCallbackPort`
 
@@ -596,7 +611,7 @@ gateway requires a specific JWT audience; empty omits the option.
 **Default:** `""`
 
 Local OAuth callback port included in the CLI setup command. Set it to match the
-redirect URI registered with your IdP; empty uses the CLI default of 8666.
+redirect URI registered with your IdP; empty uses the CLI default of `8666`.
 
 ### `thvCliDownloadUrl`
 
@@ -614,7 +629,7 @@ team. Must be an http(s) URL.
 
 **Default:** `true`
 
-Show the Stacklok CLI setup steps on the Clients page. Set false when users
+Show the Stacklok CLI setup steps on the Clients page. Set `false` when users
 should not install the CLI: the page then offers only the gateway URL and an API
 key.
 
@@ -634,8 +649,9 @@ Branding. Prefer the file-based `config` block; `config.json` values win over
 
 **Default:** `{"enabled":false,"json":{}}`
 
-Branding JSON mounted at `/etc/branding/config.json`: `app_name`, `logo_url`,
-`favicon_url` and `design_tokens`.
+File-based branding. Set `enabled: true` and put the branding JSON under `json`,
+with the fields `app_name`, `logo_url`, `favicon_url` and `design_tokens`. The
+chart writes it to a ConfigMap mounted at `/etc/branding/config.json`.
 
 ### `branding.name`
 
@@ -643,7 +659,51 @@ Branding JSON mounted at `/etc/branding/config.json`: `app_name`, `logo_url`,
 
 **Default:** `""`
 
-Simple overrides without a ConfigMap. Overridden by `config.json`.
+Product name shown in the console, without a ConfigMap. Overridden by `app_name`
+in `config.json`.
+
+### `branding.logoUrl`
+
+**Type:** `string`
+
+**Default:** `""`
+
+URL of the logo shown in the console, without a ConfigMap. Overridden by
+`logo_url` in `config.json`.
+
+### `branding.faviconUrl`
+
+**Type:** `string`
+
+**Default:** `""`
+
+URL of the browser favicon, without a ConfigMap. Overridden by `favicon_url` in
+`config.json`.
+
+### `localSpeechToTextEnabled`
+
+**Type:** `bool`
+
+**Default:** `true`
+
+Workspace chat dictation (voice typing) recognised on the user's device, where
+the browser promises it (`SpeechRecognition.processLocally`); the console cannot
+verify that promise. The browser downloads its language pack, model data and not
+audio, on the first click. Set `false` to stop on-device dictation; with
+`thirdPartySpeechToTextEnabled` also `false`, the console offers no dictation.
+
+### `thirdPartySpeechToTextEnabled`
+
+**Type:** `bool`
+
+**Default:** `false`
+
+Workspace chat dictation through the browser's own speech recognition, which may
+send the user's audio to a service of the browser's or OS's choosing (Google for
+Chrome), with no control over or trace of where it goes. On-device recognition
+is still used wherever `localSpeechToTextEnabled` allows it and the browser
+offers it. Set `true` to offer dictation in browsers that cannot recognise
+speech on the device.
 
 ### `env`
 
