@@ -3,43 +3,37 @@ title: Review tool usage
 sidebar_label: Tool usage
 description:
   Find the busiest, least-used, and growing Connector Gateway connectors and
-  tools, and turn on tool call recording that populates the Tool Usage screen.
+  tools, and understand how tool call recording populates the Tool Usage screen.
 ---
 
 The **Tool Usage** screen in the console summarizes tool calls through the
 Connector Gateway, so you can see which connectors and tools your organization
-relies on, which go unused, and how usage changes over time. It shows data only
-after you turn on tool call recording, which is off by default. The screen
-reports tool calls only. To review model traffic, see the
+relies on, which go unused, and how usage changes over time. The screen reports
+tool calls only. To review model traffic, see the
 [AI Gateway](../ai-gateway/index.mdx).
 
-## Record tool calls
+## How tool calls are recorded
 
-After returning each tool result, the gateway queues a record of the call in
-Redis or Valkey. A background sender then delivers the queued records to the
-Enterprise Manager, which stores them for the **Tool Usage** screen. Turn on the
-queue and the token the sender authenticates with:
-
-```yaml title="values.yaml"
-connector-gateway:
-  enterpriseConfig:
-    outbox:
-      enabled: true
-  meteringTokenProjection:
-    enabled: true
-```
+When the Connector Gateway is enabled, it records every tool call with no extra
+configuration. After returning each tool result, the gateway queues a record of
+the call in Redis or Valkey. A background sender then delivers the queued
+records to the Enterprise Manager, which stores them for the **Tool Usage**
+screen.
 
 The sender reuses the gateway's Enterprise Manager connection from
 `enterpriseConfig.directory`, and the queue uses the Redis or Valkey instance
-the gateway already needs. The platform chart adds the gateway's ServiceAccount
-to the Enterprise Manager's metering allowlist, and the Enterprise Manager
-validates the token against the `clusterOidcIssuer` you set in
+the gateway already needs. The chart projects a ServiceAccount token for the
+sender to authenticate with and adds the gateway's ServiceAccount to the
+Enterprise Manager's metering allowlist. The Enterprise Manager validates the
+token against the `clusterOidcIssuer` you set in
 [Connect the gateway to the Enterprise Manager](../platform/enterprise-platform/configure-connector-gateway.mdx#connect-the-gateway-to-the-enterprise-manager).
+To tune the queue length or override the metering address and token, see the
+`enterpriseConfig` entry in the
+[Connector Gateway chart reference](../platform/reference/helm/connector-gateway.mdx#enterpriseconfig).
 
 Queued records survive gateway restarts only if your Redis or Valkey instance
 does, so use a Redis or Valkey deployment with persistence and replication when
-you rely on these numbers. The chart refuses to render when `outbox.enabled` is
-`true` and `meteringTokenProjection.enabled` is `false`.
+you rely on these numbers.
 
 ## Read the screen
 
@@ -113,12 +107,8 @@ Users see a summary of their own calls on the **Usage** tab under **Gateways** >
 <details>
 <summary>The screen shows "No tool calls in this window"</summary>
 
-Check that tool call recording is on, as described in
-[Record tool calls](#record-tool-calls). The gateway records only calls made
-after you turn it on.
-
-If recording is on, check the gateway's logs for errors delivering records to
-the Enterprise Manager:
+The screen shows only calls made through the gateway. Check the gateway's logs
+for errors delivering records to the Enterprise Manager:
 
 ```bash
 kubectl logs deployment/stacklok-enterprise-connector-gateway -n stacklok-system
