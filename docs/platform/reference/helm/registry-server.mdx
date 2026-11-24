@@ -12,8 +12,8 @@ Configure the Registry Server chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `toolhive-registry-server`. Chart version: `0.30.0`. Generated from the
-platform source at `v0.30.0`.
+Chart: `toolhive-registry-server`. Chart version: `0.31.1`. Generated from the
+platform source at `v0.31.1`.
 
 ## Values
 
@@ -34,6 +34,50 @@ renders only above one replica.
 **Default:** `1`
 
 Minimum number of registry-server pods that must remain available.
+
+### `upstream`
+
+**Type:** `object`
+
+<details>
+<summary>Default value</summary>
+
+```yaml
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: registry-api
+              app.kubernetes.io/name: upstream
+          topologyKey: kubernetes.io/hostname
+        weight: 100
+      - podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: registry-api
+              app.kubernetes.io/name: upstream
+          topologyKey: topology.kubernetes.io/zone
+        weight: 50
+fullnameOverride: registry-api
+image:
+  registryServerUrl: image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-enterprise/registry-api:0.31.1
+imagePullSecrets:
+  - name: enterprise-pull-secret
+```
+
+</details>
+
+Values for the Registry Server chart this chart wraps; every key under
+`upstream` is passed to it. The Registry Server requires an external PostgreSQL
+database: set `upstream.config.database.*`, or leave
+`upstream.config.database.host` empty to inherit `global.postgres.host`; with
+neither, the render fails. `upstream.config` is rendered into a ConfigMap, so
+never put the database password in it. Pass the password through
+`upstream.extraEnv` with a `secretKeyRef` instead. AWS RDS IAM authentication
+does not inherit `global.postgres.dynamicAuth`; set
+`upstream.config.database.dynamicAuth.awsRdsIam.region` here.
 
 ### `upstream.affinity`
 
@@ -65,8 +109,9 @@ podAntiAffinity:
 
 Preferred spread of registry-server replicas across nodes and zones. Your own
 `upstream.affinity` merges with this; set `podAntiAffinity: null` to drop it.
-Selector labels must match the upstream pods (`upstream` alias name; component
-excludes toolhive-operator pods, which share it).
+The selectors match the Registry Server pods' `app.kubernetes.io/name: upstream`
+label. If you set `upstream.nameOverride`, change `app.kubernetes.io/name` in
+these selectors to the same value, or the render fails.
 
 ### `upstream.fullnameOverride`
 
@@ -75,7 +120,7 @@ excludes toolhive-operator pods, which share it).
 **Default:** `"registry-api"`
 
 Override the upstream Registry Server resource names. The default gives the
-deployment and Service the name registry-api.
+Deployment and Service the name `registry-api`.
 
 ### `upstream.image.registryServerUrl`
 
@@ -85,7 +130,7 @@ deployment and Service the name registry-api.
 <summary>Default value</summary>
 
 ```yaml
-image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-enterprise/registry-api:0.30.0
+image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-enterprise/registry-api:0.31.1
 ```
 
 </details>
@@ -99,7 +144,7 @@ Container image used by the standalone Stacklok Enterprise Registry Server.
 **Default:** `[{"name":"enterprise-pull-secret"}]`
 
 Image pull Secrets for the Registry Server pod. The default authenticates to the
-Replicated image proxy with enterprise-pull-secret.
+Replicated image proxy with `enterprise-pull-secret`.
 
 ### `networkPolicy.enabled`
 
@@ -107,7 +152,9 @@ Replicated image proxy with enterprise-pull-secret.
 
 **Default:** `false`
 
-Enable a NetworkPolicy for the registry-api pod.
+Enable a NetworkPolicy for the Registry Server pod. The render fails while
+`upstream.nameOverride` is set, because the policy selects pods by the default
+name label.
 
 ### `networkPolicy.allowExternalEgress`
 
@@ -115,9 +162,10 @@ Enable a NetworkPolicy for the registry-api pod.
 
 **Default:** `true`
 
-Allow all egress. NetworkPolicies are additive, so true GRANTS allow-all egress
-and overrides a cluster default-deny. Set false and populate `egress` to lock
-the pod down.
+Allow all egress. NetworkPolicies are additive, so `true` grants allow-all
+egress and overrides a cluster default-deny. Set `false` and populate `egress`
+to lock the pod down. With the policy enabled, the render fails when this is
+`true` and `egress` is non-empty, because the list would be ignored.
 
 ### `networkPolicy.egress`
 
@@ -125,9 +173,11 @@ the pod down.
 
 **Default:** `[]`
 
-Egress rules (NetworkPolicyEgressRule shape) used when allowExternalEgress is
-false. Must cover DNS, PostgreSQL, and every sync source; a missing one fails
-silently.
+Egress rules (NetworkPolicyEgressRule shape) used when `allowExternalEgress` is
+`false`. Must cover DNS, PostgreSQL, and every sync source; a missing one fails
+silently at run time. With the policy enabled, the render fails when this is
+empty and `allowExternalEgress` is `false`, because the pod would have no egress
+at all.
 
 ## Related information
 

@@ -11,8 +11,8 @@ Configure the platform chart with these Helm values.
 This reference lists values declared in the chart's default `values.yaml`.
 Templates can also accept optional settings and inherited `global` values.
 
-Chart: `stacklok-enterprise-platform`. Chart version: `0.30.0`. Generated from
-the platform source at `v0.30.0`.
+Chart: `stacklok-enterprise-platform`. Chart version: `0.31.1`. Generated from
+the platform source at `v0.31.1`.
 
 ## Values
 
@@ -49,13 +49,137 @@ Install the console subchart.
 
 Install the ToolHive operator and its CRD overlay charts.
 
+### `platformMcp.enabled`
+
+**Type:** `bool`
+
+**Default:** `false`
+
+Run the Platform MCP server while `toolhiveOperator.enabled` is true. It is
+opt-in: the default runs none, whatever else is enabled. With no endpoints set
+below, the chart runs one `admin` endpoint while Enterprise Manager is enabled,
+and none otherwise.
+
+### `platformMcp.image.repository`
+
+**Type:** `string`
+
+<details>
+<summary>Default value</summary>
+
+```yaml
+image-proxy.stacklok.com/proxy/stacklok-enterprise/ghcr.io/stacklok/stacklok-enterprise/platform-mcp
+```
+
+</details>
+
+Container image repository for the Platform MCP server.
+
+### `platformMcp.image.tag`
+
+**Type:** `string`
+
+**Default:** `""`
+
+Override the image tag. An empty value uses the chart's appVersion.
+
+### `platformMcp.audience`
+
+**Type:** `string`
+
+**Default:** `""`
+
+Audience that each endpoint's ToolHive proxy accepts, which is the audience
+Enterprise Manager accepts, since the proxy forwards the caller's token to it.
+Empty uses `enterprise-manager.idpConfig.audience`. The render fails when both
+are empty and an endpoint renders. The issuer comes from
+`global.stacklok.primaryIdp`.
+
+### `platformMcp.endpoints`
+
+**Type:** `object`
+
+**Default:** `{}`
+
+The endpoints to run, by name. Each is one MCPServer that runs the toolsets
+listed in its required `toolsets` (a comma-separated list; a server with none
+refuses to start). It also takes an optional `env` map of extra server settings
+and an optional `resources` block with `requests` and `limits` for `cpu` and
+`memory` only. The `env` settings are `PLATFORM_MCP_LOG_LEVEL` (`debug`, `info`,
+`warn` or `error`; default `info`), `PLATFORM_MCP_READ_HEADER_TIMEOUT` (default
+`5s`), `PLATFORM_MCP_READ_TIMEOUT` (default `15s`), `PLATFORM_MCP_WRITE_TIMEOUT`
+(default `15s`, at most `20s`, or the render fails), `PLATFORM_MCP_IDLE_TIMEOUT`
+(default `60s`), `PLATFORM_MCP_MAX_HEADER_BYTES` (default `16384`) and
+`PLATFORM_MCP_MAX_BODY_BYTES` (default `262144`). The chart sets
+`PLATFORM_MCP_TOOLSETS` and `PLATFORM_MCP_LISTEN_ADDR` itself and fails the
+render when `env` sets either. The server checks the other values at startup.
+Empty runs the default `admin` endpoint while Enterprise Manager is enabled.
+Setting any endpoint replaces the default.
+
+### `platformMcp.networkPolicy.enabled`
+
+**Type:** `bool`
+
+**Default:** `true`
+
+Render a NetworkPolicy for each endpoint. It admits the endpoint's own pods,
+Connector Gateway and Enterprise Manager (Enterprise Manager's directory
+verifies the endpoint when an Admin saves the Connector). The last two reach the
+proxy port only, never the server pod behind it.
+
+### `platformMcp.networkPolicy.connectorGateway.namespace`
+
+**Type:** `string`
+
+**Default:** `""`
+
+Namespace Connector Gateway runs in. Empty means the release namespace.
+
+### `platformMcp.networkPolicy.connectorGateway.podSelector`
+
+**Type:** `object`
+
+**Default:** `{}`
+
+Pod selector matching the Connector Gateway pods. Empty selects the pods by the
+name label of the `connector-gateway` subchart, including its `nameOverride`.
+
+### `platformMcp.networkPolicy.enterpriseManager.namespace`
+
+**Type:** `string`
+
+**Default:** `""`
+
+Namespace Enterprise Manager runs in. Empty means the release namespace.
+
+### `platformMcp.networkPolicy.enterpriseManager.podSelector`
+
+**Type:** `object`
+
+**Default:** `{}`
+
+Pod selector matching the Enterprise Manager pods. Empty selects the pods by the
+name label of the `enterprise-manager` subchart, including its `nameOverride`.
+
+### `platformMcp.networkPolicy.extraIngress`
+
+**Type:** `list`
+
+**Default:** `[]`
+
+Extra ingress rules merged into every endpoint's policy. The policy selects the
+proxy pod and the server pod behind it, so each rule must list its ports, and
+the only port it may list is TCP 8080, the proxy port, with no `endPort` and no
+named port: any other port can reach the server pod and skip the proxy's token
+check. The render fails for a rule that does not.
+
 ### `enterpriseManager.enabled`
 
 **Type:** `bool`
 
 **Default:** `false`
 
-Install Enterprise Manager when global.stacklok.enterpriseManager.enabled is
+Install Enterprise Manager when `global.stacklok.enterpriseManager.enabled` is
 unset. Prefer the global key. The render fails when the global key is false and
 this is true.
 
@@ -66,10 +190,10 @@ this is true.
 **Default:** `false`
 
 Install the standalone Registry Server when
-global.stacklok.registryServer.enabled is unset. Prefer the global key; the
+`global.stacklok.registryServer.enabled` is unset. Prefer the global key; the
 install notes warn while this one installs it. The render fails when the global
 key is false and this is true. No subchart can read this key, so it derives no
-registry URL: with it alone, set global.stacklok.registryServer.url, or the
+registry URL: with it alone, set `global.stacklok.registryServer.url`, or the
 render fails while the console or Workspace would get no registry URL.
 
 ### `preflight.checkEgress`
@@ -78,8 +202,9 @@ render fails while the console or Workspace would get no registry URL.
 
 **Default:** `false`
 
-Include an advisory HTTP probe of replicated.app. Enable only for installations
-with internet access; the probe fails in an air-gapped environment.
+Include an advisory HTTP probe of `replicated.app`. Enable only for
+installations with internet access; the probe fails in an air-gapped
+environment.
 
 ### `preflight.enforce`
 
@@ -88,7 +213,7 @@ with internet access; the probe fails in an air-gapped environment.
 **Default:** `false`
 
 Run preflight checks in a Helm hook Job and fail installation or upgrade if a
-check fails. Requires global.replicated.dockerconfigjson (without it the image
+check fails. Requires `global.replicated.dockerconfigjson` (without it the image
 pull fails and the install hangs) and cluster-scoped read RBAC.
 
 ### `preflight.image.repository`
@@ -157,15 +282,28 @@ PostgreSQL URI for the optional preflight database probe. Supply it only for a
 one-off preflight run: a persistent values file stores its password in the
 rendered preflight Secret. Empty disables the probe.
 
-### `enterprise-manager.serviceAccount`
+### `enterprise-manager.serviceAccount.create`
 
-**Type:** `object`
+**Type:** `bool`
 
-**Default:** `{"automount":true,"create":true}`
+**Default:** `true`
 
-Dedicated Enterprise Manager ServiceAccount; Connector Gateway's internal API
-admits exactly this subject. Renaming it requires setting
-connector-gateway.internalApi.allowedSubjects to match.
+Create a dedicated ServiceAccount for Enterprise Manager, named after the
+subchart's full name unless `enterprise-manager.serviceAccount.name` is set.
+Connector Gateway's internal API admits this ServiceAccount's subject, derived
+from the release name, so if you rename it or set this to false, set
+`connector-gateway.internalApi.allowedSubjects` to match.
+
+### `enterprise-manager.serviceAccount.automount`
+
+**Type:** `bool`
+
+**Default:** `true`
+
+Mount the ServiceAccount's API token into the Enterprise Manager pod. Applies
+only while `create` is true. Enterprise Manager reads the directory KEK through
+the Kubernetes API, so the render fails when `directory.kek.enabled` is true and
+this is false.
 
 ### `enterprise-manager.grpc.insecure`
 
@@ -173,8 +311,9 @@ connector-gateway.internalApi.allowedSubjects to match.
 
 **Default:** `false`
 
-Skip caller authentication on the shared gRPC service (development only; TLS is
-grpc.tls.enabled). Must agree with Connector Gateway's directory.insecure.
+Skip caller authentication on the shared gRPC service. Development only;
+`enterprise-manager.grpc.tls.enabled` controls TLS separately. Must agree with
+Connector Gateway's `directory.insecure` setting.
 
 ### `enterprise-manager.grpc.callerAuth.clusterOidcIssuer`
 
@@ -183,42 +322,27 @@ grpc.tls.enabled). Must agree with Connector Gateway's directory.insecure.
 **Default:** `""`
 
 Cluster OIDC issuer used to verify projected ServiceAccount tokens on the shared
-gRPC listener. Empty leaves authenticated calls denied unless grpc.insecure is
-enabled for development.
+gRPC listener. Empty leaves authenticated calls denied unless
+`enterprise-manager.grpc.insecure` is enabled for development.
 
 ### `enterprise-manager.grpc.callerAuth.saSubjectAllowlist`
 
 **Type:** `list`
 
-<details>
-<summary>Default value</summary>
-
-```yaml
-- '{{- if dig "stacklok" "connectorGateway" "enabled" false .Values.global
-  -}}system:serviceaccount:{{ .Release.Namespace }}:{{ if contains
-  "connector-gateway" .Release.Name }}{{ .Release.Name | trunc 63 | trimSuffix
-  "-" }}{{ else }}{{ printf "%s-connector-gateway" .Release.Name | trunc 63 |
-  trimSuffix "-" }}{{ end }}{{- end -}}'
-- '{{- if dig "stacklok" "aiGatewayV2" "enabled" false .Values.global
-  -}}system:serviceaccount:{{ .Release.Namespace }}:{{ if contains
-  "ai-gateway-v2" .Release.Name }}{{ .Release.Name | trunc 63 | trimSuffix "-"
-  }}{{ else }}{{ printf "%s-ai-gateway-v2" .Release.Name | trunc 63 | trimSuffix
-  "-" }}{{ end }}{{- end -}}'
-- '{{- if and (eq (toString (dig "stacklok" "experiments" "workspace" "enabled"
-  false .Values.global)) "true") (eq (toString (dig "replicated" "licenseFields"
-  "module_workspace" "value" "" .Values.global)) "true")
-  -}}system:serviceaccount:{{ .Release.Namespace }}:{{ if contains "workspace"
-  .Release.Name }}{{ .Release.Name | trunc 63 | trimSuffix "-" }}{{ else }}{{
-  printf "%s-workspace" .Release.Name | trunc 63 | trimSuffix "-" }}{{ end }}{{-
-  end -}}'
-```
-
-</details>
+**Default:** One `system:serviceaccount:<namespace>:<name>` subject for each
+installed caller: Connector Gateway while
+`global.stacklok.connectorGateway.enabled` is true, AI Gateway while
+`global.stacklok.aiGatewayV2.enabled` is true, and Workspace while
+`global.stacklok.experiments.workspace.enabled` is true and the license includes
+the `module_workspace` entitlement. Each `<name>` is the release name when it
+already contains the component's chart name (`connector-gateway`,
+`ai-gateway-v2` or `workspace`), else `<release>-<chart name>`, truncated to 63
+characters.
 
 ServiceAccount subjects allowed to call the directory's identity RPCs: Connector
-Gateway, AI Gateway v2 and Workspace. The default derives each one's subject
-from the release name while it is installed. An override replaces the default,
-so keep every caller.
+Gateway, AI Gateway and Workspace. The default derives each one's subject from
+the release name while it is installed. An override replaces the default, so
+keep every caller.
 
 ### `enterprise-manager.grpc.callerAuth.gatewaySaSubjectAllowlist`
 
@@ -227,7 +351,7 @@ so keep every caller.
 **Default:** `[]`
 
 ServiceAccount subjects allowed to call gateway registration RPCs, including
-EnsureConnectorGateway. With caller authentication enabled, include Connector
+`EnsureConnectorGateway`. With caller authentication enabled, include Connector
 Gateway's subject or the gateway aborts its startup.
 
 ### `enterprise-manager.grpc.callerAuth.credentialSaSubjectAllowlist`
@@ -236,7 +360,7 @@ Gateway's subject or the gateway aborts its startup.
 
 **Default:** `[]`
 
-ServiceAccount subjects allowed to call ResolveSecretRef. This
+ServiceAccount subjects allowed to call `ResolveSecretRef`. This
 credential-returning RPC has its own allowlist and requires TLS; empty denies
 all callers.
 
@@ -321,8 +445,8 @@ this gate, and a gateway with no Directory address never calls.
 **Default:** `false`
 
 Enable the TLS listener on the shared gRPC service. Required when
-directory.kek.enabled is true. Configure exactly one certificate source:
-issuerRef.name or existingSecret.
+`enterprise-manager.directory.kek.enabled` is true. Configure exactly one
+certificate source: `issuerRef.name` or `existingSecret`.
 
 ### `enterprise-manager.grpc.tls.issuerRef.name`
 
@@ -331,7 +455,7 @@ issuerRef.name or existingSecret.
 **Default:** `""`
 
 cert-manager issuer name for the gRPC serving certificate. Use this or
-existingSecret as the certificate source.
+`existingSecret` as the certificate source.
 
 ### `enterprise-manager.grpc.tls.issuerRef.kind`
 
@@ -339,8 +463,8 @@ existingSecret as the certificate source.
 
 **Default:** `"ClusterIssuer"`
 
-Kind of the cert-manager issuer for the gRPC serving certificate: ClusterIssuer
-or Issuer.
+Kind of the cert-manager issuer for the gRPC serving certificate:
+`ClusterIssuer` or `Issuer`.
 
 ### `enterprise-manager.grpc.tls.existingSecret`
 
@@ -348,8 +472,8 @@ or Issuer.
 
 **Default:** `""`
 
-Existing Secret containing tls.crt and tls.key for the gRPC listener. Use this
-or issuerRef.name as the certificate source.
+Existing Secret containing `tls.crt` and `tls.key` for the gRPC listener. Use
+this or `issuerRef.name` as the certificate source.
 
 ### `enterprise-manager.directory.enabled`
 
@@ -365,8 +489,8 @@ Enable the Enterprise Manager directory service.
 
 **Default:** `""`
 
-External HTTPS base URL used in SCIM Location headers and member $ref values.
-Set it for clients that require absolute URLs.
+External HTTPS base URL used in SCIM `Location` headers and member `$ref`
+values. Set it for clients that require absolute URLs.
 
 ### `enterprise-manager.directory.issuers`
 
@@ -375,7 +499,7 @@ Set it for clients that require absolute URLs.
 **Default:** `[]`
 
 Additional issuers accepted by the directory. The primary IdP is configured
-through global.stacklok.primaryIdp.
+through `global.stacklok.primaryIdp`.
 
 ### `enterprise-manager.directory.hmac.existingSecret`
 
@@ -401,7 +525,7 @@ Key within the existing HMAC Secret that contains the HMAC key material.
 **Default:** `false`
 
 Enable envelope encryption for directory-managed credentials. Requires gRPC TLS
-and exactly one KEK source: existingSecret or generate.
+and exactly one KEK source: `existingSecret` or `generate`.
 
 ### `enterprise-manager.directory.kek.existingSecret`
 
@@ -426,8 +550,9 @@ Key within the existing Secret that contains the directory KEK.
 
 **Default:** `false`
 
-Generate the directory KEK through Helm. Use existingSecret for render-and-apply
-GitOps, where repeated generation would invalidate stored credentials.
+Generate the directory KEK through Helm. Use `existingSecret` for
+render-and-apply GitOps, where repeated generation would invalidate stored
+credentials.
 
 ### `enterprise-manager.directory.kek.externallyManagedRBAC`
 
@@ -464,7 +589,7 @@ Connectors require re-saving to be verified again.
 **Default:** `""`
 
 Timeout for Connector endpoint verification, expressed as a Go duration such as
-15s. Empty uses the application default of 5s.
+`15s`. Empty uses the application default of `5s`.
 
 ### `enterprise-manager.directory.connectorVerification.allowedPrivateRanges`
 
@@ -481,9 +606,9 @@ deny-list. Never exempt loopback, link-local, or cloud metadata addresses.
 
 **Default:** `""`
 
-Enterprise Manager HTTP API base URL, e.g.
-http://enterprise-manager.toolhive-system:9090. Empty inherits
-global.stacklok.enterpriseManager.url. Either source enables the console pages
+Enterprise Manager HTTP API base URL, for example
+`http://enterprise-manager.toolhive-system:9090`. Empty inherits
+`global.stacklok.enterpriseManager.url`. Either source enables the console pages
 backed by it and Directory session authorization.
 
 ### `toolhive-cloud-ui.apiBaseUrl`
@@ -493,23 +618,15 @@ backed by it and Directory session authorization.
 **Default:** `""`
 
 Registry Server API base URL for the console. Leave it empty: it defaults to
-global.stacklok.registryServer.url, and a set value that differs from that URL
+`global.stacklok.registryServer.url`, and a set value that differs from that URL
 fails the render.
 
 ### `toolhive-cloud-ui.connectorGatewayUrl`
 
 **Type:** `string`
 
-<details>
-<summary>Default value</summary>
-
-```yaml
-'{{- if dig "stacklok" "connectorGateway" "enabled" false (.Values.global |
-default dict) -}}http://{{ .Release.Name }}-connector-gateway-control-plane.{{
-.Release.Namespace }}:8090{{- end -}}'
-```
-
-</details>
+**Default:** `http://<release>-connector-gateway-control-plane.<namespace>:8090`
+while `global.stacklok.connectorGateway.enabled` is true, else empty.
 
 Connector Gateway control-plane API URL for the console. Defaults to the derived
 Service address when the gateway is enabled; set it when naming or ports differ.
@@ -519,27 +636,43 @@ Empty hides the Connectors pages.
 
 **Type:** `string`
 
-<details>
-<summary>Default value</summary>
-
-```yaml
-'{{- $exp := include "toolhive-cloud-ui.experiments" (dict "root" .) | fromJson
--}}{{- $ent := include "toolhive-cloud-ui.entitlements" (dict "root" .) |
-fromJson -}}{{- if and $exp.workspace $ent.module_workspace -}}{{- $svc :=
-ternary .Release.Name (printf "%s-workspace" .Release.Name) (contains
-"workspace" .Release.Name) | trunc 63 | trimSuffix "-" -}}http://{{ $svc }}.{{
-.Release.Namespace }}:8080{{- end -}}'
-```
-
-</details>
+**Default:** `http://<service>.<namespace>:8080` while the Workspace experiment
+is on and the license includes `module_workspace`, else empty. `<service>` is
+the release name when it already contains `workspace`, else
+`<release>-workspace`, truncated to 63 characters.
 
 Front Door URL for the Workspace pages, derived from the `workspace` subchart's
-Service. Rendered only while the cloud-ui AppConfig has the workspace experiment
-and the module_workspace entitlement on, so the URL and the Workspace pages read
-the same check. The Service name follows the subchart's fullname: the release
-name alone when it already contains "workspace", else
-&#60;release&#62;-workspace. Set it by hand when workspace.fullnameOverride or
-workspace.nameOverride is set.
+Service. Rendered only while `global.stacklok.experiments.workspace.enabled` is
+true and the license includes the `module_workspace` entitlement, the same check
+that shows the Workspace pages. The Service name follows the subchart's full
+name: the release name alone when it already contains `workspace`, else
+`<release>-workspace`. Set it by hand when `workspace.fullnameOverride` or
+`workspace.nameOverride` is set.
+
+### `toolhive-cloud-ui.localSpeechToTextEnabled`
+
+**Type:** `bool`
+
+**Default:** `true`
+
+Workspace chat dictation (voice typing) recognized on the user's device, where
+the browser promises it (`SpeechRecognition.processLocally`); the console cannot
+verify that promise. The browser downloads its language pack, model data and not
+audio, on the first click. Set false to stop on-device dictation; with
+`thirdPartySpeechToTextEnabled` also false, the console offers no dictation.
+
+### `toolhive-cloud-ui.thirdPartySpeechToTextEnabled`
+
+**Type:** `bool`
+
+**Default:** `false`
+
+Workspace chat dictation through the browser's own speech recognition, which may
+send the user's audio to a service of the browser's or OS's choosing (Google for
+Chrome), with no control over or trace of where it goes. On-device recognition
+is still used wherever `localSpeechToTextEnabled` allows it and the browser
+offers it. Set true to offer dictation in browsers that cannot recognize speech
+on the device.
 
 ### `connector-gateway.enabled`
 
@@ -547,9 +680,9 @@ workspace.nameOverride is set.
 
 **Default:** `false`
 
-Fallback installation toggle when global.stacklok.connectorGateway.enabled is
+Fallback installation toggle when `global.stacklok.connectorGateway.enabled` is
 absent. The explicit false default keeps the gateway disabled when
-global.stacklok is null.
+`global.stacklok` is null.
 
 ### `connector-gateway.internalApi`
 
@@ -558,9 +691,11 @@ global.stacklok is null.
 **Default:** `{"deriveEnterpriseManagerSubject":true,"enabled":true}`
 
 Internal API Enterprise Manager calls to revoke upstream tokens and refresh
-Connector tools; it must stay enabled. With networkPolicy.enabled and
-allowExternalEgress false, allow egress to the kube-apiserver or every
-Disconnect returns 502.
+Connector tools; keep `enabled` true. With `deriveEnterpriseManagerSubject` true
+and `connector-gateway.internalApi.allowedSubjects` empty, the API admits
+Enterprise Manager's ServiceAccount subject, derived from the release name. With
+`connector-gateway.networkPolicy.enabled` true and `allowExternalEgress` false,
+allow egress to the kube-apiserver or every Disconnect returns 502.
 
 ### `ai-gateway-v2.enabled`
 
@@ -568,9 +703,9 @@ Disconnect returns 502.
 
 **Default:** `false`
 
-Fallback installation toggle when global.stacklok.aiGatewayV2.enabled is absent.
-The explicit false default keeps this data plane disabled when global.stacklok
-is null.
+Fallback installation toggle for AI Gateway when
+`global.stacklok.aiGatewayV2.enabled` is absent. The explicit false default
+keeps AI Gateway disabled when `global.stacklok` is null.
 
 ### `ai-gateway-v2.scanning.enabled`
 
@@ -623,7 +758,7 @@ Container image repository for Workspace.
 **Default:** `false`
 
 Deploy the development MinIO object store for Workspace. Requires
-workspace.production to be false.
+`workspace.production` to be false.
 
 ### `workspace.skills.enabled`
 
@@ -631,8 +766,12 @@ workspace.production to be false.
 
 **Default:** `false`
 
-Run Workspace's Skills Registry. Off, so Workspace creates no `skillsregistry`
-schema in its database. Turning it on creates it; turning it off again keeps it.
+Run Workspace's Skills Registry, which is deprecated. Off, so Workspace creates
+no `skillsregistry` schema in its database. Turning it on creates it; turning it
+off again keeps it. The `workspaceSkills` experiment
+(`global.stacklok.experiments.workspaceSkills`) turns skills on with the
+Stacklok Enterprise Platform skills catalog as their source instead, whatever
+this value says.
 
 ### `workspace.memory.enabled`
 
@@ -650,7 +789,7 @@ it; turning it off again keeps it and its rows.
 
 **Default:** `true`
 
-Allow console pods to reach Workspace when workspace.networkPolicy.enabled is
+Allow console pods to reach Workspace when `workspace.networkPolicy.enabled` is
 true.
 
 ### `workspace.networkPolicy.enterpriseManager.enabled`
@@ -660,9 +799,9 @@ true.
 **Default:** `true`
 
 Allow Workspace to reach Enterprise Manager's pods in the release namespace
-(Directory gRPC TLS 9443, HTTPS 8443, HTTP 9090) when
-workspace.networkPolicy.enabled is true. Workspace calls the Directory and the
-connections API there in SEP mode.
+(directory gRPC TLS 9443, HTTPS 8443, HTTP 9090) when
+`workspace.networkPolicy.enabled` is true. Workspace calls the directory and the
+connections API there while `workspace.sep.enabled` is true.
 
 ### `workspace.genuiServer.enabled`
 
@@ -670,7 +809,7 @@ connections API there in SEP mode.
 
 **Default:** `true`
 
-Deploy the generative UI server when the generativeUi experiment is enabled.
+Deploy the generative UI server when the `generativeUi` experiment is enabled.
 
 ### `workspace.genuiServer.image.repository`
 
@@ -691,70 +830,53 @@ Container image repository for the generative UI server.
 
 **Type:** `string`
 
-<details>
-<summary>Default value</summary>
+**Default:** `<host>:9443` while `global.stacklok.enterpriseManager.enabled` is
+true, else empty. `<host>` is the host of
+`global.stacklok.enterpriseManager.url` when it is a Service name, else
+`<name>.<namespace>.svc`, where `<name>` is the release name when it already
+contains `enterprise-manager`, else `<release>-enterprise-manager`, truncated to
+63 characters.
 
-```yaml
-'{{- if dig "stacklok" "enterpriseManager" "enabled" false (.Values.global |
-default dict) -}}{{ include
-"stacklok-enterprise-platform.workspaceEnterpriseManagerHost" . }}:9443{{- end
--}}'
-```
-
-</details>
-
-Directory gRPC endpoint (TLS) in Workspace's AppConfig. Defaults to Enterprise
-Manager's Service on its gRPC TLS port 9443 while
-global.stacklok.enterpriseManager.enabled is on: the host of
-global.stacklok.enterpriseManager.url when that host is a Service name
-(&#60;svc&#62;, &#60;svc&#62;.&#60;ns&#62;,
-&#60;svc&#62;.&#60;ns&#62;.svc[.cluster.local]), else the Service the release
-name derives. The render fails when enterprise-manager.directory is off, that
-host is not Enterprise Manager's Service, or enterprise-manager.grpc.tls is off
-or on another port; set it then, or when the Directory runs elsewhere.
+Enterprise Manager directory gRPC endpoint (TLS) that Workspace calls. Defaults
+to Enterprise Manager's Service on its gRPC TLS port 9443 while
+`global.stacklok.enterpriseManager.enabled` is on: the host of
+`global.stacklok.enterpriseManager.url` when that host is a Service name
+(`<svc>`, `<svc>.<ns>`, `<svc>.<ns>.svc[.cluster.local]`), else the Service the
+release name derives. The render fails when
+`enterprise-manager.directory.enabled` is off, that host is not Enterprise
+Manager's Service, or `enterprise-manager.grpc.tls` is off or on another port;
+set it then, or when the directory runs elsewhere.
 
 ### `workspace.sep.connections.origin`
 
 **Type:** `string`
 
-<details>
-<summary>Default value</summary>
+**Default:** `http://<host>` while `global.stacklok.enterpriseManager.enabled`
+is true, else empty, with the same `<host>` as the
+`workspace.sep.directory.endpoint` default.
 
-```yaml
-'{{- if dig "stacklok" "enterpriseManager" "enabled" false (.Values.global |
-default dict) -}}http://{{ include
-"stacklok-enterprise-platform.workspaceEnterpriseManagerHost" . }}{{- end -}}'
-```
-
-</details>
-
-Enterprise Manager origin serving the connections API, in Workspace's AppConfig.
-Defaults, while global.stacklok.enterpriseManager.enabled is on, to Enterprise
-Manager's HTTP Service on port 80: http:// and the endpoint's host. The render
-fails when that host is not Enterprise Manager's Service or
-enterprise-manager.service.port is not 80. Set it then, when Enterprise Manager
-runs elsewhere, or to an https origin, which Workspace verifies with
-workspace.sep.caSecret.
+Enterprise Manager origin serving the connections API that Workspace calls.
+Defaults, while `global.stacklok.enterpriseManager.enabled` is on, to Enterprise
+Manager's HTTP Service on port 80: `http://` and the host of
+`workspace.sep.directory.endpoint`'s default. The render fails when that host is
+not Enterprise Manager's Service or `enterprise-manager.service.port` is not 80.
+Set it then, when Enterprise Manager runs elsewhere, or to an `https` origin,
+which Workspace verifies with `workspace.sep.caSecret`.
 
 ### `workspace.sep.connectorGateway.controlPlaneOrigin`
 
 **Type:** `string`
 
-<details>
-<summary>Default value</summary>
+**Default:**
+`http://<release>-connector-gateway-control-plane.<namespace>.svc:8090` while
+`global.stacklok.connectorGateway.enabled` is true, else empty.
 
-```yaml
-'{{- if dig "stacklok" "connectorGateway" "enabled" false (.Values.global |
-default dict) -}}http://{{ .Release.Name }}-connector-gateway-control-plane.{{
-.Release.Namespace }}.svc:8090{{- end -}}'
-```
-
-</details>
-
-Connector Gateway control-plane origin in the `sep.json` Workspace's chart
-renders. Defaults to the gateway's control-plane Service while
-global.stacklok.connectorGateway.enabled is on; set it when naming or ports
-differ.
+Connector Gateway control-plane origin that Workspace calls to list and manage
+connections. Defaults to the gateway's control-plane Service while
+`global.stacklok.connectorGateway.enabled` is on. While `workspace.sep.enabled`
+is true and the default is in effect, the render fails when Connector Gateway
+serves its control plane under another Service name or port; set it then, or
+when the gateway runs elsewhere.
 
 ### `global.stacklok.sessionHeaders`
 
@@ -763,8 +885,8 @@ differ.
 **Default:** `[]`
 
 Ordered request headers used to correlate conversations; the first non-empty
-wins. Empty uses x-claude-code-session-id, x-mecatl-root-session-id,
-x-mecatl-session-id, session-id. Changing it rolls the Envoy data plane.
+wins. Empty uses `x-claude-code-session-id`, `x-mecatl-root-session-id`,
+`x-mecatl-session-id`, `session-id`. Changing it rolls the pods that read it.
 
 ### `global.stacklok.directoryGrpcEndpoint`
 
@@ -773,12 +895,13 @@ x-mecatl-session-id, session-id. Changing it rolls the Envoy data plane.
 **Default:** `""`
 
 Enterprise Manager directory gRPC address on its cleartext listener, for
-group-label telemetry, e.g. enterprise-manager.toolhive-system.svc:9091.
-Authorize each calling main processor in
-enterprise-manager.grpc.callerAuth.saSubjectAllowlist. AI Gateway v2 inherits it
-when its directory.endpoint is empty and directory.insecure is true, and under
-caller authentication then needs directory.tokenProjection.enabled and its
-ServiceAccount in that allowlist.
+group-label telemetry, for example
+`enterprise-manager.toolhive-system.svc:9091`. Authorize each calling main
+processor in `enterprise-manager.grpc.callerAuth.saSubjectAllowlist`. AI Gateway
+inherits it when `ai-gateway-v2.directory.endpoint` is empty and
+`ai-gateway-v2.directory.insecure` is true, and under caller authentication then
+needs `ai-gateway-v2.directory.tokenProjection.enabled` and its ServiceAccount
+in that allowlist.
 
 ### `global.stacklok.directoryGrpcInsecure`
 
@@ -786,8 +909,9 @@ ServiceAccount in that allowlist.
 
 **Default:** `false`
 
-Not read by any subchart. AI Gateway v2 takes its directory transport from its
-own `directory.insecure` and `directory.tokenProjection`.
+Not read by any subchart. AI Gateway takes its directory transport from its own
+`ai-gateway-v2.directory.insecure` and
+`ai-gateway-v2.directory.tokenProjection`.
 
 ### `global.stacklok.enterpriseManager`
 
@@ -797,11 +921,12 @@ own `directory.insecure` and `directory.tokenProjection`.
 `{"platformSettings":{"connectivityPollIntervalSeconds":5},"url":""}`
 
 Enterprise Manager's install toggle and shared HTTP configuration propagated to
-adopting subcharts. Configure directory gRPC through directoryGrpcEndpoint. Set
-enabled: true to install Enterprise Manager, after configuring the primary IdP
-issuer and the expected audience. The toggle has no default here, so that an
-unset key falls back to the top-level enterpriseManager.enabled; unset and false
-both leave it off. The gateways do not read the toggle.
+adopting subcharts. Configure directory gRPC through
+`global.stacklok.directoryGrpcEndpoint`. Set `enabled: true` to install
+Enterprise Manager, after configuring the primary IdP issuer and the expected
+audience. The toggle has no default here, so that an unset key falls back to the
+top-level `enterpriseManager.enabled`; unset and false both leave it off. The
+gateways do not read the toggle.
 
 ### `global.stacklok.enterpriseManager.url`
 
@@ -811,11 +936,11 @@ both leave it off. The gateways do not read the toggle.
 
 Enterprise Manager HTTP base URL, without a path suffix. Callers append their
 endpoint paths. The console inherits it when
-toolhive-cloud-ui.enterpriseManagerUrl is empty. Empty disables features that
-require this address, including Gateway connectivity enforcement. With Workspace
-in SEP mode, a host shaped like a Service name also sets the defaults of
-workspace.sep.directory.endpoint (the host on 9443) and
-workspace.sep.connections.origin (http:// and the host).
+`toolhive-cloud-ui.enterpriseManagerUrl` is empty. Empty disables features that
+require this address, including Gateway connectivity enforcement. A host shaped
+like a Service name also sets the defaults Workspace uses while
+`workspace.sep.enabled` is true: `workspace.sep.directory.endpoint` (the host on
+port 9443) and `workspace.sep.connections.origin` (`http://` and the host).
 
 ### `global.stacklok.enterpriseManager.platformSettings`
 
@@ -823,8 +948,22 @@ workspace.sep.connections.origin (http:// and the host).
 
 **Default:** `{"connectivityPollIntervalSeconds":5}`
 
-Defaults for Enterprise Manager's administration-managed platform settings,
-including the interval used to poll Gateway connectivity state.
+Defaults for Enterprise Manager's administration-managed platform settings that
+the gateways read.
+
+### `global.stacklok.enterpriseManager.platformSettings.connectivityPollIntervalSeconds`
+
+**Type:** `int`
+
+**Default:** `5`
+
+How often, in seconds, Connector Gateway and AI Gateway poll Enterprise Manager
+for the Gateway connectivity state an Admin sets, which decides whether the
+gateway serves traffic. Applies only while
+`global.stacklok.enterpriseManager.url` is set. A disconnect takes effect within
+one interval. Lower it for faster disconnects, at the cost of more requests to
+Enterprise Manager from every gateway replica. Connector Gateway refuses to
+start with an interval below 1 second.
 
 ### `global.stacklok.experiments.insightsClassification.enabled`
 
@@ -864,27 +1003,27 @@ CSV.
 Enable the experimental tool-call approvals. A gated tool call is denied until
 the signed-in user approves that exact call in the console, then allowed once.
 One switch turns on both halves: Enterprise Manager hosts the approval service
-(it stores records in global.redis, links users to global.stacklok.consoleUrl
-and serves the HTTPS listener) and Connector Gateway calls it as a policy
-webhook (it trusts global.webhooks.caBundleSecret). Needs tools below,
-Enterprise Manager installed with directory.enabled, global.redis.host and
-global.stacklok.primaryIdp.clientId: only a token issued to that client, the
+(it stores records in `global.redis`, links users to
+`global.stacklok.consoleUrl` and serves the HTTPS listener) and Connector
+Gateway calls it as a policy webhook (it trusts
+`global.webhooks.caBundleSecret`). Needs `tools` below, Enterprise Manager
+installed with `directory.enabled`, `global.redis.host` and
+`global.stacklok.primaryIdp.clientId`: only a token issued to that client, the
 console, can read or approve a request. Its client claim is
-primaryIdp.clientClaim (cid, client_id or azp). The gateway builds Enterprise
-Manager's Service and Secret names from the host of
-global.stacklok.enterpriseManager.url when that host is a Service name
-(&#60;svc&#62;, &#60;svc&#62;.&#60;ns&#62;,
-&#60;svc&#62;.&#60;ns&#62;.svc[.cluster.local]), else from the release name.
-With a nameOverride or fullnameOverride on enterprise-manager, set that URL to
-the renamed Service on its service.port (80 by default), for example
-http://enterprise-server.&#60;ns&#62;.svc, or the enterprise-manager render
-refuses the experiment. The URL is also Enterprise Manager's address for
-ai-gateway-v2, connector-gateway and cloud-ui. A URL naming any other Service
-fails the same render, because the gateway would call that Service for
-approvals. The chart generates the HMAC secret and keeps it across upgrades. A
-renderer that cannot read the cluster, such as a GitOps tool, generates a new
-secret on every sync, which briefly denies gated calls while the two pods pick
-it up. Subject to the release-channel guard: it stays off on the Stable channel.
+`primaryIdp.clientClaim` (`cid`, `client_id` or `azp`). The gateway builds
+Enterprise Manager's Service and Secret names from the host of
+`global.stacklok.enterpriseManager.url` when that host is a Service name
+(`<svc>`, `<svc>.<ns>`, `<svc>.<ns>.svc[.cluster.local]`), else from the release
+name. With a `nameOverride` or `fullnameOverride` on `enterprise-manager`, set
+that URL to the renamed Service on its `service.port` (80 by default), for
+example `http://enterprise-server.<ns>.svc`, or the `enterprise-manager` render
+refuses the experiment. The URL is also Enterprise Manager's address for AI
+Gateway, Connector Gateway and the console. A URL naming any other Service fails
+the same render, because the gateway would call that Service for approvals. The
+chart generates the HMAC secret and keeps it across upgrades. A renderer that
+cannot read the cluster, such as a GitOps tool, generates a new secret on every
+sync, which briefly denies gated calls while the two pods pick it up. Subject to
+the release-channel guard: it stays off on the Stable channel.
 
 ### `global.stacklok.experiments.approvals.tools`
 
@@ -893,8 +1032,9 @@ it up. Subject to the release-channel guard: it stays off on the Stable channel.
 **Default:** `[]`
 
 Tool-name globs that need approval, matched against the served or the
-backend-local tool name, e.g. ["github_delete_*"]. Required while approvals is
-on: an empty list would send every tool call to the approval service.
+backend-local tool name, for example `["github_delete_*"]`. Required while
+approvals is on: an empty list would send every tool call to the approval
+service.
 
 ### `global.stacklok.experiments.approvals.approvalTtl`
 
@@ -903,8 +1043,8 @@ on: an empty list would send every tool call to the approval service.
 **Default:** `""`
 
 How long an approval lasts unused before it expires: a whole number and a unit,
-such as 90s, 10m or 1h. Empty keeps the default of five minutes. The limit is
-one hour.
+such as `90s`, `10m` or `1h`. Empty keeps the default of five minutes. The limit
+is one hour.
 
 ### `global.stacklok.experiments.workspace.enabled`
 
@@ -912,10 +1052,11 @@ one hour.
 
 **Default:** `false`
 
-Enable the experimental Workspace: the cloud UI pages and the Atrium backend
-(the workspace subchart). Both also require the module_workspace license field.
-Unlike the other experiments it has no release-channel guard: a licensed install
-turns it on from any channel, Stable included.
+Enable the experimental Workspace: the console pages and the Workspace backend
+(the `workspace` subchart). Both also require the `module_workspace` license
+field. Like `fusedConnectors` and unlike the other experiments, it has no
+release-channel guard: a licensed install turns it on from any channel, Stable
+included.
 
 ### `global.stacklok.experiments.generativeUi.enabled`
 
@@ -923,10 +1064,11 @@ turns it on from any channel, Stable included.
 
 **Default:** `false`
 
-Enable generative UI in Workspace Chat: the cloud UI draws charts and tables
-from tool results, the workspace subchart renders the generative UI server, and
-Atrium sends the model only the text of tool results. Needs workspace on too.
-Subject to the release-channel guard: it stays off on the Stable channel.
+Enable generative UI in Workspace Chat: the console draws charts and tables from
+tool results, the `workspace` subchart renders the generative UI server, and the
+Workspace backend sends the model only the text of tool results. Needs the
+`workspace` experiment on too. Subject to the release-channel guard: it stays
+off on the Stable channel.
 
 ### `global.stacklok.experiments.workspaceSkills.enabled`
 
@@ -934,9 +1076,12 @@ Subject to the release-channel guard: it stays off on the Stable channel.
 
 **Default:** `false`
 
-Reserved for letting Workspace Chat use the SEP skills catalog. Not available in
-this release: the render refuses true. Subject to the release-channel guard once
-available: it stays off on the Stable channel.
+Let Workspace Chat use the Stacklok Enterprise Platform skills catalog: the
+`workspace` subchart takes its skills from the catalog with each user's own
+token, and the console offers them in the chat composer's `/` menu. Needs the
+`workspace` experiment on and `workspace.sep.enabled: true`; the render fails
+without `workspace.sep.enabled`. Subject to the release-channel guard: it stays
+off on the Stable channel.
 
 ### `global.stacklok.experiments.platformIdpBearers.enabled`
 
@@ -944,11 +1089,12 @@ available: it stays off on the Stable channel.
 
 **Default:** `false`
 
-Let agents call Connector Gateway's /gw/mcp with access tokens from the primary
-IdP, including RFC 8693 delegated tokens whose act claim names the agent acting
-for the User. The gateway mounts the path only when its control-plane corp-IdP
-chain names the primary IdP. Subject to the release-channel guard: it stays off
-on the Stable channel.
+Let agents call Connector Gateway's `/gw/mcp` with access tokens from the
+primary IdP, including RFC 8693 delegated tokens whose `act` claim names the
+agent acting for the User. The gateway serves this only when its control-plane
+sign-in validates tokens from the primary IdP's issuer
+(`global.stacklok.primaryIdp.issuer`). Subject to the release-channel guard: it
+stays off on the Stable channel.
 
 ### `global.stacklok.experiments.kubernetesImportSuggestedAuth.enabled`
 
@@ -962,6 +1108,33 @@ server accepts what Connector Gateway sends, so it can create a connector that
 gets 401s; with it off, the Admin configures authorization by hand. Subject to
 the release-channel guard: it stays off on the Stable channel.
 
+### `global.stacklok.experiments.fusedConnectors.enabled`
+
+**Type:** `bool`
+
+**Default:** `false`
+
+Enable the experimental fused connectors: existing connectors, one per instance
+of the same MCP server, served as one connector whose tools take an argument
+naming the instance. Each member keeps its own auth, of any type. Turns on
+Enterprise Manager's fused connector admin API (needs `directory.enabled`) and
+Connector Gateway's fusion; both halves are needed. Like `workspace`, it has no
+release-channel guard: the opt-in works on every channel, Stable included.
+
+### `global.stacklok.experiments.nativeSignIn.enabled`
+
+**Type:** `bool`
+
+**Default:** `false`
+
+Enable the experimental native sign-in connector auth type: a user signs in to
+the target's own login on a branded page Connector Gateway hosts, and the
+gateway presents the captured session on each call. Turns on the auth type in
+Enterprise Manager's connector API (needs `directory.enabled`) and in Connector
+Gateway, which also needs its auth server, Redis and KEK; both halves are
+needed. Like `workspace`, it has no release-channel guard: the opt-in works on
+every channel, Stable included.
+
 ### `global.stacklok.connectorGateway.enabled`
 
 **Type:** `bool`
@@ -969,7 +1142,7 @@ the release-channel guard: it stays off on the Stable channel.
 **Default:** `false`
 
 Install Connector Gateway and expose its capability to sibling components. Also
-set connectorGatewayId and authServerIssuer.
+set `global.stacklok.connectorGatewayId` and `global.stacklok.authServerIssuer`.
 
 ### `global.stacklok.connectorGateway.workloadIdentity.enabled`
 
@@ -977,17 +1150,19 @@ set connectorGatewayId and authServerIssuer.
 
 **Default:** `true`
 
-Let a Directory service account call the Connector Gateway with its workload's
-own projected ServiceAccount token. Turns on the gateway setting, its
+Let a directory ServiceAccount call Connector Gateway with its workload's own
+projected ServiceAccount token. Turns on the gateway setting, its
 issuer-discovery ClusterRoleBinding and API-server token mount, and adds the
 gateway's ServiceAccount to
-enterprise-manager.grpc.callerAuth.workloadTrustSaSubjectAllowlist, so the
-gateway's half is never on without Directory's. The gateway's half stays off
-when it has no Directory address or dials Directory on the cleartext development
-arm (directory.insecure), where the gateway would refuse to start. Workload
-trusts and accounts are shared with AI Gateway v2: an active bound account
-authenticates here too and reaches every Connector its groups grant. See
-docs/customer/connector-gateway-workload-callers.md.
+`enterprise-manager.grpc.callerAuth.workloadTrustSaSubjectAllowlist`, so the
+gateway's half is never on without the directory's. The gateway's half stays off
+when it has no directory address or dials the directory on its cleartext
+development listener (`directory.insecure`), where the gateway would refuse to
+start. Workload trusts and accounts are shared with AI Gateway: an active bound
+account authenticates here too and reaches every Connector its groups grant.
+Under Connector Gateway's `networkPolicy.allowExternalEgress: false`, allow
+egress to the kube-apiserver and to every public JWKS host a workload trust
+names.
 
 ### `global.stacklok.registryServer.url`
 
@@ -995,14 +1170,14 @@ docs/customer/connector-gateway-workload-callers.md.
 
 **Default:** `""`
 
-The Registry Server API root, e.g. https://registry.example.com: the one place
-its URL is set. Empty uses the in-cluster registry-api Service while enabled is
-true. The console (toolhive-cloud-ui.apiBaseUrl), Workspace
-(workspace.registry.url, in SEP mode with workspace.registry.name set) and
-Enterprise Manager (server_api_url in an enterpriseConfig.registry directive you
-write) derive their registry URL from it, and the render fails while any of them
-sets a different one. Set it when the Registry Server runs elsewhere, or under
-another Service name or port.
+The Registry Server API root, for example `https://registry.example.com`: the
+one place its URL is set. Empty uses the in-cluster `registry-api` Service while
+`enabled` is true. The console (`toolhive-cloud-ui.apiBaseUrl`), Workspace
+(`workspace.registry.url`, while `workspace.sep.enabled` is true and
+`workspace.registry.name` is set) and Enterprise Manager (`server_api_url` in an
+`enterpriseConfig.registry` directive you write) derive their registry URL from
+it, and the render fails while any of them sets a different one. Set it when the
+Registry Server runs elsewhere, or under another Service name or port.
 
 ### `global.stacklok.aiGatewayV2.enabled`
 
@@ -1010,7 +1185,7 @@ another Service name or port.
 
 **Default:** `false`
 
-Install the AI Gateway v2 data plane.
+Install AI Gateway.
 
 ### `global.stacklok.aiGatewayV2.url`
 
@@ -1018,10 +1193,10 @@ Install the AI Gateway v2 data plane.
 
 **Default:** `""`
 
-AI Gateway v2's public URL, e.g. https://ai-gateway.example.com. The console
-reads models and health from it, and shows it in the CLI setup command.
-ai-gateway-v2's httpRoute.hostname defaults to its host. A local
-toolhive-cloud-ui.gatewayProxyUrl or httpRoute.hostname wins.
+AI Gateway's public URL, for example `https://ai-gateway.example.com`. The
+console reads models and health from it, and shows it in the CLI setup command.
+`ai-gateway-v2.httpRoute.hostname` defaults to its host. A local
+`toolhive-cloud-ui.gatewayProxyUrl` or `ai-gateway-v2.httpRoute.hostname` wins.
 
 ### `global.stacklok.aiGatewayV2.maxFrameBytes`
 
@@ -1029,14 +1204,14 @@ toolhive-cloud-ui.gatewayProxyUrl or httpRoute.hostname wins.
 
 **Default:** `10485760`
 
-Largest SSE frame, in bytes, on the AI Gateway's streaming responses: an integer
-from 1048576 (1 MiB) to 16777216 (16 MiB). ai-gateway-v2 caps each frame it
-reads from a provider, and each non-streaming response body, at it, and
-Workspace each frame it reads from the gateway. The OpenAI Responses API repeats
-the request's tool schemas in its lifecycle frames, so a frame grows with an
-agent's tool surface. A stream holds a few copies of its largest frame, and
-ai-gateway-v2's pod is limited to 256Mi and Workspace's to 512Mi, so raise
-ai-gateway-v2.resources and workspace.resources before raising this value.
+Largest SSE frame, in bytes, on AI Gateway's streaming responses: an integer
+from 1048576 (1 MiB) to 16777216 (16 MiB). AI Gateway caps each frame it reads
+from a provider, and each non-streaming response body, at it, and Workspace caps
+each frame it reads from the gateway. The OpenAI Responses API repeats the
+request's tool schemas in its lifecycle frames, so a frame grows with an agent's
+tool surface. A stream holds a few copies of its largest frame, and AI Gateway's
+pod is limited to 256Mi and Workspace's to 512Mi, so raise
+`ai-gateway-v2.resources` and `workspace.resources` before raising this value.
 
 ### `global.stacklok.consoleUrl`
 
@@ -1044,15 +1219,16 @@ ai-gateway-v2.resources and workspace.resources before raising this value.
 
 **Default:** `""`
 
-The console's public, browser-reachable URL, e.g. https://console.example.com.
-The console inherits it as toolhive-cloud-ui.betterAuth.url, and a local
-betterAuth.url wins. Connector Gateway inherits it as
-connector-gateway.consoleUrl, which switches on the reconnect link in a
-connector credential prompt; a local connector-gateway.consoleUrl wins. The
-gateway accepts only an absolute https URL, or http on a loopback host, with no
-userinfo, query or fragment; an inherited value outside that stops it from
-starting. Workspace inherits it as workspace.sep.callbackBaseUrl, where the
-Connector Gateway sign-in returns the browser; a local value wins.
+The console's public, browser-reachable URL, for example
+`https://console.example.com`. The console inherits it as
+`toolhive-cloud-ui.betterAuth.url`, and a local `betterAuth.url` wins. Connector
+Gateway inherits it as `connector-gateway.consoleUrl`, which switches on the
+reconnect link in a connector credential prompt; a local
+`connector-gateway.consoleUrl` wins. The gateway accepts only an absolute
+`https` URL, or `http` on a loopback host, with no userinfo, query or fragment;
+an inherited value outside that stops it from starting. Workspace inherits it as
+`workspace.sep.callbackBaseUrl`, where the Connector Gateway sign-in returns the
+browser; a local value wins.
 
 ### `global.stacklok.primaryIdp.issuer`
 
@@ -1061,7 +1237,7 @@ Connector Gateway sign-in returns the browser; a local value wins.
 **Default:** `""`
 
 Corporate OIDC issuer URL shared by the console, Connector Gateway's primary
-IdP, and Enterprise Manager.
+IdP, Enterprise Manager, and the Platform MCP proxy.
 
 ### `global.stacklok.primaryIdp.clientId`
 
@@ -1103,8 +1279,8 @@ Comma-separated OIDC scopes requested from the primary IdP.
 **Default:** `""`
 
 Access-token claim used to identify the OAuth client on Connector Gateway's
-tools route. Empty checks cid and client_id; supported explicit values are cid,
-client_id, azp, and appid.
+tools route. Empty checks `cid` and `client_id`; supported explicit values are
+`cid`, `client_id`, `azp`, and `appid`.
 
 ### `global.stacklok.primaryIdp.clientClaimAllowUnsafe`
 
@@ -1112,7 +1288,7 @@ client_id, azp, and appid.
 
 **Default:** `false`
 
-Allow a clientClaim outside the supported list. Configure only when the IdP's
+Allow a `clientClaim` outside the supported list. Configure only when the IdP's
 claim reliably identifies the requesting client; a claim shared across clients
 can defeat client validation. Supply a boolean.
 
@@ -1122,9 +1298,11 @@ can defeat client validation. Supply a boolean.
 
 **Default:** `""`
 
-Token claim Connector Gateway's primary-IdP upstream resolves user subjects on
-until the catalog primary activates; Directory's matching binding_claim governs
-after. Empty uses sub, or oid on Microsoft Entra ID.
+Token claim Connector Gateway uses to identify users signed in through the
+primary IdP. It applies from startup until Enterprise Manager's directory
+publishes the primary IdP's settings to the gateway; from then on, the
+directory's binding claim for that issuer applies instead. Empty uses `sub`, or
+`oid` on Microsoft Entra ID.
 
 ### `global.stacklok.primaryIdp.allowPrivateIps`
 
@@ -1133,8 +1311,9 @@ after. Empty uses sub, or oid on Microsoft Entra ID.
 **Default:** `false`
 
 Allow primary-IdP discovery on private addresses. Applies to this IdP's
-Connector Gateway integration, including its directory-synthesized
-configuration; supply a boolean value.
+Connector Gateway integration, including the primary IdP settings Enterprise
+Manager's directory sends the gateway, and to the Platform MCP proxy. Supply a
+boolean value; the render fails for a string.
 
 ### `global.stacklok.primaryIdp.caBundleRef`
 
@@ -1142,10 +1321,13 @@ configuration; supply a boolean value.
 
 **Default:** `{}`
 
-Additional PEM CA bundle for the primary IdP, read by the console and Connector
-Gateway. Reference exactly one secretRef or configMapRef, with key defaulting to
-ca.crt. Enterprise Manager uses its own trustedCABundle. Restart consumers after
-rotating bundle contents without changing the reference.
+Additional PEM CA bundle for the primary IdP, read by the console, Connector
+Gateway and the Platform MCP proxy. Reference exactly one `secretRef` or
+`configMapRef`, with the `key` beside it defaulting to `ca.crt`. The Platform
+MCP proxy trusts only this bundle, not the system roots, and the ToolHive
+operator reads it from a ConfigMap only, so a `secretRef` skips the default
+Platform MCP endpoint. Enterprise Manager uses its own `trustedCABundle`.
+Restart consumers after rotating bundle contents without changing the reference.
 
 ### `global.stacklok.connectorGatewayId`
 
@@ -1163,9 +1345,10 @@ changing it identifies a different gateway installation.
 
 **Default:** `""`
 
-Public issuer URL for Connector Gateway's embedded authorization server.
-Required when the gateway is enabled. OAuth callbacks use this URL with
-/oauth/callback appended. Tenant path prefixes are supported; userinfo, query
+Public issuer URL for Connector Gateway's embedded authorization server,
+distinct from `global.stacklok.primaryIdp.issuer`, the corporate IdP users sign
+in with. Required when the gateway is enabled. OAuth callbacks use this URL with
+`/oauth/callback` appended. Tenant path prefixes are supported; userinfo, query
 strings, and fragments are rejected.
 
 ### `global.stacklok.audit.enabled`
@@ -1202,7 +1385,7 @@ Audit event types excluded from emission by adopting components.
 **Default:** `false`
 
 Include request payloads in audit events emitted by adopting components. Payload
-capture is a separate opt-in from audit.enabled.
+capture is a separate opt-in from `audit.enabled`.
 
 ### `global.stacklok.audit.includeResponseData`
 
@@ -1211,7 +1394,7 @@ capture is a separate opt-in from audit.enabled.
 **Default:** `false`
 
 Include response payloads in audit events emitted by adopting components.
-Payload capture is a separate opt-in from audit.enabled.
+Payload capture is a separate opt-in from `audit.enabled`.
 
 ### `global.stacklok.audit.maxDataSize`
 
@@ -1264,8 +1447,9 @@ Enterprise Manager webhook TLS is enabled.
 
 **Default:** `"ClusterIssuer"`
 
-Kind of the shared cert-manager issuer: ClusterIssuer or Issuer. A namespaced
-Issuer must exist in every namespace where a consumer creates a Certificate.
+Kind of the shared cert-manager issuer: `ClusterIssuer` or `Issuer`. A
+namespaced `Issuer` must exist in every namespace where a consumer creates a
+Certificate.
 
 ### `global.webhooks.caBundleSecret`
 
@@ -1273,7 +1457,7 @@ Issuer must exist in every namespace where a consumer creates a Certificate.
 
 **Default:** `""`
 
-Secret containing the shared webhook issuer's CA certificate under ca.crt.
+Secret containing the shared webhook issuer's CA certificate under `ca.crt`.
 Create it in each namespace where a consumer mounts it.
 
 ### `global.redis.host`
@@ -1307,7 +1491,7 @@ Use the Redis Cluster protocol for the shared Redis or Valkey host.
 
 **Default:** `""`
 
-Redis ACL username. Pair with existingSecret for username-and-password
+Redis ACL username. Pair with `existingSecret` for username-and-password
 authentication; an empty username with a password uses password-only
 authentication.
 
@@ -1318,7 +1502,7 @@ authentication.
 **Default:** `""`
 
 Existing Secret containing the Redis password. Create it in every consumer pod's
-namespace. The AI Gateway data plane requires the fixed Secret name redis-auth.
+namespace. AI Gateway requires the fixed Secret name `redis-auth`.
 
 ### `global.redis.existingSecretKey`
 
@@ -1326,8 +1510,8 @@ namespace. The AI Gateway data plane requires the fixed Secret name redis-auth.
 
 **Default:** `"redis-password"`
 
-Key containing the Redis password. The AI Gateway data plane requires
-redis-password; other adopters read this setting.
+Key containing the Redis password. AI Gateway requires `redis-password`; other
+adopters read this setting.
 
 ### `global.redis.tls.enabled`
 
@@ -1387,15 +1571,17 @@ Key within the existing Secret containing the PostgreSQL password.
 **Default:** `{}`
 
 CA bundle that verifies the PostgreSQL server certificate, for a server signed
-by a private CA (a corporate CA, AWS RDS). Reference exactly one secretRef or
-configMapRef, with key beside it defaulting to ca.crt. Enterprise Manager and
-Workspace mount it and name it in PGSSLROOTCERT;
-enterprise-manager.database.caBundleRef and workspace.database.caBundleRef
-override it. Registry Server does not read it: under verify-ca or verify-full
-the render fails until its upstream.extraEnv sets PGSSLROOTCERT (install guide
-section 5j) or it has its own upstream.config.database host and sslMode. Set
-sslMode to verify-full so the host name is checked too. Restart consumers after
-rotating bundle contents without changing the reference.
+by a private CA (a corporate CA, AWS RDS). Reference exactly one `secretRef` or
+`configMapRef`, with `key` beside it defaulting to `ca.crt`. Enterprise Manager
+and Workspace mount it and name it in `PGSSLROOTCERT`;
+`enterprise-manager.database.caBundleRef` and `workspace.database.caBundleRef`
+override it. Registry Server does not read it: under `verify-ca` or
+`verify-full` the render fails until
+`toolhive-registry-server.upstream.extraEnv` sets `PGSSLROOTCERT` to the path of
+a CA file you mount into the Registry Server pod, or Registry Server has its own
+`toolhive-registry-server.upstream.config.database` host and `sslMode`. Set
+`sslMode` to `verify-full` so the host name is checked too. Restart consumers
+after rotating bundle contents without changing the reference.
 
 ### `global.postgres.dynamicAuth`
 
@@ -1404,10 +1590,10 @@ rotating bundle contents without changing the reference.
 **Default:** `{}`
 
 Shared dynamic database authentication settings for Enterprise Manager, used
-when its local database.dynamicAuth is unset. Configure awsRdsIam.region for AWS
-RDS IAM authentication. Registry Server requires its own
-upstream.config.database.dynamicAuth setting. Workspace does not support it and
-needs workspace.database.existingSecret.
+when its local `database.dynamicAuth` is unset. Configure `awsRdsIam.region` for
+AWS RDS IAM authentication. Registry Server requires its own
+`toolhive-registry-server.upstream.config.database.dynamicAuth` setting.
+Workspace does not support it and needs `workspace.database.existingSecret`.
 
 ## Related information
 
