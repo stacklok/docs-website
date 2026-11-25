@@ -153,6 +153,24 @@ The principal entity (`Client::`) receives all JWT claims from the access token
 with a `claim_` prefix. Any claim in the token becomes an attribute you can
 reference in policies.
 
+With the embedded authorization server, the claims come from the primary
+upstream provider's access token, and any claim that token omits is filled from
+the same provider's ID token. The following claims are never filled from the ID
+token:
+
+- Claims that describe the token itself: `iss`, `aud`, `exp`, `nbf`, `iat`,
+  `jti`, `nonce`, `at_hash`, `c_hash`, `s_hash`, `azp`, `sid`, `client_id`,
+  `typ`, `token_use`, `uti`, `rh`, `idtyp`, `ver`, `cnf`, `appid`, `appidacr`,
+  `azpacr`, `cid`, `gty`, `allowed-origins`, `session_state`, `xms_cc`, and
+  `acrs`
+- The delegated grant: `scope`, `scp`, `act`, `may_act`, and
+  `authorization_details`
+- `sub`
+
+Group and role claims follow the rule in
+[How groups are resolved](#how-groups-are-resolved). For how the fill works, see
+[Claims from the upstream ID token](../concepts/cedar-policies.mdx#claims-from-the-upstream-id-token).
+
 ### Common principal attributes
 
 | Attribute      | Source       | Cedar type     | Description                                                       |
@@ -168,8 +186,9 @@ reference in policies.
 :::tip
 
 The exact attributes available depend on your identity provider and token
-configuration. Check your access token's claims to see what's available. Every
-claim becomes a `claim_`-prefixed attribute automatically.
+configuration. Check your access token's claims to see what's available; with
+the embedded authorization server, check the upstream ID token's claims too.
+Every claim becomes a `claim_`-prefixed attribute automatically.
 
 Every `claim_`-prefixed attribute is available on both the principal and the
 context, so `principal.claim_email` and `context.claim_email` read the same
@@ -183,8 +202,7 @@ value. Use whichever reads more naturally in your policy.
 | -------------------- | -------------------------------------------- |
 | String               | `String`                                     |
 | Boolean              | `Bool`                                       |
-| Integer              | `Long`                                       |
-| Float                | `Decimal`                                    |
+| Number               | `Decimal`                                    |
 | Array of strings     | `Set` of `String` values                     |
 | Array of mixed types | `Set` (each element converted individually)  |
 | Object (nested map)  | `Record` (each field converted individually) |
@@ -195,6 +213,15 @@ JWT claims with dot access. For example, `context.claim_act.sub` reads the
 subject of an [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)
 delegation `act` claim. Nesting deeper than 10 levels is dropped rather than
 converted, since claim values can originate from an unverified upstream token.
+
+Claims keep the JSON type the token sends. Numeric claims such as `auth_time`
+are `Decimal` values, which you compare with decimal methods, as in
+`principal.claim_auth_time.greaterThan(decimal("1700000000.0"))`; a `decimal`
+literal needs a decimal point. Some providers send `email_verified` as the
+string `"true"`, which you compare with
+`principal.claim_email_verified == "true"`. Using a claim as the wrong type is
+an evaluation error, and ToolHive denies the request even when another policy
+permits it.
 
 ### Multi-valued claim normalization
 
@@ -433,6 +460,15 @@ found:
 
 The claim value must be an array of strings. Each string becomes a `THVGroup`
 entity, and the principal is added as a child of each group.
+
+With the embedded authorization server, group and role claims come from one
+token. If the upstream access token carries a list, even an empty one, under any
+of these claim names or the configured `role_claim_name`, ToolHive fills none of
+them from the upstream ID token; a null or non-list value doesn't count. When
+the access token carries none of them, they all come from the ID token, so with
+`group_claim_name` set, the ID token's list under that claim becomes the user's
+groups. See
+[Claims from the upstream ID token](../concepts/cedar-policies.mdx#claims-from-the-upstream-id-token).
 
 ### Group policy examples
 

@@ -34,12 +34,14 @@ Collect these values as you complete the steps below:
 
 ### Step 1: Create a custom authorization server
 
-You **must** use a custom authorization server, not the
-[Org authorization server](https://developer.okta.com/docs/concepts/auth-servers/#org-authorization-server).
-The Org authorization server is Okta's built-in, non-customizable server
-intended for SSO with Okta-managed apps and access to Okta's own APIs. Its
-tokens are not designed for validation by external resource servers, and its
-claims, scopes, and policies cannot be customized.
+A custom authorization server issues access tokens with an audience you set,
+which backend MCP servers can validate. You need one when a backend receives the
+user's Okta access token, for example through the `upstreamInject` outgoing
+strategy. The
+[Org authorization server](https://developer.okta.com/docs/concepts/auth-servers/#org-authorization-server)
+issues access tokens intended only for Okta's own APIs. If no backend needs the
+Okta access token, you can use the Org authorization server instead; see
+[Use the Org authorization server](#use-the-org-authorization-server).
 
 - **Security > API > Authorization Servers > Add Authorization Server**
 - Name: e.g. `toolhive-engineering`
@@ -120,6 +122,14 @@ names literally starting with `.*`, which matches nothing.
 
 :::
 
+If your authorization server already adds groups to the ID token, you can use
+that claim instead: set **Include in token type** to **ID Token** and
+**Always**. Cedar fills group claims that the access token omits from the
+upstream ID token, so the same policies work. Groups in the access token update
+at each access token refresh; groups in the ID token update when ToolHive
+refreshes the ID token, which Okta issues with a 1-hour lifetime. See
+[Claims from the upstream ID token](../concepts/cedar-policies.mdx#claims-from-the-upstream-id-token).
+
 ### Step 5: Create groups and assign users
 
 - **Directory > Groups > Add Group**
@@ -194,6 +204,26 @@ Register a dedicated Okta application for this VirtualMCPServer. See
 [One application per VirtualMCPServer](./vmcp-idp-overview.mdx#one-application-per-virtualmcpserver).
 
 :::
+
+### Use the Org authorization server
+
+The Org authorization server is available in every Okta org without the API
+Access Management add-on. It adds the groups claim only to the ID token, and
+Cedar fills group claims from the ID token, so the policies in this guide work
+unchanged. Group changes take effect when ToolHive refreshes the ID token, which
+Okta issues with a 1-hour lifetime.
+
+To use it, follow steps 2 and 5 as written, skip steps 1, 3, and 6, and replace
+step 4:
+
+1. In your app, open the **Sign On** tab and click **Edit** in the **OpenID
+   Connect ID Token** section.
+2. Set **Group claim type** to **Filter**, keep the claim name `groups`, and set
+   the filter to **Starts with** `mcp-`.
+3. Save.
+
+In the VirtualMCPServer, set `issuerUrl` to `https://<OKTA_DOMAIN>` and keep the
+same `scopes`.
 
 ## Deploy to ToolHive
 
@@ -331,9 +361,12 @@ membership in the access token.
 
 ## Troubleshooting
 
-**`default` vs custom authorization server**: Custom authorization servers
-support groups claims in access tokens. The Org authorization server can only
-add groups claims to ID tokens, not access tokens.
+**`default` vs custom authorization server**: Custom authorization servers can
+add groups claims to access tokens and ID tokens, and ToolHive reads groups from
+either (see step 4). The Org authorization server adds groups claims only to ID
+tokens, which also works; see
+[Use the Org authorization server](#use-the-org-authorization-server). Use a
+custom authorization server when a backend needs the Okta access token (step 1).
 
 **Groups claim empty**: Common causes: (1) the claim filter prefix does not
 match the Okta group names (e.g., filter says `mcp-` but groups are named
