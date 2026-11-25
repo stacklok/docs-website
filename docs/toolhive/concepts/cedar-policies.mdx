@@ -643,15 +643,17 @@ uses the embedded authorization server. The primary upstream provider is the
 first one configured; a VirtualMCPServer can select another with
 [`primaryUpstreamProvider`](../guides-vmcp/embedded-auth-server-vmcp.mdx#select-the-primary-upstream-provider).
 
-:::info[Changed in v0.69.0]
+:::info[Changed in v0.70.0]
 
-Releases v0.41.0 through v0.68.0 fill only `name` and `email` from the ID token.
+Releases v0.41.0 through v0.69.1 fill only `name` and `email` from the ID token.
 After you upgrade, policies can see claims they didn't see before, which changes
 decisions in both directions: a `permit` rule keyed on a newly filled group or
 claim can start matching, and an `unless` clause or a
-`!(principal has claim_<name>)` condition can stop matching. Review your
-`permit` and `forbid` rules against
-[Designing secure policies](#designing-secure-policies) before you upgrade.
+`!(principal has claim_<name>)` condition can stop matching. A newly filled
+claim with an unexpected type makes a policy error, which denies the request
+even when another policy permits it. Review your `permit` and `forbid` rules
+against [Designing secure policies](#designing-secure-policies) before you
+upgrade.
 
 :::
 
@@ -664,13 +666,9 @@ a group or role claim filled from it reflects how that registration is
 configured. Give ToolHive's registration the same group filters, app roles, and
 client scopes as the resource API, so both tokens agree.
 
-Group and role claims come from one token. If the access token carries a list,
-even an empty one, under any claim that group extraction reads, ToolHive fills
-none of those claims from the ID token. Otherwise they all come from the ID
-token, so a single decision never combines the access token's `groups` with the
-ID token's `roles`. See
-[How groups are resolved](../reference/authz-policy-reference.mdx#how-groups-are-resolved)
-for the claim names.
+Group and role claims all come from one token, so a single decision never
+combines the access token's `groups` with the ID token's `roles`; see
+[How groups are resolved](../reference/authz-policy-reference.mdx#how-groups-are-resolved).
 
 Filled claims are as current as the stored ID token. When it expires, ToolHive
 refreshes the upstream tokens, and Entra ID, Okta, Auth0, and Keycloak return a
@@ -681,11 +679,13 @@ describes the refresh behavior.
 
 :::warning[Revoking a user's last group]
 
-Keycloak omits `groups` for a user who has no groups. After you revoke a user's
-last group, the refreshed access token carries no group claim, so ToolHive fills
-the groups from the stored ID token until the provider issues a new one. For
-revocation to take effect at the next access token refresh, put groups in the
-access token only.
+Keycloak omits `groups` for a user who has no groups, so after you revoke a
+user's last group, the refreshed access token carries no group claim. Keycloak
+returns a new ID token on the same refresh, which omits `groups` too. A provider
+that omits empty `groups` but keeps the old ID token on refresh, or a failed
+refresh, leaves the stored ID token's groups in place, and ToolHive fills them
+until a later refresh replaces that ID token. To tie revocation to the access
+token alone, put groups in the access token only.
 
 :::
 
