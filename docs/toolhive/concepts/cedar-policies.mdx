@@ -609,16 +609,106 @@ groups or roles using the same `principal in THVGroup::"..."` syntax.
 
 1. The embedded authorization server authenticates the user with your upstream
    identity provider and issues a ToolHive JWT.
-2. The Cedar authorizer reads claims from the upstream token (not just the
-   ToolHive-issued JWT).
+2. The Cedar authorizer reads claims from the primary upstream provider's access
+   token, and fills any claim that token omits from the same provider's ID token
+   (see
+   [Claims from the upstream ID token](#claims-from-the-upstream-id-token)).
 3. Group claims are extracted and used to build `THVGroup` parent entities for
    the principal.
 4. Policies using `principal in THVGroup::"<group>"` evaluate correctly.
 
 :::note
 
-If the upstream token is opaque (not a JWT), the authorizer denies the request.
-There is no silent fallback to ToolHive-issued claims only.
+If the upstream access token is opaque rather than a JWT, as Google and GitHub
+access tokens are, the authorizer can't read its claims. It evaluates the claims
+in the ToolHive-issued token instead and doesn't read the upstream ID token, so
+policies that reference upstream-only claims such as `groups` or `hd` see them
+as absent.
+
+:::
+
+### Claims from the upstream ID token
+
+With the embedded authorization server, Cedar evaluates the claims in the
+primary upstream provider's access token. Any claim that the access token omits
+is filled from the same provider's ID token, which ToolHive stores when the user
+signs in. This includes group and role claims under any name, `email_verified`,
+`acr`, `amr`, and custom claims. A claim that the access token carries is used
+as-is: ToolHive never replaces it with, or merges it with, the ID token's value.
+
+This applies to every MCPServer, MCPRemoteProxy, and VirtualMCPServer that uses
+the embedded authorization server, and you can't turn it off. The primary
+upstream provider is the first one configured. A VirtualMCPServer can name a
+different one with
+[`primaryUpstreamProvider`](../guides-vmcp/embedded-auth-server-vmcp.mdx#select-the-primary-upstream-provider).
+
+:::info[Changed in v0.69.0]
+
+Releases v0.41.0 through v0.68.0 fill only `name` and `email` from the ID token.
+After you upgrade, authorization decisions can change in both directions, so
+review both your `permit` and your `forbid` rules before upgrading:
+
+- A rule keyed on a group or claim that the ID token now supplies can start
+  matching.
+- A `!(principal has claim_<name>)` condition or an `unless` clause can stop
+  matching.
+- A claim that arrives with an unexpected type makes the policy error, which
+  denies the whole request.
+- With `group_claim_name` set and no group or role claim in the access token,
+  the ID token's list under that claim becomes the user's group set.
+
+See [Designing secure policies](#designing-secure-policies) for how to write
+rules that hold up when claims appear.
+
+:::
+
+**ToolHive's client registration is authoritative for what the access token
+omits.** Identity providers compute group and role claims per client or per
+audience. Entra ID builds each token from its app registration's group claims,
+app roles, and optional claims. Okta configures group claims per token type,
+authorization server, and app. Auth0 Actions set claims on each token
+separately. Keycloak resolves `realm_access` and `resource_access` through the
+requesting client's role scope mappings. The ID token is issued to ToolHive's
+own client registration at your identity provider, so a group or role claim
+filled from it is that registration's answer, not the resource API's. Configure
+group filters, app roles, and client scopes on ToolHive's client registration.
+If you filter the groups in the access token, apply the same filter to that
+registration: providers typically omit the claim when a filter matches none of
+the user's groups, and the ID token's list is then filled in.
+
+- **Group and role claims come from one token.** If the access token carries a
+  list under any claim that group extraction reads (`group_claim_name`,
+  `role_claim_name`, or the defaults `groups`, `roles`, and `cognito:groups`),
+  ToolHive fills none of them from the ID token. A null or non-list value
+  doesn't count. When the access token carries none of them, they all come from
+  the ID token, so a single decision never combines the access token's `groups`
+  with the ID token's `roles`.
+- **Some claims always come from the access token.** Claims that describe the
+  token itself (such as `iss`, `aud`, `exp`, `azp`, and `client_id`), the
+  delegated grant (`scope`, `scp`, `act`, `may_act`, and
+  `authorization_details`), and `sub` are never filled from the ID token. See
+  [Principal attributes](../reference/authz-policy-reference.mdx#principal-attributes)
+  for the full list.
+- **Keycloak:** `realm_access` and `resource_access` in the ID token reflect the
+  role scope mappings of ToolHive's client. Keycloak omits `groups` entirely
+  when the user has no groups instead of sending an empty list.
+
+Groups filled from the ID token are only as fresh as the stored ID token.
+ToolHive uses it even after it expires, and an expired ID token triggers an
+upstream refresh. Entra ID, Okta, Auth0, and Keycloak return a new ID token on
+refresh when the `openid` scope was requested, so filled groups track the
+provider at about the ID token's lifetime. See
+[Automatic token refresh](./embedded-auth-server.mdx#automatic-token-refresh)
+for providers that don't rotate the ID token.
+
+:::warning[Revoking a user's last group]
+
+Providers that omit `groups` for a user with no groups, such as Keycloak, leave
+the refreshed access token with no group claim after you revoke the user's last
+group. The stored ID token's list is then filled back in until that ID token is
+replaced. If revocation must take effect when the access token refreshes, put
+groups in the access token and either have the provider emit an empty list or
+keep groups out of the ID token.
 
 :::
 
@@ -655,6 +745,16 @@ behavior is sufficient.
 **Guard annotation access with `has`:** Always use `resource has <attr>` before
 accessing annotation attributes. Many MCP servers only set some annotations, and
 unguarded access causes evaluation errors that result in a deny.
+
+**Expect claims to appear:** With the embedded authorization server, a claim
+missing from the access token can be filled from the upstream ID token, so don't
+treat a claim's absence as a signal. Guard claim access with
+`principal has claim_<name>`, and check that negations such as
+`!(principal has claim_<name>)` and `unless` clauses still mean what you intend.
+Use each claim with the type it actually arrives in: numeric claims arrive as
+decimals, and some providers send `email_verified` as the string `"true"` rather
+than a boolean. Using a value as the wrong type is an evaluation error, which
+denies the request.
 
 **Test your policies:** Always test policies with real requests to ensure they
 work as expected. Pay special attention to edge cases and error conditions.
@@ -808,7 +908,9 @@ When policies don't work as expected, follow this systematic approach:
 ### Groups are not working
 
 1. **Check JWT claims:** Verify that your JWT token contains a group claim
-   (`groups`, `roles`, or `cognito:groups`).
+   (`groups`, `roles`, or `cognito:groups`). With the embedded authorization
+   server, check the upstream access token first, then the upstream ID token for
+   the group claims the access token omits.
 2. **Configure custom claim name:** If your identity provider uses a
    non-standard claim name, set `group_claim_name` in the Cedar configuration.
 3. **Use correct syntax:** Use `principal in THVGroup::"group-name"` rather than
