@@ -286,7 +286,36 @@ spec:
 ```
 
 This configuration only allows requests from pods using the `mcp-client` service
-account in the `client-apps` namespace.
+account in the `client-apps` namespace. ToolHive enforces this by checking the
+token's `sub` claim, in addition to its issuer, audience, and expiry. The
+`serviceAccount` and `namespace` fields combine as follows:
+
+| `serviceAccount` | `namespace` | Accepted tokens                                                                                                              |
+| ---------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| set              | set         | Only that service account in that namespace (`sub` is `system:serviceaccount:<NAMESPACE>:<SERVICE_ACCOUNT>`)                 |
+| set              | empty       | Only that service account, in the namespace of the MCPServer, MCPRemoteProxy, or VirtualMCPServer that references the config |
+| empty            | set         | Any service account in that namespace                                                                                        |
+| empty            | empty       | Any service account token from the issuer with a matching audience                                                           |
+
+Because any pod in the cluster can request a projected token for your audience,
+leaving both fields empty lets every workload in the cluster authenticate. Set
+at least `namespace` unless that's what you intend. Both fields must be valid
+Kubernetes names; a full `system:serviceaccount:...` string is rejected at
+admission.
+
+A token from any other service account gets HTTP 401 with an `invalid_token`
+error, and the proxy logs a warning naming the rejected subject and the required
+subject.
+
+:::info[Changed in v0.68.0]
+
+ToolHive previously ignored `serviceAccount` and `namespace` and accepted any
+service account token with a matching audience. If clients that worked before
+upgrading now get HTTP 401, check the proxy logs for the rejected subject, then
+run those clients under the configured service account or adjust
+`serviceAccount` and `namespace`.
+
+:::
 
 ```bash
 kubectl apply -f mcp-server-k8s-auth.yaml
