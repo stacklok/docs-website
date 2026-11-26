@@ -313,27 +313,30 @@ section.
 
 #### Remote workload health checks
 
-By default, health checks are:
+Health checks are enabled for both local backends (MCPServer) and remote
+backends (MCPRemoteProxy). The remote proxy checks the remote server's MCP
+endpoint every 10 seconds and treats any response below HTTP 500 as healthy.
+After five consecutive failed checks, the proxy marks the workload `unhealthy`
+and keeps checking, then marks it `running` again when a check passes.
 
-- **Always enabled** for local backends (MCPServer)
-- **Disabled by default** for remote backends (MCPRemoteProxy)
+If a remote server answers health checks with errors while it serves MCP
+requests normally, turn off health checks for that backend by setting
+`TOOLHIVE_REMOTE_HEALTHCHECKS` to `false` in its MCPRemoteProxy:
 
-To enable health checks for remote workloads, set the
-`TOOLHIVE_REMOTE_HEALTHCHECKS` environment variable in the vMCP pod:
-
-```yaml
+```yaml {6-10}
 apiVersion: toolhive.stacklok.dev/v1beta1
-kind: VirtualMCPServer
+kind: MCPRemoteProxy
 metadata:
-  name: my-vmcp
+  name: my-remote-proxy
 spec:
-  podTemplateSpec:
-    spec:
-      containers:
-        - name: vmcp
-          env:
-            - name: TOOLHIVE_REMOTE_HEALTHCHECKS
-              value: 'true'
+  resourceOverrides:
+    proxyDeployment:
+      env:
+        - name: TOOLHIVE_REMOTE_HEALTHCHECKS
+          value: 'false'
+  remoteUrl: https://mcp.example.com/mcp
+  proxyPort: 8080
+  transport: streamable-http
 ```
 
 For detailed backend health monitoring, see
